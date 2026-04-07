@@ -3545,8 +3545,22 @@ function bootUI() {
     if (cssGrid) cssGrid.style.display = "none";
     _redraw();
 
-    // Single rAF for layout settle — no delays
-    requestAnimationFrame(() => { syncCanvasToViewport(); C.zoomFit(); updateStatus(); _redraw(); S.canvas.style.visibility = ""; });
+    // Retry rAF until viewport layout settles (contain: strict can delay)
+    (function waitForLayout(n) {
+        requestAnimationFrame(() => {
+            const vp = document.getElementById("studio-viewport");
+            const rect = vp ? vp.getBoundingClientRect() : null;
+            if ((!rect || rect.width < 10 || rect.height < 10) && n < 10) {
+                waitForLayout(n + 1);
+                return;
+            }
+            syncCanvasToViewport();
+            C.zoomFit();
+            updateStatus();
+            _redraw();
+            S.canvas.style.visibility = "";
+        });
+    })(0);
 
     // Manual resize on window resize only — no ResizeObserver
     // (ResizeObserver was causing composite glitches on pointer events)
