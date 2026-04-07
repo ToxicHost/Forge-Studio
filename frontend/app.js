@@ -2459,6 +2459,19 @@ function bindUI() {
   // Auto-save session on page unload
   window.addEventListener("beforeunload", _saveSession);
 
+  document.getElementById("checkUpdateBtn")?.addEventListener("click", async () => {
+    const btn = document.getElementById("checkUpdateBtn");
+    const status = document.getElementById("updateCheckStatus");
+    if (btn) btn.disabled = true;
+    if (status) status.textContent = "Checking...";
+    try {
+      const data = await API.checkUpdate();
+      if (data.error) { showToast(data.offline ? "Offline — cannot check for updates" : data.error, "error"); if (status) status.textContent = ""; }
+      else if (data.update_available) { UpdateBanner.show(data); if (status) status.textContent = ""; }
+      else { showToast("Forge Studio is up to date", "success"); if (status) status.textContent = "Up to date"; }
+    } catch (e) { showToast("Update check failed: " + e.message, "error"); if (status) status.textContent = ""; }
+    if (btn) btn.disabled = false;
+  });
   document.getElementById("saveDefaults")?.addEventListener("click", () => {
     saveDefaults();
     showToast("Workflow defaults saved", "success");
