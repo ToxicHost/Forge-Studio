@@ -145,7 +145,7 @@ function onAutoSync(d) {
     _syncDebounce = setTimeout(async () => {
         if (G.page === "detail") return;
         await Promise.all([loadStats(), loadCharacters(), loadFolders(), loadImagesReset()]);
-        renderMain(); renderTagList();
+        renderMain(); renderTagList(); renderFolderSidebar();
         if (d.new > 0 || d.removed > 0) {
             const parts = [];
             if (d.new) parts.push(d.new + " new");
@@ -169,8 +169,8 @@ async function unlinkFolderIdx(idx) { const fp = _folderPaths[idx]; if (!fp) ret
 // FILTERING & SORTING
 // ========================================================================
 
-function filterByCharacter(n) { G.filter.character = G.filter.character === n ? "" : n; G.selectedImages.clear(); loadImagesReset().then(renderMain); }
-async function filterByFolder(f) { G.filter.folder = G.filter.folder === f ? "" : f; G.selectedImages.clear(); await Promise.all([loadCharacters(), loadImagesReset()]); renderMain(); renderTagList(); updateFolderActive(); }
+function filterByCharacter(n) { G.filter.character = G.filter.character === n ? "" : n; G.selectedImages.clear(); loadImagesReset().then(() => { renderMain(); updateTagActive(); updateFolderActive(); }); }
+async function filterByFolder(f) { G.filter.folder = G.filter.folder === f ? "" : f; G.selectedImages.clear(); await Promise.all([loadCharacters(), loadImagesReset()]); renderMain(); renderTagList(); updateFolderActive(); updateTagActive(); }
 function setSort(s) { if (G.sort === s) G.order = G.order === "asc" ? "desc" : "asc"; else { G.sort = s; G.order = s === "newest" ? "desc" : "asc"; } updateSortButtons(); loadImagesReset().then(renderMain); }
 function updateSortButtons() { G._container.querySelectorAll(".gal-sort-btn").forEach(b => { const s = b.dataset.sort; b.classList.toggle("active", s === G.sort); if (s === "filename") b.textContent = G.sort === "filename" ? (G.order === "asc" ? "A\u2013Z" : "Z\u2013A") : "A\u2013Z"; if (s === "newest") b.textContent = G.sort === "newest" ? (G.order === "desc" ? "Newest" : "Oldest") : "Newest"; }); }
 let _searchTimeout;
@@ -228,17 +228,26 @@ function _highlightSuggest(items) { items.forEach((el, i) => el.classList.toggle
 // SELECTION
 // ========================================================================
 
-let _clickTimer = null, _clickId = 0;
+let _clickTimer = null, _clickId = 0, _clickCount = 0;
 function onItemClick(imgId, e) {
     e.preventDefault(); e.stopPropagation();
-    if (_clickTimer && _clickId === imgId) { clearTimeout(_clickTimer); _clickTimer = null; _clickId = 0; G.selectedImages.clear(); updateSelectionUI(); openImage(imgId); return; }
-    if (_clickTimer) { clearTimeout(_clickTimer); _clickTimer = null; }
-    _clickId = imgId; const shiftKey = e.shiftKey, ctrlKey = e.ctrlKey || e.metaKey;
-    _clickTimer = setTimeout(() => { _clickTimer = null; _clickId = 0; const idx = getImgIndex(imgId); const prev = new Set(G.selectedImages);
-        if (shiftKey && G.lastSelectedIndex >= 0) { const a = Math.min(G.lastSelectedIndex, idx), b = Math.max(G.lastSelectedIndex, idx); if (!ctrlKey) G.selectedImages.clear(); for (let i = a; i <= b; i++) G.selectedImages.add(G.images[i].id); }
-        else if (ctrlKey) { if (G.selectedImages.has(imgId)) G.selectedImages.delete(imgId); else G.selectedImages.add(imgId); }
-        else { if (G.selectedImages.size === 1 && G.selectedImages.has(imgId)) G.selectedImages.clear(); else { G.selectedImages.clear(); G.selectedImages.add(imgId); } }
-        G.lastSelectedIndex = idx; updateSelectionDiff(prev); }, 350);
+    if (_clickTimer && _clickId === imgId) {
+        // Second click on same image within timeout = double-click = open
+        clearTimeout(_clickTimer); _clickTimer = null; _clickId = 0; _clickCount = 0;
+        G.selectedImages.clear(); updateSelectionUI(); openImage(imgId); return;
+    }
+    // Clear any pending timer from a different image
+    if (_clickTimer) { clearTimeout(_clickTimer); _clickTimer = null; _clickCount = 0; }
+    _clickId = imgId; _clickCount = 1;
+    const shiftKey = e.shiftKey, ctrlKey = e.ctrlKey || e.metaKey;
+    // Immediately apply selection (don't wait for timeout) for better responsiveness
+    const idx = getImgIndex(imgId); const prev = new Set(G.selectedImages);
+    if (shiftKey && G.lastSelectedIndex >= 0) { const a = Math.min(G.lastSelectedIndex, idx), b = Math.max(G.lastSelectedIndex, idx); if (!ctrlKey) G.selectedImages.clear(); for (let i = a; i <= b; i++) G.selectedImages.add(G.images[i].id); }
+    else if (ctrlKey) { if (G.selectedImages.has(imgId)) G.selectedImages.delete(imgId); else G.selectedImages.add(imgId); }
+    else { if (G.selectedImages.size === 1 && G.selectedImages.has(imgId)) G.selectedImages.clear(); else { G.selectedImages.clear(); G.selectedImages.add(imgId); } }
+    G.lastSelectedIndex = idx; updateSelectionDiff(prev);
+    // Start timer to clear double-click window
+    _clickTimer = setTimeout(() => { _clickTimer = null; _clickId = 0; _clickCount = 0; }, 350);
 }
 function updateSelectionDiff(prev) { const all = new Set([...prev, ...G.selectedImages]); all.forEach(id => { const w = prev.has(id), n = G.selectedImages.has(id); if (w !== n) { const el = G._container.querySelector('.gal-card[data-id="' + id + '"]'); if (el) el.classList.toggle("selected", n); } }); updateSelectionBar(); }
 function updateSelectionUI() { G._container.querySelectorAll(".gal-card").forEach(el => { el.classList.toggle("selected", G.selectedImages.has(parseInt(el.dataset.id))); }); updateSelectionBar(); }
@@ -249,7 +258,7 @@ function clearSelection() { G.selectedImages.clear(); updateSelectionUI(); }
 // BULK OPERATIONS
 // ========================================================================
 
-async function bulkDeleteSelected() { const n = G.selectedImages.size; if (!n || !confirm("Delete " + n + " image" + (n > 1 ? "s" : "") + "?")) return; const ids = Array.from(G.selectedImages); const r = await api("/images/bulk-delete", { method: "POST", body: JSON.stringify({ ids }) }); if (r.error) return toast("Error: " + r.error); if (r.trash_ids && r.trash_ids.length) pushUndo({ type: "delete_bulk", trashIds: r.trash_ids }); toast(r.deleted + " deleted", "success", true); G.selectedImages.clear(); await Promise.all([loadImagesReset(), loadCharacters(), loadFolders(), loadStats()]); renderMain(); renderTagList(); }
+async function bulkDeleteSelected() { const n = G.selectedImages.size; if (!n || !confirm("Delete " + n + " image" + (n > 1 ? "s" : "") + "?")) return; const ids = Array.from(G.selectedImages); const r = await api("/images/bulk-delete", { method: "POST", body: JSON.stringify({ ids }) }); if (r.error) return toast("Error: " + r.error); if (r.trash_ids && r.trash_ids.length) pushUndo({ type: "delete_bulk", trashIds: r.trash_ids }); toast(r.deleted + " deleted", "success", true); G.selectedImages.clear(); await Promise.all([loadImagesReset(), loadCharacters(), loadFolders(), loadStats()]); renderMain(); renderTagList(); renderFolderSidebar(); }
 async function bulkOpenExplorer() { for (const id of Array.from(G.selectedImages)) await api("/image/" + id + "/open-explorer", { method: "POST" }); }
 async function bulkRenameSelected() {
     const n = G.selectedImages.size; if (!n) return;
@@ -294,12 +303,44 @@ function showFolderCtx(e, idx) {
     _buildCtxMenu([{ icon: IC.folderPlus, label: "New subfolder", fn: () => createFolderIn(_folderPaths[idx]) }, { icon: IC.edit, label: "Rename", fn: () => renameFolderIdx(idx) }, null, { icon: IC.unlink, label: "Unlink", fn: () => unlinkFolderIdx(idx) }, { icon: IC.trash, label: "Delete from disk", cls: "danger", fn: () => deleteFolderIdx(idx) }], e.clientX, e.clientY);
 }
 async function renameFromCtx(imgId) { const img = G.images.find(i => i.id === imgId); if (!img) return; const name = prompt("Rename file:", img.filename); if (!name || !name.trim() || name.trim() === img.filename) return; let r = await api("/image/" + imgId + "/rename", { method: "POST", body: JSON.stringify({ filename: name.trim(), continue_numbering: true }) }); if (r.error) { if (r.suggestion && confirm('File exists. Rename to "' + r.suggestion + '"?')) r = await api("/image/" + imgId + "/rename", { method: "POST", body: JSON.stringify({ filename: name.trim(), auto_increment: true, continue_numbering: true }) }); if (r.error) return toast("Error: " + r.error); } pushUndo({ type: "rename", imageId: imgId, oldFilename: img.filename, newFilename: r.filename }); toast("Renamed!", "success", true); await Promise.all([loadImagesReset(), loadCharacters(), loadStats()]); renderMain(); renderTagList(); }
-async function deleteSingleFromCtx(imgId) { if (!confirm("Delete this image?")) return; const r = await api("/image/" + imgId + "/delete", { method: "POST" }); if (r.error) return toast("Error: " + r.error); pushUndo({ type: "delete", trashId: r.trash_id }); toast("Deleted", "success", true); G.selectedImages.clear(); await Promise.all([loadImagesReset(), loadCharacters(), loadFolders(), loadStats()]); renderMain(); renderTagList(); }
+async function deleteSingleFromCtx(imgId) { if (!confirm("Delete this image?")) return; const r = await api("/image/" + imgId + "/delete", { method: "POST" }); if (r.error) return toast("Error: " + r.error); pushUndo({ type: "delete", trashId: r.trash_id }); toast("Deleted", "success", true); G.selectedImages.clear(); await Promise.all([loadImagesReset(), loadCharacters(), loadFolders(), loadStats()]); renderMain(); renderTagList(); renderFolderSidebar(); }
 
 // ========================================================================
 // STUDIO INTEGRATION
 // ========================================================================
 
+async function copyImageToClipboard(imgId) {
+    const img = G.images.find(i => i.id === imgId);
+    try {
+        const resp = await fetch(API_BASE + "/full/" + imgId);
+        const blob = await resp.blob();
+        // Clipboard API requires image/png; convert if needed
+        let pngBlob = blob;
+        if (blob.type !== "image/png") {
+            const bmp = await createImageBitmap(blob);
+            const canvas = document.createElement("canvas");
+            canvas.width = bmp.width; canvas.height = bmp.height;
+            const ctx = canvas.getContext("2d");
+            ctx.drawImage(bmp, 0, 0);
+            pngBlob = await new Promise(r => canvas.toBlob(r, "image/png"));
+        }
+        await navigator.clipboard.write([new ClipboardItem({ "image/png": pngBlob })]);
+        toast("Copied" + (img ? " " + img.filename : "") + " to clipboard", "success");
+    } catch (e) { toast("Copy failed: " + e.message); }
+}
+async function downloadImage(imgId) {
+    const img = G.images.find(i => i.id === imgId);
+    if (!img) return;
+    try {
+        const resp = await fetch(API_BASE + "/full/" + imgId);
+        const blob = await resp.blob();
+        const url = URL.createObjectURL(blob);
+        const a = document.createElement("a");
+        a.href = url; a.download = img.filename;
+        document.body.appendChild(a); a.click();
+        setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+    } catch (e) { toast("Download failed: " + e.message); }
+}
 async function sendToCanvas(imgId) { try { const resp = await fetch(API_BASE + "/full/" + imgId); const blob = await resp.blob(); const dataUrl = await new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = reject; reader.readAsDataURL(blob); }); if (typeof displayOnCanvas === "function") { if (window.State) { window.State.baseGenW = 0; window.State.baseGenH = 0; } displayOnCanvas(dataUrl, { newLayer: true, layerName: "Gallery", undoLabel: "Gallery send" }); toast("Sent to canvas", "success"); setTimeout(() => { if (window.StudioModules) window.StudioModules.activateStudio(); }, 100); } } catch (e) { toast("Failed: " + e.message); } }
 async function importParamsFromImage(imgId) { try { const meta = await api("/image/" + imgId + "/metadata"); if (meta.raw_parameters && typeof _applyInfotextToUI === "function") { _applyInfotextToUI(meta.raw_parameters); toast("Parameters imported", "success"); if (window.StudioModules) window.StudioModules.activateStudio(); } else toast("No generation parameters found"); } catch (e) { toast("Failed: " + e.message); } }
 
@@ -309,13 +350,41 @@ async function importParamsFromImage(imgId) { try { const meta = await api("/ima
 
 function showMoveModal() {
     if (!G.selectedImages.size) return; const bg = document.createElement("div"); bg.className = "gal-move-bg"; bg.id = "gal-move-bg"; bg.addEventListener("click", e => { if (e.target === bg) bg.remove(); });
-    const tree = buildFolderTree(); const flat = [];
-    (function flatten(node, depth) { Object.keys(node.children).sort(natSort).forEach(k => { const n = node.children[k]; flat.push({ name: k, fullPath: n.fullPath, depth }); flatten(n, depth + 1); }); })(tree, 0);
+    const tree = buildFolderTree();
     const cur = new Set(); G.selectedImages.forEach(id => { const img = G.images.find(i => i.id === id); if (img) cur.add(img.folder); });
+    // Build collapsible folder tree for move dialog
+    const _moveOpen = {};
+    function buildMoveTree(node, depth) {
+        let h = "";
+        const keys = Object.keys(node.children).sort(natSort);
+        keys.forEach(k => {
+            const n = node.children[k]; const hasKids = Object.keys(n.children).length > 0;
+            const isCur = cur.size === 1 && cur.has(n.fullPath);
+            const uid = "mm-" + n.fullPath.replace(/[\\\/\s]/g, "_");
+            h += '<div class="mm-node">';
+            h += '<div class="mm-item' + (isCur ? " current" : "") + '" style="padding-left:' + (depth * 16 + 12) + 'px" ' + (isCur ? "" : 'data-folder="' + esc(n.fullPath) + '"') + '>';
+            if (hasKids) h += '<span class="mm-toggle" data-mm-toggle="' + uid + '">\u25B6</span>';
+            else h += '<span style="width:14px;display:inline-block"></span>';
+            h += '<span class="gal-tree-icon">' + IC.folder + '</span> ' + esc(k);
+            if (isCur) h += ' <span style="color:var(--text-4);font-size:10px;margin-left:auto">(current)</span>';
+            h += '</div>';
+            if (hasKids) h += '<div class="mm-children" id="' + uid + '" style="display:none">' + buildMoveTree(n, depth + 1) + '</div>';
+            h += '</div>';
+        });
+        return h;
+    }
     let h = '<div class="gal-move-modal"><h3>Move ' + G.selectedImages.size + " file" + (G.selectedImages.size > 1 ? "s" : "") + '</h3><div class="mm-list">';
-    flat.forEach(f => { const isCur = cur.size === 1 && cur.has(f.fullPath); h += '<div class="mm-item' + (isCur ? " current" : "") + '" style="padding-left:' + (f.depth * 16 + 12) + 'px" ' + (isCur ? "" : 'data-folder="' + esc(f.fullPath) + '"') + '><span class="gal-tree-icon">' + IC.folder + '</span> ' + esc(f.name) + (isCur ? ' <span style="color:var(--text-4);font-size:10px;margin-left:auto">(current)</span>' : "") + "</div>"; });
+    h += buildMoveTree(tree, 0);
     h += '</div><div class="mm-footer"><button class="gal-btn" id="gal-move-cancel">Cancel</button></div></div>';
-    bg.innerHTML = h; bg.addEventListener("click", e => { const item = e.target.closest(".mm-item[data-folder]"); if (item) { doMoveToFolder(item.dataset.folder); bg.remove(); } if (e.target.id === "gal-move-cancel") bg.remove(); }); document.body.appendChild(bg);
+    bg.innerHTML = h;
+    bg.addEventListener("click", e => {
+        // Toggle collapse
+        const toggle = e.target.closest(".mm-toggle");
+        if (toggle) { e.stopPropagation(); const tid = toggle.dataset.mmToggle; const ch = document.getElementById(tid); if (ch) { const open = ch.style.display !== "none"; ch.style.display = open ? "none" : "block"; toggle.classList.toggle("open", !open); } return; }
+        const item = e.target.closest(".mm-item[data-folder]"); if (item) { doMoveToFolder(item.dataset.folder); bg.remove(); }
+        if (e.target.id === "gal-move-cancel") bg.remove();
+    });
+    document.body.appendChild(bg);
 }
 async function doMoveToFolder(targetFolder) {
     const ids = Array.from(G.selectedImages); const moves = ids.map(id => { const img = G.images.find(i => i.id === id); return { id, folder: img ? img.folder : "" }; });
@@ -348,7 +417,7 @@ async function performUndo() {
         else if (u.type === "delete_bulk") { await api("/bulk-restore", { method: "POST", body: JSON.stringify({ trash_ids: u.trashIds }) }); toast("Undo: " + u.trashIds.length + " restored", "success"); }
         else if (u.type === "tag_add") { await api("/image/" + u.imageId + "/remove-tag", { method: "POST", body: JSON.stringify({ tag: u.tag, add_ignore: false }) }); toast("Undo: tag removed", "success"); }
         else if (u.type === "tag_remove") { await api("/image/" + u.imageId + "/add-tag", { method: "POST", body: JSON.stringify({ tag: u.tag }) }); if (u.wasIgnored) await api("/ignore-words", { method: "DELETE", body: JSON.stringify({ word: u.tag.toLowerCase() }) }); toast("Undo: tag restored", "success"); }
-        G.tagsModified = true; await Promise.all([loadImagesReset(), loadCharacters(), loadFolders(), loadStats()]); renderMain(); renderTagList();
+        G.tagsModified = true; await Promise.all([loadImagesReset(), loadCharacters(), loadFolders(), loadStats()]); renderMain(); renderTagList(); renderFolderSidebar();
     } catch (e) { toast("Undo failed: " + e.message); }
 }
 
@@ -394,6 +463,16 @@ function buildTagsHtml(allCount) {
 function renderTagList() { const el = G._container.querySelector("#gal-tag-list"); if (el) el.innerHTML = buildTagsHtml(getFolderTotal()); }
 function updateTagActive() { G._container.querySelectorAll(".gal-tag-item").forEach(el => el.classList.toggle("active", el.dataset.tag === (G.filter.character || "__all"))); }
 function updateFolderActive() { G._container.querySelectorAll(".gal-tree-toggle").forEach(el => { const idx = el.dataset.fidx; if (idx !== undefined) el.classList.toggle("active", _folderPaths[parseInt(idx)] === G.filter.folder); }); }
+function renderFolderSidebar() {
+    const col = G._container?.querySelector(".gal-sidebar-col");
+    if (!col) return;
+    _folderPaths = [];
+    const tree = buildFolderTree();
+    const titleHtml = '<div class="gal-sidebar-title"><span>Folders</span></div>';
+    col.innerHTML = titleHtml + renderFolderNode(tree, 0) + '<div class="gal-link-folder-btn" id="gal-link-folder">' + IC.folderPlus + ' Link new folder</div>';
+    col.querySelector("#gal-link-folder")?.addEventListener("click", pickAndAddFolder);
+    updateFolderActive();
+}
 
 // ========================================================================
 // GALLERY GRID
@@ -427,7 +506,7 @@ function showDetailOverlay() {
     else if (img.is_video) mediaHtml = '<div style="display:flex;flex-direction:column;align-items:center;gap:16px"><img src="' + API_BASE + '/thumb/' + img.id + '?h=' + img.fphash + '" style="max-width:80%;max-height:70vh;border-radius:8px;object-fit:contain"/><button class="gal-btn-primary" data-action="open-file" data-img-id="' + img.id + '" style="padding:10px 28px">' + IC.play + ' Open in Player</button></div>';
     else mediaHtml = '<img id="gal-detail-img" src="' + fullUrl + '" alt="' + esc(img.filename) + '"/>';
     const hasCanvas = typeof displayOnCanvas === "function";
-    ov.innerHTML = '<div class="gal-detail-img-area" id="gal-detail-img-area">' + mediaHtml + '</div><div class="gal-detail-sidebar"><div class="gal-detail-panel"><input class="gal-detail-filename" id="gal-rename-input" value="' + esc(img.filename) + '" /><div class="gal-detail-folder"><span class="gal-tree-icon">' + IC.folder + '</span> ' + esc(img.folder) + '</div>' + (img.width ? '<div class="gal-detail-dims">' + img.width + ' \u00d7 ' + img.height + ' px</div>' : '') + '<div class="gal-detail-actions"><button class="gal-detail-btn" data-action="explorer" data-img-id="' + img.id + '">' + IC.explorer + ' Browse</button>' + (hasCanvas ? '<button class="gal-detail-btn accent" data-action="send-canvas" data-img-id="' + img.id + '">' + IC.canvas + ' Image to Canvas</button>' : '') + '<button class="gal-detail-btn" data-action="import-params" data-img-id="' + img.id + '">' + IC.params + ' Params to Canvas</button><span class="gal-detail-sep"></span><button class="gal-detail-btn danger" data-action="delete" data-img-id="' + img.id + '">' + IC.trash + ' Delete</button></div><div class="gal-detail-chars" id="gal-detail-chars">' + buildDetailTagsHtml(img.id, img.characters) + '</div><div class="gal-detail-nav"><button class="gal-detail-btn nav" data-action="prev" ' + (G.currentImageIndex <= 0 ? "disabled" : "") + '>' + IC.chevLeft + '</button><button class="gal-btn" data-action="back" style="flex:1">Back</button><button class="gal-detail-btn nav" data-action="next" ' + (G.currentImageIndex >= G.images.length - 1 ? "disabled" : "") + '>' + IC.chevRight + '</button></div></div><div class="gal-meta-panel" id="gal-meta-panel"><div class="gal-meta-section-title">Metadata</div><div class="gal-meta-empty">Loading...</div></div></div>';
+    ov.innerHTML = '<div class="gal-detail-img-area" id="gal-detail-img-area">' + mediaHtml + '</div><div class="gal-detail-sidebar"><div class="gal-detail-panel"><input class="gal-detail-filename" id="gal-rename-input" value="' + esc(img.filename) + '" /><div class="gal-detail-folder"><span class="gal-tree-icon">' + IC.folder + '</span> ' + esc(img.folder) + '</div>' + (img.width ? '<div class="gal-detail-dims">' + img.width + ' \u00d7 ' + img.height + ' px</div>' : '') + '<div class="gal-detail-actions"><button class="gal-detail-btn" data-action="explorer" data-img-id="' + img.id + '">' + IC.explorer + ' Browse</button><button class="gal-detail-btn" data-action="copy-image" data-img-id="' + img.id + '">&#x1F4CB; Copy</button><button class="gal-detail-btn" data-action="download-image" data-img-id="' + img.id + '">&#x2B07; Save</button>' + (hasCanvas ? '<button class="gal-detail-btn accent" data-action="send-canvas" data-img-id="' + img.id + '">' + IC.canvas + ' Image to Canvas</button>' : '') + '<button class="gal-detail-btn" data-action="import-params" data-img-id="' + img.id + '">' + IC.params + ' Params to Canvas</button><span class="gal-detail-sep"></span><button class="gal-detail-btn danger" data-action="delete" data-img-id="' + img.id + '">' + IC.trash + ' Delete</button></div><div class="gal-detail-chars" id="gal-detail-chars">' + buildDetailTagsHtml(img.id, img.characters) + '</div><div class="gal-detail-nav"><button class="gal-detail-btn nav" data-action="prev" ' + (G.currentImageIndex <= 0 ? "disabled" : "") + '>' + IC.chevLeft + '</button><button class="gal-btn" data-action="back" style="flex:1">Back</button><button class="gal-detail-btn nav" data-action="next" ' + (G.currentImageIndex >= G.images.length - 1 ? "disabled" : "") + '>' + IC.chevRight + '</button></div></div><div class="gal-meta-panel" id="gal-meta-panel"><div class="gal-meta-section-title">Metadata</div><div class="gal-meta-empty">Loading...</div></div></div>';
     document.body.appendChild(ov); G.detailZoom = 1; G.detailPan = { x: 0, y: 0 };
     _wireDetailEvents(ov, img); setTimeout(() => loadMetadata(img.id), 50);
 }
@@ -435,11 +514,28 @@ function showDetailOverlay() {
 function _wireDetailEvents(ov, img) {
     const ri = ov.querySelector("#gal-rename-input"); if (ri) { ri.addEventListener("keydown", e => { if (e.key === "Enter") ri.blur(); }); ri.addEventListener("blur", renameFile); }
     ov.addEventListener("click", e => { const a = e.target.closest("[data-action]"); if (!a) return; const act = a.dataset.action, id = parseInt(a.dataset.imgId);
-        if (act === "explorer") api("/image/" + id + "/open-explorer", { method: "POST" }); else if (act === "send-canvas") sendToCanvas(id); else if (act === "import-params") importParamsFromImage(id); else if (act === "delete") deleteImage(id); else if (act === "open-file") api("/image/" + id + "/open-file", { method: "POST" }); else if (act === "prev") prevImage(); else if (act === "next") nextImage(); else if (act === "back") closeDetail(); });
+        if (act === "explorer") api("/image/" + id + "/open-explorer", { method: "POST" }); else if (act === "send-canvas") sendToCanvas(id); else if (act === "import-params") importParamsFromImage(id); else if (act === "delete") deleteImage(id); else if (act === "open-file") api("/image/" + id + "/open-file", { method: "POST" }); else if (act === "copy-image") copyImageToClipboard(id); else if (act === "download-image") downloadImage(id); else if (act === "prev") prevImage(); else if (act === "next") nextImage(); else if (act === "back") closeDetail(); });
     ov.addEventListener("click", e => { const pill = e.target.closest("[data-tag-action='remove']"); if (pill) { removeTag(parseInt(pill.dataset.imgId), pill.dataset.tag); return; } if (e.target.closest("#gal-add-tag-toggle")) toggleAddTag(); });
     const ai = ov.querySelector("#gal-add-tag-input"); if (ai) ai.addEventListener("keydown", e => { if (e.key === "Enter") addTag(G.currentImageId); if (e.key === "Escape") toggleAddTag(); });
     if (!img.is_video) setupDetailZoom(ov); else { const vid = ov.querySelector("#gal-detail-video"); if (vid) { vid.volume = G.volume; vid.addEventListener("volumechange", () => { G.volume = vid.volume; localStorage.setItem("gal_volume", String(vid.volume)); }); } }
-    const area = ov.querySelector("#gal-detail-img-area"); if (area) area.addEventListener("click", e => { if (G.detailZoom > 1) return; if (e.target.closest("button") || e.target.closest("video")) return; closeDetail(); });
+    const area = ov.querySelector("#gal-detail-img-area"); if (area) area.addEventListener("click", e => {
+        if (e.target.closest("button") || e.target.closest("video")) return;
+        const isImg = e.target.id === "gal-detail-img";
+        if (isImg) {
+            // Click on image: toggle zoom 2.5x
+            if (G.detailZoom > 1) { G.detailZoom = 1; G.detailPan = { x: 0, y: 0 }; } else {
+                G.detailZoom = 2.5;
+                const r = area.getBoundingClientRect();
+                const mx = e.clientX - r.left - r.width / 2, my = e.clientY - r.top - r.height / 2;
+                G.detailPan.x = mx - mx * G.detailZoom; G.detailPan.y = my - my * G.detailZoom;
+            }
+            const imgEl = ov.querySelector("#gal-detail-img");
+            if (imgEl) { area.classList.toggle("zoomed", G.detailZoom > 1); imgEl.style.transform = "translate(" + G.detailPan.x + "px," + G.detailPan.y + "px) scale(" + G.detailZoom + ")"; }
+        } else {
+            // Click on black area around image: close detail
+            closeDetail();
+        }
+    });
 }
 function setupDetailZoom(ov) {
     const area = ov.querySelector("#gal-detail-img-area"), imgEl = ov.querySelector("#gal-detail-img"); if (!area || !imgEl) return;
@@ -476,7 +572,7 @@ async function loadMetadata(id) {
 // SETTINGS
 // ========================================================================
 
-async function renderSettingsView() { await loadIgnoreWords(); return '<div class="gal-settings"><div class="gal-settings-title">Gallery Settings</div><div class="gal-settings-card"><h3>Ignore Words</h3><p>Words to skip when parsing character tags from filenames.</p><div style="margin-bottom:8px;display:flex;flex-wrap:wrap;align-items:center;gap:0">' + G.ignoreWords.map(w => '<span class="gal-ignore-word-tag">' + esc(w) + ' <span class="remove" data-remove-word="' + esc(w) + '">\u00d7</span></span>').join("") + (!G.ignoreWords.length ? '<span style="color:var(--text-4);font-size:11px">None.</span>' : "") + '<button class="gal-add-tag-btn" id="gal-ignore-toggle" style="margin:2px">+</button><div class="gal-add-tag-inline" id="gal-ignore-inline" style="min-width:100px;margin:2px"><input id="gal-ignore-input" placeholder="Word..." /></div></div><p style="margin-top:4px;font-size:10px;color:var(--text-4)">After changes, re-scan to apply.</p></div><div class="gal-settings-card"><h3>Tagging Rules</h3><div style="font-size:11px;color:var(--text-2);line-height:1.8"><strong>Separators:</strong> space, comma, underscore, dash, plus<br><strong>Filtered:</strong> (...), [...], trailing numbers, numeric strings, ignore words<br><strong>Min length:</strong> 2+ characters with a letter<br><strong>Manual:</strong> add/remove tags per image in detail view</div></div></div>'; }
+async function renderSettingsView() { await loadIgnoreWords(); return '<div class="gal-settings"><div class="gal-settings-title">Gallery Settings</div><div class="gal-settings-card"><h3>Ignore Words</h3><p>Words to skip when parsing character tags from filenames.</p><div style="margin-bottom:8px;display:flex;flex-wrap:wrap;align-items:center;gap:0">' + G.ignoreWords.map(w => '<span class="gal-ignore-word-tag">' + esc(w) + ' <span class="remove" data-remove-word="' + esc(w) + '">\u00d7</span></span>').join("") + (!G.ignoreWords.length ? '<span style="color:var(--text-4);font-size:11px">None.</span>' : "") + '<button class="gal-add-tag-btn" id="gal-ignore-toggle" style="margin:2px">+</button><div class="gal-add-tag-inline" id="gal-ignore-inline" style="min-width:100px;margin:2px"><input id="gal-ignore-input" placeholder="Word..." /></div></div><p style="margin-top:4px;font-size:10px;color:var(--text-4)">After changes, re-scan to apply.</p></div><div class="gal-settings-card"><h3>Tagging Rules</h3><div style="font-size:11px;color:var(--text-2);line-height:1.8"><strong>Character separators:</strong> comma, plus (+)<br><strong>Name connectors:</strong> space, underscore, dash (joined into one name)<br><strong>Filtered:</strong> (...), [...], trailing numbers, numeric strings, ignore words<br><strong>Min length:</strong> 2+ characters with a letter<br><strong>Manual:</strong> add/remove tags per image in detail view</div></div></div>'; }
 async function addIgnoreWord() { const i = document.getElementById("gal-ignore-input"); const w = i.value.trim(); if (!w) return; await api("/ignore-words", { method: "POST", body: JSON.stringify({ word: w }) }); i.value = ""; toast('"' + w + '" added', "success"); G.page = "settings"; render(); }
 async function removeIgnoreWord(w) { await api("/ignore-words", { method: "DELETE", body: JSON.stringify({ word: w }) }); G.page = "settings"; render(); }
 
@@ -545,20 +641,63 @@ function onKeyDown(e) {
     // Arrow key navigation for folders/tags in gallery view
     if (G.page === "gallery" && window.StudioModules && window.StudioModules.activeId === "gallery") {
         if (document.activeElement && (document.activeElement.tagName === "INPUT" || document.activeElement.tagName === "TEXTAREA")) return;
-        if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+        if (e.key === "ArrowUp" || e.key === "ArrowDown" || e.key === "ArrowLeft" || e.key === "ArrowRight") {
             e.preventDefault();
             const c = G._container; if (!c) return;
-            // Try folders first, then tags
-            const folders = Array.from(c.querySelectorAll(".gal-tree-toggle"));
-            const tags = Array.from(c.querySelectorAll(".gal-tag-item"));
-            const items = folders.length ? folders : tags;
-            if (!items.length) return;
-            const activeIdx = items.findIndex(el => el.classList.contains("active"));
-            let next;
-            if (e.key === "ArrowDown") next = activeIdx < items.length - 1 ? activeIdx + 1 : 0;
-            else next = activeIdx > 0 ? activeIdx - 1 : items.length - 1;
-            items[next].click();
-            items[next].scrollIntoView({ block: "nearest", behavior: "smooth" });
+
+            // Track which column is focused: "folders" or "tags"
+            if (!G._kbNavCol) G._kbNavCol = "folders";
+
+            if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+                const folderEls = Array.from(c.querySelectorAll(".gal-tree-toggle"));
+                const tagEls = Array.from(c.querySelectorAll(".gal-tag-item"));
+                const items = G._kbNavCol === "tags" ? tagEls : folderEls;
+                if (!items.length) return;
+                const activeIdx = items.findIndex(el => el.classList.contains("active"));
+                let next;
+                if (e.key === "ArrowDown") next = activeIdx < items.length - 1 ? activeIdx + 1 : 0;
+                else next = activeIdx > 0 ? activeIdx - 1 : items.length - 1;
+                items[next].click();
+                items[next].scrollIntoView({ block: "nearest", behavior: "smooth" });
+            }
+
+            if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+                if (G._kbNavCol === "folders" && e.key === "ArrowLeft") {
+                    // Collapse the active folder
+                    const activeFolder = c.querySelector(".gal-tree-toggle.active");
+                    if (activeFolder) {
+                        const arrow = activeFolder.querySelector(".arrow.open");
+                        if (arrow) arrow.click(); // collapse
+                    }
+                } else if (G._kbNavCol === "folders" && e.key === "ArrowRight") {
+                    // Expand active folder, or if already open / no children, switch to tags column
+                    const activeFolder = c.querySelector(".gal-tree-toggle.active");
+                    if (activeFolder) {
+                        const arrow = activeFolder.querySelector(".arrow:not(.open)");
+                        if (arrow) { arrow.click(); return; } // expand
+                    }
+                    // Switch to tags column
+                    G._kbNavCol = "tags";
+                    const firstActive = c.querySelector(".gal-tag-item.active");
+                    if (firstActive) firstActive.scrollIntoView({ block: "nearest", behavior: "smooth" });
+                } else if (G._kbNavCol === "tags" && e.key === "ArrowLeft") {
+                    // Switch to folders column
+                    G._kbNavCol = "folders";
+                    const activeFolder = c.querySelector(".gal-tree-toggle.active");
+                    if (activeFolder) activeFolder.scrollIntoView({ block: "nearest", behavior: "smooth" });
+                } else if (G._kbNavCol === "tags" && e.key === "ArrowRight") {
+                    // Open/close tag letter groups
+                    const activeTI = c.querySelector(".gal-tag-item.active");
+                    if (activeTI) {
+                        const grp = activeTI.closest(".gal-tag-group");
+                        if (grp) {
+                            const letter = grp.dataset.tagGroup;
+                            const letterEl = c.querySelector('.gal-tag-letter[data-letter="' + letter + '"]');
+                            if (letterEl) letterEl.click();
+                        }
+                    }
+                }
+            }
         }
     }
 }

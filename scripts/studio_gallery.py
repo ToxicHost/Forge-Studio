@@ -472,19 +472,27 @@ def parse_characters_from_filename(filename, ignore_words=None):
     if not stem.strip():
         return ["Unknown"]
     stem = stem.strip()
-    parts = re.split(r'[,_\-\+\s]+', stem)
+    # Split on + and , as character separators (e.g. "Oliver+Luca" or "Oliver, Luca")
+    # Underscores, dashes, and spaces connect parts of a single name (e.g. "Shoyo_Hinata")
+    char_parts = re.split(r'[,\+]+', stem)
     characters = []
-    for part in parts:
-        name = part.strip()
-        if not name:
+    for char_part in char_parts:
+        # Split internal separators (space, underscore, dash) into name words, then rejoin
+        words = re.split(r'[\s_\-]+', char_part.strip())
+        # Filter out numeric/code words and short words, keep valid name parts
+        valid_words = []
+        for w in words:
+            w = w.strip()
+            if not w:
+                continue
+            if is_numeric_or_code(w):
+                continue
+            if not re.search(r'[a-zA-Z]', w):
+                continue
+            valid_words.append(w.title())
+        name = " ".join(valid_words)
+        if not name or len(name) < 2:
             continue
-        if is_numeric_or_code(name):
-            continue
-        if len(name) < 2:
-            continue
-        if not re.search(r'[a-zA-Z]', name):
-            continue
-        name = name.title()
         if name.lower() in ignore_words:
             continue
         if name and name not in characters:

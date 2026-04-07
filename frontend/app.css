@@ -794,6 +794,8 @@ body {
 }
 .param-val:hover { border-color: var(--border); color: var(--text-1); }
 .param-val:focus { border-color: var(--accent); color: var(--text-1); }
+.param-val.scrubbing { border-color: var(--accent); background: var(--accent-dim); color: var(--accent); cursor: ew-resize; }
+.param-val { cursor: ew-resize; }
 
 .param-select {
   appearance: none;

@@ -713,6 +713,13 @@
 }
 .gal-move-modal .mm-item:hover { background: var(--bg-raised); }
 .gal-move-modal .mm-item.current { color: var(--text-4); cursor: default; }
+.gal-move-modal .mm-toggle {
+  display: inline-block; width: 14px; text-align: center; font-size: 9px;
+  cursor: pointer; transition: transform 0.15s; color: var(--text-3); flex-shrink: 0;
+}
+.gal-move-modal .mm-toggle.open { transform: rotate(90deg); }
+.gal-move-modal .mm-node { }
+.gal-move-modal .mm-children { }
 .gal-move-modal .mm-footer {
   padding: 8px 14px;
   border-top: 1px solid var(--border);

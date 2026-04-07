@@ -3460,10 +3460,66 @@ async function _refreshVRAM() {
 // INIT
 // ═══════════════════════════════════════════
 
+// ── Param scrub: hold & drag on number inputs to change values ──
+function _initParamScrub() {
+  const scrubDefs = [
+    { id: "paramSteps",    min: 1,   max: 150,  step: 1   },
+    { id: "paramCFG",      min: 1,   max: 30,   step: 0.5 },
+    { id: "paramDenoise",  min: 0,   max: 1,    step: 0.01 },
+    { id: "paramWidth",    min: 64,  max: 2048, step: 64  },
+    { id: "paramHeight",   min: 64,  max: 2048, step: 64  },
+    { id: "paramBatch",    min: 1,   max: 16,   step: 1   },
+  ];
+  for (const def of scrubDefs) {
+    const el = document.getElementById(def.id);
+    if (!el) continue;
+    let dragStartX = 0, dragStartVal = 0, dragged = false, pointerId = null;
+
+    el.addEventListener("pointerdown", e => {
+      if (document.activeElement === el) return; // already editing, don't scrub
+      e.preventDefault();
+      dragStartX = e.clientX;
+      dragStartVal = parseFloat(el.value) || 0;
+      dragged = false;
+      pointerId = e.pointerId;
+      el.setPointerCapture(e.pointerId);
+      el.classList.add("scrubbing");
+    });
+
+    el.addEventListener("pointermove", e => {
+      if (!el.classList.contains("scrubbing")) return;
+      const dx = e.clientX - dragStartX;
+      if (Math.abs(dx) < 3 && !dragged) return;
+      dragged = true;
+      const sensitivity = def.max <= 1 ? 0.15 : (def.max <= 30 ? 0.3 : (def.max <= 150 ? 0.5 : 1));
+      let v = dragStartVal + Math.round(dx * sensitivity / def.step) * def.step;
+      v = Math.max(def.min, Math.min(def.max, v));
+      // Round to avoid floating point noise
+      if (def.step < 1) v = Math.round(v / def.step) * def.step;
+      el.value = def.step >= 1 ? v : v.toFixed(String(def.step).split(".")[1]?.length || 2);
+      el.dispatchEvent(new Event("input", { bubbles: true }));
+    });
+
+    el.addEventListener("pointerup", e => {
+      if (!el.classList.contains("scrubbing")) return;
+      el.classList.remove("scrubbing");
+      if (pointerId !== null) { try { el.releasePointerCapture(pointerId); } catch {} pointerId = null; }
+      if (!dragged) {
+        // Click — focus the input for manual typing
+        el.focus();
+        el.select();
+      } else {
+        el.dispatchEvent(new Event("change", { bubbles: true }));
+      }
+    });
+  }
+}
+
 async function init() {
   console.log("[Studio] Standalone UI initializing...");
 
   bindUI();
+  _initParamScrub();
 
   // Add initial history entry
   addHistoryEntry("Session started");

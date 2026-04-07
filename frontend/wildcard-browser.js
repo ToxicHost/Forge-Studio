@@ -178,6 +178,8 @@
   opacity: 0; transition: opacity 0.12s;
 }
 .wc-item:hover .wc-item-insert { opacity: 1; }
+.wc-item.kb-focus { border-color: var(--accent); outline: 1px solid var(--accent); outline-offset: -1px; }
+.wc-folder-item.kb-focus { background: var(--bg-raised); color: var(--text-1); }
 
 /* Preview pane */
 .wc-preview {
@@ -289,7 +291,9 @@
   // ── Filtering ──────────────────────────────────────────
   function getFiltered() {
     let list = allWildcards;
-    if (activeFolder) {
+    if (activeFolder === "__unsorted__") {
+      list = list.filter(w => !w.name.includes("/"));
+    } else if (activeFolder) {
       list = list.filter(w => w.name.startsWith(activeFolder + "/"));
     }
     if (searchQuery) {
@@ -348,7 +352,107 @@
 
     modal.querySelector(".wc-refresh-btn").addEventListener("click", refreshWildcards);
 
-    modal.addEventListener("keydown", e => { if (e.key === "Escape") closeModal(); e.stopPropagation(); });
+    modal.addEventListener("keydown", e => {
+      if (e.key === "Escape") closeModal();
+
+      // Arrow key navigation (skip if search input is focused)
+      const inSearch = document.activeElement === modal.querySelector(".wc-search");
+      if (!inSearch && (e.key === "ArrowUp" || e.key === "ArrowDown" || e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+        e.preventDefault();
+
+        if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+          // Navigate wildcard items OR folder items
+          const items = Array.from(modal.querySelectorAll(".wc-item"));
+          const folderItems = Array.from(modal.querySelectorAll(".wc-folder-item"));
+          // If a folder is focused (has keyboard-focus), navigate folders
+          const focusedFolder = modal.querySelector(".wc-folder-item.kb-focus");
+          if (focusedFolder || !items.length) {
+            const fi = folderItems.length ? folderItems : [];
+            if (!fi.length) return;
+            const curIdx = focusedFolder ? fi.indexOf(focusedFolder) : -1;
+            let next;
+            if (e.key === "ArrowDown") next = curIdx < fi.length - 1 ? curIdx + 1 : 0;
+            else next = curIdx > 0 ? curIdx - 1 : fi.length - 1;
+            fi.forEach(el => el.classList.remove("kb-focus"));
+            fi[next].classList.add("kb-focus");
+            fi[next].click();
+            fi[next].scrollIntoView({ block: "nearest", behavior: "smooth" });
+          } else {
+            // Navigate wildcard items
+            const activeItem = modal.querySelector(".wc-item.active") || modal.querySelector(".wc-item.kb-focus");
+            const curIdx = activeItem ? items.indexOf(activeItem) : -1;
+            let next;
+            if (e.key === "ArrowDown") next = curIdx < items.length - 1 ? curIdx + 1 : 0;
+            else next = curIdx > 0 ? curIdx - 1 : items.length - 1;
+            items.forEach(el => el.classList.remove("kb-focus"));
+            items[next].classList.add("kb-focus");
+            // Show preview for the focused item
+            const nameEl = items[next].querySelector(".wc-item-name");
+            if (nameEl) nameEl.click();
+            items[next].scrollIntoView({ block: "nearest", behavior: "smooth" });
+          }
+        }
+
+        if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+          // Left/Right: collapse/expand folders, or switch focus between folders and items
+          const focusedFolder = modal.querySelector(".wc-folder-item.kb-focus");
+          if (e.key === "ArrowLeft") {
+            if (!focusedFolder) {
+              // Switch focus to folder sidebar
+              const activeF = modal.querySelector(".wc-folder-item.active") || modal.querySelector(".wc-folder-item");
+              if (activeF) {
+                activeF.classList.add("kb-focus");
+                activeF.scrollIntoView({ block: "nearest", behavior: "smooth" });
+              }
+            } else {
+              // Collapse folder if it has a toggle
+              const toggle = focusedFolder.querySelector(".wc-folder-toggle");
+              if (toggle) {
+                // Only collapse if currently expanded
+                const folderPath = focusedFolder.querySelector(".wc-folder-name")?.title;
+                if (folderPath && !collapsedFolders.has(folderPath)) {
+                  toggle.click();
+                }
+              }
+            }
+          } else {
+            // ArrowRight
+            if (focusedFolder) {
+              const toggle = focusedFolder.querySelector(".wc-folder-toggle");
+              if (toggle) {
+                // Expand folder if collapsed
+                const folderPath = focusedFolder.querySelector(".wc-folder-name")?.title;
+                if (folderPath && collapsedFolders.has(folderPath)) {
+                  toggle.click();
+                } else {
+                  // Already expanded or leaf - switch to items
+                  modal.querySelectorAll(".wc-folder-item").forEach(el => el.classList.remove("kb-focus"));
+                  const firstItem = modal.querySelector(".wc-item");
+                  if (firstItem) {
+                    firstItem.classList.add("kb-focus");
+                    const nameEl = firstItem.querySelector(".wc-item-name");
+                    if (nameEl) nameEl.click();
+                    firstItem.scrollIntoView({ block: "nearest", behavior: "smooth" });
+                  }
+                }
+              } else {
+                // Leaf folder - switch to items
+                modal.querySelectorAll(".wc-folder-item").forEach(el => el.classList.remove("kb-focus"));
+                const firstItem = modal.querySelector(".wc-item");
+                if (firstItem) {
+                  firstItem.classList.add("kb-focus");
+                  const nameEl = firstItem.querySelector(".wc-item-name");
+                  if (nameEl) nameEl.click();
+                  firstItem.scrollIntoView({ block: "nearest", behavior: "smooth" });
+                }
+              }
+            }
+          }
+        }
+      }
+
+      e.stopPropagation();
+    });
     modal.addEventListener("keyup", e => e.stopPropagation());
 
     document.body.appendChild(modal);
@@ -358,6 +462,13 @@
     const container = modal.querySelector(".wc-folders");
     container.innerHTML = "";
     container.appendChild(makeFolderItem("", "All", allWildcards.length, false, 0));
+
+    // Count wildcards not in any folder ("Unsorted")
+    const unsortedCount = allWildcards.filter(w => !w.name.includes("/")).length;
+    if (unsortedCount > 0) {
+      container.appendChild(makeFolderItem("__unsorted__", "Unsorted", unsortedCount, false, 0));
+    }
+
     for (const folder of folders) {
       if (isAncestorCollapsed(folder)) continue;
 
