@@ -93,6 +93,7 @@
 }
 .gal-tag-item:hover { background: var(--bg-raised); }
 .gal-tag-item.active { background: var(--accent-dim); color: var(--accent); }
+.gal-tag-item.kb-focus { outline: 1px solid var(--accent); outline-offset: -1px; background: var(--bg-raised); }
 
 .gal-tag-item .count {
   font-family: var(--mono);
@@ -142,6 +143,7 @@
 }
 .gal-tree-toggle:hover { background: var(--bg-raised); }
 .gal-tree-toggle.active { background: var(--accent-dim); color: var(--accent); }
+.gal-tree-toggle.kb-focus { outline: 1px solid var(--accent); outline-offset: -1px; background: var(--bg-raised); }
 
 .gal-tree-toggle .arrow {
   display: inline-block;

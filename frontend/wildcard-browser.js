@@ -355,10 +355,12 @@
     modal.addEventListener("keydown", e => {
       if (e.key === "Escape") closeModal();
 
-      // Arrow key navigation (skip if search input is focused)
-      const inSearch = document.activeElement === modal.querySelector(".wc-search");
-      if (!inSearch && (e.key === "ArrowUp" || e.key === "ArrowDown" || e.key === "ArrowLeft" || e.key === "ArrowRight")) {
+      // Arrow key navigation
+      if (e.key === "ArrowUp" || e.key === "ArrowDown" || e.key === "ArrowLeft" || e.key === "ArrowRight") {
         e.preventDefault();
+        // Blur search input so keyboard navigation takes over
+        const searchEl = modal.querySelector(".wc-search");
+        if (document.activeElement === searchEl) searchEl.blur();
 
         if (e.key === "ArrowUp" || e.key === "ArrowDown") {
           // Navigate wildcard items OR folder items
