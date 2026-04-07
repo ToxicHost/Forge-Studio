@@ -73,14 +73,29 @@ def _get_stub_module():
 # GIT UPDATE HELPER
 # =========================================================================
 
+# Resolve the extension root once at import time — same pattern as the
+# existing _ext_root logic but using .git to locate the repo root.
+_here_dir = Path(__file__).parent
+_git_root = None
+for _candidate in [_here_dir, _here_dir.parent, _here_dir.resolve(), _here_dir.resolve().parent]:
+    if (_candidate / ".git").exists():
+        _git_root = str(_candidate)
+        break
+
+if _git_root:
+    print(f"{TAG} Git root: {_git_root}")
+else:
+    print(f"{TAG} No .git found near {_here_dir} — auto-update disabled")
+
+
 def _git_run(*args, timeout=30):
     """Run a git command in the extension root, return (returncode, stdout, stderr)."""
-    _here = Path(__file__).resolve().parent
-    cwd = str(_here if (_here / ".git").is_dir() else _here.parent)
+    if not _git_root:
+        return -1, "", "not a git repository"
     try:
         result = subprocess.run(
             ["git"] + list(args),
-            cwd=cwd,
+            cwd=_git_root,
             capture_output=True,
             text=True,
             timeout=timeout,
@@ -2248,9 +2263,7 @@ def setup_studio_routes(app: FastAPI):
 
     @app.get("/studio/api/check-update")
     async def check_update():
-        _here = Path(__file__).resolve().parent
-        _root = _here if (_here / ".git").is_dir() else _here.parent
-        if not (_root / ".git").is_dir():
+        if not _git_root:
             return JSONResponse({"error": "Not a git repository"})
 
         # Fetch latest from remote
@@ -2293,9 +2306,7 @@ def setup_studio_routes(app: FastAPI):
 
     @app.post("/studio/api/update")
     async def apply_update():
-        _here = Path(__file__).resolve().parent
-        _root = _here if (_here / ".git").is_dir() else _here.parent
-        if not (_root / ".git").is_dir():
+        if not _git_root:
             return JSONResponse({"ok": False, "error": "Not a git repository"})
 
         # Refuse if working tree is dirty
