@@ -572,20 +572,10 @@ async function loadMetadata(id) {
 // SETTINGS
 // ========================================================================
 
-async function renderSettingsView() { await loadIgnoreWords(); return '<div class="gal-settings"><div class="gal-settings-title">Gallery Settings</div><div class="gal-settings-card"><h3>Updates</h3><p>Check for new versions of Forge Studio.</p><button class="gal-detail-btn" id="gal-check-update">' + IC.refresh + ' Check for Updates</button><div id="gal-update-status" style="margin-top:8px"></div></div><div class="gal-settings-card"><h3>Ignore Words</h3><p>Words to skip when parsing character tags from filenames.</p><div style="margin-bottom:8px;display:flex;flex-wrap:wrap;align-items:center;gap:0">' + G.ignoreWords.map(w => '<span class="gal-ignore-word-tag">' + esc(w) + ' <span class="remove" data-remove-word="' + esc(w) + '">\u00d7</span></span>').join("") + (!G.ignoreWords.length ? '<span style="color:var(--text-4);font-size:11px">None.</span>' : "") + '<button class="gal-add-tag-btn" id="gal-ignore-toggle" style="margin:2px">+</button><div class="gal-add-tag-inline" id="gal-ignore-inline" style="min-width:100px;margin:2px"><input id="gal-ignore-input" placeholder="Word..." /></div></div><p style="margin-top:4px;font-size:10px;color:var(--text-4)">After changes, re-scan to apply.</p></div><div class="gal-settings-card"><h3>Tagging Rules</h3><div style="font-size:11px;color:var(--text-2);line-height:1.8"><strong>Character separators:</strong> comma, plus (+)<br><strong>Name connectors:</strong> space, underscore, dash (joined into one name)<br><strong>Filtered:</strong> (...), [...], trailing numbers, numeric strings, ignore words<br><strong>Min length:</strong> 2+ characters with a letter<br><strong>Manual:</strong> add/remove tags per image in detail view</div></div></div>'; }
+async function renderSettingsView() { await loadIgnoreWords(); return '<div class="gal-settings"><div class="gal-settings-title">Gallery Settings</div><div class="gal-settings-card"><h3>Ignore Words</h3><p>Words to skip when parsing character tags from filenames.</p><div style="margin-bottom:8px;display:flex;flex-wrap:wrap;align-items:center;gap:0">' + G.ignoreWords.map(w => '<span class="gal-ignore-word-tag">' + esc(w) + ' <span class="remove" data-remove-word="' + esc(w) + '">\u00d7</span></span>').join("") + (!G.ignoreWords.length ? '<span style="color:var(--text-4);font-size:11px">None.</span>' : "") + '<button class="gal-add-tag-btn" id="gal-ignore-toggle" style="margin:2px">+</button><div class="gal-add-tag-inline" id="gal-ignore-inline" style="min-width:100px;margin:2px"><input id="gal-ignore-input" placeholder="Word..." /></div></div><p style="margin-top:4px;font-size:10px;color:var(--text-4)">After changes, re-scan to apply.</p></div><div class="gal-settings-card"><h3>Tagging Rules</h3><div style="font-size:11px;color:var(--text-2);line-height:1.8"><strong>Character separators:</strong> comma, plus (+)<br><strong>Name connectors:</strong> space, underscore, dash (joined into one name)<br><strong>Filtered:</strong> (...), [...], trailing numbers, numeric strings, ignore words<br><strong>Min length:</strong> 2+ characters with a letter<br><strong>Manual:</strong> add/remove tags per image in detail view</div></div></div>'; }
 async function addIgnoreWord() { const i = document.getElementById("gal-ignore-input"); const w = i.value.trim(); if (!w) return; await api("/ignore-words", { method: "POST", body: JSON.stringify({ word: w }) }); i.value = ""; toast('"' + w + '" added', "success"); G.page = "settings"; render(); }
 async function removeIgnoreWord(w) { await api("/ignore-words", { method: "DELETE", body: JSON.stringify({ word: w }) }); G.page = "settings"; render(); }
-async function checkForUpdates() {
-    const btn = document.getElementById("gal-check-update");
-    const status = document.getElementById("gal-update-status");
-    if (btn) btn.disabled = true;
-    if (status) status.innerHTML = '<span style="font-size:11px;color:var(--text-4)">Checking...</span>';
-    try {
-        if (window.UpdateBanner) { await window.UpdateBanner.manualCheck(); if (status) status.innerHTML = ""; }
-        else { const data = await fetch("/studio/api/check-update").then(r => r.json()); if (data.update_available) { toast(data.commits_behind + " update" + (data.commits_behind > 1 ? "s" : "") + " available"); if (status) status.innerHTML = '<span style="font-size:11px;color:var(--accent)">' + data.commits_behind + ' new commit' + (data.commits_behind > 1 ? 's' : '') + ' available</span>'; } else { toast("Forge Studio is up to date", "success"); if (status) status.innerHTML = '<span style="font-size:11px;color:var(--green)">Up to date</span>'; } }
-    } catch (e) { toast("Update check failed", "error"); if (status) status.innerHTML = '<span style="font-size:11px;color:var(--red)">Check failed</span>'; }
-    if (btn) btn.disabled = false;
-}
+
 
 // ========================================================================
 // INFINITE SCROLL
@@ -643,7 +633,7 @@ function wireGlobalEvents() {
     c.addEventListener("dragend", e => { if (e.target.closest(".gal-card")) onGalleryDragEnd(); });
     c.addEventListener("click", e => { const rm = e.target.closest("[data-remove-word]"); if (rm) removeIgnoreWord(rm.dataset.removeWord); if (e.target.id === "gal-ignore-toggle") { const el = c.querySelector("#gal-ignore-inline"), btn = c.querySelector("#gal-ignore-toggle"); if (el.classList.contains("open")) { el.classList.remove("open"); btn.style.display = ""; } else { el.classList.add("open"); btn.style.display = "none"; c.querySelector("#gal-ignore-input")?.focus(); } } });
     c.querySelector("#gal-ignore-input")?.addEventListener("keydown", e => { if (e.key === "Enter") addIgnoreWord(); if (e.key === "Escape") { c.querySelector("#gal-ignore-inline")?.classList.remove("open"); c.querySelector("#gal-ignore-toggle").style.display = ""; } });
-    c.querySelector("#gal-check-update")?.addEventListener("click", checkForUpdates);
+
     if (G.page === "gallery") requestAnimationFrame(() => { const m = c.querySelector(".gal-main"); if (m) m.scrollTop = G.scrollPosition; });
 }
 
