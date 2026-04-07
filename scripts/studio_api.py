@@ -1554,7 +1554,7 @@ def setup_studio_routes(app: FastAPI):
 
             # Update the setting and reload
             shared.opts.set("sd_vae", vae_name)
-            sd_vae.reload_vae_weights()
+            sd_vae.reload_vae_weights(vae_name)
 
             # Persist to config.json
             try:
