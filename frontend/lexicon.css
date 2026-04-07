@@ -1,0 +1,487 @@
+/*
+ * Forge Studio — Wildcards Module Styles
+ * by ToxicHost & Moritz
+ *
+ * Phase 1–4: complete wildcard file manager
+ * Uses Studio's design tokens from app.css.
+ */
+
+/* ═══════════════════════════════════════════
+   LAYOUT
+   ═══════════════════════════════════════════ */
+
+.lex-layout {
+    display: flex;
+    flex-direction: row;
+    width: 100%;
+    height: 100%;
+    overflow: hidden;
+    background: var(--bg-void);
+    font-family: var(--font);
+}
+
+/* ═══════════════════════════════════════════
+   FILE TREE PANEL (LEFT)
+   ═══════════════════════════════════════════ */
+
+.lex-tree-panel {
+    width: 260px;
+    min-width: 200px;
+    max-width: 400px;
+    border-right: 1px solid var(--border);
+    background: var(--bg-surface);
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.lex-tree-header {
+    padding: 10px 12px 8px;
+    border-bottom: 1px solid var(--border-subtle);
+    display: flex;
+    flex-direction: column;
+    gap: 6px;
+}
+
+.lex-tree-title {
+    font-size: 11px;
+    font-weight: 600;
+    text-transform: uppercase;
+    letter-spacing: 0.05em;
+    color: var(--text-3);
+}
+
+.lex-tree-actions {
+    display: flex;
+    gap: 4px;
+}
+
+.lex-tree-actions button {
+    padding: 4px 10px;
+    font-size: 10px;
+    font-weight: 500;
+    font-family: var(--font);
+    background: var(--bg-raised);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-3);
+    cursor: pointer;
+    transition: all 0.12s;
+    white-space: nowrap;
+}
+
+.lex-tree-actions button:hover {
+    color: var(--text-1);
+    border-color: var(--accent);
+}
+
+.lex-tree-search {
+    width: 100%;
+    padding: 5px 8px;
+    font-size: 12px;
+    font-family: var(--font);
+    background: var(--bg-input);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-1);
+    outline: none;
+    box-sizing: border-box;
+}
+
+.lex-tree-search:focus { border-color: var(--accent); }
+.lex-tree-search::placeholder { color: var(--text-4); }
+
+/* Search row — input + mode toggle */
+.lex-search-row {
+    display: flex;
+    gap: 4px;
+}
+
+.lex-search-row .lex-tree-search {
+    flex: 1;
+    min-width: 0;
+}
+
+.lex-search-toggle {
+    padding: 4px 6px;
+    font-size: 10px;
+    font-family: var(--mono);
+    font-weight: 600;
+    background: var(--bg-raised);
+    border: 1px solid var(--border);
+    border-radius: var(--radius-sm);
+    color: var(--text-4);
+    cursor: pointer;
+    transition: color 0.15s, border-color 0.15s, background 0.15s;
+    flex-shrink: 0;
+}
+
+.lex-search-toggle:hover {
+    color: var(--text-2);
+    border-color: var(--border-hover);
+}
+
+.lex-search-toggle.active {
+    color: var(--accent);
+    border-color: var(--accent);
+    background: var(--accent-dim);
+}
+
+/* Content search results */
+.lex-content-result {
+    flex-direction: column;
+    align-items: flex-start !important;
+    gap: 1px !important;
+    padding-top: 5px !important;
+    padding-bottom: 5px !important;
+}
+
+.lex-content-hit {
+    display: flex;
+    flex-direction: column;
+    flex: 1;
+    min-width: 0;
+    overflow: hidden;
+}
+
+.lex-content-hit .lex-name {
+    font-size: 12px;
+}
+
+.lex-content-match {
+    font-size: 10px;
+    font-family: var(--mono);
+    color: var(--text-3);
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+    max-width: 100%;
+}
+
+.lex-tree-list {
+    flex: 1;
+    overflow-y: auto;
+    padding: 4px 0;
+}
+
+/* Tree items */
+.lex-tree-item {
+    display: flex;
+    align-items: center;
+    padding: 4px 12px;
+    cursor: pointer;
+    font-size: 12px;
+    color: var(--text-2);
+    user-select: none;
+    transition: background 0.1s;
+    gap: 5px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.lex-tree-item:hover { background: var(--bg-raised); color: var(--text-1); }
+.lex-tree-item.active { background: var(--accent-dim); color: var(--accent-bright); }
+
+.lex-tree-item .lex-icon { flex-shrink: 0; font-size: 12px; width: 16px; text-align: center; }
+.lex-tree-item .lex-name { flex: 1; overflow: hidden; text-overflow: ellipsis; }
+.lex-tree-item .lex-count { font-size: 10px; color: var(--text-4); flex-shrink: 0; margin-left: auto; padding-left: 6px; }
+
+.lex-tree-folder > .lex-tree-item { font-weight: 500; }
+
+.lex-tree-children { display: none; }
+.lex-tree-folder.open > .lex-tree-children { display: block; }
+.lex-tree-folder.open > .lex-tree-item .lex-chevron { transform: rotate(90deg); }
+
+.lex-chevron {
+    font-size: 10px;
+    transition: transform 0.15s;
+    width: 12px;
+    text-align: center;
+    flex-shrink: 0;
+    color: var(--text-4);
+}
+
+.lex-tree-item[data-depth="1"] { padding-left: 24px; }
+.lex-tree-item[data-depth="2"] { padding-left: 36px; }
+.lex-tree-item[data-depth="3"] { padding-left: 48px; }
+.lex-tree-item[data-depth="4"] { padding-left: 60px; }
+
+.lex-tree-footer {
+    padding: 6px 12px;
+    border-top: 1px solid var(--border-subtle);
+    font-size: 10px;
+    color: var(--text-4);
+}
+
+/* ═══════════════════════════════════════════
+   DRAG & DROP
+   ═══════════════════════════════════════════ */
+
+.lex-tree-item.lex-dragging {
+    opacity: 0.4;
+}
+
+.lex-tree-item.lex-drop-target {
+    background: var(--accent-dim);
+    outline: 1px dashed var(--accent);
+    outline-offset: -1px;
+}
+
+/* Root-level drop target (the tree list itself) */
+.lex-tree-list.lex-drop-target {
+    background: var(--accent-dim);
+    outline: 1px dashed var(--accent);
+    outline-offset: -2px;
+}
+
+/* ═══════════════════════════════════════════
+   EDITOR PANEL (RIGHT)
+   ═══════════════════════════════════════════ */
+
+.lex-editor-panel {
+    flex: 1;
+    min-width: 0;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+.lex-empty {
+    flex: 1;
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    flex-direction: column;
+    gap: 8px;
+    color: var(--text-4);
+    font-size: 13px;
+}
+
+.lex-empty-icon { font-size: 32px; opacity: 0.4; }
+
+.lex-editor-wrap {
+    flex: 1;
+    display: flex;
+    flex-direction: column;
+    overflow: hidden;
+}
+
+/* Editor header */
+.lex-editor-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 8px 16px;
+    border-bottom: 1px solid var(--border);
+    background: var(--bg-surface);
+    min-height: 40px;
+    flex-shrink: 0;
+}
+
+.lex-file-name {
+    font-size: 13px;
+    font-weight: 500;
+    color: var(--text-1);
+    flex: 1;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.lex-dirty-dot {
+    width: 6px; height: 6px; border-radius: 50%;
+    background: var(--accent); flex-shrink: 0;
+    opacity: 0; transition: opacity 0.2s;
+}
+.lex-dirty-dot.visible { opacity: 1; }
+
+.lex-save-btn {
+    padding: 4px 12px; font-size: 11px; font-family: var(--font);
+    background: var(--accent); color: #fff; border: none;
+    border-radius: var(--radius-sm); cursor: pointer; font-weight: 600;
+    opacity: 0.4; pointer-events: none; transition: opacity 0.2s;
+}
+.lex-save-btn.enabled { opacity: 1; pointer-events: auto; }
+.lex-save-btn.enabled:hover { background: var(--accent-bright); }
+
+/* Toggle buttons (auto-save, preview) */
+.lex-autosave-toggle,
+.lex-preview-toggle {
+    padding: 4px 8px; font-size: 11px; font-family: var(--font);
+    background: transparent; color: var(--text-4);
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+    cursor: pointer; transition: color 0.15s, border-color 0.15s, background 0.15s;
+}
+.lex-autosave-toggle:hover,
+.lex-preview-toggle:hover { color: var(--text-2); border-color: var(--border-hover); }
+.lex-autosave-toggle.active { color: var(--green); border-color: var(--green); background: var(--green-dim); }
+.lex-preview-toggle.active { color: var(--accent); border-color: var(--accent); background: var(--accent-dim); }
+
+/* Sort & Dedup buttons */
+.lex-sort-btn,
+.lex-dedup-btn {
+    padding: 4px 8px; font-size: 11px; font-family: var(--font);
+    background: transparent; color: var(--text-4);
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+    cursor: pointer; transition: color 0.15s, border-color 0.15s;
+}
+.lex-sort-btn:hover,
+.lex-dedup-btn:hover { color: var(--text-2); border-color: var(--border-hover); }
+
+.lex-delete-btn {
+    padding: 4px 8px; font-size: 11px; font-family: var(--font);
+    background: transparent; color: var(--text-3);
+    border: 1px solid var(--border); border-radius: var(--radius-sm);
+    cursor: pointer; transition: color 0.15s, border-color 0.15s;
+}
+.lex-delete-btn:hover { color: var(--red); border-color: var(--red); }
+
+/* ═══════════════════════════════════════════
+   EDITOR BODY — gutter + highlight/textarea
+   ═══════════════════════════════════════════ */
+
+.lex-editor-body {
+    flex: 1; display: flex; overflow: hidden;
+    position: relative; min-height: 0;
+}
+
+.lex-gutter {
+    width: 44px; flex-shrink: 0;
+    background: var(--bg-surface);
+    border-right: 1px solid var(--border-subtle);
+    overflow: hidden; padding-top: 10px; user-select: none;
+}
+
+.lex-gutter-inner {
+    font-family: var(--mono); font-size: 12px; line-height: 20px;
+    color: var(--text-4); text-align: right; padding-right: 8px; white-space: pre;
+}
+
+.lex-editor-area { flex: 1; position: relative; overflow: hidden; min-width: 0; }
+
+.lex-highlight,
+.lex-textarea {
+    font-family: var(--mono); font-size: 12px; line-height: 20px;
+    padding: 10px 12px; tab-size: 4; white-space: pre;
+    word-wrap: normal; margin: 0; border: none; letter-spacing: normal;
+}
+
+.lex-highlight {
+    position: absolute; top: 0; left: 0; right: 0; bottom: 0;
+    overflow: auto; background: var(--bg-void); color: var(--text-1);
+    pointer-events: none; z-index: 0; scrollbar-width: none;
+}
+.lex-highlight::-webkit-scrollbar { display: none; }
+
+.lex-textarea {
+    position: absolute; top: 0; left: 0; width: 100%; height: 100%;
+    resize: none; background: transparent; color: transparent;
+    caret-color: var(--text-1); outline: none; z-index: 1;
+    overflow: auto; box-sizing: border-box;
+}
+.lex-textarea::placeholder { color: var(--text-4); }
+
+.lex-hl-comment { color: var(--text-4); font-style: italic; }
+.lex-hl-ref { color: var(--accent-bright); }
+
+/* FR-013: Search match highlight in file tree */
+.lex-hl-match {
+    background: var(--accent-mid);
+    color: var(--text-1);
+    border-radius: 2px;
+    padding: 0 1px;
+}
+
+/* ═══════════════════════════════════════════
+   PREVIEW PANEL
+   ═══════════════════════════════════════════ */
+
+.lex-preview-panel {
+    flex-shrink: 0; max-height: 0; overflow: hidden;
+    border-top: 1px solid var(--border); background: var(--bg-surface);
+    transition: max-height 0.2s ease;
+}
+.lex-preview-panel.open { max-height: 200px; }
+
+.lex-preview-header {
+    display: flex; align-items: center; justify-content: space-between;
+    padding: 6px 16px; border-bottom: 1px solid var(--border-subtle);
+}
+
+.lex-preview-title {
+    font-size: 11px; font-weight: 600; text-transform: uppercase;
+    letter-spacing: 0.05em; color: var(--text-3);
+}
+
+.lex-preview-roll {
+    padding: 3px 10px; font-size: 11px; font-family: var(--font);
+    background: var(--accent); color: #fff; border: none;
+    border-radius: var(--radius-sm); cursor: pointer; font-weight: 600;
+    transition: background 0.15s;
+}
+.lex-preview-roll:hover { background: var(--accent-bright); }
+
+.lex-preview-body { padding: 8px 16px 12px; overflow-y: auto; max-height: 140px; }
+
+.lex-preview-label {
+    font-size: 10px; color: var(--text-4); text-transform: uppercase;
+    letter-spacing: 0.04em; margin-bottom: 2px;
+}
+.lex-preview-label:not(:first-child) { margin-top: 8px; }
+
+.lex-preview-raw { font-family: var(--mono); font-size: 12px; color: var(--text-2); word-break: break-all; line-height: 1.4; }
+.lex-preview-result { font-family: var(--mono); font-size: 12px; color: var(--accent-bright); word-break: break-all; line-height: 1.4; }
+.lex-preview-result.lex-preview-error { color: var(--red); }
+
+/* ═══════════════════════════════════════════
+   EDITOR FOOTER
+   ═══════════════════════════════════════════ */
+
+.lex-editor-footer {
+    display: flex; align-items: center; gap: 16px;
+    padding: 5px 16px; border-top: 1px solid var(--border);
+    background: var(--bg-surface); font-size: 11px; color: var(--text-3);
+    min-height: 28px; flex-shrink: 0;
+}
+.lex-editor-footer span { white-space: nowrap; }
+
+/* ═══════════════════════════════════════════
+   CONTEXT MENU
+   ═══════════════════════════════════════════ */
+
+.lex-context-menu {
+    position: fixed; z-index: 9999; min-width: 150px;
+    background: var(--bg-raised); border: 1px solid var(--border);
+    border-radius: var(--radius); padding: 4px 0;
+    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.5); display: none;
+}
+.lex-context-menu.open { display: block; }
+
+.lex-context-item {
+    padding: 6px 12px; font-size: 12px; font-family: var(--font);
+    color: var(--text-2); cursor: pointer; transition: background 0.1s;
+}
+.lex-context-item:hover { background: var(--accent-dim); color: var(--text-1); }
+.lex-context-item.danger:hover { background: var(--red-dim); color: var(--red); }
+
+.lex-context-sep { height: 1px; background: var(--border-subtle); margin: 4px 0; }
+
+/* ═══════════════════════════════════════════
+   ERROR / LOADING
+   ═══════════════════════════════════════════ */
+
+.lex-error-banner {
+    padding: 8px 12px; background: var(--red-dim); color: var(--red);
+    font-size: 12px; display: none; flex-shrink: 0;
+}
+.lex-error-banner.visible { display: block; }
+
+/* ═══════════════════════════════════════════
+   SCROLLBARS
+   ═══════════════════════════════════════════ */
+
+.lex-layout ::-webkit-scrollbar { width: 6px; height: 6px; }
+.lex-layout ::-webkit-scrollbar-track { background: transparent; }
+.lex-layout ::-webkit-scrollbar-thumb { background: var(--border); border-radius: 3px; }
+.lex-layout ::-webkit-scrollbar-thumb:hover { background: var(--border-hover); }
