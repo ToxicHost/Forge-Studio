@@ -1552,8 +1552,9 @@ def setup_studio_routes(app: FastAPI):
         try:
             from modules import sd_vae
 
-            # Update the setting — Forge Neo's onchange handler triggers the reload
+            # Update the setting and reload
             shared.opts.set("sd_vae", vae_name)
+            sd_vae.reload_vae_weights()
 
             # Persist to config.json
             try:
