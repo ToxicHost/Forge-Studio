@@ -3507,6 +3507,9 @@ function bootUI() {
         return;
     }
 
+    // Hide canvas until layout settles to prevent flash of unsized canvas
+    el.style.visibility = "hidden";
+
     // Boot core
     C.boot(el);
 
@@ -3543,7 +3546,7 @@ function bootUI() {
     _redraw();
 
     // Single rAF for layout settle — no delays
-    requestAnimationFrame(() => { syncCanvasToViewport(); C.zoomFit(); updateStatus(); _redraw(); });
+    requestAnimationFrame(() => { syncCanvasToViewport(); C.zoomFit(); updateStatus(); _redraw(); S.canvas.style.visibility = ""; });
 
     // Manual resize on window resize only — no ResizeObserver
     // (ResizeObserver was causing composite glitches on pointer events)
