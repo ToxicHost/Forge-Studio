@@ -29,6 +29,7 @@
   let modal = null;
   let loaded = false;
   let collapsedFolders = new Set();
+  let _foldersDefaulted = false;
   let previewPane = null;      // content preview element
   let previewName = "";        // currently previewed wildcard
 
@@ -272,7 +273,8 @@
       }
       folders = [...folderSet].sort((a, b) => a.localeCompare(b));
       // Collapse all folders by default on first load
-      if (!collapsedFolders.size) {
+      if (!_foldersDefaulted) {
+        _foldersDefaulted = true;
         for (const f of folders) collapsedFolders.add(f);
       }
       loaded = true;
@@ -356,7 +358,18 @@
 
     modal.querySelector(".wc-refresh-btn").addEventListener("click", refreshWildcards);
 
-    modal.addEventListener("keydown", e => { e.stopPropagation(); });
+    modal.addEventListener("keydown", e => {
+      if (e.key === "Escape") { closeModal(); e.stopPropagation(); return; }
+      // Arrow key navigation — works regardless of search focus
+      if (e.key === "ArrowUp" || e.key === "ArrowDown" || e.key === "ArrowLeft" || e.key === "ArrowRight" || (e.key === "Enter" && document.activeElement !== modal.querySelector(".wc-search"))) {
+        e.preventDefault();
+        // Blur search if focused so navigation takes over
+        const searchEl = modal.querySelector(".wc-search");
+        if (document.activeElement === searchEl) searchEl.blur();
+        _wcHandleKey(e.key);
+      }
+      e.stopPropagation();
+    });
     modal.addEventListener("keyup", e => e.stopPropagation());
 
     document.body.appendChild(modal);
@@ -645,36 +658,17 @@
       }
     });
 
-    // ── Arrow key navigation (document-level so it works regardless of focus) ──
-    document.addEventListener("keydown", _wcKeyNav);
-
     console.log(`${TAG} Initialized`);
   }
 
   // Track which pane has keyboard focus: "folders" or "items"
   let _wcNavPane = "items";
 
-  function _wcKeyNav(e) {
-    // Only handle keys when modal is open
-    if (!modal || modal.style.display !== "flex") return;
-
-    if (e.key === "Escape") { closeModal(); e.preventDefault(); return; }
-
-    // If the user is typing in the search field, let normal input work
-    // but intercept arrow up/down to start navigation
-    const searchEl = modal.querySelector(".wc-search");
-    const inSearch = document.activeElement === searchEl;
-
-    if (!(e.key === "ArrowUp" || e.key === "ArrowDown" || e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "Enter")) return;
-
-    // Let Enter work normally in search
-    if (e.key === "Enter" && inSearch) return;
-
-    e.preventDefault();
-    if (inSearch) searchEl.blur();
+  function _wcHandleKey(key) {
+    if (!modal) return;
 
     // Enter on focused item: insert the wildcard
-    if (e.key === "Enter") {
+    if (key === "Enter") {
       const focusedItem = modal.querySelector(".wc-item.kb-focus");
       if (focusedItem) {
         const insertBtn = focusedItem.querySelector(".wc-item-insert");
@@ -683,38 +677,35 @@
       return;
     }
 
-    if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+    if (key === "ArrowUp" || key === "ArrowDown") {
       if (_wcNavPane === "folders") {
-        // Navigate visible folder items
         const fi = Array.from(modal.querySelectorAll(".wc-folder-item"));
         if (!fi.length) return;
         const curIdx = fi.findIndex(el => el.classList.contains("kb-focus"));
         let next;
-        if (e.key === "ArrowDown") next = curIdx < fi.length - 1 ? curIdx + 1 : 0;
+        if (key === "ArrowDown") next = curIdx < fi.length - 1 ? curIdx + 1 : 0;
         else next = curIdx > 0 ? curIdx - 1 : fi.length - 1;
         fi.forEach(el => el.classList.remove("kb-focus"));
         fi[next].classList.add("kb-focus");
-        fi[next].click(); // select the folder (filters the list)
+        fi[next].click();
         fi[next].scrollIntoView({ block: "nearest", behavior: "smooth" });
       } else {
-        // Navigate wildcard items
         const items = Array.from(modal.querySelectorAll(".wc-item"));
         if (!items.length) return;
         const curIdx = items.findIndex(el => el.classList.contains("kb-focus") || el.classList.contains("active"));
         let next;
-        if (e.key === "ArrowDown") next = curIdx < items.length - 1 ? curIdx + 1 : 0;
+        if (key === "ArrowDown") next = curIdx < items.length - 1 ? curIdx + 1 : 0;
         else next = curIdx > 0 ? curIdx - 1 : items.length - 1;
         items.forEach(el => el.classList.remove("kb-focus"));
         items[next].classList.add("kb-focus");
         const nameEl = items[next].querySelector(".wc-item-name");
-        if (nameEl) nameEl.click(); // show preview
+        if (nameEl) nameEl.click();
         items[next].scrollIntoView({ block: "nearest", behavior: "smooth" });
       }
     }
 
-    if (e.key === "ArrowLeft") {
+    if (key === "ArrowLeft") {
       if (_wcNavPane === "items") {
-        // Switch to folders pane
         _wcNavPane = "folders";
         modal.querySelectorAll(".wc-item").forEach(el => el.classList.remove("kb-focus"));
         const activeF = modal.querySelector(".wc-folder-item.active") || modal.querySelector(".wc-folder-item");
@@ -724,7 +715,6 @@
           activeF.scrollIntoView({ block: "nearest", behavior: "smooth" });
         }
       } else {
-        // Collapse focused folder
         const focused = modal.querySelector(".wc-folder-item.kb-focus");
         if (focused) {
           const toggle = focused.querySelector(".wc-folder-toggle");
@@ -736,19 +726,17 @@
       }
     }
 
-    if (e.key === "ArrowRight") {
+    if (key === "ArrowRight") {
       if (_wcNavPane === "folders") {
-        // Expand focused folder, or switch to items pane
         const focused = modal.querySelector(".wc-folder-item.kb-focus");
         if (focused) {
           const toggle = focused.querySelector(".wc-folder-toggle");
           const folderPath = focused.querySelector(".wc-folder-name")?.title;
           if (toggle && folderPath && collapsedFolders.has(folderPath)) {
-            toggle.click(); // expand
+            toggle.click();
             return;
           }
         }
-        // Switch to items pane
         _wcNavPane = "items";
         modal.querySelectorAll(".wc-folder-item").forEach(el => el.classList.remove("kb-focus"));
         const firstItem = modal.querySelector(".wc-item.active") || modal.querySelector(".wc-item");
