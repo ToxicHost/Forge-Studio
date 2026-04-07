@@ -641,80 +641,68 @@ function onKeyDown(e) {
     // Arrow key navigation for folders/tags in gallery view
     if (G.page === "gallery" && window.StudioModules && window.StudioModules.activeId === "gallery") {
         if (document.activeElement && (document.activeElement.tagName === "INPUT" || document.activeElement.tagName === "TEXTAREA")) return;
-
-        // Track which column is focused: "folders" or "tags"
+        if (!(e.key === "ArrowUp" || e.key === "ArrowDown" || e.key === "ArrowLeft" || e.key === "ArrowRight" || e.key === "Enter" || e.key === " ")) return;
+        e.preventDefault();
+        const c = G._container; if (!c) return;
         if (!G._kbNavCol) G._kbNavCol = "folders";
 
-        if (e.key === "ArrowUp" || e.key === "ArrowDown" || e.key === "ArrowLeft" || e.key === "ArrowRight") {
-            e.preventDefault();
-            const c = G._container; if (!c) return;
-
-            if (e.key === "ArrowUp" || e.key === "ArrowDown") {
-                const folderEls = Array.from(c.querySelectorAll(".gal-tree-toggle"));
-                const tagEls = Array.from(c.querySelectorAll(".gal-tag-item"));
-                const items = G._kbNavCol === "tags" ? tagEls : folderEls;
-                if (!items.length) return;
-                // Find currently kb-focused item, fall back to active item
-                let curIdx = items.findIndex(el => el.classList.contains("kb-focus"));
-                if (curIdx < 0) curIdx = items.findIndex(el => el.classList.contains("active"));
-                let next;
-                if (e.key === "ArrowDown") next = curIdx < items.length - 1 ? curIdx + 1 : 0;
-                else next = curIdx > 0 ? curIdx - 1 : items.length - 1;
-                // Move kb-focus cursor (visual only, no filtering)
-                c.querySelectorAll(".gal-tree-toggle.kb-focus, .gal-tag-item.kb-focus").forEach(el => el.classList.remove("kb-focus"));
-                items[next].classList.add("kb-focus");
-                items[next].scrollIntoView({ block: "nearest", behavior: "smooth" });
-            }
-
-            if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
-                if (G._kbNavCol === "folders" && e.key === "ArrowLeft") {
-                    // Collapse the focused folder
-                    const focused = c.querySelector(".gal-tree-toggle.kb-focus") || c.querySelector(".gal-tree-toggle.active");
-                    if (focused) {
-                        const arrow = focused.querySelector(".arrow.open");
-                        if (arrow) arrow.click();
-                    }
-                } else if (G._kbNavCol === "folders" && e.key === "ArrowRight") {
-                    // Expand focused folder, or switch to tags column
-                    const focused = c.querySelector(".gal-tree-toggle.kb-focus") || c.querySelector(".gal-tree-toggle.active");
-                    if (focused) {
-                        const arrow = focused.querySelector(".arrow:not(.open)");
-                        if (arrow) { arrow.click(); return; }
-                    }
-                    // Switch to tags column
-                    G._kbNavCol = "tags";
-                    c.querySelectorAll(".gal-tree-toggle.kb-focus").forEach(el => el.classList.remove("kb-focus"));
-                    const firstTag = c.querySelector(".gal-tag-item.active") || c.querySelector(".gal-tag-item");
-                    if (firstTag) { firstTag.classList.add("kb-focus"); firstTag.scrollIntoView({ block: "nearest", behavior: "smooth" }); }
-                } else if (G._kbNavCol === "tags" && e.key === "ArrowLeft") {
-                    // Switch to folders column
-                    G._kbNavCol = "folders";
-                    c.querySelectorAll(".gal-tag-item.kb-focus").forEach(el => el.classList.remove("kb-focus"));
-                    const firstFolder = c.querySelector(".gal-tree-toggle.active") || c.querySelector(".gal-tree-toggle");
-                    if (firstFolder) { firstFolder.classList.add("kb-focus"); firstFolder.scrollIntoView({ block: "nearest", behavior: "smooth" }); }
-                } else if (G._kbNavCol === "tags" && e.key === "ArrowRight") {
-                    // Open/close tag letter groups
-                    const focusedTag = c.querySelector(".gal-tag-item.kb-focus");
-                    if (focusedTag) {
-                        const grp = focusedTag.closest(".gal-tag-group");
-                        if (grp) {
-                            const letter = grp.dataset.tagGroup;
-                            const letterEl = c.querySelector('.gal-tag-letter[data-letter="' + letter + '"]');
-                            if (letterEl) letterEl.click();
-                        }
-                    }
-                }
-            }
+        // Helper: get only VISIBLE folder toggles (skip ones inside collapsed containers)
+        function visibleFolders() {
+            return Array.from(c.querySelectorAll(".gal-tree-toggle")).filter(el => el.offsetParent !== null);
+        }
+        // Helper: get only VISIBLE tag items (skip ones inside collapsed letter groups)
+        function visibleTags() {
+            return Array.from(c.querySelectorAll(".gal-tag-item")).filter(el => el.offsetParent !== null);
+        }
+        // Helper: clear all kb-focus
+        function clearFocus() { c.querySelectorAll(".kb-focus").forEach(el => el.classList.remove("kb-focus")); }
+        // Helper: move focus in a list
+        function moveFocus(items, dir) {
+            if (!items.length) return;
+            let cur = items.findIndex(el => el.classList.contains("kb-focus"));
+            if (cur < 0) cur = items.findIndex(el => el.classList.contains("active"));
+            let next;
+            if (dir === 1) next = cur < items.length - 1 ? cur + 1 : 0;
+            else next = cur > 0 ? cur - 1 : items.length - 1;
+            clearFocus();
+            items[next].classList.add("kb-focus");
+            items[next].scrollIntoView({ block: "nearest", behavior: "smooth" });
         }
 
-        // Enter/Space: activate the kb-focused item (filter by it)
-        if (e.key === "Enter" || e.key === " ") {
-            const c = G._container; if (!c) return;
-            const focused = c.querySelector(".gal-tree-toggle.kb-focus") || c.querySelector(".gal-tag-item.kb-focus");
-            if (focused) {
-                e.preventDefault();
-                focused.click();
+        if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+            const dir = e.key === "ArrowDown" ? 1 : -1;
+            moveFocus(G._kbNavCol === "tags" ? visibleTags() : visibleFolders(), dir);
+        }
+        else if (e.key === "ArrowLeft") {
+            if (G._kbNavCol === "tags") {
+                // Switch to folders column
+                G._kbNavCol = "folders"; clearFocus();
+                const f = visibleFolders(); const act = f.find(el => el.classList.contains("active")) || f[0];
+                if (act) { act.classList.add("kb-focus"); act.scrollIntoView({ block: "nearest", behavior: "smooth" }); }
+            } else {
+                // Collapse the focused folder
+                const focused = c.querySelector(".gal-tree-toggle.kb-focus") || c.querySelector(".gal-tree-toggle.active");
+                if (focused) { const arrow = focused.querySelector(".arrow.open"); if (arrow) arrow.click(); }
             }
+        }
+        else if (e.key === "ArrowRight") {
+            if (G._kbNavCol === "folders") {
+                // Try to expand focused folder first
+                const focused = c.querySelector(".gal-tree-toggle.kb-focus") || c.querySelector(".gal-tree-toggle.active");
+                if (focused) { const arrow = focused.querySelector(".arrow:not(.open)"); if (arrow) { arrow.click(); return; } }
+                // Already expanded or leaf — switch to tags column
+                G._kbNavCol = "tags"; clearFocus();
+                const t = visibleTags(); const act = t.find(el => el.classList.contains("active")) || t[0];
+                if (act) { act.classList.add("kb-focus"); act.scrollIntoView({ block: "nearest", behavior: "smooth" }); }
+            } else {
+                // Toggle tag letter group of focused tag
+                const ft = c.querySelector(".gal-tag-item.kb-focus");
+                if (ft) { const grp = ft.closest(".gal-tag-group"); if (grp) { const lEl = c.querySelector('.gal-tag-letter[data-letter="' + grp.dataset.tagGroup + '"]'); if (lEl) lEl.click(); } }
+            }
+        }
+        else if (e.key === "Enter" || e.key === " ") {
+            const focused = c.querySelector(".gal-tree-toggle.kb-focus") || c.querySelector(".gal-tag-item.kb-focus");
+            if (focused) focused.click();
         }
     }
 }
