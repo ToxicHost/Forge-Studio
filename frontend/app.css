@@ -1447,6 +1447,58 @@ body {
 @keyframes toastIn { from { opacity: 0; transform: translateX(-50%) translateY(10px); } to { opacity: 1; transform: translateX(-50%) translateY(0); } }
 @keyframes toastOut { from { opacity: 1; } to { opacity: 0; } }
 
+
+/* ═══════════════════════════════════════════
+   AUTO-UPDATE BANNER
+   ═══════════════════════════════════════════ */
+
+.update-banner {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 99;
+  display: flex; align-items: center; gap: 10px;
+  padding: 6px 14px;
+  background: var(--accent-dim); border-bottom: 1px solid var(--accent);
+  font-size: 12px; font-family: var(--font); color: var(--accent);
+  animation: toastIn 0.3s ease;
+}
+.update-banner-text { flex: 1; }
+.update-banner-btn {
+  padding: 3px 10px; border-radius: var(--radius); font-size: 11px;
+  border: 1px solid var(--accent); background: transparent;
+  color: var(--accent); cursor: pointer; font-family: var(--font);
+}
+.update-banner-btn:hover { background: var(--accent); color: #fff; }
+.update-banner-btn:disabled { opacity: 0.5; cursor: not-allowed; }
+.update-banner-btn:disabled:hover { background: transparent; color: var(--accent); }
+.update-banner-dismiss {
+  background: none; border: none; color: var(--text-4);
+  font-size: 16px; cursor: pointer; padding: 0 4px;
+}
+.update-banner-dismiss:hover { color: var(--text-1); }
+.update-restart-banner {
+  background: #3a352022; border-color: var(--amber);
+  color: var(--amber);
+}
+.update-indicator {
+  color: var(--accent) !important; cursor: pointer;
+  animation: pulse 1.5s infinite;
+}
+.update-indicator:hover { text-decoration: underline; }
+
+/* Update details overlay */
+.update-overlay {
+  position: fixed; inset: 0; z-index: 100;
+  display: flex; align-items: center; justify-content: center;
+  background: rgba(0,0,0,0.6);
+  animation: toastIn 0.2s ease;
+}
+.update-overlay-content {
+  background: var(--bg-surface); border: 1px solid var(--border);
+  border-radius: 8px; padding: 20px; max-width: 480px; width: 90%;
+  max-height: 60vh; overflow-y: auto;
+  font-size: 12px; color: var(--text-2); font-family: var(--font);
+}
+
+
 /* ControlNet upload */
 .cn-upload-row { display:flex; align-items:center; gap:6px; padding:2px 0; }
 .cn-upload-btn { font-size:10px; padding:3px 8px; background:var(--bg-raised); color:var(--text-3); border:1px solid var(--border); border-radius:var(--radius); cursor:pointer; }

@@ -18,6 +18,7 @@ import io
 import json
 import os
 import re
+import subprocess
 import time
 import traceback
 from datetime import date
@@ -66,6 +67,29 @@ def _get_stub_module():
             import modules.gradio_stub as mod
             _get_stub_module._cached = mod
     return _get_stub_module._cached
+
+
+# =========================================================================
+# GIT UPDATE HELPER
+# =========================================================================
+
+def _git_run(*args, timeout=30):
+    """Run a git command in the extension root, return (returncode, stdout, stderr)."""
+    _here = Path(__file__).resolve().parent
+    cwd = str(_here if (_here / ".git").is_dir() else _here.parent)
+    try:
+        result = subprocess.run(
+            ["git"] + list(args),
+            cwd=cwd,
+            capture_output=True,
+            text=True,
+            timeout=timeout,
+        )
+        return result.returncode, result.stdout.strip(), result.stderr.strip()
+    except FileNotFoundError:
+        return -1, "", "git not found"
+    except subprocess.TimeoutExpired:
+        return -1, "", "timed out"
 
 
 # =========================================================================
@@ -2219,6 +2243,87 @@ def setup_studio_routes(app: FastAPI):
         return JSONResponse(extensions)
 
     # ------------------------------------------------------------------
+    # Auto-update: check for and apply Git updates
+    # ------------------------------------------------------------------
+
+    @app.get("/studio/api/check-update")
+    async def check_update():
+        _here = Path(__file__).resolve().parent
+        _root = _here if (_here / ".git").is_dir() else _here.parent
+        if not (_root / ".git").is_dir():
+            return JSONResponse({"error": "Not a git repository"})
+
+        # Fetch latest from remote
+        rc, _, err = _git_run("fetch", "origin", timeout=15)
+        if rc != 0:
+            return JSONResponse({"update_available": False, "offline": True,
+                                 "error": f"Fetch failed: {err}"})
+
+        # Compare local HEAD vs upstream tracking branch
+        rc, local_hash, _ = _git_run("rev-parse", "HEAD")
+        if rc != 0:
+            return JSONResponse({"error": "Cannot read local HEAD"})
+        rc, remote_hash, _ = _git_run("rev-parse", "@{u}")
+        if rc != 0:
+            return JSONResponse({"error": "No upstream tracking branch configured"})
+
+        if local_hash == remote_hash:
+            return JSONResponse({"update_available": False, "current_commit": local_hash[:8]})
+
+        # How far behind?
+        rc, count_str, _ = _git_run("rev-list", "--count", "HEAD..@{u}")
+        commits_behind = int(count_str) if rc == 0 and count_str.isdigit() else 0
+
+        # Changelog
+        rc, log_out, _ = _git_run("log", "--oneline", "--no-decorate", "-20", "HEAD..@{u}")
+        changelog = log_out.splitlines() if rc == 0 else []
+
+        # Dirty working tree?
+        rc, status_out, _ = _git_run("status", "--porcelain")
+        dirty = bool(status_out) if rc == 0 else False
+
+        return JSONResponse({
+            "update_available": True,
+            "current_commit": local_hash[:8],
+            "remote_commit": remote_hash[:8],
+            "commits_behind": commits_behind,
+            "changelog": changelog,
+            "dirty": dirty,
+        })
+
+    @app.post("/studio/api/update")
+    async def apply_update():
+        _here = Path(__file__).resolve().parent
+        _root = _here if (_here / ".git").is_dir() else _here.parent
+        if not (_root / ".git").is_dir():
+            return JSONResponse({"ok": False, "error": "Not a git repository"})
+
+        # Refuse if working tree is dirty
+        rc, status_out, _ = _git_run("status", "--porcelain")
+        if rc != 0:
+            return JSONResponse({"ok": False, "error": "Cannot check working tree status"})
+        if status_out:
+            return JSONResponse({"ok": False, "error": "Working tree has local changes. Stash or commit them first.", "dirty": True})
+
+        # Fast-forward only — no merge commits, no conflict risk
+        rc, out, err = _git_run("pull", "--ff-only", timeout=60)
+        if rc != 0:
+            if "diverged" in err.lower() or "not possible to fast-forward" in err.lower():
+                return JSONResponse({"ok": False, "error": "Local branch has diverged from remote. Manual pull required.", "diverged": True})
+            return JSONResponse({"ok": False, "error": f"Pull failed: {err or out}"})
+
+        # Read new HEAD
+        _, new_hash, _ = _git_run("rev-parse", "HEAD")
+        print(f"{TAG} Updated to {new_hash[:8]}")
+
+        return JSONResponse({
+            "ok": True,
+            "restart_required": True,
+            "new_commit": new_hash[:8],
+            "message": "Updated successfully. Restart the server to apply backend changes. Refresh the browser for frontend changes.",
+        })
+
+    # ------------------------------------------------------------------
     # Frontend serving
     # ------------------------------------------------------------------
 
@@ -2293,6 +2398,35 @@ def setup_studio_routes(app: FastAPI):
     # ------------------------------------------------------------------
 
     Thread(target=_progress_polling_thread, daemon=True).start()
+
+    # ------------------------------------------------------------------
+    # Startup update check — notify via WebSocket if updates available
+    # ------------------------------------------------------------------
+
+    def _startup_update_check():
+        time.sleep(10)
+        try:
+            rc, _, _ = _git_run("fetch", "origin", timeout=15)
+            if rc != 0:
+                return
+            rc, local, _ = _git_run("rev-parse", "HEAD")
+            if rc != 0:
+                return
+            rc, remote, _ = _git_run("rev-parse", "@{u}")
+            if rc != 0:
+                return
+            if local == remote:
+                return
+            rc, count, _ = _git_run("rev-list", "--count", "HEAD..@{u}")
+            if rc == 0 and count.isdigit() and int(count) > 0:
+                msg = {"type": "update_available", "commits_behind": int(count)}
+                if _uvicorn_loop:
+                    asyncio.run_coroutine_threadsafe(_broadcast_progress(msg), _uvicorn_loop)
+                print(f"{TAG} Update available: {count} commit(s) behind remote")
+        except Exception as e:
+            print(f"{TAG} Startup update check failed: {e}")
+
+    Thread(target=_startup_update_check, daemon=True).start()
 
     # ------------------------------------------------------------------
     # Optional module loader — uses file path, not sys.path

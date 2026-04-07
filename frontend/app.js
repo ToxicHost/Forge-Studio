@@ -56,6 +56,10 @@ const API = {
   modelStatus:   ()       => API.get("/studio/model_status"),
   autoUnload:    (params) => API.post("/studio/auto_unload", params),
   vram:          ()       => API.get("/studio/vram"),
+
+  // Auto-update
+  checkUpdate:   ()       => API.get("/studio/api/check-update"),
+  applyUpdate:   ()       => API.post("/studio/api/update", {}),
 };
 
 
@@ -139,6 +143,8 @@ const Progress = {
           StatusBar.setModelUnloaded();
           showToast(`Model auto-unloaded after ${data.minutes}min idle`, "info");
           _refreshVRAM();
+        } else if (data.type === "update_available") {
+          UpdateBanner.show(data);
         }
       } catch (_) {}
     };
@@ -311,6 +317,139 @@ function showToast(msg, type = "info") {
   document.body.appendChild(el);
   setTimeout(() => el.remove(), 3000);
 }
+
+
+// ═══════════════════════════════════════════
+// AUTO-UPDATE NOTIFICATION
+// ═══════════════════════════════════════════
+
+const UpdateBanner = {
+  _el: null,
+  _data: null,
+
+  show(data) {
+    this._data = data;
+    if (this._el) this._el.remove();
+
+    const el = document.createElement("div");
+    el.className = "update-banner";
+    el.innerHTML = `
+      <span class="update-banner-text">
+        Update available \u2014 ${data.commits_behind} new commit${data.commits_behind > 1 ? "s" : ""}
+      </span>
+      <button class="update-banner-btn update-details-btn">Details</button>
+      <button class="update-banner-btn update-apply-btn">Update Now</button>
+      <button class="update-banner-dismiss" title="Dismiss">&times;</button>
+    `;
+
+    el.querySelector(".update-details-btn").onclick = () => this._showDetails();
+    el.querySelector(".update-apply-btn").onclick = () => this._applyUpdate();
+    el.querySelector(".update-banner-dismiss").onclick = () => this.hide();
+
+    document.body.appendChild(el);
+    this._el = el;
+
+    // Also light up status bar indicator
+    const ind = document.getElementById("statusUpdate");
+    if (ind) { ind.style.display = ""; ind.onclick = () => this._showDetails(); }
+  },
+
+  hide() {
+    if (this._el) { this._el.remove(); this._el = null; }
+  },
+
+  async _showDetails() {
+    // Fetch fresh data if we don't have changelog
+    let data = this._data;
+    if (!data || !data.changelog) {
+      try {
+        data = await API.checkUpdate();
+        if (data.error) { showToast(data.error, "error"); return; }
+        if (!data.update_available) { showToast("Already up to date", "success"); this.hide(); return; }
+        this._data = data;
+      } catch (e) { showToast("Update check failed: " + e.message, "error"); return; }
+    }
+
+    // Build overlay
+    const overlay = document.createElement("div");
+    overlay.className = "update-overlay";
+    overlay.innerHTML = `
+      <div class="update-overlay-content">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;">
+          <strong style="color:var(--text-1);font-size:13px;">Update Available</strong>
+          <button class="update-banner-dismiss" title="Close">&times;</button>
+        </div>
+        <div style="font-size:11px;color:var(--text-3);margin-bottom:8px;">
+          ${data.current_commit} &rarr; ${data.remote_commit} &mdash; ${data.commits_behind} commit${data.commits_behind > 1 ? "s" : ""} behind
+        </div>
+        ${data.dirty ? '<div style="color:var(--amber);font-size:11px;margin-bottom:8px;">&#9888; Local changes detected \u2014 update will be blocked until resolved.</div>' : ""}
+        <div style="font-size:11px;color:var(--text-4);margin-bottom:4px;">Changelog:</div>
+        <div style="max-height:200px;overflow-y:auto;font-family:var(--mono);font-size:10px;color:var(--text-3);background:var(--bg-inset);border-radius:var(--radius);padding:8px;">
+          ${(data.changelog || []).map(l => `<div style="padding:1px 0;">${_escapeHtml(l)}</div>`).join("") || "<em>No changelog available</em>"}
+        </div>
+        <div style="display:flex;gap:8px;margin-top:12px;justify-content:flex-end;">
+          <button class="update-banner-btn update-close-btn">Close</button>
+          <button class="update-banner-btn update-confirm-btn" ${data.dirty ? "disabled style=\"opacity:0.5;cursor:not-allowed;\"" : ""}>Update Now</button>
+        </div>
+      </div>
+    `;
+
+    overlay.querySelector(".update-banner-dismiss").onclick = () => overlay.remove();
+    overlay.querySelector(".update-close-btn").onclick = () => overlay.remove();
+    overlay.querySelector(".update-confirm-btn").onclick = () => { overlay.remove(); this._applyUpdate(); };
+    overlay.addEventListener("click", (e) => { if (e.target === overlay) overlay.remove(); });
+
+    document.body.appendChild(overlay);
+  },
+
+  async _applyUpdate() {
+    showToast("Updating...", "info");
+    try {
+      const res = await API.applyUpdate();
+      if (!res.ok) {
+        showToast(res.error || "Update failed", "error");
+        return;
+      }
+      // Replace banner with restart notice
+      this.hide();
+      const banner = document.createElement("div");
+      banner.className = "update-banner update-restart-banner";
+      banner.innerHTML = `
+        <span class="update-banner-text">
+          Updated to ${res.new_commit}. Restart the server to apply backend changes. Refresh browser for frontend changes.
+        </span>
+        <button class="update-banner-dismiss" title="Dismiss">&times;</button>
+      `;
+      banner.querySelector(".update-banner-dismiss").onclick = () => banner.remove();
+      document.body.appendChild(banner);
+      this._el = banner;
+    } catch (e) {
+      showToast("Update failed: " + e.message, "error");
+    }
+  },
+
+  async check() {
+    try {
+      const data = await API.checkUpdate();
+      if (data.error && !data.offline) { showToast(data.error, "error"); return; }
+      if (data.update_available) {
+        this.show(data);
+      }
+    } catch (_) { /* silently ignore network errors */ }
+  },
+
+  async manualCheck() {
+    try {
+      const data = await API.checkUpdate();
+      if (data.error) { showToast(data.offline ? "Offline \u2014 cannot check for updates" : data.error, "error"); return; }
+      if (data.update_available) {
+        this.show(data);
+      } else {
+        showToast("Forge Studio is up to date", "success");
+      }
+    } catch (e) { showToast("Update check failed: " + e.message, "error"); }
+  },
+};
 
 
 // ═══════════════════════════════════════════
@@ -3552,6 +3691,10 @@ async function init() {
 
   // Initialize theme switcher
   ThemeSwitcher.init();
+
+  // Auto-update: check on load (after 5s delay) and every 30 minutes
+  setTimeout(() => UpdateBanner.check(), 5000);
+  setInterval(() => UpdateBanner.check(), 30 * 60 * 1000);
 
   // Colorblind mode
   {
