@@ -1,0 +1,967 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>Forge Studio</title>
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎨</text></svg>">
+<link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
+<link rel="stylesheet" href="/studio/static/app.css">
+<link rel="stylesheet" href="/studio/static/education.css">
+<link rel="stylesheet" href="/studio/static/studio-tour.css">
+<link rel="stylesheet" href="/studio/static/studio-docs.css">
+</head>
+<body>
+
+<!-- ═══════════════════════════════════════════
+     TITLE BAR
+     ═══════════════════════════════════════════ -->
+
+<div class="titlebar">
+  <div class="brand"><em>FORGE</em>&ensp;<span class="brand-studio">STUDIO</span></div>
+  <div class="tab-bar" id="appTabs">
+    <button class="active" data-app="studio">Canvas</button>
+  </div>
+</div>
+
+
+<!-- ═══════════════════════════════════════════
+     MAIN CONTENT
+     ═══════════════════════════════════════════ -->
+
+<div class="main">
+
+  <!-- =================== STUDIO PAGE =================== -->
+  <div class="app-page active" id="app-studio">
+
+    <!-- Toolstrip (left) -->
+    <div class="toolstrip" id="toolstrip">
+      <button class="tool-btn active" title="Brush (B)" data-tool="brush"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/></svg></button>
+      <button class="tool-btn" title="Eraser (E)" data-tool="eraser"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M20 20H7L3 16l9-9 8 8-4 4z"/><path d="M6.5 13.5l5-5"/></svg></button>
+      <button class="tool-btn" title="Eyedropper (I)" data-tool="eyedropper"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 21v-3l9-9 3 3-9 9H3z"/><circle cx="19" cy="5" r="3"/></svg></button>
+      <div class="tool-sep"></div>
+      <button class="tool-btn" title="Fill (G — press again for Gradient)" data-tool="fill"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 7 6 2"/><path d="M18.992 12H2.041"/><path d="M21.145 18.38A3.34 3.34 0 0 1 20 16.5a3.3 3.3 0 0 1-1.145 1.88c-.575.46-.855 1.02-.855 1.595A2 2 0 0 0 20 22a2 2 0 0 0 2-2.025c0-.58-.285-1.13-.855-1.595"/><path d="m8.5 4.5 2.148-2.148a1.205 1.205 0 0 1 1.704 0l7.296 7.296a1.205 1.205 0 0 1 0 1.704l-7.592 7.592a3.615 3.615 0 0 1-5.112 0l-3.888-3.888a3.615 3.615 0 0 1 0-5.112L5.67 7.33"/></svg></button>
+      <button class="tool-btn" title="Gradient (G — press again for Fill)" data-tool="gradient"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="21" x2="21" y2="3" opacity="0.4"/></svg></button>
+      <button class="tool-btn" title="Shape (U)" data-tool="shape"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg></button>
+      <button class="tool-btn" title="Text (T)" data-tool="text"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M4 7V4h16v3"/><path d="M12 4v16"/><path d="M8 20h8"/></svg></button>
+      <div class="tool-sep"></div>
+      <button class="tool-btn" title="Smudge (S)" data-tool="smudge"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M7 21c-2 0-3-1-3-3s3-6 6-9c3-3 6-5 8-5s3 1 3 3-3 6-6 9-6 5-8 5z"/></svg></button>
+      <button class="tool-btn" title="Blur (R)" data-tool="blur"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="9" opacity="0.4"/><circle cx="12" cy="12" r="5" opacity="0.7"/><circle cx="12" cy="12" r="2"/></svg></button>
+      <button class="tool-btn" title="Dodge/Burn (J)" data-tool="dodge"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="9"/><path d="M12 3v18"/></svg></button>
+      <button class="tool-btn" title="Clone Stamp (K)" data-tool="clone"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="10" cy="12" r="7"/><circle cx="16" cy="12" r="7" stroke-dasharray="3 2"/></svg></button>
+      <button class="tool-btn" title="Liquify (Y)" data-tool="liquify"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 3c-2 4-6 5-6 9a6 6 0 0012 0c0-4-4-5-6-9z"/></svg></button>
+      <div class="tool-sep"></div>
+      <button class="tool-btn" title="Select (M)" data-tool="select"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-dasharray="4 3"><rect x="3" y="3" width="18" height="18" rx="1"/></svg></button>
+      <button class="tool-btn" title="Ellipse Select (O)" data-tool="ellipse"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-dasharray="4 3"><ellipse cx="12" cy="12" rx="9" ry="7"/></svg></button>
+      <button class="tool-btn" title="Lasso (L)" data-tool="lasso"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 12c0-5 4-9 9-9s9 4 9 9-2 6-5 7"/><circle cx="16" cy="20" r="2.5"/></svg></button>
+      <button class="tool-btn" title="Magic Wand (W)" data-tool="wand"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 21L15 9"/><path d="M15 3l1 3 3 1-3 1-1 3-1-3-3-1 3-1z"/></svg></button>
+      <button class="tool-btn" title="Crop (C)" data-tool="crop"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M6 2v4"/><path d="M6 6h12v12"/><path d="M18 22v-4"/><path d="M18 18H6V6"/></svg></button>
+      <button class="tool-btn" title="Transform (V)" data-tool="transform"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="5" y="5" width="14" height="14"/><circle cx="5" cy="5" r="2" fill="currentColor"/><circle cx="19" cy="5" r="2" fill="currentColor"/><circle cx="5" cy="19" r="2" fill="currentColor"/><circle cx="19" cy="19" r="2" fill="currentColor"/></svg></button>
+      <div class="tool-spacer"></div>
+      <div class="color-swatch" id="colorSwatch">
+        <div class="color-fg" id="colorFg" style="background:#000000;"></div>
+        <div class="color-bg" id="colorBg" style="background:#ffffff;"></div>
+      </div>
+    </div>
+
+    <!-- HSV Color Picker Popover -->
+    <div id="hsvPopup" style="display:none; position:fixed; z-index:100; background:var(--bg-surface); border:1px solid var(--border); border-radius:10px; padding:12px; box-shadow:0 8px 32px rgba(0,0,0,0.5);">
+      <div style="display:flex;gap:10px;">
+        <div>
+          <canvas id="hsvWheel" width="160" height="160" style="cursor:crosshair;border-radius:4px;"></canvas>
+          <div style="display:flex;gap:6px;margin-top:8px;align-items:center;">
+            <div id="fgBgSwap" style="position:relative;width:32px;height:32px;cursor:pointer;" title="Swap FG/BG (X)">
+              <div id="bgSwatchInner" style="position:absolute;right:0;bottom:0;width:20px;height:20px;border:2px solid #555;border-radius:3px;background:#ffffff;"></div>
+              <div id="fgSwatchInner" style="position:absolute;left:0;top:0;width:20px;height:20px;border:2px solid #999;border-radius:3px;background:#000000;"></div>
+            </div>
+            <input id="hexInput" type="text" maxlength="7" value="#000000" style="width:70px;background:var(--bg-raised);color:var(--text-1);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-size:11px;font-family:var(--mono);">
+          </div>
+        </div>
+        <div>
+          <canvas id="hsvSV" width="128" height="128" style="cursor:crosshair;border-radius:4px;"></canvas>
+          <div id="colorHistory" style="display:flex;gap:2px;margin-top:8px;flex-wrap:wrap;"></div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Canvas workspace -->
+    <div class="canvas-area" id="canvasArea">
+      <div class="canvas-grid"></div>
+
+      <!-- Floating controls -->
+
+      <div id="ctxBarWrap" class="ctx-bar-wrap">
+      <div class="context-bar" id="contextBar">
+        <span class="ctx-drag-handle" id="ctxDragHandle" title="Drag to reposition (double-click to reset)">&#x2801;&#x2801;</span>
+        <span class="ctx-scrub ctx-item" data-ctx="size" data-key="size" data-min="1" data-max="500" data-step="1" data-suffix="" data-scale="1">Size: 15</span>
+        <span class="ctx-scrub ctx-item" data-ctx="opacity" data-key="opacity" data-min="0" data-max="100" data-step="1" data-suffix="%" data-scale="100">Opacity: 100%</span>
+        <span class="ctx-scrub ctx-item" data-ctx="hardness" data-key="hardness" data-min="0" data-max="100" data-step="1" data-suffix="%" data-scale="100">Hardness: 100%</span>
+        <span class="ctx-scrub ctx-item" data-ctx="smoothing" data-key="smoothing" data-min="0" data-max="20" data-step="1" data-suffix="" data-scale="1">Smoothing: 4</span>
+        <!-- Symmetry toggle -->
+        <span class="ctx-item" data-ctx="sym-opts" style="display:flex;gap:2px;margin-left:4px;border-left:1px solid var(--border);padding-left:6px;align-items:center;">
+          <button class="ctx-mode-btn active" data-sym="none" title="No symmetry">&#x2205;</button>
+          <button class="ctx-mode-btn" data-sym="h" title="Horizontal symmetry">&#x2194;</button>
+          <button class="ctx-mode-btn" data-sym="v" title="Vertical symmetry">&#x2195;</button>
+          <button class="ctx-mode-btn" data-sym="both" title="Both axes">&#x271A;</button>
+          <button class="ctx-mode-btn" data-sym="radial" title="Radial symmetry">&#x2742;</button>
+          <span class="ctx-scrub" id="symAxesScrub" data-key="symmetryAxes" data-label="Axes" data-min="2" data-max="16" data-step="1" data-suffix="" data-scale="1" style="display:none;margin-left:2px;">Axes: 4</span>
+        </span>
+        <!-- Mask mode toggle (Q) — shown when brush is active -->
+        <span class="ctx-item" data-ctx="mask-toggle" style="margin-left:4px;border-left:1px solid var(--border);padding-left:6px;">
+          <button class="ctx-mode-btn" id="maskModeBtn" title="Toggle mask painting (Q)">Mask</button>
+        </span>
+        <!-- Pen pressure toggle + Size/Opacity sub-options -->
+        <span class="ctx-item" data-ctx="pressure-opts" style="display:flex;gap:2px;margin-left:4px;border-left:1px solid var(--border);padding-left:6px;">
+          <button class="ctx-mode-btn" id="pressureBtn" title="Pen pressure">Pen</button>
+          <button class="ctx-mode-btn pressure-sub" id="pressureSizeBtn" title="Pressure affects size" style="display:none;">S</button>
+          <button class="ctx-mode-btn pressure-sub" id="pressureOpacityBtn" title="Pressure affects opacity" style="display:none;">O</button>
+        </span>
+        <span class="ctx-scrub ctx-item" data-ctx="strength" data-key="strength" data-min="1" data-max="100" data-step="1" data-suffix="%" data-scale="100">Strength: 50%</span>
+        <!-- Shape sub-options (shown when shape tool active) -->
+        <span class="ctx-item" data-ctx="shape-opts" style="display:flex;gap:2px;">
+          <button class="ctx-mode-btn active" data-smode="rect" title="Rectangle">&#x25ad;</button>
+          <button class="ctx-mode-btn" data-smode="ellipse" title="Ellipse">&#x25cb;</button>
+          <button class="ctx-mode-btn" data-smode="line" title="Line">&#x2571;</button>
+          <button class="ctx-mode-btn" data-sfill title="Fill shape">&#x25a0;</button>
+        </span>
+        <!-- Gradient sub-options -->
+        <span class="ctx-item" data-ctx="grad-opts" style="display:flex;gap:2px;">
+          <button class="ctx-mode-btn active" data-gmode="linear" title="Linear">&#x2194;</button>
+          <button class="ctx-mode-btn" data-gmode="radial" title="Radial">&#x25ce;</button>
+        </span>
+        <!-- Dodge/Burn mode -->
+        <span class="ctx-item" data-ctx="db-opts" style="display:flex;gap:2px;">
+          <button class="ctx-mode-btn active" data-dbmode="dodge" title="Dodge (lighten)">&#x2600;</button>
+          <button class="ctx-mode-btn" data-dbmode="burn" title="Burn (darken)">&#x25cf;</button>
+        </span>
+        <!-- Liquify sub-options -->
+        <span class="ctx-item" data-ctx="liquify-opts" style="display:flex;gap:2px;align-items:center;border-left:1px solid var(--border);padding-left:6px;">
+          <button class="ctx-mode-btn active" data-liqmode="move" title="Move (push)">&#x2b95;</button>
+          <button class="ctx-mode-btn" data-liqmode="pinch" title="Pinch (shrink)">&#x29bb;</button>
+          <button class="ctx-mode-btn" data-liqmode="bloat" title="Bloat (expand)">&#x29be;</button>
+          <button class="ctx-mode-btn" data-liqmode="twirl_cw" title="Twirl clockwise">&#x21bb;</button>
+          <button class="ctx-mode-btn" data-liqmode="twirl_ccw" title="Twirl counter-clockwise">&#x21ba;</button>
+          <span class="ctx-scrub" data-key="spacing" data-min="5" data-max="100" data-step="5" data-suffix="%" style="margin-left:4px;">Spacing: 20%</span>
+        </span>
+        <!-- Transform sub-options (shown when transform tool active) -->
+        <span class="ctx-item" data-ctx="transform-opts" style="display:flex;gap:4px;align-items:center;border-left:1px solid var(--border);padding-left:6px;">
+          <label class="tf-field"><span class="tf-lbl">X</span><input type="number" id="tfX" class="tf-input" step="1"></label>
+          <label class="tf-field"><span class="tf-lbl">Y</span><input type="number" id="tfY" class="tf-input" step="1"></label>
+          <label class="tf-field"><span class="tf-lbl">W</span><input type="number" id="tfW" class="tf-input" step="1" min="4"></label>
+          <label class="tf-field"><span class="tf-lbl">H</span><input type="number" id="tfH" class="tf-input" step="1" min="4"></label>
+          <label class="tf-field"><span class="tf-lbl">R°</span><input type="number" id="tfR" class="tf-input tf-input-r" step="0.5"></label>
+          <span style="border-left:1px solid var(--border);padding-left:4px;margin-left:2px;">
+            <button class="ctx-mode-btn" id="tfSkewBtn" title="Skew mode — edge handles shear (K)">Skew</button>
+            <button class="ctx-mode-btn" id="tfPerspBtn" title="Perspective mode — drag corners freely (P)">Persp</button>
+            <button class="ctx-mode-btn" id="tfWarpBtn" title="Warp mode — MLS deformation (W)">Warp</button>
+          </span>
+          <span id="tfWarpOpts" style="display:none;border-left:1px solid var(--border);padding-left:4px;margin-left:2px;gap:2px;align-items:center;">
+            <button class="ctx-mode-btn active" data-wdensity="3" title="3×3 grid">3</button>
+            <button class="ctx-mode-btn" data-wdensity="4" title="4×4 grid">4</button>
+            <button class="ctx-mode-btn" data-wdensity="5" title="5×5 grid">5</button>
+            <span style="border-left:1px solid var(--border);padding-left:3px;margin-left:2px;">
+              <button class="ctx-mode-btn" data-wmode="affine" title="Affine — allows shear">Aff</button>
+              <button class="ctx-mode-btn" data-wmode="similitude" title="Similitude — preserves angles">Sim</button>
+              <button class="ctx-mode-btn active" data-wmode="rigid" title="Rigid — preserves shape">Rig</button>
+            </span>
+          </span>
+        </span>
+        <!-- Eyedropper options -->
+        <span class="ctx-item" data-ctx="eye-opts" style="display:flex;gap:4px;align-items:center;border-left:1px solid var(--border);padding-left:6px;">
+          <span class="ctx-scrub" data-key="sampleRadius" data-label="Radius" data-min="1" data-max="11" data-step="2" data-suffix="px" data-scale="1">Radius: 1px</span>
+          <button class="ctx-mode-btn" id="sampleMergedBtn" title="Sample from all visible layers">Merged</button>
+        </span>
+        <!-- Crop options -->
+        <span class="ctx-item" data-ctx="crop-opts" style="display:flex;gap:2px;align-items:center;border-left:1px solid var(--border);padding-left:6px;">
+          <button class="ctx-mode-btn active" data-cropratio="0" title="Free crop">Free</button>
+          <button class="ctx-mode-btn" data-cropratio="1:1" title="Square">1:1</button>
+          <button class="ctx-mode-btn" data-cropratio="5:4" title="5:4 — click again to swap">5:4</button>
+          <button class="ctx-mode-btn" data-cropratio="4:3" title="4:3 — click again to swap">4:3</button>
+          <button class="ctx-mode-btn" data-cropratio="3:2" title="3:2 — click again to swap">3:2</button>
+          <button class="ctx-mode-btn" data-cropratio="16:9" title="16:9 — click again to swap">16:9</button>
+          <button class="ctx-mode-btn" data-cropratio="2:1" title="2:1 — click again to swap">2:1</button>
+          <button class="ctx-mode-btn" data-cropratio="2.39:1" title="2.39:1 — click again to swap">2.39:1</button>
+          <span style="font-size:10px;color:var(--text-4);margin-left:4px;">Shift=lock</span>
+        </span>
+        <!-- Lasso sub-options (shown when any lasso tool active) -->
+        <span class="ctx-item" data-ctx="lasso-opts" style="display:flex;gap:2px;align-items:center;border-left:1px solid var(--border);padding-left:6px;">
+          <button class="ctx-mode-btn active" data-lassotype="lasso" title="Freehand lasso (L)">Free</button>
+          <button class="ctx-mode-btn" data-lassotype="polylasso" title="Polygonal lasso (L)">Poly</button>
+          <button class="ctx-mode-btn" data-lassotype="maglasso" title="Magnetic lasso (L)">Mag</button>
+        </span>
+      </div>
+
+      <!-- Inpaint settings sub-bar — visible when mask mode (Q) is active -->
+      <div class="context-bar inpaint-bar" id="inpaintBar" style="display:none;">
+        <span class="ctx-inline">
+          <label>Area</label>
+          <select class="ctx-select" id="paramInpaintArea">
+            <option value="1">Only Masked</option>
+            <option value="0" selected>Whole Picture</option>
+          </select>
+        </span>
+        <span class="ctx-scrub inpaint-scrub" data-key="blur" data-min="0" data-max="64" data-step="1">Blur: 4</span>
+        <input type="hidden" id="paramMaskBlur" value="4">
+        <input type="hidden" id="paramBrushSize" value="5">
+        <span class="ctx-inline">
+          <label>Fill</label>
+          <select class="ctx-select" id="paramFill">
+            <option value="1" selected>Original</option>
+            <option value="0">Fill</option>
+            <option value="2">Latent Noise</option>
+            <option value="3">Latent Nothing</option>
+          </select>
+        </span>
+        <span class="ctx-scrub inpaint-scrub" data-key="padding" data-min="0" data-max="512" data-step="8">Padding: 64</span>
+        <input type="hidden" id="paramPadding" value="64">
+        <span style="flex:1;"></span>
+        <button class="ctx-mode-btn" id="clearMaskBtn" title="Clear mask" style="color:var(--red);">&#x1f5d1; Clear</button>
+      </div>
+      </div>
+
+      <div class="brush-presets" id="brushPresets">
+        <button class="brush-preset-btn active" title="Round">&#x25cf;</button>
+        <button class="brush-preset-btn" title="Flat">&#x25ac;</button>
+        <button class="brush-preset-btn" title="Scatter">&#x2726;</button>
+        <button class="brush-preset-btn" title="Marker">&#x25ae;</button>
+        <button class="brush-preset-btn" title="Custom">&#x2702;</button>
+        <button class="brush-preset-btn" id="dynamicsToggle" title="Brush Dynamics" style="margin-left:4px;border-left:1px solid var(--border);padding-left:6px;">&#x2699;</button>
+      </div>
+
+      <!-- Brush dynamics flyout -->
+      <div id="dynamicsPanel" style="display:none; position:absolute; bottom:80px; left:50%; transform:translateX(-50%); z-index:10; background:var(--bg-surface); border:1px solid var(--border); border-radius:10px; padding:10px 14px; min-width:280px; font-size:10px; color:var(--text-3);">
+        <div style="font-weight:600;color:var(--text-1);margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;">
+          Brush Dynamics
+          <label style="font-weight:400;display:flex;align-items:center;gap:3px;cursor:pointer;">
+            <input type="checkbox" id="dynFollowStroke" checked style="accent-color:var(--accent);"> Follow stroke
+          </label>
+        </div>
+        <div style="display:grid;grid-template-columns:80px 1fr 32px;gap:3px 8px;align-items:center;">
+          <span>Spacing</span><input type="range" class="ctx-slider" id="dynSpacing" min="2" max="50" value="8"><span id="dynSpacingVal">0.08</span>
+          <span>Size Jitter</span><input type="range" class="ctx-slider" id="dynSizeJitter" min="0" max="100" value="0"><span id="dynSizeJitterVal">0%</span>
+          <span>Opacity Jitter</span><input type="range" class="ctx-slider" id="dynOpacityJitter" min="0" max="100" value="0"><span id="dynOpacityJitterVal">0%</span>
+          <span>Scatter</span><input type="range" class="ctx-slider" id="dynScatter" min="0" max="100" value="0"><span id="dynScatterVal">0%</span>
+          <span>Rotation Jitter</span><input type="range" class="ctx-slider" id="dynRotJitter" min="0" max="100" value="0"><span id="dynRotJitterVal">0%</span>
+        </div>
+        <div style="border-top:1px solid var(--border-subtle);margin-top:8px;padding-top:6px;">
+          <div style="font-weight:600;color:var(--text-1);margin-bottom:6px;">Brush Shape</div>
+          <div style="display:grid;grid-template-columns:80px 1fr 32px;gap:3px 8px;align-items:center;">
+            <span>Ratio</span><input type="range" class="ctx-slider" id="dynRatio" min="10" max="100" step="5" value="100"><span id="dynRatioVal">100%</span>
+            <span>Density</span><input type="range" class="ctx-slider" id="dynDensity" min="5" max="100" step="5" value="100"><span id="dynDensityVal">100%</span>
+            <span>Spikes</span><input type="range" class="ctx-slider" id="dynSpikes" min="2" max="12" step="1" value="2"><span id="dynSpikesVal">2</span>
+          </div>
+          <div style="display:flex;gap:4px;margin-top:6px;">
+            <span style="width:80px;">Falloff</span>
+            <button class="ctx-mode-btn active" data-falloff="default" title="Standard smoothstep">Std</button>
+            <button class="ctx-mode-btn" data-falloff="gaussian" title="Gaussian bell curve">Gauss</button>
+          </div>
+        </div>
+      </div>
+
+      <!-- Viewport container -->
+      <div id="studio-viewport" style="position:absolute; inset:0; overflow:hidden; z-index:2;">
+        <!-- Canvas: NO CSS sizing. Both pixel buffer and display size set by _syncCanvasToViewport -->
+        <canvas id="studio-canvas"></canvas>
+      </div>
+      <!-- Live generation preview thumbnail (bottom-right corner of viewport) -->
+      <div id="canvasPreviewWrap" style="display:none; position:absolute; bottom:40px; right:12px; z-index:10; border-radius:6px; overflow:hidden; border:1px solid var(--border); background:var(--bg-surface); box-shadow:0 4px 16px rgba(0,0,0,0.4);">
+        <img id="canvasPreview" style="display:block; width:480px; height:auto; object-fit:contain;">
+        <div style="position:absolute; top:4px; left:6px; font-size:9px; color:var(--text-4); font-family:var(--mono); background:rgba(0,0,0,0.5); padding:1px 5px; border-radius:3px;">Preview</div>
+      </div>
+
+      <div class="canvas-status" id="canvasStatus">768 &times; 768 &ensp; 100%</div>
+      <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
+    </div>
+
+    <!-- Panel collapse toggle -->
+    <button class="panel-collapse-btn" id="panelCollapseBtn" title="Toggle side panel (\\)">
+      <svg width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"><polyline id="collapseChevron" points="3,1 7,5 3,9"/></svg>
+    </button>
+
+    <!-- Right panel -->
+    <div class="panel-right" id="panelRight">
+      <div class="panel-tabs" id="panelTabs">
+        <button class="panel-tab active" data-panel="generate">Generate</button>
+        <button class="panel-tab" data-panel="extensions">Extensions</button>
+        <button class="panel-tab" data-panel="settings">Settings</button>
+      </div>
+
+      <div class="panel-content">
+
+        <!-- ===== GENERATE TAB ===== -->
+        <div class="panel-page active" id="page-generate">
+
+          <!-- Prompt -->
+          <div class="prompt-section">
+            <div class="prompt-box">
+              <textarea class="prompt-text" id="paramPrompt" rows="3" placeholder="Describe what to generate..."></textarea>
+              <div class="prompt-token-bar" id="tokenBar">
+                <span class="token-count" id="tokenCount"></span>
+              </div>
+            </div>
+            <div class="prompt-box">
+              <textarea class="prompt-text prompt-neg" id="paramNeg" rows="2" placeholder="Negative prompt..."></textarea>
+            </div>
+            <button class="gen-btn" id="genBtn"><span class="gen-shine"></span>Generate</button>
+            <div class="gen-actions">
+              <button id="interruptBtn">Interrupt</button>
+              <button id="skipBtn">Skip</button>
+            </div>
+          </div>
+
+          <!-- Output gallery -->
+          <div class="output-section" id="outputSection" style="display:none;">
+            <div class="output-grid" id="outputGrid"></div>
+            <div class="output-info" id="outputInfo"></div>
+            <div class="output-actions">
+              <button id="outputToCanvas">Result → Canvas</button>
+              <button id="outputSave">Save ▾</button>
+            </div>
+            <div class="output-save-formats" id="outputSaveFormats" style="display:none;">
+              <button data-fmt="png">Save as PNG</button>
+              <button data-fmt="jpeg">Save as JPEG</button>
+              <button data-fmt="webp">Save as WebP</button>
+            </div>
+          </div>
+
+          <!-- Regional Prompting (between gallery and params for quick access) -->
+          <div id="regionSection" style="display:none;">
+            <div class="section-header">
+              <span class="section-label">Regions</span>
+              <div class="section-actions">
+                <button id="regionAdd" title="Add region">+</button>
+                <button id="regionClearAll" title="Remove all regions" style="font-size:11px;">&#x1f5d1;</button>
+              </div>
+            </div>
+            <div id="regionList"></div>
+          </div>
+
+          <!-- Soft Inpainting — visible when mask mode (Q) is active -->
+          <div id="softInpaintSection" style="display:none;">
+            <div class="collapse-section">
+              <div class="collapse-header">
+                <div class="collapse-check" id="checkSoftInpaint"></div>
+                <span class="collapse-title">Soft Inpainting</span>
+                <svg class="collapse-arrow" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg>
+              </div>
+              <div class="collapse-body" id="panelSoftInpaint">
+                <div class="param-grid cols-2" style="margin-top:4px;">
+                  <div class="param-cell"><label>Schedule Bias</label><input class="param-val" id="paramSoftBias" value="1" step="0.1" min="0" max="8"></div>
+                  <div class="param-cell"><label>Preservation</label><input class="param-val" id="paramSoftPreserve" value="0.5" step="0.05" min="0" max="8"></div>
+                </div>
+                <div class="param-grid cols-2" style="margin-top:5px;">
+                  <div class="param-cell"><label>Contrast Boost</label><input class="param-val" id="paramSoftContrast" value="4" step="0.5" min="0" max="32"></div>
+                  <div class="param-cell"><label>Mask Influence</label><input class="param-val" id="paramSoftMaskInf" value="0" step="0.05" min="0" max="1"></div>
+                </div>
+                <div class="param-grid cols-2" style="margin-top:5px;">
+                  <div class="param-cell"><label>Diff Threshold</label><input class="param-val" id="paramSoftDiffThresh" value="0.5" step="0.05" min="0" max="8"></div>
+                  <div class="param-cell"><label>Diff Contrast</label><input class="param-val" id="paramSoftDiffContrast" value="2" step="0.25" min="0" max="16"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Model & VAE (FR-021: always visible at top) -->
+          <div class="param-section" style="padding-bottom:6px;">
+            <div class="param-grid cols-1">
+              <div class="param-cell">
+                <label>Model</label>
+                <div style="display:flex;gap:4px;">
+                  <select class="param-select" id="paramModel" style="flex:1;">
+                    <option>Loading models...</option>
+                  </select>
+                  <button class="cn-upload-btn" id="refreshModelsBtn" title="Refresh model list" style="padding:4px 6px;font-size:12px;">&#x21bb;</button>
+                </div>
+              </div>
+            </div>
+            <div class="param-grid cols-1" style="margin-top:4px;">
+              <div class="param-cell">
+                <label>VAE</label>
+                <div style="display:flex;gap:4px;">
+                  <select class="param-select" id="paramVAE" style="flex:1;">
+                    <option value="Automatic">Automatic</option>
+                  </select>
+                  <button class="cn-upload-btn" id="refreshVAEBtn" title="Refresh VAE list" style="padding:4px 6px;font-size:12px;">&#x21bb;</button>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Sampling (FR-022: collapsible, open by default) -->
+          <div class="collapse-section">
+            <div class="collapse-header">
+              <span class="collapse-title">Sampling</span>
+              <svg class="collapse-arrow open" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg>
+            </div>
+            <div class="collapse-body open" id="panelSampling">
+            <div class="param-grid cols-2">
+              <div class="param-cell">
+                <label>Sampler</label>
+                <select class="param-select" id="paramSampler">
+                  <option>DPM++ 2M SDE</option>
+                </select>
+              </div>
+              <div class="param-cell">
+                <label>Scheduler</label>
+                <select class="param-select" id="paramScheduler">
+                  <option>Karras</option>
+                </select>
+              </div>
+            </div>
+            <div class="param-grid cols-3" style="margin-top:5px;">
+              <div class="param-cell"><label>Steps</label><input class="param-val" id="paramSteps" value="30"></div>
+              <div class="param-cell"><label>CFG</label><input class="param-val" id="paramCFG" value="5.0"></div>
+              <div class="param-cell"><label>Denoise</label><input class="param-val" id="paramDenoise" value="0.81"></div>
+            </div>
+            </div>
+          </div>
+
+          <!-- Canvas (FR-022: collapsible, open by default) -->
+          <div class="collapse-section">
+            <div class="collapse-header">
+              <span class="collapse-title">Canvas</span>
+              <svg class="collapse-arrow open" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg>
+            </div>
+            <div class="collapse-body open" id="panelCanvas">
+            <div class="param-grid cols-2">
+              <div class="param-cell"><label>Width</label><input class="param-val" id="paramWidth" value="768"></div>
+              <div class="param-cell"><label>Height</label><input class="param-val" id="paramHeight" value="768"></div>
+            </div>
+            <div class="ar-row" id="arBaseButtons">
+              <button class="ar-base-btn" data-base="512">512</button>
+              <button class="ar-base-btn" data-base="640">640</button>
+              <button class="ar-base-btn active" data-base="768">768</button>
+              <button class="ar-base-btn" data-base="896">896</button>
+              <button class="ar-base-btn" data-base="1024">1024</button>
+            </div>
+            <div class="ar-row" id="arButtons">
+              <button class="ar-btn active" data-ar="1:1">1:1</button>
+              <button class="ar-btn" data-ar="5:4">5:4</button>
+              <button class="ar-btn" data-ar="4:3">4:3</button>
+              <button class="ar-btn" data-ar="3:2">3:2</button>
+              <button class="ar-btn" data-ar="16:9">16:9</button>
+              <button class="ar-btn" data-ar="2:1">2:1</button>
+              <button class="ar-btn" data-ar="2.39:1">2.39:1</button>
+            </div>
+            <div class="ar-row ar-randomize-row" id="arRandomizeRow">
+              <span class="ar-rand-label">Randomize:</span>
+              <label class="ar-rand-check"><input type="checkbox" id="arRandBase"> Base</label>
+              <label class="ar-rand-check"><input type="checkbox" id="arRandRatio"> Ratio</label>
+              <label class="ar-rand-check"><input type="checkbox" id="arRandOrientation"> Orientation</label>
+            </div>
+            <input type="hidden" id="arBasePoolData" value="[512,640,768,896,1024]">
+            <input type="hidden" id="arRatioPoolData" value='["1:1","5:4","4:3","3:2","16:9","2:1","2.39:1"]'>
+            <div class="ar-row">
+              <button class="ar-btn" id="loadImageBtn" title="Load image to canvas">&#x1f4c2; Load Image</button>
+              <input type="file" id="loadImageInput" accept="image/*" style="display:none;">
+              <span style="flex:1;"></span>
+              <button class="ar-btn ar-clear" id="clearCanvas" title="Clear canvas">Reset Canvas</button>
+            </div>
+            </div>
+          </div>
+
+          <!-- Seed & Batch (FR-022: collapsible, open by default) -->
+          <div class="collapse-section">
+            <div class="collapse-header">
+              <span class="collapse-title">Seed &amp; Batch</span>
+              <svg class="collapse-arrow open" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg>
+            </div>
+            <div class="collapse-body open" id="panelSeedBatch">
+            <div class="seed-row">
+              <div class="param-cell"><label>Seed</label><input class="param-val" id="paramSeed" value="-1" style="text-align:left;font-family:var(--mono);"></div>
+              <button class="seed-btn" id="seedRandom" title="Random">&#x1f3b2;</button>
+              <button class="seed-btn" id="seedRecycle" title="Recycle last">&#x1f501;</button>
+              <label class="extra-seed-toggle" title="Show variation seed options" style="margin:0;">
+                <input type="checkbox" id="checkExtra"> Extra
+              </label>
+            </div>
+            <div id="extraSeedSection" class="extra-seed-section" style="display:none;">
+              <div class="seed-row" style="margin-top:4px;">
+                <div class="param-cell"><label>Variation seed</label><input class="param-val" id="paramVarSeed" value="-1" style="text-align:left;font-family:var(--mono);"></div>
+                <button class="seed-btn" id="varSeedRandom" title="Random">&#x1f3b2;</button>
+                <button class="seed-btn" id="varSeedRecycle" title="Recycle last">&#x1f501;</button>
+              </div>
+              <div class="param-grid cols-2" style="margin-top:4px;">
+                <div class="param-cell">
+                  <label>Variation strength</label>
+                  <input type="range" class="param-range" id="paramVarStrength" min="0" max="1" step="0.01" value="0">
+                </div>
+                <div class="param-cell">
+                  <input class="param-val" id="paramVarStrengthVal" value="0" style="width:40px;">
+                </div>
+              </div>
+              <div class="param-grid cols-2" style="margin-top:4px;">
+                <div class="param-cell"><label>Resize seed from width</label><input class="param-val" id="paramResizeSeedW" value="0"></div>
+                <div class="param-cell"><label>Resize seed from height</label><input class="param-val" id="paramResizeSeedH" value="0"></div>
+              </div>
+            </div>
+            <div class="param-grid cols-2" style="margin-top:5px;">
+              <div class="param-cell"><label>Batch</label><input class="param-val" id="paramBatch" value="1"></div>
+              <div class="param-cell"><label>Batch Size</label><input class="param-val" id="paramBatchSize" value="1"></div>
+            </div>
+            </div>
+          </div>
+
+          <!-- Hires Fix -->
+          <div class="collapse-section">
+            <div class="collapse-header">
+              <div class="collapse-check" id="checkHires"></div>
+              <span class="collapse-title">Hires Fix</span>
+              <svg class="collapse-arrow" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg>
+            </div>
+            <div class="collapse-body" id="panelHires">
+              <div class="param-grid cols-2" style="margin-top:4px;">
+                <div class="param-cell"><label>Upscaler</label><select class="param-select" id="paramHrUpscaler"><option>Latent</option><option>R-ESRGAN 4x+</option></select></div>
+                <div class="param-cell"><label>Scale</label><input class="param-val" id="paramHrScale" value="2.0"></div>
+              </div>
+              <div class="param-grid cols-2" style="margin-top:5px;">
+                <div class="param-cell"><label>Steps</label><input class="param-val" id="paramHrSteps" value="0"></div>
+                <div class="param-cell"><label>Denoise</label><input class="param-val" id="paramHrDenoise" value="0.30"></div>
+              </div>
+              <div class="param-grid cols-2" style="margin-top:5px;">
+                <div class="param-cell"><label>CFG</label><input class="param-val" id="paramHrCFG" value="0"></div>
+                <div class="param-cell"><label>Checkpoint</label><select class="param-select" id="paramHrCheckpoint"><option>Same</option></select></div>
+              </div>
+            </div>
+          </div>
+
+          <!-- ADetailer -->
+          <div class="collapse-section">
+            <div class="collapse-header">
+              <div class="collapse-check" id="checkAD"></div>
+              <span class="collapse-title">ADetailer</span>
+              <svg class="collapse-arrow" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg>
+            </div>
+            <div class="collapse-body" id="panelAD">
+              <div style="margin-top:4px;margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid var(--border-subtle);">
+                <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+                  <div class="collapse-check ad-slot-check checked" id="checkAD1"></div>
+                  <span style="font-size:10px;color:var(--text-3);font-weight:500;">Slot 1 — Face</span>
+                </div>
+                <div class="param-grid cols-2">
+                  <div class="param-cell"><label>Model</label><select class="param-select" id="paramAD1Model"><option>face_yolov8n.pt</option></select></div>
+                  <div class="param-cell"><label>Confidence</label><input class="param-val" id="paramAD1Conf" value="0.3"></div>
+                </div>
+                <div class="param-grid cols-2" style="margin-top:4px;">
+                  <div class="param-cell"><label>Denoise</label><input class="param-val" id="paramAD1Denoise" value="0.4"></div>
+                  <div class="param-cell"><label>Mask Blur</label><input class="param-val" id="paramAD1Blur" value="4"></div>
+                </div>
+                <div class="param-grid cols-1" style="margin-top:4px;">
+                  <div class="param-cell"><label>Prompt (blank = main)</label><input class="param-val" id="paramAD1Prompt" value="" style="text-align:left;font-family:var(--font);"></div>
+                </div>
+              </div>
+              <!-- Slot 2 -->
+              <div style="margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid var(--border-subtle);">
+                <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+                  <div class="collapse-check ad-slot-check" id="checkAD2"></div>
+                  <span style="font-size:10px;color:var(--text-3);font-weight:500;">Slot 2</span>
+                </div>
+                <div class="param-grid cols-2">
+                  <div class="param-cell"><label>Model</label><select class="param-select" id="paramAD2Model"><option>None</option></select></div>
+                  <div class="param-cell"><label>Confidence</label><input class="param-val" id="paramAD2Conf" value="0.3"></div>
+                </div>
+                <div class="param-grid cols-2" style="margin-top:4px;">
+                  <div class="param-cell"><label>Denoise</label><input class="param-val" id="paramAD2Denoise" value="0.4"></div>
+                  <div class="param-cell"><label>Mask Blur</label><input class="param-val" id="paramAD2Blur" value="4"></div>
+                </div>
+                <div class="param-grid cols-1" style="margin-top:4px;">
+                  <div class="param-cell"><label>Prompt (blank = main)</label><input class="param-val" id="paramAD2Prompt" value="" style="text-align:left;font-family:var(--font);"></div>
+                </div>
+              </div>
+              <!-- Slot 3 -->
+              <div>
+                <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+                  <div class="collapse-check ad-slot-check" id="checkAD3"></div>
+                  <span style="font-size:10px;color:var(--text-3);font-weight:500;">Slot 3</span>
+                </div>
+                <div class="param-grid cols-2">
+                  <div class="param-cell"><label>Model</label><select class="param-select" id="paramAD3Model"><option>None</option></select></div>
+                  <div class="param-cell"><label>Confidence</label><input class="param-val" id="paramAD3Conf" value="0.3"></div>
+                </div>
+                <div class="param-grid cols-2" style="margin-top:4px;">
+                  <div class="param-cell"><label>Denoise</label><input class="param-val" id="paramAD3Denoise" value="0.4"></div>
+                  <div class="param-cell"><label>Mask Blur</label><input class="param-val" id="paramAD3Blur" value="4"></div>
+                </div>
+                <div class="param-grid cols-1" style="margin-top:4px;">
+                  <div class="param-cell"><label>Prompt (blank = main)</label><input class="param-val" id="paramAD3Prompt" value="" style="text-align:left;font-family:var(--font);"></div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Upscale (standalone, post-generation) -->
+          <div class="collapse-section">
+            <div class="collapse-header" id="upscaleHeader">
+              <svg class="collapse-arrow" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg>
+              <span class="collapse-title">Upscale</span>
+            </div>
+            <div class="collapse-body" id="panelUpscale">
+              <div class="param-grid cols-2" style="margin-top:4px;">
+                <div class="param-cell"><label>Upscaler</label><select class="param-select" id="paramUpscaleModel"><option>R-ESRGAN 4x+</option></select></div>
+                <div class="param-cell"><label>Scale</label><input class="param-val" id="paramUpscaleScale" value="2.0"></div>
+              </div>
+              <div style="margin-top:6px;display:flex;align-items:center;gap:6px;">
+                <div class="collapse-check" id="checkUpscaleAD"></div>
+                <span style="font-size:10px;color:var(--text-3);">Re-run ADetailer after upscale</span>
+              </div>
+              <button class="gen-btn" id="upscaleBtn" style="margin-top:8px;background:var(--bg-raised);border:1px solid var(--border);color:var(--text-2);font-size:11px;height:30px;">UPSCALE CANVAS</button>
+              <div class="param-hint" style="margin-top:4px;font-size:9px;color:var(--text-4);">Standalone upscaler — no diffusion model needed. ADetailer re-run reloads the model for face correction only.</div>
+            </div>
+          </div>
+
+          <!-- ControlNet -->
+          <div class="collapse-section">
+            <div class="collapse-header">
+              <div class="collapse-check" id="checkCN"></div>
+              <span class="collapse-title">ControlNet</span>
+              <svg class="collapse-arrow" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg>
+            </div>
+            <div class="collapse-body" id="panelCN">
+              <div style="margin-top:4px;margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid var(--border-subtle);">
+                <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+                  <div class="collapse-check cn-unit-check" id="checkCN1"></div>
+                  <span style="font-size:10px;color:var(--text-3);font-weight:500;">Unit 1</span>
+                </div>
+                <div class="param-grid cols-2">
+                  <div class="param-cell"><label>Preprocessor</label><select class="param-select" id="paramCN1Module"><option>None</option></select></div>
+                  <div class="param-cell"><label>Model</label><select class="param-select" id="paramCN1Model"><option>None</option></select></div>
+                </div>
+                <div class="param-grid cols-2" style="margin-top:4px;">
+                  <div class="param-cell"><label>Source</label>
+                    <select class="param-select" id="paramCN1Source">
+                      <option value="Canvas">Canvas</option>
+                      <option value="Active Layer">Active Layer</option>
+                      <option value="Upload">Upload</option>
+                    </select>
+                  </div>
+                  <div class="param-cell"><label>Weight</label><input class="param-val" id="paramCN1Weight" value="1.0"></div>
+                </div>
+                <div class="cn-upload-row" id="cnUpload1" style="display:none;margin-top:4px;">
+                  <button class="cn-upload-btn" id="cnUploadBtn1">Choose Image...</button>
+                  <input type="file" id="cnUploadInput1" accept="image/*" style="display:none;">
+                  <img class="cn-upload-thumb" id="cnUploadThumb1" style="display:none;">
+                  <button class="cn-upload-clear" id="cnUploadClear1" style="display:none;" title="Remove">&#x2715;</button>
+                </div>
+                <div class="param-grid cols-2" style="margin-top:4px;">
+                  <div class="param-cell"><label>Start</label><input class="param-val" id="paramCN1Start" value="0.0"></div>
+                  <div class="param-cell"><label>End</label><input class="param-val" id="paramCN1End" value="1.0"></div>
+                </div>
+                <div class="param-grid cols-1" style="margin-top:4px;">
+                  <div class="param-cell"><label>Control mode</label>
+                    <select class="param-select" id="paramCN1Mode">
+                      <option>Balanced</option>
+                      <option>My prompt is more important</option>
+                      <option>ControlNet is more important</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+              <!-- Unit 2 -->
+              <div>
+                <div style="display:flex;align-items:center;gap:6px;margin-bottom:4px;">
+                  <div class="collapse-check cn-unit-check" id="checkCN2"></div>
+                  <span style="font-size:10px;color:var(--text-3);font-weight:500;">Unit 2</span>
+                </div>
+                <div class="param-grid cols-2">
+                  <div class="param-cell"><label>Preprocessor</label><select class="param-select" id="paramCN2Module"><option>None</option></select></div>
+                  <div class="param-cell"><label>Model</label><select class="param-select" id="paramCN2Model"><option>None</option></select></div>
+                </div>
+                <div class="param-grid cols-2" style="margin-top:4px;">
+                  <div class="param-cell"><label>Source</label>
+                    <select class="param-select" id="paramCN2Source">
+                      <option value="Canvas">Canvas</option>
+                      <option value="Active Layer">Active Layer</option>
+                      <option value="Upload">Upload</option>
+                    </select>
+                  </div>
+                  <div class="param-cell"><label>Weight</label><input class="param-val" id="paramCN2Weight" value="1.0"></div>
+                </div>
+                <div class="cn-upload-row" id="cnUpload2" style="display:none;margin-top:4px;">
+                  <button class="cn-upload-btn" id="cnUploadBtn2">Choose Image...</button>
+                  <input type="file" id="cnUploadInput2" accept="image/*" style="display:none;">
+                  <img class="cn-upload-thumb" id="cnUploadThumb2" style="display:none;">
+                  <button class="cn-upload-clear" id="cnUploadClear2" style="display:none;" title="Remove">&#x2715;</button>
+                </div>
+                <div class="param-grid cols-2" style="margin-top:4px;">
+                  <div class="param-cell"><label>Start</label><input class="param-val" id="paramCN2Start" value="0.0"></div>
+                  <div class="param-cell"><label>End</label><input class="param-val" id="paramCN2End" value="1.0"></div>
+                </div>
+                <div class="param-grid cols-1" style="margin-top:4px;">
+                  <div class="param-cell"><label>Control mode</label>
+                    <select class="param-select" id="paramCN2Mode">
+                      <option>Balanced</option>
+                      <option>My prompt is more important</option>
+                      <option>ControlNet is more important</option>
+                    </select>
+                  </div>
+                </div>
+              </div>
+            </div>
+          </div>
+
+          <!-- Layers -->
+          <div class="section-header" data-collapse="layersList">
+            <span class="section-arrow">&#x25BC;</span>
+            <span class="section-label">Layers</span>
+            <div class="section-actions" id="layerActions">
+              <button title="Add layer" id="layerAdd">+</button>
+              <button title="Add Brightness/Contrast" id="layerAddBrightness" style="font-size:9px;">B/C</button>
+              <button title="Add Hue/Saturation" id="layerAddHue" style="font-size:9px;">H/S</button>
+              <button title="Add Levels" id="layerAddLevels" style="font-size:9px;">Lvl</button>
+              <button title="Duplicate" id="layerDupe" style="font-size:10px;">&#x2398;</button>
+              <button title="Move up" id="layerUp" style="font-size:11px;">&#x25B2;</button>
+              <button title="Move down" id="layerDown" style="font-size:11px;">&#x25BC;</button>
+              <button title="Merge down" id="layerMerge" style="font-size:10px;">&#x21E9;</button>
+              <button title="Delete" id="layerDel" style="font-size:11px;">&#x1f5d1;</button>
+              <button title="Export Canvas / PSD" id="layerSave" style="font-size:9px;">Export</button>
+            </div>
+          </div>
+          <div id="layersList" class="section-body">
+            <div class="layer-item selected">
+              <div class="layer-thumb" style="background:linear-gradient(135deg,#3a4a5a,#5a4a3a);"></div>
+              <div class="layer-info"><div class="layer-name">Layer 1</div><div class="layer-meta">Normal &middot; 100%</div></div>
+              <div class="layer-vis"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></div>
+            </div>
+            <div class="layer-item">
+              <div class="layer-thumb" style="background:#2a2a30;"></div>
+              <div class="layer-info"><div class="layer-name">Background</div><div class="layer-meta">Normal &middot; 100%</div></div>
+              <div class="layer-vis"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></div>
+            </div>
+          </div>
+
+          <!-- Action History -->
+          <div class="section-header" data-collapse="historyList">
+            <span class="section-arrow">&#x25BC;</span>
+            <span class="section-label">History</span>
+            <div class="section-actions">
+              <button id="historyUndo" title="Undo (Ctrl+Z)" style="font-size:12px;">&#x21b6;</button>
+              <button id="historyRedo" title="Redo (Ctrl+Shift+Z)" style="font-size:12px;">&#x21b7;</button>
+            </div>
+          </div>
+          <div id="historyList" class="section-body"></div>
+
+        </div>
+
+        <!-- ===== SETTINGS TAB ===== -->
+        <!-- ===== EXTENSIONS TAB ===== -->
+        <div class="panel-page" id="page-extensions">
+          <div class="extensions-content" id="extensionsContent">
+            <div class="ext-loading" id="extLoading">Loading extensions...</div>
+          </div>
+        </div>
+
+        <!-- ===== SETTINGS TAB ===== -->
+        <div class="panel-page" id="page-settings">
+          <div class="settings-content">
+            <div class="setting-group">
+              <div class="setting-group-title">Canvas</div>
+              <div class="setting-row"><span class="setting-label">Show grid</span><div class="toggle-track" id="toggleGrid"><div class="toggle-knob"></div></div></div>
+              <!-- Pen pressure is now on the brush context bar -->
+            </div>
+            <div class="setting-group">
+              <div class="setting-group-title">Generation</div>
+              <div class="setting-row"><span class="setting-label">Save outputs</span><div class="toggle-track on" id="toggleSaveOutputs"><div class="toggle-knob"></div></div></div>
+              <div class="setting-row"><span class="setting-label">Live preview</span><div class="toggle-track on" id="toggleLivePreview"><div class="toggle-knob"></div></div></div>
+              <div class="setting-row"><span class="setting-label">Remember last session</span><div class="toggle-track" id="toggleRememberSession"><div class="toggle-knob"></div></div></div>
+              <div id="sessionCategories" style="display:none;">
+                <div class="session-accordion" id="sessionAccordionHeader">
+                  <span style="font-size:10px;color:var(--text-3);cursor:pointer;user-select:none;display:flex;align-items:center;gap:4px;padding:4px 0 2px 8px;">
+                    <svg class="session-accordion-arrow" id="sessionAccordionArrow" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" style="transition:transform 0.2s;"><path d="M2 3.5l3 3 3-3"/></svg>
+                    Session categories
+                  </span>
+                </div>
+                <div id="sessionAccordionBody" style="display:none;padding-left:16px;padding-bottom:4px;">
+                  <label class="session-cat-label">
+                    <input type="checkbox" class="session-cat" data-cat="prompts" checked> Prompts
+                  </label>
+                  <label class="session-cat-label">
+                    <input type="checkbox" class="session-cat" data-cat="gen" checked> Generation params &amp; AR pools
+                  </label>
+                  <label class="session-cat-label">
+                    <input type="checkbox" class="session-cat" data-cat="hires" checked> Hires Fix
+                  </label>
+                  <label class="session-cat-label">
+                    <input type="checkbox" class="session-cat" data-cat="ad" checked> ADetailer
+                  </label>
+                  <label class="session-cat-label">
+                    <input type="checkbox" class="session-cat" data-cat="upscale" checked> Upscale
+                  </label>
+                  <label class="session-cat-label">
+                    <input type="checkbox" class="session-cat" data-cat="canvas" checked> Canvas settings
+                  </label>
+                  <label class="session-cat-label">
+                    <input type="checkbox" class="session-cat" data-cat="brush" checked> Brush settings
+                  </label>
+                  <label class="session-cat-label">
+                    <input type="checkbox" class="session-cat" data-cat="format" checked> Output format
+                  </label>
+                  <label class="session-cat-label">
+                    <input type="checkbox" class="session-cat" data-cat="inpaint" checked> Inpaint settings
+                  </label>
+                </div>
+              </div>
+            </div>
+            <div class="setting-group">
+              <div class="setting-group-title">Output Format</div>
+              <div class="setting-row">
+                <span class="setting-label">Format</span>
+                <select class="param-select" id="settingSaveFormat" style="width:90px;padding:4px 8px;">
+                  <option value="png" selected>PNG</option>
+                  <option value="jpeg">JPEG</option>
+                  <option value="webp">WebP</option>
+                </select>
+              </div>
+              <div class="setting-row"><span class="setting-label">Embed metadata</span><div class="toggle-track on" id="toggleMetadata"><div class="toggle-knob"></div></div></div>
+              <div id="fmtJpegOpts" style="display:none;">
+                <div class="setting-row">
+                  <span class="setting-label">Quality</span>
+                  <div style="display:flex;align-items:center;gap:6px;">
+                    <input type="range" id="settingJpegQuality" min="1" max="100" value="80" style="width:90px;">
+                    <span id="settingJpegQualityVal" style="font-size:11px;color:var(--text-3);min-width:28px;">80%</span>
+                  </div>
+                </div>
+              </div>
+              <div id="fmtWebpOpts" style="display:none;">
+                <div class="setting-row"><span class="setting-label">Lossless</span><div class="toggle-track" id="toggleWebpLossless"><div class="toggle-knob"></div></div></div>
+                <div class="setting-row" id="webpQualityRow">
+                  <span class="setting-label">Quality</span>
+                  <div style="display:flex;align-items:center;gap:6px;">
+                    <input type="range" id="settingWebpQuality" min="1" max="100" value="75" style="width:90px;">
+                    <span id="settingWebpQualityVal" style="font-size:11px;color:var(--text-3);min-width:28px;">75%</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="setting-group">
+              <div class="setting-group-title">VRAM</div>
+              <div style="margin-bottom:8px;">
+                <button class="defaults-btn" id="unloadModelBtn" style="width:100%;">Unload Model from VRAM</button>
+              </div>
+              <div class="setting-row">
+                <span class="setting-label">VRAM Reserve</span>
+                <div style="display:flex;align-items:center;gap:6px;">
+                  <input type="range" id="vramReserveSlider" min="0" max="8.0" step="0.25" value="0" style="width:100px;">
+                  <span id="vramReserveVal" style="font-size:11px;color:var(--text-2);font-family:var(--mono);min-width:36px;">Auto</span>
+                </div>
+              </div>
+              <div style="font-size:9px;color:var(--text-4);padding:2px 0 6px 0;">Controls how much VRAM Forge reserves for compute when loading models. 0 = Forge default. Higher values load less model into VRAM (offloading the rest to RAM), freeing space for inference. Peak usage during generation may still exceed this — it's a loading budget, not a hard cap.</div>
+              <div class="setting-row"><span class="setting-label">Auto-unload when idle</span><div class="toggle-track" id="toggleAutoUnload"><div class="toggle-knob"></div></div></div>
+              <div class="setting-row" id="autoUnloadMinutesRow" style="display:none;">
+                <span class="setting-label">Idle timeout</span>
+                <div style="display:flex;align-items:center;gap:6px;">
+                  <input type="range" id="autoUnloadMinutes" min="5" max="30" step="5" value="10" style="width:80px;">
+                  <span id="autoUnloadMinutesVal" style="font-size:11px;color:var(--text-3);min-width:32px;">10 min</span>
+                </div>
+              </div>
+            </div>
+            <div class="setting-group">
+              <div class="setting-group-title">Extensions</div>
+              <p style="font-size:10px;color:var(--text-4);margin:0 0 8px 0;">Toggle which extensions appear in the Extensions tab.</p>
+              <div id="extToggles"></div>
+            </div>
+            <div class="setting-group">
+              <div class="setting-group-title">Theme</div>
+              <div class="theme-selector" id="themeSelector">
+                <button class="theme-btn active" data-theme="">Studio</button>
+                <button class="theme-btn" data-theme="liam">Liam</button>
+                <button class="theme-btn" data-theme="oliver">Oliver</button>
+                <button class="theme-btn" data-theme="toxic">ToxicHost</button>
+                <button class="theme-btn" data-theme="neutral">Neutral</button>
+                <button class="theme-btn" data-theme="neon">Neon</button>
+              </div>
+            </div>
+            <div class="setting-group">
+              <div class="setting-group-title">Accessibility</div>
+              <div class="setting-row">
+                <span class="setting-label">Colorblind mode</span>
+                <select class="param-select" id="settingColorblind" style="width:140px;padding:4px 8px;">
+                  <option value="">None</option>
+                  <option value="deutan">Deuteranopia (red-green)</option>
+                  <option value="protan">Protanopia (red-green)</option>
+                  <option value="tritan">Tritanopia (blue-yellow)</option>
+                </select>
+              </div>
+              <div class="setting-row">
+                <span class="setting-label">Reduced motion</span>
+                <select class="param-select" id="settingMotion" style="width:140px;padding:4px 8px;">
+                  <option value="">System default</option>
+                  <option value="reduced">Reduced</option>
+                  <option value="full">Full</option>
+                </select>
+              </div>
+            </div>
+            <div class="setting-group">
+              <div class="setting-group-title">Defaults</div>
+              <p style="font-size:10px;color:var(--text-4);margin:0 0 8px 0;">Save current workflow settings as defaults for future sessions.</p>
+              <div style="display:flex;gap:6px;">
+                <button class="defaults-btn" id="saveDefaults">Save Current as Defaults</button>
+                <button class="defaults-btn defaults-btn-reset" id="resetDefaults">Reset</button>
+              </div>
+            </div>
+            <!-- FR-001: Credits -->
+            <div class="setting-group">
+              <div class="setting-group-title" style="cursor:pointer;display:flex;align-items:center;gap:6px;" id="creditsToggle">
+                Credits
+                <svg class="collapse-arrow" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" style="transition:transform 0.2s;"><path d="M2 3.5l3 3 3-3"/></svg>
+              </div>
+              <div id="creditsBody" style="display:none;">
+                <p style="font-size:11px;color:var(--text-2);margin:0 0 10px 0;">by <strong>ToxicHost</strong> &amp; <strong>Moritz</strong></p>
+                <div id="creditsList" style="font-size:10px;color:var(--text-3);line-height:1.8;"></div>
+              </div>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  </div>
+
+
+</div>
+
+
+<!-- ═══════════════════════════════════════════
+     STATUS BAR
+     ═══════════════════════════════════════════ -->
+
+<div class="statusbar">
+  <span id="statusDims">768 &times; 768</span>
+  <span class="spacer"></span>
+  <span id="statusVRAM" class="vram-readout" title="GPU VRAM usage"></span>
+  <span id="statusModel">Loading...</span>
+  <span><span class="status-dot status-ready" id="statusDot"></span><span id="statusText">Ready</span></span>
+</div>
+
+<script>
+// Auto cache-bust: load scripts in order with timestamp
+(async () => {
+  const scripts = [
+    "ag-psd.js", "png-metadata.js", "canvas-core.js",
+    "canvas-ui.js", "app.js", "module-system.js", "studio-tour.js", "studio-docs.js", "tag-complete.js",
+    "lora-browser.js", "wildcard-browser.js"
+  ];
+  // Optional modules — loaded if available, silently skipped if not
+  const optionalScripts = ["comic-lab.js", "workshop.js", "lexicon.js", "education.js", "codex.js", "studio-showme.js", "gallery.js", "module-tours.js"];
+  const v = "4.3.0";
+  for (const s of scripts) {
+    await new Promise((resolve, reject) => {
+      const el = document.createElement("script");
+      el.src = `/studio/static/${s}?v=${v}`;
+      el.onload = resolve;
+      el.onerror = () => { console.error(`Failed to load ${s}`); resolve(); };
+      document.body.appendChild(el);
+    });
+  }
+  // Optional modules — load silently, no error on 404
+  for (const s of optionalScripts) {
+    await new Promise((resolve) => {
+      const el = document.createElement("script");
+      el.src = `/studio/static/${s}?v=${v}`;
+      el.onload = resolve;
+      el.onerror = resolve; // silent skip
+      document.body.appendChild(el);
+    });
+  }
+})();
+</script>
+</body>
+</html>
