@@ -73,19 +73,21 @@ def _get_stub_module():
 # GIT UPDATE HELPER
 # =========================================================================
 
-# Resolve the extension root once at import time — same pattern as the
-# existing _ext_root logic but using .git to locate the repo root.
+# Find the Studio extension root (the dir containing frontend/) — same
+# logic used throughout the codebase.  Only check THAT directory for .git
+# so we never accidentally pick up Forge's own repository.
 _here_dir = Path(__file__).parent
+_studio_root = _here_dir if (_here_dir / "frontend").is_dir() else _here_dir.parent
 _git_root = None
-for _candidate in [_here_dir, _here_dir.parent, _here_dir.resolve(), _here_dir.resolve().parent]:
-    if (_candidate / ".git").exists():
-        _git_root = str(_candidate)
-        break
+if (_studio_root / ".git").exists():
+    _git_root = str(_studio_root)
+elif (_studio_root.resolve() / ".git").exists():
+    _git_root = str(_studio_root.resolve())
 
 if _git_root:
     print(f"{TAG} Git root: {_git_root}")
 else:
-    print(f"{TAG} No .git found near {_here_dir} — auto-update disabled")
+    print(f"{TAG} No .git found in {_studio_root} — auto-update disabled")
 
 
 def _git_run(*args, timeout=30):
