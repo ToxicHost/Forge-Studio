@@ -3545,13 +3545,17 @@ function bootUI() {
     if (cssGrid) cssGrid.style.display = "none";
     _redraw();
 
-    // Retry rAF until viewport layout settles (contain: strict can delay)
-    (function waitForLayout(n) {
+    // Wait for viewport dimensions to stabilize before revealing canvas.
+    // contain:strict can cause getBoundingClientRect to return intermediate
+    // sizes during layout — wait until two consecutive frames agree.
+    (function waitForLayout(lastW, lastH, n) {
         requestAnimationFrame(() => {
             const vp = document.getElementById("studio-viewport");
             const rect = vp ? vp.getBoundingClientRect() : null;
-            if ((!rect || rect.width < 10 || rect.height < 10) && n < 10) {
-                waitForLayout(n + 1);
+            const w = rect ? Math.round(rect.width) : 0;
+            const h = rect ? Math.round(rect.height) : 0;
+            if (n < 15 && (w < 10 || h < 10 || w !== lastW || h !== lastH)) {
+                waitForLayout(w, h, n + 1);
                 return;
             }
             syncCanvasToViewport();
@@ -3560,9 +3564,25 @@ function bootUI() {
             _redraw();
             S.canvas.style.visibility = "";
         });
-    })(0);
+    })(0, 0, 0);
 
-    // Manual resize on window resize only — no ResizeObserver
+    // Boot-phase ResizeObserver: catches layout shifts after reveal
+    // (disconnects after first resize to avoid composite glitches on pointer events)
+    const _bootVP = document.getElementById("studio-viewport");
+    if (_bootVP && typeof ResizeObserver !== "undefined") {
+        const _bootRO = new ResizeObserver(() => {
+            syncCanvasToViewport();
+            C.zoomFit();
+            updateStatus();
+            _redraw();
+            _bootRO.disconnect();
+        });
+        _bootRO.observe(_bootVP);
+        // Safety: disconnect after 2s regardless
+        setTimeout(() => _bootRO.disconnect(), 2000);
+    }
+
+    // Manual resize on window resize only — no persistent ResizeObserver
     // (ResizeObserver was causing composite glitches on pointer events)
     window.addEventListener("resize", () => {
         // Preserve user's zoom/pan across resize: scale ox/oy by canvas dimension ratio
