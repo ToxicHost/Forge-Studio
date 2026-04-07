@@ -3883,6 +3883,7 @@ window.StatusBar = StatusBar;
 window.Progress = Progress;
 window.showToast = showToast;
 window.ExtensionBridge = ExtensionBridge;
+window.UpdateBanner = UpdateBanner;
 
 // Go
 if (document.readyState === "loading") {
