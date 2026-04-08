@@ -143,8 +143,6 @@ const Progress = {
           StatusBar.setModelUnloaded();
           showToast(`Model auto-unloaded after ${data.minutes}min idle`, "info");
           _refreshVRAM();
-        } else if (data.type === "update_available") {
-          UpdateBanner.show(data);
         }
       } catch (_) {}
     };
@@ -3704,9 +3702,7 @@ async function init() {
   // Initialize theme switcher
   ThemeSwitcher.init();
 
-  // Auto-update: check on load (after 5s delay) and every 30 minutes
-  setTimeout(() => UpdateBanner.check(), 5000);
-  setInterval(() => UpdateBanner.check(), 30 * 60 * 1000);
+  // Update check is manual — use the "Check for Updates" button in Settings.
 
   // Colorblind mode
   {
