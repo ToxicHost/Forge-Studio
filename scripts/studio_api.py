@@ -1071,6 +1071,7 @@ def setup_studio_routes(app: FastAPI):
             return GenerateResponse(settings={"defaults_deleted": True})
 
         # --- Normal generation ---
+        _cancel_auto_unload()
         run_generation = _import("studio_generation", "run_generation")
 
         ad_slots = req.ad_slots + [ADSlotParams()] * max(0, 3 - len(req.ad_slots))
