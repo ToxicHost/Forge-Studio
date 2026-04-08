@@ -1556,7 +1556,7 @@ def setup_studio_routes(app: FastAPI):
             # Update the setting and reload if a real model is loaded
             shared.opts.set("sd_vae", vae_name)
             if hasattr(shared.sd_model, 'first_stage_model'):
-                sd_vae.reload_vae_weights()
+                sd_vae.reload_vae_weights(shared.sd_model, vae_name)
 
             # Persist to config.json
             try:
