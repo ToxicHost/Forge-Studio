@@ -1555,7 +1555,7 @@ def setup_studio_routes(app: FastAPI):
             # Update the setting and reload if a real model is loaded
             shared.opts.set("sd_vae", vae_name)
             if hasattr(shared.sd_model, 'first_stage_model'):
-                sd_vae.reload_vae_weights(vae_name)
+                sd_vae.reload_vae_weights()
 
             # Persist to config.json
             try:
@@ -2462,35 +2462,6 @@ def setup_studio_routes(app: FastAPI):
     # ------------------------------------------------------------------
 
     Thread(target=_progress_polling_thread, daemon=True).start()
-
-    # ------------------------------------------------------------------
-    # Startup update check — notify via WebSocket if updates available
-    # ------------------------------------------------------------------
-
-    def _startup_update_check():
-        time.sleep(10)
-        try:
-            local = _read_version()
-            if not local:
-                return
-            data = _github_get(f"/commits/{_GITHUB_BRANCH}")
-            if not data:
-                return
-            remote_sha = data.get("sha", "")
-            if not remote_sha or local == remote_sha:
-                return
-            # Count commits behind
-            compare = _github_get(f"/compare/{local[:12]}...{_GITHUB_BRANCH}")
-            count = compare.get("total_commits", 1) if compare else 1
-            if count > 0:
-                msg = {"type": "update_available", "commits_behind": count}
-                if _uvicorn_loop:
-                    asyncio.run_coroutine_threadsafe(_broadcast_progress(msg), _uvicorn_loop)
-                print(f"{TAG} Update available: {count} commit(s) behind remote")
-        except Exception as e:
-            print(f"{TAG} Startup update check failed: {e}")
-
-    Thread(target=_startup_update_check, daemon=True).start()
 
     # ------------------------------------------------------------------
     # Optional module loader — uses file path, not sys.path
