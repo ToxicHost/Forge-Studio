@@ -1870,7 +1870,7 @@ async function render() {
     _folderPaths = []; const tree = buildFolderTree(); const allCount = getFolderTotal();
     const sb = '<div class="gal-sidebar" style="--folder-col-w:' + G.folderColW + 'px;--tag-col-w:' + G.tagColW + 'px"><div class="gal-sidebar-col-wrap folders-wrap"><div class="gal-sidebar-col"><div class="gal-sidebar-title"><span>Folders</span></div>' + renderFolderNode(tree, 0) + '<div class="gal-link-folder-btn" id="gal-link-folder">' + IC.folderPlus + ' Link new folder</div></div><div class="gal-col-resizer" data-resize="folder"></div></div><div class="gal-sidebar-col-wrap tags-wrap"><div class="gal-sidebar-col"><div class="gal-sidebar-title">Tags</div><div class="gal-tag-list" id="gal-tag-list">' + buildTagsHtml(allCount) + '</div></div><div class="gal-col-resizer" data-resize="tag"></div></div></div>';
     const mc = G.page === "settings" ? await renderSettingsView() : renderMainContent();
-    c.innerHTML = '<div class="gal-layout">' + renderTopbar() + sb + '<div class="gal-main" id="gal-main-area">' + mc + '</div><div class="gal-credit">Powered by <strong>TrackImage</strong> by Moritz</div></div>';
+    c.innerHTML = '<div class="gal-layout">' + renderTopbar() + sb + '<div class="gal-main" id="gal-main-area">' + mc + '</div><div class="gal-credit"><span>Powered by <strong>TrackImage</strong> by Moritz</span></div></div>';
     if (G.page !== "settings") requestAnimationFrame(setupInfiniteScroll);
     wireGlobalEvents();
 }
