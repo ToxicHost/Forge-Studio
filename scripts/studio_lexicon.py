@@ -54,6 +54,16 @@ def _get_root() -> str:
     return _wildcards_root
 
 
+def get_wildcards_root() -> str:
+    """Public accessor for the resolved wildcards directory.
+
+    Single source of truth — every Studio module that reads/writes
+    wildcards (Lexicon, /studio/wildcards endpoints, Attention Couple
+    resolver) must call this so they agree on where files live.
+    """
+    return _get_root()
+
+
 def _safe_path(rel_path: str) -> str:
     """Resolve a relative path and verify it's inside the wildcards root."""
     root = _get_root()
