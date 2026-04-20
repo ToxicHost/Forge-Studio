@@ -83,6 +83,25 @@ def _get_stub_module():
 _here_dir = Path(__file__).parent
 _studio_root = _here_dir if (_here_dir / "frontend").is_dir() else _here_dir.parent
 
+
+def _next_forge_counter(output_dir: Path) -> int:
+    """Return the next Forge-style 5-digit counter for the given folder.
+    Scans existing files matching NNNNN-*.{png,jpg,webp} and returns max+1,
+    or 1 if the folder is empty or has no matching files.
+    """
+    if not output_dir.is_dir():
+        return 1
+    max_n = 0
+    for f in output_dir.iterdir():
+        if not f.is_file():
+            continue
+        name = f.name
+        if len(name) >= 6 and name[5] == "-" and name[:5].isdigit():
+            n = int(name[:5])
+            if n > max_n:
+                max_n = n
+    return max_n + 1
+
 # ── GitHub API update system ──────────────────────────────────────────
 # No .git required. Checks the public GitHub API for new commits,
 # downloads zip archives to update. Zero local metadata beyond a
@@ -1241,6 +1260,13 @@ def setup_studio_routes(app: FastAPI):
             except Exception:
                 pass
 
+        try:
+            _parsed_base_seed = int(_parsed_settings.get("seed", -1)) if _parsed_settings else -1
+        except Exception:
+            _parsed_base_seed = -1
+
+        _base_counter = _next_forge_counter(output_dir) if req.save_outputs else 1
+
         for i, img in enumerate(images_list or []):
             if isinstance(img, Image.Image):
                 # When saving as PNG, encode once to buffer and reuse for both
@@ -1248,8 +1274,14 @@ def setup_studio_routes(app: FastAPI):
                 if req.save_outputs and req.save_format == "png":
                     try:
                         ext = "png"
-                        fname = f"studio_{int(time.time())}_{i}.{ext}"
-                        fpath = output_dir / fname
+                        image_seed = (_parsed_base_seed + i) if _parsed_base_seed != -1 else 0
+                        counter = _base_counter + i
+                        while True:
+                            fname = f"{counter:05d}-{image_seed}.{ext}"
+                            fpath = output_dir / fname
+                            if not fpath.exists():
+                                break
+                            counter += 1
                         save_kwargs = {}
                         if req.embed_metadata and _parsed_infotexts:
                             try:
@@ -1289,8 +1321,14 @@ def setup_studio_routes(app: FastAPI):
                         try:
                             ext_map = {"png": "png", "jpeg": "jpg", "webp": "webp"}
                             ext = ext_map.get(req.save_format, "png")
-                            fname = f"studio_{int(time.time())}_{i}.{ext}"
-                            fpath = output_dir / fname
+                            image_seed = (_parsed_base_seed + i) if _parsed_base_seed != -1 else 0
+                            counter = _base_counter + i
+                            while True:
+                                fname = f"{counter:05d}-{image_seed}.{ext}"
+                                fpath = output_dir / fname
+                                if not fpath.exists():
+                                    break
+                                counter += 1
                             save_kwargs = {}
 
                             if req.save_format == "jpeg":
