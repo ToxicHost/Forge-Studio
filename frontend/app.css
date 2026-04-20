@@ -1006,6 +1006,8 @@ body {
   transform: rotate(-45deg) translateY(-1px);
 }
 
+#upscaleADRow.disabled { opacity: 0.4; pointer-events: none; }
+
 .collapse-title { flex: 1; font-size: 13px; color: var(--text-2); }
 
 .collapse-arrow { transition: transform 0.2s; color: var(--text-4); }
