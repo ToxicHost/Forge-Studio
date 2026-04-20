@@ -1858,7 +1858,8 @@ function bindUI() {
 
     const upscaler = document.getElementById("paramUpscaleModel")?.value || "R-ESRGAN 4x+";
     const scale = parseFloat(document.getElementById("paramUpscaleScale")?.value) || 2.0;
-    const runAD = document.getElementById("checkUpscaleAD")?.classList.contains("checked") || false;
+    const runRefine = document.getElementById("checkUpscaleRefine")?.classList.contains("checked") || false;
+    const runAD = runRefine && (document.getElementById("checkUpscaleAD")?.classList.contains("checked") || false);
 
     // Get canvas composite as data URL
     const tmp = document.createElement("canvas");
@@ -1893,7 +1894,7 @@ function bindUI() {
       const r = await fetch(API.base + "/studio/upscale", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ image_b64: imageB64, upscaler, scale, save: State.saveOutputs && !runAD }),
+        body: JSON.stringify({ image_b64: imageB64, upscaler, scale, save: State.saveOutputs && !runRefine }),
       });
       const data = await r.json();
       if (r.ok && data.ok) {
@@ -1912,11 +1913,11 @@ function bindUI() {
     }
 
     // Stage 2: img2img refine pass on upscaled image
-    // Runs whenever the Refine checkbox is on, regardless of ADetailer state.
-    // ADetailer fires during this pass only if the main AD toggle is enabled.
-    if (upscaleOk && runAD) {
+    // Runs whenever the Refine checkbox is on. AD fires during refine
+    // only if the "Run ADetailer during refine" checkbox is also on.
+    if (upscaleOk && runRefine) {
       {
-        const adEnabled = document.getElementById("checkAD")?.classList.contains("checked");
+        const adEnabled = runAD;
         const userSteps = parseInt(document.getElementById("paramUpscaleSteps")?.value) || 20;
         const userDenoise = parseFloat(document.getElementById("paramUpscaleDenoise")?.value) || 0.3;
         if (btn) btn.textContent = `Refining (${userSteps} steps, ${userDenoise} denoise)...`;
@@ -2838,6 +2839,7 @@ function bindUI() {
     ],
     upscale: [
       ["paramUpscaleModel", "val"], ["paramUpscaleScale", "val"],
+      ["checkUpscaleRefine", "check"],
       ["checkUpscaleAD", "check"],
     ],
     canvas: [
@@ -3114,11 +3116,20 @@ function bindUI() {
     });
   });
 
-  // Upscale AD checkbox
+  // Upscale refine checkbox — gates the img2img refine pass
+  document.getElementById("checkUpscaleRefine")?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    e.currentTarget.classList.toggle("checked");
+    _syncUpscaleADState();
+  });
+
+  // Upscale AD checkbox — gates AD during the refine pass
   document.getElementById("checkUpscaleAD")?.addEventListener("click", (e) => {
     e.stopPropagation();
     e.currentTarget.classList.toggle("checked");
   });
+
+  _syncUpscaleADState();
 
   // CN unit checkboxes
   document.querySelectorAll(".cn-unit-check").forEach(check => {
@@ -4205,6 +4216,15 @@ const ThemeSwitcher = {
     });
   }
 };
+
+
+// Sync the "Run ADetailer during refine" row's disabled state
+// with the Refine checkbox — AD has nothing to run in without refine.
+function _syncUpscaleADState() {
+  const refineOn = document.getElementById("checkUpscaleRefine")?.classList.contains("checked");
+  const row = document.getElementById("upscaleADRow");
+  if (row) row.classList.toggle("disabled", !refineOn);
+}
 
 
 // ═══════════════════════════════════════════
