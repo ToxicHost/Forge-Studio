@@ -73,6 +73,15 @@ def _attach_script_runner(p, has_mask=False, ip=None):
             if script_args:
                 script_args[0] = 0
 
+            try:
+                try:
+                    from studio_generation import _force_enable_dynamic_prompts
+                except ImportError:
+                    from scripts.studio_generation import _force_enable_dynamic_prompts
+                _force_enable_dynamic_prompts(runner, script_args)
+            except Exception as _dp_e:
+                _warn(f"Could not force-enable Dynamic Prompts: {_dp_e}")
+
             if has_mask and ip and hasattr(ip, 'soft_inpaint_enabled') and ip.soft_inpaint_enabled:
                 for s in runner.alwayson_scripts:
                     if s.title() == "Soft Inpainting":

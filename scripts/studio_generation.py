@@ -992,6 +992,64 @@ def _cast_arg(val, runner, idx):
     return val
 
 
+def _force_enable_dynamic_prompts(runner, script_args):
+    """Force sd-dynamic-prompts' is_enabled checkbox to True in script_args.
+
+    DP defaults is_enabled to the result of an internal library-version
+    check. When the dynamicprompts pip package is missing, version-
+    mismatched, or installed against a different Python interpreter, the
+    check fails, the checkbox defaults to False, and DP's process() no-
+    ops — wildcards pass through the pipeline as literal text. Vanilla
+    WebUI surfaces this with a red banner; Studio hides DP's UI via
+    NATIVE_TITLES so users get zero signal.
+
+    Locate the DP script in alwayson_scripts, scan its input slots for the
+    is_enabled component by label (falling back to args_from), and write
+    True. If DP's library is genuinely broken, DP will now raise loudly
+    during process() — visible failure > silent failure.
+
+    Returns the target index that was overridden, or None if DP wasn't
+    found on the runner.
+    """
+    if runner is None or not hasattr(runner, 'alwayson_scripts'):
+        return None
+    dp_script = None
+    for s in runner.alwayson_scripts:
+        try:
+            if s.title().strip().lower() == "dynamic prompts":
+                dp_script = s
+                break
+        except Exception:
+            continue
+    if dp_script is None:
+        return None
+    args_from = getattr(dp_script, 'args_from', None)
+    args_to = getattr(dp_script, 'args_to', None)
+    if args_from is None or args_to is None:
+        return None
+    target = args_from
+    inputs = getattr(runner, 'inputs', None)
+    if inputs:
+        for i in range(args_from, min(args_to, len(inputs))):
+            comp = inputs[i]
+            if comp is None:
+                continue
+            label = getattr(comp, 'label', None)
+            if not isinstance(label, str):
+                continue
+            label_lc = label.strip().lower()
+            if "dynamic prompts enabled" in label_lc or label_lc == "enabled":
+                target = i
+                break
+    while target >= len(script_args):
+        script_args.append(None)
+    prev = script_args[target]
+    script_args[target] = True
+    if prev is not True:
+        print(f"[Studio] Forced Dynamic Prompts is_enabled=True at script_args[{target}] (was {prev!r})")
+    return target
+
+
 def _attach_script_runner(p, has_mask=False, ip=None, cn_units=None, extension_args=None, ad_params=None):
     """Attach img2img script runner for wildcards, dynamic prompts, etc.
 
@@ -1012,6 +1070,9 @@ def _attach_script_runner(p, has_mask=False, ip=None, cn_units=None, extension_a
                         script_args[i] = _cast_arg(comp.value, runner, i)
             if script_args:
                 script_args[0] = 0
+
+            # Force DP enabled — see _force_enable_dynamic_prompts() docstring.
+            _force_enable_dynamic_prompts(runner, script_args)
 
             # Inject Soft Inpainting settings if applicable
             if has_mask and ip and ip.soft_inpaint_enabled:
@@ -1229,6 +1290,9 @@ def _attach_txt2img_script_runner(p, gp=None, cn_units=None, extension_args=None
                         script_args[i] = _cast_arg(comp.value, runner, i)
             if script_args:
                 script_args[0] = 0
+
+            # Force DP enabled — see _force_enable_dynamic_prompts() docstring.
+            _force_enable_dynamic_prompts(runner, script_args)
 
             # Inject ControlNet units if provided
             if cn_units:
