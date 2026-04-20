@@ -8,10 +8,29 @@
 .gal-layout {
   display: grid;
   grid-template-columns: auto 1fr;
-  grid-template-rows: auto 1fr;
+  grid-template-rows: auto 1fr auto;
   gap: 0;
   height: 100%;
   background: var(--bg-void);
+}
+
+.gal-credit {
+  grid-column: 1 / -1;
+  display: flex;
+  align-items: center;
+  justify-content: flex-end;
+  padding: 4px 12px;
+  border-top: 1px solid var(--border-subtle);
+  background: var(--bg-void);
+  font-family: var(--font);
+  font-size: 10px;
+  color: var(--text-4);
+  letter-spacing: 0.4px;
+  user-select: none;
+}
+.gal-credit strong {
+  color: var(--text-3);
+  font-weight: 600;
 }
 
 .gal-topbar {
