@@ -86,8 +86,8 @@ _studio_root = _here_dir if (_here_dir / "frontend").is_dir() else _here_dir.par
 
 def _next_forge_counter(output_dir: Path) -> int:
     """Return the next Forge-style 5-digit counter for the given folder.
-    Scans existing files matching NNNNN-*.{png,jpg,webp} and returns max+1,
-    or 1 if the folder is empty or has no matching files.
+    Scans existing files matching Studio-NNNNN-*.{png,jpg,webp} and returns
+    max+1, or 1 if the folder is empty or has no matching files.
     """
     if not output_dir.is_dir():
         return 1
@@ -96,8 +96,13 @@ def _next_forge_counter(output_dir: Path) -> int:
         if not f.is_file():
             continue
         name = f.name
-        if len(name) >= 6 and name[5] == "-" and name[:5].isdigit():
-            n = int(name[:5])
+        if (
+            len(name) >= 13
+            and name[:7] == "Studio-"
+            and name[7:12].isdigit()
+            and name[12] == "-"
+        ):
+            n = int(name[7:12])
             if n > max_n:
                 max_n = n
     return max_n + 1
@@ -1277,7 +1282,7 @@ def setup_studio_routes(app: FastAPI):
                         image_seed = (_parsed_base_seed + i) if _parsed_base_seed != -1 else 0
                         counter = _base_counter + i
                         while True:
-                            fname = f"{counter:05d}-{image_seed}.{ext}"
+                            fname = f"Studio-{counter:05d}-{image_seed}.{ext}"
                             fpath = output_dir / fname
                             if not fpath.exists():
                                 break
@@ -1324,7 +1329,7 @@ def setup_studio_routes(app: FastAPI):
                             image_seed = (_parsed_base_seed + i) if _parsed_base_seed != -1 else 0
                             counter = _base_counter + i
                             while True:
-                                fname = f"{counter:05d}-{image_seed}.{ext}"
+                                fname = f"Studio-{counter:05d}-{image_seed}.{ext}"
                                 fpath = output_dir / fname
                                 if not fpath.exists():
                                     break
