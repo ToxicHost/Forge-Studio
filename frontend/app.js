@@ -1911,16 +1911,16 @@ function bindUI() {
       showToast("Upscale error: " + err.message, "error");
     }
 
-    // Stage 2: ADetailer re-run on upscaled image
+    // Stage 2: img2img refine pass on upscaled image
+    // Runs whenever the Refine checkbox is on, regardless of ADetailer state.
+    // ADetailer fires during this pass only if the main AD toggle is enabled.
     if (upscaleOk && runAD) {
-      const adEnabled = document.getElementById("checkAD")?.classList.contains("checked");
-      if (!adEnabled) {
-        showToast("ADetailer is not enabled — skipping face refinement", "info");
-      } else {
+      {
+        const adEnabled = document.getElementById("checkAD")?.classList.contains("checked");
         const userSteps = parseInt(document.getElementById("paramUpscaleSteps")?.value) || 20;
         const userDenoise = parseFloat(document.getElementById("paramUpscaleDenoise")?.value) || 0.3;
         if (btn) btn.textContent = `Refining (${userSteps} steps, ${userDenoise} denoise)...`;
-        console.log("[Upscale] Stage 2: ADetailer pass starting");
+        console.log("[Upscale] Stage 2: refine pass starting (AD: " + (adEnabled ? "on" : "off") + ")");
         await _refreshVRAM();
 
         try {
@@ -1954,8 +1954,8 @@ function bindUI() {
             // No hires fix
             hr_enable:     false,
 
-            // ADetailer — read from UI
-            ad_enable:     true,
+            // ADetailer — read from UI (off if user disabled it)
+            ad_enable:     adEnabled,
             ad_slots:      [1, 2, 3].map(n => ({
               enable:     document.getElementById(`checkAD${n}`)?.classList.contains("checked") || false,
               model:      document.getElementById(`paramAD${n}Model`)?.value || "None",
