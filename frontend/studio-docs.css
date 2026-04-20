@@ -1,0 +1,59 @@
+/*
+ * Forge Studio — Document Strip Styles
+ * by ToxicHost & Moritz
+ *
+ * Thin tab bar for multi-file document switching in Studio tab.
+ */
+
+.doc-strip {
+  position: absolute; top: 0; left: 0; right: 0; z-index: 6;
+  display: flex; align-items: center; gap: 1px;
+  height: 26px; flex-shrink: 0;
+  background: var(--bg-void); border-bottom: 1px solid var(--border);
+  padding: 0 4px; overflow-x: auto; overflow-y: hidden;
+  scrollbar-width: none;
+}
+.doc-strip::-webkit-scrollbar { display: none; }
+
+/* Push viewport down when doc strip is present */
+.canvas-area.has-docs #studio-viewport { top: 26px !important; }
+
+.doc-tab {
+  display: flex; align-items: center; gap: 4px;
+  height: 22px; padding: 0 8px;
+  background: var(--bg-surface); border: 1px solid transparent;
+  border-radius: var(--radius-sm) var(--radius-sm) 0 0;
+  font-size: 10px; font-family: var(--font); color: var(--text-3);
+  cursor: pointer; white-space: nowrap; transition: all 0.1s;
+  user-select: none; flex-shrink: 0;
+}
+.doc-tab:hover { color: var(--text-2); background: var(--bg-raised); }
+.doc-tab.active {
+  color: var(--text-1); background: var(--bg-raised);
+  border-color: var(--border); border-bottom-color: var(--bg-raised);
+}
+
+.doc-tab-name { max-width: 140px; overflow: hidden; text-overflow: ellipsis; }
+.doc-tab-close {
+  font-size: 11px; color: var(--text-4); cursor: pointer;
+  padding: 0 2px; line-height: 1; transition: color 0.1s;
+  opacity: 0;
+}
+.doc-tab:hover .doc-tab-close { opacity: 1; }
+.doc-tab-close:hover { color: var(--red); }
+
+.doc-tab-rename {
+  background: var(--bg-input); border: 1px solid var(--accent);
+  border-radius: 2px; color: var(--text-1); font-size: 10px;
+  font-family: var(--font); padding: 0 4px; outline: none;
+}
+
+.doc-add {
+  height: 20px; width: 20px; flex-shrink: 0;
+  background: none; border: 1px solid transparent;
+  border-radius: var(--radius-sm); color: var(--text-4);
+  font-size: 14px; font-family: var(--font); cursor: pointer;
+  display: flex; align-items: center; justify-content: center;
+  transition: all 0.1s; margin-left: 2px;
+}
+.doc-add:hover { color: var(--text-2); border-color: var(--border); background: var(--bg-surface); }
