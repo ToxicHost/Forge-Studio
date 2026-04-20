@@ -405,6 +405,15 @@ def _generation_worker(spec: LiveSpec):
                 if script_args:
                     script_args[0] = 0
 
+                try:
+                    try:
+                        from studio_generation import _force_enable_dynamic_prompts
+                    except ImportError:
+                        from scripts.studio_generation import _force_enable_dynamic_prompts
+                    _force_enable_dynamic_prompts(runner, script_args)
+                except Exception as _dp_e:
+                    print(f"{TAG} Warning: could not force-enable Dynamic Prompts ({_dp_e})")
+
                 # Force-disable ADetailer in script_args
                 for s in runner.alwayson_scripts:
                     try:

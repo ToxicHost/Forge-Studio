@@ -190,11 +190,23 @@ def _resolve_wildcards(text):
 
         webui_root = Path(script_path)
         wildcards_dir = None
-        for c in [webui_root / "extensions" / "sd-dynamic-prompts" / "wildcards",
-                  webui_root / "wildcards"]:
-            if c.is_dir():
-                wildcards_dir = c
-                break
+        try:
+            try:
+                from studio_lexicon import get_wildcards_root
+            except ImportError:
+                from scripts.studio_lexicon import get_wildcards_root
+            resolved = Path(get_wildcards_root())
+            if resolved.is_dir():
+                wildcards_dir = resolved
+        except Exception:
+            for c in [webui_root / "extensions" / "sd-dynamic-prompts" / "wildcards",
+                      webui_root / "extensions-builtin" / "sd-dynamic-prompts" / "wildcards",
+                      webui_root / "extensions" / "sd-dynamic-prompts-fork" / "wildcards",
+                      webui_root / "wildcards",
+                      webui_root / "outputs" / "wildcards"]:
+                if c.is_dir():
+                    wildcards_dir = c
+                    break
 
         wm = WildcardManager(wildcards_dir) if wildcards_dir else None
         gen = RandomPromptGenerator(wildcard_manager=wm) if wm else RandomPromptGenerator()

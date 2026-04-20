@@ -1982,10 +1982,18 @@ def setup_studio_routes(app: FastAPI):
         from pathlib import Path
         webui_root = Path(script_path)
         wildcards = []
-        for wc_dir in [
-            webui_root / "extensions" / "sd-dynamic-prompts" / "wildcards",
-            webui_root / "wildcards",
-        ]:
+        try:
+            _get_root = _import("studio_lexicon", "get_wildcards_root")
+            candidates = [Path(_get_root())]
+        except Exception:
+            candidates = [
+                webui_root / "extensions" / "sd-dynamic-prompts" / "wildcards",
+                webui_root / "extensions-builtin" / "sd-dynamic-prompts" / "wildcards",
+                webui_root / "extensions" / "sd-dynamic-prompts-fork" / "wildcards",
+                webui_root / "wildcards",
+                webui_root / "outputs" / "wildcards",
+            ]
+        for wc_dir in candidates:
             if wc_dir.is_dir():
                 for f in sorted(wc_dir.rglob("*.txt")):
                     rel = f.relative_to(wc_dir)
@@ -2003,10 +2011,18 @@ def setup_studio_routes(app: FastAPI):
         if not name:
             return {"lines": [], "count": 0}
         webui_root = Path(script_path)
-        for wc_dir in [
-            webui_root / "extensions" / "sd-dynamic-prompts" / "wildcards",
-            webui_root / "wildcards",
-        ]:
+        try:
+            _get_root = _import("studio_lexicon", "get_wildcards_root")
+            candidates = [Path(_get_root())]
+        except Exception:
+            candidates = [
+                webui_root / "extensions" / "sd-dynamic-prompts" / "wildcards",
+                webui_root / "extensions-builtin" / "sd-dynamic-prompts" / "wildcards",
+                webui_root / "extensions" / "sd-dynamic-prompts-fork" / "wildcards",
+                webui_root / "wildcards",
+                webui_root / "outputs" / "wildcards",
+            ]
+        for wc_dir in candidates:
             if wc_dir.is_dir():
                 target = wc_dir / (name.replace("/", os.sep) + ".txt")
                 if target.exists() and target.is_file():
