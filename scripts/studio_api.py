@@ -1769,9 +1769,7 @@ def setup_studio_routes(app: FastAPI):
         _get_output_dir = _import("studio_generation", "_get_output_dir")
 
         def _worker():
-            from modules.processing import (
-                StableDiffusionProcessingImg2Img, process_images
-            )
+            from modules.processing import process_images
 
             # Decode image once at the top — no further base64 round-trips.
             raw = req.image_b64
@@ -1883,29 +1881,29 @@ def setup_studio_routes(app: FastAPI):
 
                 elif req.run_ad and ad_has_work:
                     # ── Stage 2b: standalone AD on ESRGAN output ────
-                    # No base img2img pass — AD operates directly on the
-                    # upscaled image. _run_studio_ad still wants a p-like
-                    # carrier for prompt/sampler/seed, so we build a
-                    # minimal Img2Img without calling process_images().
-                    studio_outdir = _get_output_dir("img2img")
-                    p = StableDiffusionProcessingImg2Img(
-                        sd_model=shared.sd_model,
-                        outpath_samples=studio_outdir, outpath_grids=studio_outdir,
-                        prompt=req.prompt, negative_prompt=req.neg_prompt,
-                        init_images=[upscaled], resize_mode=0,
-                        denoising_strength=float(req.denoising),
-                        n_iter=1, batch_size=1,
-                        steps=int(req.steps), cfg_scale=float(req.cfg_scale),
-                        width=new_w, height=new_h,
+                    # No img2img pass runs — AD operates directly on the
+                    # upscaled image. Build `p` with the SAME helper the
+                    # refine path uses so both paths hand _run_studio_ad
+                    # a fully-wired processing object. Prevents drift if
+                    # _run_studio_ad ever starts reading new fields.
+                    gp = GenParams(
+                        prompt=req.prompt, neg_prompt=req.neg_prompt,
+                        steps=int(req.steps),
                         sampler_name=req.sampler_name or "Euler a",
-                        seed=seed, subseed=-1, subseed_strength=0,
-                        do_not_save_samples=True, do_not_save_grid=True,
+                        schedule_type=req.schedule_type or "Automatic",
+                        cfg_scale=float(req.cfg_scale),
+                        denoising=float(req.denoising),
+                        width=new_w, height=new_h, seed=seed,
+                        batch_count=1, batch_size=1,
                     )
-                    if req.schedule_type and req.schedule_type != "Automatic" and hasattr(p, 'scheduler'):
-                        p.scheduler = req.schedule_type
-                    # _run_studio_ad reads resolved prompts from these
-                    p.all_prompts = [req.prompt]
-                    p.all_negative_prompts = [req.neg_prompt]
+                    ip = InpaintParams()
+                    studio_outdir = _get_output_dir("img2img")
+                    p = _build_processing_obj(
+                        upscaled, gp, mask_img=None, has_mask=False,
+                        ip=ip, studio_outdir=studio_outdir, batch_seed=seed,
+                        cn_units=None, extension_args=None,
+                        ad_params=None,  # no native AD injection; Studio AD runs externally
+                    )
                     p._ad_disabled = True
 
                     shared.state.job_count = 1
