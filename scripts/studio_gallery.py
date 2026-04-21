@@ -3240,10 +3240,23 @@ def setup_gallery_routes(app: FastAPI):
     async def gallery_serve_full(image_id: int):
         db = _get_db()
         try:
-            row = db.execute("SELECT filepath FROM images WHERE id=?", (image_id,)).fetchone()
+            row = db.execute("SELECT filepath,filename FROM images WHERE id=?", (image_id,)).fetchone()
             if not row:
                 return Response("Not found", status_code=404)
-            return FileResponse(row["filepath"])
+            # Content-Disposition with the original filename so drag-out
+            # targets name the file correctly regardless of the URL path
+            # (which is just the numeric id). Uses RFC 5987 filename*=
+            # encoding to handle non-ASCII names. Only filename gets
+            # percent-encoded; quotes in the plain filename fall back to
+            # a safe ASCII variant.
+            from urllib.parse import quote
+            fname = row["filename"] or f"image_{image_id}"
+            ascii_safe = fname.encode("ascii", "replace").decode("ascii").replace('"', "_")
+            cd = (
+                f'attachment; filename="{ascii_safe}"; '
+                f"filename*=UTF-8''{quote(fname, safe='')}"
+            )
+            return FileResponse(row["filepath"], headers={"Content-Disposition": cd})
         finally:
             db.close()
 
