@@ -1562,7 +1562,16 @@ function onGalleryDragStart(e, imgId) {
             const ext = img.filename.split(".").pop().toLowerCase();
             const mime = _mimeForExt(ext);
             const fullUrl = window.location.origin + API_BASE + "/full/" + img.id;
+            // Chromium/Edge/Brave honor DownloadURL.
             e.dataTransfer.setData("DownloadURL", mime + ":" + img.filename + ":" + fullUrl);
+            // Firefox ignores DownloadURL and falls back to the <img> src,
+            // which is the /thumb/ URL. These types override that fallback
+            // so the drop target fetches /full/ instead. /full/ responds
+            // with Content-Disposition so the filename is preserved.
+            e.dataTransfer.setData("text/uri-list", fullUrl);
+            e.dataTransfer.setData("text/x-moz-url", fullUrl + "\n" + img.filename);
+            e.dataTransfer.setData("application/x-moz-file-promise-url", fullUrl);
+            e.dataTransfer.setData("application/x-moz-file-promise-dest-filename", img.filename);
         }
     }
     requestAnimationFrame(() => { G._container.querySelectorAll(".gal-card").forEach(el => { if (G.selectedImages.has(parseInt(el.dataset.id))) el.classList.add("dragging"); }); });
@@ -1748,6 +1757,10 @@ function _wireDetailEvents(ov, img) {
                 const fullUrl = window.location.origin + API_BASE + "/full/" + img.id;
                 e.dataTransfer.effectAllowed = "copy";
                 e.dataTransfer.setData("DownloadURL", mime + ":" + img.filename + ":" + fullUrl);
+                e.dataTransfer.setData("text/uri-list", fullUrl);
+                e.dataTransfer.setData("text/x-moz-url", fullUrl + "\n" + img.filename);
+                e.dataTransfer.setData("application/x-moz-file-promise-url", fullUrl);
+                e.dataTransfer.setData("application/x-moz-file-promise-dest-filename", img.filename);
             });
         }
     }
