@@ -566,6 +566,9 @@
 .gal-detail-btn:disabled { opacity: 0.35; cursor: not-allowed; }
 .gal-detail-btn.accent { border-color: var(--accent); color: var(--accent); }
 .gal-detail-btn.accent:hover { background: var(--accent-dim); }
+.gal-detail-btn-split { display: inline-flex; align-items: center; }
+.gal-detail-btn-split .split-main { border-top-right-radius: 0; border-bottom-right-radius: 0; border-right: none; }
+.gal-detail-btn-split .split-arrow { border-top-left-radius: 0; border-bottom-left-radius: 0; padding: 0 6px; font-size: 10px; }
 .gal-detail-btn.danger { color: var(--red); }
 .gal-detail-btn.danger:hover { background: var(--red-dim); border-color: var(--red); }
 .gal-detail-btn.nav { width: 32px; padding: 0; justify-content: center; }
