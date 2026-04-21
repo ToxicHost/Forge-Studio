@@ -2709,7 +2709,13 @@ def setup_studio_routes(app: FastAPI):
             data = await request.json()
             gb = float(data.get("gb", 1.5))
             reset = data.get("reset", False)
-            gb = max(0.0, min(8.0, gb))
+            # Cap at actual VRAM minus a small safety margin (1 GB for compute headroom)
+            try:
+                from backend import memory_management as mm
+                max_gb = max(0.0, (mm.total_vram / 1024.0) - 1.0)
+            except Exception:
+                max_gb = 8.0  # fallback if memory_management isn't available yet
+            gb = max(0.0, min(max_gb, gb))
 
             try:
                 from backend import memory_management as mm
