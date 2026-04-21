@@ -1564,14 +1564,14 @@ function onGalleryDragStart(e, imgId) {
             const fullUrl = window.location.origin + API_BASE + "/full/" + img.id;
             // Chromium/Edge/Brave honor DownloadURL.
             e.dataTransfer.setData("DownloadURL", mime + ":" + img.filename + ":" + fullUrl);
-            // Firefox ignores DownloadURL and falls back to the <img> src,
-            // which is the /thumb/ URL. These types override that fallback
-            // so the drop target fetches /full/ instead. /full/ responds
-            // with Content-Disposition so the filename is preserved.
+            // Firefox ignores DownloadURL and falls back to the <img> src
+            // (the /thumb/ URL). text/uri-list and text/x-moz-url both point
+            // the drop target at /full/ instead. Do NOT attempt to set
+            // application/x-moz-file-promise-* types — those are privileged
+            // (XUL / chrome-only) and throw "The operation is insecure" from
+            // web content, which aborts the whole dragstart handler.
             e.dataTransfer.setData("text/uri-list", fullUrl);
             e.dataTransfer.setData("text/x-moz-url", fullUrl + "\n" + img.filename);
-            e.dataTransfer.setData("application/x-moz-file-promise-url", fullUrl);
-            e.dataTransfer.setData("application/x-moz-file-promise-dest-filename", img.filename);
         }
     }
     requestAnimationFrame(() => { G._container.querySelectorAll(".gal-card").forEach(el => { if (G.selectedImages.has(parseInt(el.dataset.id))) el.classList.add("dragging"); }); });
@@ -1759,8 +1759,6 @@ function _wireDetailEvents(ov, img) {
                 e.dataTransfer.setData("DownloadURL", mime + ":" + img.filename + ":" + fullUrl);
                 e.dataTransfer.setData("text/uri-list", fullUrl);
                 e.dataTransfer.setData("text/x-moz-url", fullUrl + "\n" + img.filename);
-                e.dataTransfer.setData("application/x-moz-file-promise-url", fullUrl);
-                e.dataTransfer.setData("application/x-moz-file-promise-dest-filename", img.filename);
             });
         }
     }
