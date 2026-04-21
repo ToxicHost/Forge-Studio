@@ -3245,15 +3245,17 @@ def setup_gallery_routes(app: FastAPI):
                 return Response("Not found", status_code=404)
             # Content-Disposition with the original filename so drag-out
             # targets name the file correctly regardless of the URL path
-            # (which is just the numeric id). Uses RFC 5987 filename*=
-            # encoding to handle non-ASCII names. Only filename gets
-            # percent-encoded; quotes in the plain filename fall back to
-            # a safe ASCII variant.
+            # (which is just the numeric id). "inline" rather than
+            # "attachment" so direct URL visits and lightbox <img src>
+            # loads still render in-browser — the filename hint is what
+            # drag-out and Save-As read. RFC 5987 filename*= handles
+            # non-ASCII; ASCII fallback handles drop targets that ignore
+            # the extended form.
             from urllib.parse import quote
             fname = row["filename"] or f"image_{image_id}"
             ascii_safe = fname.encode("ascii", "replace").decode("ascii").replace('"', "_")
             cd = (
-                f'attachment; filename="{ascii_safe}"; '
+                f'inline; filename="{ascii_safe}"; '
                 f"filename*=UTF-8''{quote(fname, safe='')}"
             )
             return FileResponse(row["filepath"], headers={"Content-Disposition": cd})
