@@ -1917,17 +1917,55 @@ def setup_studio_routes(app: FastAPI):
                       f"upscaler={req.upscaler}, denoise={req.denoising}, "
                       f"seed={seed}, AD={'on' if ad_has_work else 'off'}")
 
-                # Let scripts intercept first (matches Forge's pattern),
-                # fall through to process_images if no script handles it.
-                processed = None
-                if runner:
-                    try:
-                        processed = runner.run(p, *p.script_args)
-                    except Exception as _re:
-                        print(f"{TAG} scripts_txt2img.run raised, falling back to process_images: {_re}")
-                        processed = None
-                if processed is None:
-                    processed = process_images(p)
+                # Physically remove scripts that unconditionally overwrite
+                # p.width / p.height during before_process — notably the
+                # standalone AR Selector, which has no enable toggle and
+                # forces a fixed ratio no matter what script_args say.
+                # Same treatment run_generation() applies. Without this
+                # the HR target dims become (orig_w × hr_scale, ar_h ×
+                # hr_scale) instead of (orig_w × hr_scale, orig_h × hr_scale).
+                import modules.scripts as _mod_scripts
+                _removed_scripts = []
+                _suppress_titles = {"moritz's ar selector"}
+                try:
+                    for _r in [_mod_scripts.scripts_txt2img, _mod_scripts.scripts_img2img]:
+                        if not _r:
+                            continue
+                        _to_remove = []
+                        for _s in _r.alwayson_scripts:
+                            try:
+                                _title = _s.title().strip().lower() if callable(getattr(_s, 'title', None)) else ""
+                            except Exception:
+                                _title = ""
+                            if _title in _suppress_titles:
+                                _to_remove.append((_r, _s))
+                        for _rr, _ss in _to_remove:
+                            _rr.alwayson_scripts.remove(_ss)
+                            _removed_scripts.append((_rr, _ss))
+                            print(f"{TAG} Temporarily removed conflicting script: {_ss.title()}")
+                except Exception as _se:
+                    print(f"{TAG} Script suppression warning: {_se}")
+
+                try:
+                    # Let scripts intercept first (matches Forge's pattern),
+                    # fall through to process_images if no script handles it.
+                    processed = None
+                    if runner:
+                        try:
+                            processed = runner.run(p, *p.script_args)
+                        except Exception as _re:
+                            print(f"{TAG} scripts_txt2img.run raised, falling back to process_images: {_re}")
+                            processed = None
+                    if processed is None:
+                        processed = process_images(p)
+                finally:
+                    # Restore any scripts we temporarily removed so they're
+                    # available for the next generation.
+                    for _rr, _ss in _removed_scripts:
+                        if _ss not in _rr.alwayson_scripts:
+                            _rr.alwayson_scripts.append(_ss)
+                    if _removed_scripts:
+                        print(f"{TAG} Restored {len(_removed_scripts)} suppressed script(s)")
 
                 if processed and processed.images:
                     result = processed.images[0]
