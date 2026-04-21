@@ -1850,7 +1850,12 @@ function bindUI() {
   document.getElementById("paramPrompt")?.addEventListener("input", () => Live.onPromptChanged());
   document.getElementById("paramNeg")?.addEventListener("input", () => Live.onPromptChanged());
 
-  // Standalone upscale — runs upscaler on current canvas composite
+  // Standalone upscale — v6.10: single-call pipeline. One backend
+  // request runs ESRGAN + optional img2img refine + optional ADetailer.
+  // Replaces the old two-stage flow that paid two full process_images()
+  // setups and two base64 round-trips of the upscaled PNG. Refine and
+  // AD checkboxes are truly independent — AD can run standalone on the
+  // ESRGAN output.
   document.getElementById("upscaleBtn")?.addEventListener("click", async () => {
     if (!window.StudioCore) { showToast("Canvas not ready", "error"); return; }
     const Core = window.StudioCore;
@@ -1859,7 +1864,7 @@ function bindUI() {
     const upscaler = document.getElementById("paramUpscaleModel")?.value || "R-ESRGAN 4x+";
     const scale = parseFloat(document.getElementById("paramUpscaleScale")?.value) || 2.0;
     const runRefine = document.getElementById("checkUpscaleRefine")?.classList.contains("checked") || false;
-    const runAD = runRefine && (document.getElementById("checkUpscaleAD")?.classList.contains("checked") || false);
+    const runAD     = document.getElementById("checkUpscaleAD")?.classList.contains("checked") || false;
 
     // Get canvas composite as data URL
     const tmp = document.createElement("canvas");
@@ -1884,121 +1889,76 @@ function bindUI() {
     if (fill) { fill.style.width = "100%"; fill.classList.add("indeterminate"); }
     StatusBar.setStatus("loading");
 
-    // Fast VRAM polling during upscale pipeline
+    // Fast VRAM polling during the pipeline
     const _vramPoll = setInterval(() => _refreshVRAM(), 2000);
     await _refreshVRAM();
-    console.log("[Upscale] Stage 1: ESRGAN upscale starting");
 
-    let upscaleOk = false;
+    const userSteps   = parseInt(document.getElementById("paramUpscaleSteps")?.value) || 20;
+    const userDenoise = parseFloat(document.getElementById("paramUpscaleDenoise")?.value) || 0.3;
+
+    // Progress streaming: the new backend endpoint pushes sampling_step /
+    // job_count over the WebSocket during process_images() and
+    // _run_studio_ad(), so a single poller drives the status bar across
+    // the whole pipeline.
+    const needsProgress = runRefine || runAD;
+    if (needsProgress) { StatusBar.setStatus("generating"); Progress.startPolling(); }
+    console.log(`[Upscale] Pipeline: ESRGAN${runRefine ? " + refine" : ""}${runAD ? " + AD" : ""}`);
+
     try {
-      const r = await fetch(API.base + "/studio/upscale", {
+      const body = {
+        image_b64: imageB64,
+        upscaler, scale,
+        run_refine:    runRefine,
+        run_ad:        runAD,
+        prompt:        document.getElementById("paramPrompt")?.value || "",
+        neg_prompt:    document.getElementById("paramNeg")?.value || "",
+        steps:         userSteps,
+        sampler_name:  document.getElementById("paramSampler")?.value || "DPM++ 2M SDE",
+        schedule_type: document.getElementById("paramScheduler")?.value || "Karras",
+        cfg_scale:     parseFloat(document.getElementById("paramCFG")?.value) || 5.0,
+        denoising:     userDenoise,
+        seed:          -1,
+        ad_slots:      [1, 2, 3].map(n => ({
+          enable:     document.getElementById(`checkAD${n}`)?.classList.contains("checked") || false,
+          model:      document.getElementById(`paramAD${n}Model`)?.value || "None",
+          confidence: parseFloat(document.getElementById(`paramAD${n}Conf`)?.value) || 0.3,
+          denoise:    parseFloat(document.getElementById(`paramAD${n}Denoise`)?.value) || 0.4,
+          mask_blur:  parseInt(document.getElementById(`paramAD${n}Blur`)?.value) || 4,
+          prompt:     document.getElementById(`paramAD${n}Prompt`)?.value || "",
+          neg_prompt: "",
+        })),
+        save_outputs:   State.saveOutputs,
+        save_format:    State.saveFormat || "png",
+        save_quality:   State.saveQuality || 95,
+        save_lossless:  State.saveLossless || false,
+        embed_metadata: State.embedMetadata ?? true,
+      };
+
+      const r = await fetch(API.base + "/studio/upscale_and_refine", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ image_b64: imageB64, upscaler, scale, save: State.saveOutputs && !runRefine }),
+        body: JSON.stringify(body),
       });
       const data = await r.json();
       if (r.ok && data.ok) {
         displayOnCanvas(data.image);
-        let msg = `Upscaled to ${data.width}\u00d7${data.height} with ${upscaler}`;
+        let msg;
+        if (runRefine && runAD)  msg = `Upscale + refine + AD complete (${data.width}\u00d7${data.height})`;
+        else if (runRefine)      msg = `Upscale + refine complete (${data.width}\u00d7${data.height})`;
+        else if (runAD)          msg = `Upscale + AD complete (${data.width}\u00d7${data.height})`;
+        else                     msg = `Upscaled to ${data.width}\u00d7${data.height} with ${upscaler}`;
         if (data.filename) msg += ` \u2014 saved ${data.filename}`;
         showToast(msg, "success");
-        upscaleOk = true;
-        await _refreshVRAM();
-        console.log("[Upscale] Stage 1 complete: ESRGAN done");
+        console.log("[Upscale] Pipeline complete");
       } else {
         showToast("Upscale failed: " + (data.error || "unknown error"), "error");
       }
     } catch (err) {
       showToast("Upscale error: " + err.message, "error");
+      console.error("[Upscale] Pipeline error:", err);
     }
 
-    // Stage 2: img2img refine pass on upscaled image
-    // Runs whenever the Refine checkbox is on. AD fires during refine
-    // only if the "Run ADetailer during refine" checkbox is also on.
-    if (upscaleOk && runRefine) {
-      {
-        const adEnabled = runAD;
-        const userSteps = parseInt(document.getElementById("paramUpscaleSteps")?.value) || 20;
-        const userDenoise = parseFloat(document.getElementById("paramUpscaleDenoise")?.value) || 0.3;
-        if (btn) btn.textContent = `Refining (${userSteps} steps, ${userDenoise} denoise)...`;
-        console.log("[Upscale] Stage 2: refine pass starting (AD: " + (adEnabled ? "on" : "off") + ")");
-        await _refreshVRAM();
-
-        try {
-          // Use Create mode with canvas content → routes to img2img.
-          // Very low denoise preserves the upscaled image almost perfectly.
-          // ADetailer fires in post-process with its own face detection + inpainting.
-          const Core2 = window.StudioCore;
-          const S2 = Core2.state;
-          const canvasB64 = Core2.exportCanvas();
-
-          const adParams = {
-            canvas_b64: canvasB64,
-            mask_b64: "null",       // no mask — Create mode img2img
-            fg_b64: "null",
-            mode: "Create",         // Create + non-blank canvas = img2img
-            inpaint_mode: "Inpaint",
-
-            prompt:        document.getElementById("paramPrompt")?.value || "",
-            neg_prompt:    document.getElementById("paramNeg")?.value || "",
-            steps:         userSteps,   // real steps so sampler functions properly
-            sampler_name:  document.getElementById("paramSampler")?.value || "DPM++ 2M SDE",
-            schedule_type: document.getElementById("paramScheduler")?.value || "Karras",
-            cfg_scale:     parseFloat(document.getElementById("paramCFG")?.value) || 5.0,
-            denoising:     userDenoise,   // user-controlled refinement strength
-            width:         S2.W,
-            height:        S2.H,
-            seed:          -1,
-            batch_count:   1,
-            batch_size:    1,
-
-            // No hires fix
-            hr_enable:     false,
-
-            // ADetailer — read from UI (off if user disabled it)
-            ad_enable:     adEnabled,
-            ad_slots:      [1, 2, 3].map(n => ({
-              enable:     document.getElementById(`checkAD${n}`)?.classList.contains("checked") || false,
-              model:      document.getElementById(`paramAD${n}Model`)?.value || "None",
-              confidence: parseFloat(document.getElementById(`paramAD${n}Conf`)?.value) || 0.3,
-              denoise:    parseFloat(document.getElementById(`paramAD${n}Denoise`)?.value) || 0.4,
-              mask_blur:  parseInt(document.getElementById(`paramAD${n}Blur`)?.value) || 4,
-              prompt:     document.getElementById(`paramAD${n}Prompt`)?.value || "",
-              neg_prompt: "",
-            })),
-
-            regions_json:  "",
-            cn_json:       "[]",
-            save_outputs:  State.saveOutputs,
-            save_format:   State.saveFormat || "png",
-            save_quality:  State.saveQuality || 80,
-            save_lossless: State.saveLossless || false,
-            embed_metadata: State.embedMetadata ?? true,
-            is_txt2img:    false,       // force img2img even though mode is Create
-            extension_args: ExtensionBridge.collectArgs(),
-            disabled_extensions: [...ExtensionBridge._disabled],
-          };
-
-          StatusBar.setStatus("generating");
-          Progress.startPolling();
-          const result = await API.generate(adParams);
-
-          if (result.error) {
-            showToast("ADetailer pass failed: " + result.error, "error");
-          } else if (result.images && result.images.length) {
-            displayOnCanvas(result.images[0]);
-            showToast("Face refinement complete", "success");
-          }
-          Progress.stopPolling();
-          await _refreshVRAM();
-          console.log("[Upscale] Stage 2 complete: ADetailer done");
-        } catch (err) {
-          showToast("ADetailer pass error: " + err.message, "error");
-          console.error("[Upscale] ADetailer error:", err);
-        }
-      }
-    }
-
+    if (needsProgress) Progress.stopPolling();
     clearInterval(_vramPoll);
     if (btn) { btn.textContent = "UPSCALE CANVAS"; btn.disabled = false; }
     if (fill) { fill.style.width = "0%"; fill.classList.remove("indeterminate"); }
@@ -4218,12 +4178,12 @@ const ThemeSwitcher = {
 };
 
 
-// Sync the "Run ADetailer during refine" row's disabled state
-// with the Refine checkbox — AD has nothing to run in without refine.
+// v6.10: Refine and AD are now truly independent — AD can run standalone
+// on the ESRGAN output without a base img2img pass. Keep the function as
+// a no-op so existing callers don't break, and leave the row always live.
 function _syncUpscaleADState() {
-  const refineOn = document.getElementById("checkUpscaleRefine")?.classList.contains("checked");
   const row = document.getElementById("upscaleADRow");
-  if (row) row.classList.toggle("disabled", !refineOn);
+  if (row) row.classList.remove("disabled");
 }
 
 

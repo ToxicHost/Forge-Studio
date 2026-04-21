@@ -328,6 +328,53 @@ def _pil_to_preview_b64(img: Image.Image) -> str:
     return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
 
 
+def _studio_upscale_image(img, upscaler_name: str, scale: float):
+    """Run a single ESRGAN-class upscaler pass on a PIL image.
+
+    Extracted so both /studio/upscale and /studio/upscale_and_refine can
+    reuse the ESRGAN path without round-tripping through HTTP. Synchronous
+    and blocking — call via run_in_executor or asyncio.to_thread from
+    async handlers.
+
+    Returns the upscaled PIL.Image. Target dims are snapped to multiples
+    of 8 so the result is a valid latent size for any downstream img2img
+    pass. Falls back to LANCZOS if the requested upscaler is missing.
+    """
+    import gc
+    import torch
+
+    orig_w, orig_h = img.size
+    scale = max(1.0, min(4.0, float(scale)))
+    new_w = (int(orig_w * scale) // 8) * 8
+    new_h = (int(orig_h * scale) // 8) * 8
+
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        gc.collect()
+
+    upscaler = None
+    for u in shared.sd_upscalers:
+        if u.name == upscaler_name:
+            upscaler = u
+            break
+
+    if upscaler and upscaler.name != "None":
+        target_scale = new_w / orig_w
+        result = upscaler.scaler.upscale(img, target_scale, upscaler.data_path)
+        if result.size != (new_w, new_h):
+            result = result.resize((new_w, new_h), Image.LANCZOS)
+    else:
+        if upscaler_name and upscaler_name != "Latent":
+            print(f"{TAG} Upscaler '{upscaler_name}' not found, using LANCZOS")
+        result = img.resize((new_w, new_h), Image.LANCZOS)
+
+    if torch.cuda.is_available():
+        torch.cuda.empty_cache()
+        gc.collect()
+
+    return result
+
+
 def _build_exif_usercomment(text: str) -> Optional[bytes]:
     """Build EXIF bytes with generation params in UserComment.
 
@@ -1578,8 +1625,6 @@ def setup_studio_routes(app: FastAPI):
 
     @app.post("/studio/upscale")
     async def studio_upscale(request: Request):
-        import gc
-        import torch
         import asyncio
         import base64
         from io import BytesIO
@@ -1601,41 +1646,13 @@ def setup_studio_routes(app: FastAPI):
             img_bytes = base64.b64decode(image_b64)
             img = Image.open(BytesIO(img_bytes)).convert("RGB")
             orig_w, orig_h = img.size
-            new_w = (int(orig_w * scale) // 8) * 8
-            new_h = (int(orig_h * scale) // 8) * 8
 
-            print(f"{TAG} Upscale: {orig_w}x{orig_h} -> {new_w}x{new_h} with {upscaler_name} ({scale}x)")
+            print(f"{TAG} Upscale: {orig_w}x{orig_h} with {upscaler_name} ({scale}x)")
 
-            # Clear VRAM to maximize available memory for the upscaler
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                gc.collect()
-
-            # Find the upscaler
-            upscaler = None
-            for u in shared.sd_upscalers:
-                if u.name == upscaler_name:
-                    upscaler = u
-                    break
-
-            if upscaler and upscaler.name != "None":
-                # Run upscaler in thread pool to avoid blocking the event loop
-                def _do_upscale():
-                    target_scale = new_w / orig_w
-                    result = upscaler.scaler.upscale(img, target_scale, upscaler.data_path)
-                    if result.size != (new_w, new_h):
-                        result = result.resize((new_w, new_h), Image.LANCZOS)
-                    return result
-
-                upscaled = await asyncio.get_event_loop().run_in_executor(None, _do_upscale)
-            else:
-                print(f"{TAG} Upscaler '{upscaler_name}' not found, using LANCZOS")
-                upscaled = img.resize((new_w, new_h), Image.LANCZOS)
-
-            # Clean up after upscale
-            if torch.cuda.is_available():
-                torch.cuda.empty_cache()
-                gc.collect()
+            upscaled = await asyncio.get_event_loop().run_in_executor(
+                None, _studio_upscale_image, img, upscaler_name, scale
+            )
+            new_w, new_h = upscaled.size
 
             # Encode result
             buf = BytesIO()
@@ -1686,6 +1703,342 @@ def setup_studio_routes(app: FastAPI):
             import traceback
             traceback.print_exc()
             return JSONResponse({"error": str(e)}, status_code=500)
+
+    # ------------------------------------------------------------------
+    # Upscale + Refine — single-call pipeline
+    # Replaces the frontend's two-stage dance (POST /studio/upscale then
+    # POST /studio/generate). The two-stage approach paid two full
+    # process_images() setup cycles, two base64 round-trips, and on lowvram
+    # it thrashed model/VAE swaps between stages. Doing everything inside
+    # one handler keeps the model hot and the upscaled latent in memory.
+    # ------------------------------------------------------------------
+
+    class UpscaleRefineRequest(BaseModel):
+        image_b64: str                     # data URL or raw base64
+
+        # Upscale params
+        upscaler: str = "R-ESRGAN 4x+"
+        scale: float = 2.0
+
+        # Refine (img2img) params — consulted when run_refine is True
+        run_refine: bool = False
+        prompt: str = ""
+        neg_prompt: str = ""
+        steps: int = 20
+        sampler_name: str = "DPM++ 2M SDE"
+        schedule_type: str = "Karras"
+        cfg_scale: float = 5.0
+        denoising: float = 0.3
+        seed: int = -1
+
+        # ADetailer params — consulted when run_ad is True. Independent of
+        # run_refine: AD can run standalone on the ESRGAN output.
+        run_ad: bool = False
+        ad_slots: List[ADSlotParams] = Field(
+            default_factory=lambda: [ADSlotParams(), ADSlotParams(), ADSlotParams()]
+        )
+
+        # Save params
+        save_outputs: bool = True
+        save_format: str = "png"
+        save_quality: int = 95
+        save_lossless: bool = False
+        embed_metadata: bool = True
+
+    @app.post("/studio/upscale_and_refine")
+    async def studio_upscale_and_refine(req: UpscaleRefineRequest):
+        """ESRGAN upscale + optional img2img refine + optional ADetailer,
+        all inside a single handler so the model stays hot across stages.
+
+        Four combinations: ESRGAN alone / ESRGAN+img2img / ESRGAN+AD /
+        ESRGAN+img2img with AD firing post-refine. See _studio_hires_fix
+        for the inspiration — this is the upscale-side sibling.
+        """
+        import random
+
+        _cancel_auto_unload()
+
+        # Shared imports for the worker thread
+        _build_native_ad_dicts = _import("studio_generation", "_build_native_ad_dicts")
+        _run_studio_ad = _import("studio_generation", "_run_studio_ad")
+        _build_processing_obj = _import("studio_generation", "_build_processing_obj")
+        GenParams = _import("studio_generation", "GenParams")
+        InpaintParams = _import("studio_generation", "InpaintParams")
+        _reset_generation_state = _import("studio_generation", "_reset_generation_state")
+        _ensure_model_loaded = _import("studio_generation", "_ensure_model_loaded")
+        _get_output_dir = _import("studio_generation", "_get_output_dir")
+
+        def _worker():
+            from modules.processing import process_images
+
+            # Decode image once at the top — no further base64 round-trips.
+            raw = req.image_b64
+            if "," in raw:
+                raw = raw.split(",", 1)[1]
+            try:
+                src = Image.open(io.BytesIO(base64.b64decode(raw))).convert("RGB")
+            except Exception as e:
+                return None, None, -1, f"Invalid image_b64: {e}"
+
+            orig_w, orig_h = src.size
+
+            # ── Stage 1: ESRGAN ──────────────────────────────────────
+            upscaled = _studio_upscale_image(src, req.upscaler, req.scale)
+            new_w, new_h = upscaled.size
+            print(f"{TAG} Upscale+refine: ESRGAN {orig_w}x{orig_h} -> "
+                  f"{new_w}x{new_h} with {req.upscaler}")
+
+            # Nothing more to do — return the pure ESRGAN result.
+            if not req.run_refine and not req.run_ad:
+                return upscaled, None, -1, None
+
+            # Build ADetailer slot dicts once — used by both the refine
+            # (native AD injection) and standalone-AD paths.
+            ad_slots = list(req.ad_slots) + [ADSlotParams()] * max(0, 3 - len(req.ad_slots))
+            ad_raw_slots = [{
+                "enable": s.enable, "model": s.model, "confidence": s.confidence,
+                "mask_min_ratio": s.mask_min, "mask_max_ratio": s.mask_max,
+                "topk_filter": s.topk_filter, "topk": s.topk,
+                "mask_x_offset": s.x_offset, "mask_y_offset": s.y_offset,
+                "mask_erosion_dilation": s.erosion_dilation, "mask_merge_mode": s.merge_mode,
+                "denoise": s.denoise, "mask_blur": s.mask_blur, "inpaint_pad": s.inpaint_pad,
+                "inpaint_full_res": s.full_res, "inpaint_fill": s.fill,
+                "use_sep_steps": s.sep_steps, "ad_steps": s.steps,
+                "use_sep_cfg": s.sep_cfg, "ad_cfg": s.cfg,
+                "use_sep_sampler": s.sep_sampler, "ad_sampler": s.sampler,
+                "ad_scheduler": s.scheduler,
+                "prompt": s.prompt, "neg_prompt": s.neg_prompt,
+            } for s in ad_slots[:3]]
+            ad_enable_flag, ad_slot_dicts = _build_native_ad_dicts(
+                bool(req.run_ad), ad_raw_slots
+            )
+            # Only truly enabled if at least one slot has a real model
+            ad_has_work = ad_enable_flag and any(
+                d.get("ad_tab_enable") and d.get("ad_model", "None") != "None"
+                for d in ad_slot_dicts
+            )
+
+            # Set up progress task + ensure model is loaded.
+            id_task = _reset_generation_state()
+            _ensure_model_loaded()
+
+            seed = int(req.seed) if req.seed != -1 else random.randint(0, 2**32 - 1)
+            infotext = None
+            result = upscaled
+
+            try:
+                if req.run_refine:
+                    # ── Stage 2a: img2img refine at upscaled resolution ──
+                    # Build one processing object with the upscaled image
+                    # as init. _build_processing_obj wires up the img2img
+                    # script runner (wildcards, dynamic prompts, and AD
+                    # slot injection). process_images() then runs the full
+                    # img2img pass in a single call — VAE encode of the
+                    # init image happens internally.
+                    gp = GenParams(
+                        prompt=req.prompt, neg_prompt=req.neg_prompt,
+                        steps=int(req.steps),
+                        sampler_name=req.sampler_name or "Euler a",
+                        schedule_type=req.schedule_type or "Automatic",
+                        cfg_scale=float(req.cfg_scale),
+                        denoising=float(req.denoising),
+                        width=new_w, height=new_h, seed=seed,
+                        batch_count=1, batch_size=1,
+                    )
+                    ip = InpaintParams()
+                    studio_outdir = _get_output_dir("img2img")
+
+                    ad_params_for_p = (ad_enable_flag, ad_slot_dicts) if ad_has_work else None
+                    p = _build_processing_obj(
+                        upscaled, gp, mask_img=None, has_mask=False,
+                        ip=ip, studio_outdir=studio_outdir, batch_seed=seed,
+                        cn_units=None, extension_args=None,
+                        ad_params=ad_params_for_p,
+                    )
+
+                    # Studio runs its own AD post-process; stock AD must bail.
+                    if ad_has_work:
+                        p._ad_disabled = True
+
+                    shared.state.job_count = 1
+                    shared.state.job_no = 0
+
+                    print(f"{TAG} Upscale+refine: img2img pass at {new_w}x{new_h}, "
+                          f"steps={gp.steps}, denoise={gp.denoising}, cfg={gp.cfg_scale}, "
+                          f"seed={seed}, AD={'on' if ad_has_work else 'off'}")
+
+                    processed = process_images(p)
+                    if processed and processed.images:
+                        result = processed.images[0]
+                        if processed.infotexts:
+                            infotext = processed.infotexts[0]
+                        elif processed.info:
+                            infotext = processed.info
+
+                    # Post-process AD on the refined result.
+                    if ad_has_work and not shared.state.interrupted:
+                        result = _run_studio_ad(result, p, ad_slot_dicts, mask_img=None)
+
+                elif req.run_ad and ad_has_work:
+                    # ── Stage 2b: standalone AD on ESRGAN output ────
+                    # No img2img pass runs — AD operates directly on the
+                    # upscaled image. Build `p` with the SAME helper the
+                    # refine path uses so both paths hand _run_studio_ad
+                    # a fully-wired processing object. Prevents drift if
+                    # _run_studio_ad ever starts reading new fields.
+                    gp = GenParams(
+                        prompt=req.prompt, neg_prompt=req.neg_prompt,
+                        steps=int(req.steps),
+                        sampler_name=req.sampler_name or "Euler a",
+                        schedule_type=req.schedule_type or "Automatic",
+                        cfg_scale=float(req.cfg_scale),
+                        denoising=float(req.denoising),
+                        width=new_w, height=new_h, seed=seed,
+                        batch_count=1, batch_size=1,
+                    )
+                    ip = InpaintParams()
+                    studio_outdir = _get_output_dir("img2img")
+                    p = _build_processing_obj(
+                        upscaled, gp, mask_img=None, has_mask=False,
+                        ip=ip, studio_outdir=studio_outdir, batch_seed=seed,
+                        cn_units=None, extension_args=None,
+                        ad_params=None,  # no native AD injection; Studio AD runs externally
+                    )
+                    p._ad_disabled = True
+
+                    shared.state.job_count = 1
+                    shared.state.job_no = 0
+
+                    print(f"{TAG} Upscale+refine: standalone AD on ESRGAN at {new_w}x{new_h}")
+                    result = _run_studio_ad(upscaled, p, ad_slot_dicts, mask_img=None)
+            finally:
+                try:
+                    from modules.progress import finish_task as _ft
+                    _ft(id_task)
+                except Exception:
+                    pass
+
+            return result, infotext, seed, None
+
+        try:
+            result, infotext, seed_val, err = await asyncio.to_thread(_worker)
+        except Exception as e:
+            traceback.print_exc()
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+        if err:
+            return JSONResponse({"error": err}, status_code=400)
+        if result is None:
+            return JSONResponse({"error": "Pipeline returned no image"}, status_code=500)
+
+        # Encode the final image once.
+        result_w, result_h = result.size
+
+        # ── Save to disk ─────────────────────────────────────────────
+        # Use the same Forge-style filename helper as the regular
+        # auto-save. For PNG, encode once to buffer and reuse for both
+        # disk + response b64 (no double compression).
+        filename = None
+        saved_path = None
+        png_bytes = None
+        if req.save_outputs:
+            try:
+                base_outdir = shared.opts.data.get("outdir_samples", "")
+                if not base_outdir:
+                    base_outdir = shared.opts.data.get("outdir_img2img_samples", "")
+                if not base_outdir:
+                    from modules.paths import data_path
+                    base_outdir = os.path.join(data_path, "output")
+                if os.path.basename(base_outdir) in ("txt2img-images", "img2img-images"):
+                    base_outdir = os.path.dirname(base_outdir)
+                date_folder = date.today().strftime("%Y-%m-%d")
+                output_dir = Path(base_outdir) / "studio" / "upscaled" / date_folder
+                output_dir.mkdir(parents=True, exist_ok=True)
+
+                ext_map = {"png": "png", "jpeg": "jpg", "webp": "webp"}
+                ext = ext_map.get(req.save_format, "png")
+                counter = _next_forge_counter(output_dir)
+                seed_for_name = seed_val if seed_val != -1 else 0
+                while True:
+                    fname = f"Studio-{counter:05d}-{seed_for_name}.{ext}"
+                    fpath = output_dir / fname
+                    if not fpath.exists():
+                        break
+                    counter += 1
+
+                save_kwargs = {}
+                if req.save_format == "png":
+                    if req.embed_metadata and infotext:
+                        try:
+                            from PIL.PngImagePlugin import PngInfo
+                            pnginfo = PngInfo()
+                            pnginfo.add_text("parameters", infotext)
+                            save_kwargs["pnginfo"] = pnginfo
+                        except Exception:
+                            pass
+                    buf = io.BytesIO()
+                    result.save(buf, format="PNG", **save_kwargs)
+                    png_bytes = buf.getvalue()
+                    with open(str(fpath), "wb") as f:
+                        f.write(png_bytes)
+                elif req.save_format == "jpeg":
+                    save_img = result.convert("RGB") if result.mode != "RGB" else result
+                    save_kwargs = {"quality": req.save_quality, "optimize": True}
+                    if req.embed_metadata and infotext:
+                        exif_bytes = _build_exif_usercomment(infotext)
+                        if exif_bytes:
+                            save_kwargs["exif"] = exif_bytes
+                    save_img.save(str(fpath), "JPEG", **save_kwargs)
+                elif req.save_format == "webp":
+                    if req.save_lossless:
+                        save_kwargs = {"lossless": True}
+                    else:
+                        save_kwargs = {"quality": req.save_quality}
+                    if req.embed_metadata and infotext:
+                        exif_bytes = _build_exif_usercomment(infotext)
+                        if exif_bytes:
+                            save_kwargs["exif"] = exif_bytes
+                    result.save(str(fpath), "WEBP", **save_kwargs)
+
+                filename = fname
+                saved_path = str(fpath)
+                print(f"{TAG} Upscale+refine saved: {saved_path}")
+
+                # Gallery DB metadata write — only when we have real infotext
+                if infotext:
+                    try:
+                        _hash_fn = _import("studio_gallery", "compute_content_hash")
+                        _gallery_save = _import("studio_gallery", "save_metadata_by_hash")
+                        if _hash_fn and _gallery_save:
+                            _ch = _hash_fn(result if req.save_format == "png" else str(fpath))
+                            if _ch:
+                                _gallery_save(_ch, infotext, {"infotexts": [infotext]})
+                    except Exception:
+                        pass
+            except Exception as e:
+                print(f"{TAG} Upscale+refine save failed: {e}")
+
+        if png_bytes is not None:
+            result_b64 = "data:image/png;base64," + base64.b64encode(png_bytes).decode()
+        else:
+            result_b64 = _pil_to_b64(result)
+
+        # Reset auto-unload timer (mirrors /studio/generate behaviour)
+        global _last_generation_time
+        _last_generation_time = time.time()
+        if _auto_unload_enabled:
+            _schedule_auto_unload()
+        _log_vram("Upscale+refine complete")
+
+        return {
+            "ok": True,
+            "image": result_b64,
+            "width": result_w,
+            "height": result_h,
+            "filename": filename,
+            "saved_path": saved_path,
+            "seed": seed_val,
+        }
 
     @app.get("/studio/vaes")
     async def get_vaes():
