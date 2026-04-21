@@ -1480,7 +1480,7 @@ async function scanDuplicates() {
             const thumbUrl = API_BASE + "/thumb/" + item.id + "?v=" + item.fphash;
             html += '<label class="gal-dup-item">';
             html += '<input type="checkbox" class="gal-dup-item-check" data-img-id="' + item.id + '" />';
-            html += '<img src="' + thumbUrl + '" alt="" loading="lazy" />';
+            html += '<img src="' + thumbUrl + '" alt="" loading="lazy" draggable="false" />';
             html += '<div class="gal-dup-item-info">';
             html += '<div class="gal-dup-item-name" title="' + esc(item.filepath || item.filename) + '">' + esc(item.filename) + '</div>';
             html += '<div class="gal-dup-item-folder">' + esc(item.folder) + '</div>';
@@ -1687,7 +1687,7 @@ function renderFolderSidebar() {
 // GALLERY GRID
 // ========================================================================
 
-function cardMediaHtml(img) { const u = API_BASE + "/thumb/" + img.id + "?h=" + img.fphash; if (img.is_video || img.media_type === "video") return '<img src="' + u + '" alt="' + esc(img.filename) + '" loading="lazy"/><span class="video-badge">' + IC.play + ' VIDEO</span>'; if (img.media_type === "gif") return '<img src="' + u + '" alt="' + esc(img.filename) + '" loading="lazy"/><span class="video-badge">GIF</span>'; const ext = img.filename.split(".").pop().toLowerCase(); if (ext === "gif") return '<img src="' + u + '" alt="' + esc(img.filename) + '" loading="lazy"/><span class="video-badge">GIF</span>'; return '<img src="' + u + '" alt="' + esc(img.filename) + '" loading="lazy"/>'; }
+function cardMediaHtml(img) { const u = API_BASE + "/thumb/" + img.id + "?h=" + img.fphash; if (img.is_video || img.media_type === "video") return '<img src="' + u + '" alt="' + esc(img.filename) + '" loading="lazy" draggable="false"/><span class="video-badge">' + IC.play + ' VIDEO</span>'; if (img.media_type === "gif") return '<img src="' + u + '" alt="' + esc(img.filename) + '" loading="lazy" draggable="false"/><span class="video-badge">GIF</span>'; const ext = img.filename.split(".").pop().toLowerCase(); if (ext === "gif") return '<img src="' + u + '" alt="' + esc(img.filename) + '" loading="lazy" draggable="false"/><span class="video-badge">GIF</span>'; return '<img src="' + u + '" alt="' + esc(img.filename) + '" loading="lazy" draggable="false"/>'; }
 function renderMainContent() {
     let h = '<div class="gal-grid" id="gal-grid">' + G.images.map(img => { const sel = G.selectedImages.has(img.id) ? " selected" : ""; return '<div class="gal-card' + sel + '" data-id="' + img.id + '" draggable="true"><div class="img-wrap">' + cardMediaHtml(img) + '</div><div class="card-info"><div class="card-filename">' + esc(img.filename) + '</div><div class="card-folder"><span class="gal-tree-icon">' + IC.folder + '</span> ' + esc(img.folder) + '</div></div></div>'; }).join("") + '</div>';
     if (!G.images.length) h = '<div class="gal-empty"><div style="opacity:0.12">' + IC.image + '</div><div>No images found.</div></div>';
