@@ -1747,12 +1747,23 @@ def setup_studio_routes(app: FastAPI):
 
     @app.post("/studio/upscale_and_refine")
     async def studio_upscale_and_refine(req: UpscaleRefineRequest):
-        """ESRGAN upscale + optional img2img refine + optional ADetailer,
-        all inside a single handler so the model stays hot across stages.
+        """ESRGAN upscale + optional HiRes refine + optional ADetailer,
+        all inside a single handler using Forge's own HiRes Fix pipeline.
 
-        Four combinations: ESRGAN alone / ESRGAN+img2img / ESRGAN+AD /
-        ESRGAN+img2img with AD firing post-refine. See _studio_hires_fix
-        for the inspiration — this is the upscale-side sibling.
+        Architecture: when any diffusion is requested (refine OR AD), we
+        build a txt2img processing object with `enable_hr=True` and
+        `firstpass_image=<source>`. Forge's HiRes Fix machinery sees
+        firstpass_image and skips sampling the base gen — using our
+        pixels AS the base output — then runs the upscaler + hires
+        denoise inside one process_images() call. Model weights stay on
+        GPU, VAE encodes happen with Forge's memory manager active, and
+        no manual torch.cuda.empty_cache() cycle fights the pipeline.
+        This matches what Forge Neo's upscale button does and should
+        give the same performance profile on low-VRAM cards.
+
+        The ESRGAN-only fast path (neither refine nor AD) still uses
+        the standalone _studio_upscale_image helper — no diffusion, no
+        need for the full pipeline.
         """
         import random
 
@@ -1761,15 +1772,13 @@ def setup_studio_routes(app: FastAPI):
         # Shared imports for the worker thread
         _build_native_ad_dicts = _import("studio_generation", "_build_native_ad_dicts")
         _run_studio_ad = _import("studio_generation", "_run_studio_ad")
-        _build_processing_obj = _import("studio_generation", "_build_processing_obj")
-        GenParams = _import("studio_generation", "GenParams")
-        InpaintParams = _import("studio_generation", "InpaintParams")
         _reset_generation_state = _import("studio_generation", "_reset_generation_state")
         _ensure_model_loaded = _import("studio_generation", "_ensure_model_loaded")
         _get_output_dir = _import("studio_generation", "_get_output_dir")
 
         def _worker():
-            from modules.processing import process_images
+            from modules.processing import StableDiffusionProcessingTxt2Img, process_images
+            import modules.scripts as mod_scripts
 
             # Decode image once at the top — no further base64 round-trips.
             raw = req.image_b64
@@ -1782,18 +1791,7 @@ def setup_studio_routes(app: FastAPI):
 
             orig_w, orig_h = src.size
 
-            # ── Stage 1: ESRGAN ──────────────────────────────────────
-            upscaled = _studio_upscale_image(src, req.upscaler, req.scale)
-            new_w, new_h = upscaled.size
-            print(f"{TAG} Upscale+refine: ESRGAN {orig_w}x{orig_h} -> "
-                  f"{new_w}x{new_h} with {req.upscaler}")
-
-            # Nothing more to do — return the pure ESRGAN result.
-            if not req.run_refine and not req.run_ad:
-                return upscaled, None, -1, None
-
-            # Build ADetailer slot dicts once — used by both the refine
-            # (native AD injection) and standalone-AD paths.
+            # Build ADetailer slot dicts (shared by refine + standalone AD paths).
             ad_slots = list(req.ad_slots) + [ADSlotParams()] * max(0, 3 - len(req.ad_slots))
             ad_raw_slots = [{
                 "enable": s.enable, "model": s.model, "confidence": s.confidence,
@@ -1812,11 +1810,18 @@ def setup_studio_routes(app: FastAPI):
             ad_enable_flag, ad_slot_dicts = _build_native_ad_dicts(
                 bool(req.run_ad), ad_raw_slots
             )
-            # Only truly enabled if at least one slot has a real model
             ad_has_work = ad_enable_flag and any(
                 d.get("ad_tab_enable") and d.get("ad_model", "None") != "None"
                 for d in ad_slot_dicts
             )
+
+            # ── ESRGAN-only fast path ────────────────────────────────
+            # No refine, no AD → use the standalone upscaler helper.
+            # Preserves the "pure ESRGAN" use case without paying any
+            # diffusion setup cost.
+            if not req.run_refine and not ad_has_work:
+                upscaled = _studio_upscale_image(src, req.upscaler, req.scale)
+                return upscaled, None, -1, None
 
             # Set up progress task + ensure model is loaded.
             id_task = _reset_generation_state()
@@ -1824,93 +1829,115 @@ def setup_studio_routes(app: FastAPI):
 
             seed = int(req.seed) if req.seed != -1 else random.randint(0, 2**32 - 1)
             infotext = None
-            result = upscaled
+            result = None
+
+            # ── Refine path: Forge's HiRes Fix pipeline ─────────────
+            # txt2img + enable_hr + firstpass_image is exactly what
+            # Forge Neo's upscale button uses. The pipeline skips base
+            # gen sampling (our input is already the "base output"),
+            # runs the upscaler + hires denoise inside one call, and
+            # keeps the model hot the whole way through.
+            studio_outdir = _get_output_dir("txt2img")
 
             try:
-                if req.run_refine:
-                    # ── Stage 2a: img2img refine at upscaled resolution ──
-                    # Build one processing object with the upscaled image
-                    # as init. _build_processing_obj wires up the img2img
-                    # script runner (wildcards, dynamic prompts, and AD
-                    # slot injection). process_images() then runs the full
-                    # img2img pass in a single call — VAE encode of the
-                    # init image happens internally.
-                    gp = GenParams(
-                        prompt=req.prompt, neg_prompt=req.neg_prompt,
-                        steps=int(req.steps),
-                        sampler_name=req.sampler_name or "Euler a",
-                        schedule_type=req.schedule_type or "Automatic",
-                        cfg_scale=float(req.cfg_scale),
-                        denoising=float(req.denoising),
-                        width=new_w, height=new_h, seed=seed,
-                        batch_count=1, batch_size=1,
-                    )
-                    ip = InpaintParams()
-                    studio_outdir = _get_output_dir("img2img")
+                p = StableDiffusionProcessingTxt2Img(
+                    sd_model=shared.sd_model,
+                    outpath_samples=studio_outdir,
+                    outpath_grids=studio_outdir,
+                    prompt=req.prompt or "",
+                    negative_prompt=req.neg_prompt or "",
+                    seed=seed,
+                    # Dimensions are the ORIGINAL source image, NOT the
+                    # target. HiRes Fix scales up from here via hr_scale.
+                    width=orig_w,
+                    height=orig_h,
+                    cfg_scale=float(req.cfg_scale),
+                    sampler_name=req.sampler_name or "Euler a",
+                    batch_size=1,
+                    n_iter=1,
+                    steps=int(req.steps),
+                    # ── HiRes Fix configuration ────────────────────
+                    enable_hr=True,
+                    hr_scale=float(req.scale),
+                    hr_upscaler=req.upscaler,
+                    hr_second_pass_steps=int(req.steps),
+                    denoising_strength=float(req.denoising),
+                    hr_sampler_name=None,   # use same sampler
+                    hr_scheduler=None,      # use same scheduler
+                    # ──────────────────────────────────────────────
+                    do_not_save_samples=True,
+                    do_not_save_grid=True,
+                )
 
-                    ad_params_for_p = (ad_enable_flag, ad_slot_dicts) if ad_has_work else None
-                    p = _build_processing_obj(
-                        upscaled, gp, mask_img=None, has_mask=False,
-                        ip=ip, studio_outdir=studio_outdir, batch_seed=seed,
-                        cn_units=None, extension_args=None,
-                        ad_params=ad_params_for_p,
-                    )
+                # Scheduler for base + hires passes
+                if req.schedule_type and req.schedule_type != "Automatic" and hasattr(p, 'scheduler'):
+                    p.scheduler = req.schedule_type
 
-                    # Studio runs its own AD post-process; stock AD must bail.
-                    if ad_has_work:
-                        p._ad_disabled = True
+                # The crucial attribute — tells Forge to use our pixels
+                # as the "base gen" output and skip sampling it entirely.
+                p.firstpass_image = src
 
-                    shared.state.job_count = 1
-                    shared.state.job_no = 0
+                # Internal Forge flag: signals this is a re-upscale of an
+                # existing image, not a fresh gen. Affects some cleanup/
+                # logging paths. Safe to set.
+                p.txt2img_upscale = True
 
-                    print(f"{TAG} Upscale+refine: img2img pass at {new_w}x{new_h}, "
-                          f"steps={gp.steps}, denoise={gp.denoising}, cfg={gp.cfg_scale}, "
-                          f"seed={seed}, AD={'on' if ad_has_work else 'off'}")
+                # Suppress pre-hires intermediate save (we want the final
+                # result only; disk save happens in the outer handler).
+                p.override_settings = dict(getattr(p, 'override_settings', {}) or {})
+                p.override_settings["save_images_before_highres_fix"] = False
 
-                    processed = process_images(p)
-                    if processed and processed.images:
-                        result = processed.images[0]
-                        if processed.infotexts:
-                            infotext = processed.infotexts[0]
-                        elif processed.info:
-                            infotext = processed.info
+                # Attach the txt2img script runner so wildcards / dynamic
+                # prompts resolve. Empty script_args — we're not invoking
+                # any selectable scripts, just letting alwayson scripts
+                # (DP, etc.) process the prompt.
+                runner = mod_scripts.scripts_txt2img
+                if runner and getattr(runner, 'inputs', None):
+                    p.scripts = runner
+                    p.script_args = tuple([None] * len(runner.inputs))
+                else:
+                    p.scripts = None
+                    p.script_args = ()
 
-                    # Post-process AD on the refined result.
-                    if ad_has_work and not shared.state.interrupted:
-                        result = _run_studio_ad(result, p, ad_slot_dicts, mask_img=None)
-
-                elif req.run_ad and ad_has_work:
-                    # ── Stage 2b: standalone AD on ESRGAN output ────
-                    # No img2img pass runs — AD operates directly on the
-                    # upscaled image. Build `p` with the SAME helper the
-                    # refine path uses so both paths hand _run_studio_ad
-                    # a fully-wired processing object. Prevents drift if
-                    # _run_studio_ad ever starts reading new fields.
-                    gp = GenParams(
-                        prompt=req.prompt, neg_prompt=req.neg_prompt,
-                        steps=int(req.steps),
-                        sampler_name=req.sampler_name or "Euler a",
-                        schedule_type=req.schedule_type or "Automatic",
-                        cfg_scale=float(req.cfg_scale),
-                        denoising=float(req.denoising),
-                        width=new_w, height=new_h, seed=seed,
-                        batch_count=1, batch_size=1,
-                    )
-                    ip = InpaintParams()
-                    studio_outdir = _get_output_dir("img2img")
-                    p = _build_processing_obj(
-                        upscaled, gp, mask_img=None, has_mask=False,
-                        ip=ip, studio_outdir=studio_outdir, batch_seed=seed,
-                        cn_units=None, extension_args=None,
-                        ad_params=None,  # no native AD injection; Studio AD runs externally
-                    )
+                # Studio runs its own AD post-process; stock AD must bail.
+                if ad_has_work:
                     p._ad_disabled = True
 
-                    shared.state.job_count = 1
-                    shared.state.job_no = 0
+                shared.state.job_count = 1
+                shared.state.job_no = 0
 
-                    print(f"{TAG} Upscale+refine: standalone AD on ESRGAN at {new_w}x{new_h}")
-                    result = _run_studio_ad(upscaled, p, ad_slot_dicts, mask_img=None)
+                target_w = int(orig_w * float(req.scale))
+                target_h = int(orig_h * float(req.scale))
+                print(f"{TAG} Upscale+refine: txt2img+hires firstpass_image, "
+                      f"{orig_w}x{orig_h} -> {target_w}x{target_h}, "
+                      f"upscaler={req.upscaler}, denoise={req.denoising}, "
+                      f"seed={seed}, AD={'on' if ad_has_work else 'off'}")
+
+                # Let scripts intercept first (matches Forge's pattern),
+                # fall through to process_images if no script handles it.
+                processed = None
+                if runner:
+                    try:
+                        processed = runner.run(p, *p.script_args)
+                    except Exception as _re:
+                        print(f"{TAG} scripts_txt2img.run raised, falling back to process_images: {_re}")
+                        processed = None
+                if processed is None:
+                    processed = process_images(p)
+
+                if processed and processed.images:
+                    result = processed.images[0]
+                    if processed.infotexts:
+                        infotext = processed.infotexts[0]
+                    elif processed.info:
+                        infotext = processed.info
+                else:
+                    return None, None, seed, "process_images returned no images"
+
+                # Post-process AD on the hires output.
+                if ad_has_work and not shared.state.interrupted:
+                    result = _run_studio_ad(result, p, ad_slot_dicts, mask_img=None)
+
             finally:
                 try:
                     from modules.progress import finish_task as _ft
