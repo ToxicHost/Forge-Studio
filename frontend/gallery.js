@@ -1544,7 +1544,29 @@ async function deleteSelectedDuplicates() {
 // DRAG & DROP
 // ========================================================================
 
-function onGalleryDragStart(e, imgId) { if (!G.selectedImages.has(imgId)) { G.selectedImages.clear(); G.selectedImages.add(imgId); updateSelectionUI(); } G.dragIds = Array.from(G.selectedImages); e.dataTransfer.effectAllowed = "move"; e.dataTransfer.setData("text/plain", JSON.stringify(G.dragIds)); requestAnimationFrame(() => { G._container.querySelectorAll(".gal-card").forEach(el => { if (G.selectedImages.has(parseInt(el.dataset.id))) el.classList.add("dragging"); }); }); }
+function onGalleryDragStart(e, imgId) {
+    if (!G.selectedImages.has(imgId)) { G.selectedImages.clear(); G.selectedImages.add(imgId); updateSelectionUI(); }
+    G.dragIds = Array.from(G.selectedImages);
+    e.dataTransfer.effectAllowed = "copyMove";
+    e.dataTransfer.setData("text/plain", JSON.stringify(G.dragIds));
+    // External drag-out: tell the OS to fetch the full original image (not
+    // the thumbnail) with its real filename. Without this, the browser uses
+    // the dragged <img> src — the /thumb/ URL — so external apps receive
+    // the 320px WebP instead of the user's actual file.
+    // DownloadURL only applies to single-image drags; multi-image drag-out
+    // is browser-inconsistent, and internal drag-to-folder is the primary
+    // multi-select use case anyway.
+    if (G.dragIds.length === 1) {
+        const img = G.images.find(i => i.id === imgId);
+        if (img && img.filename) {
+            const ext = img.filename.split(".").pop().toLowerCase();
+            const mime = _mimeForExt(ext);
+            const fullUrl = window.location.origin + API_BASE + "/full/" + img.id;
+            e.dataTransfer.setData("DownloadURL", mime + ":" + img.filename + ":" + fullUrl);
+        }
+    }
+    requestAnimationFrame(() => { G._container.querySelectorAll(".gal-card").forEach(el => { if (G.selectedImages.has(parseInt(el.dataset.id))) el.classList.add("dragging"); }); });
+}
 function onGalleryDragEnd() { G.dragIds = null; G._container.querySelectorAll(".gal-card.dragging").forEach(el => el.classList.remove("dragging")); G._container.querySelectorAll(".gal-tree-toggle.drop-over").forEach(el => el.classList.remove("drop-over")); }
 function onFolderDrop(e, idx) { e.preventDefault(); e.currentTarget.classList.remove("drop-over"); if (!G.dragIds || !G.dragIds.length) return; const fp = _folderPaths[idx]; if (!fp) return; G.selectedImages = new Set(G.dragIds); doMoveToFolder(fp); }
 
@@ -1674,6 +1696,20 @@ function closeDetail() { document.getElementById("gal-detail-overlay")?.remove()
 function buildDetailTagsHtml(imgId, chars) { return chars.map(c => { const isLast = chars.length === 1; return '<span class="tag-pill' + (isLast ? " tag-last" : "") + '" data-tag-action="' + (isLast ? "" : "remove") + '" data-img-id="' + imgId + '" data-tag="' + esc(c) + '">' + esc(c) + '</span>'; }).join("") + '<button class="gal-add-tag-btn" id="gal-add-tag-toggle" title="Add tag">+</button><div class="gal-add-tag-inline" id="gal-add-tag-inline"><input id="gal-add-tag-input" placeholder="Tag name..." /></div>'; }
 const BROWSER_VIDEO = { mp4: 1, webm: 1, m4v: 1, mov: 1 };
 
+function _mimeForExt(ext) {
+    return {
+        png: "image/png",
+        jpg: "image/jpeg", jpeg: "image/jpeg",
+        webp: "image/webp",
+        gif: "image/gif",
+        bmp: "image/bmp",
+        mp4: "video/mp4",
+        webm: "video/webm",
+        mov: "video/quicktime",
+        m4v: "video/mp4",
+    }[ext] || "application/octet-stream";
+}
+
 function showDetailOverlay() {
     document.getElementById("gal-detail-overlay")?.remove();
     const img = G.images[G.currentImageIndex]; if (!img) return;
@@ -1699,6 +1735,22 @@ function _wireDetailEvents(ov, img) {
     ov.addEventListener("click", e => { const pill = e.target.closest("[data-tag-action='remove']"); if (pill) { removeTag(parseInt(pill.dataset.imgId), pill.dataset.tag); return; } if (e.target.closest("#gal-add-tag-toggle")) toggleAddTag(); });
     const ai = ov.querySelector("#gal-add-tag-input"); if (ai) { ai.addEventListener("keydown", e => { if (e.key === "Enter") addTag(G.currentImageId); if (e.key === "Escape") toggleAddTag(); }); attachAutocomplete(ai, { mode: "tag", getItems: getCharItems }); }
     if (!img.is_video) setupDetailZoom(ov); else { const vid = ov.querySelector("#gal-detail-video"); if (vid) { vid.volume = G.volume; vid.addEventListener("volumechange", () => { G.volume = vid.volume; localStorage.setItem("gal_volume", String(vid.volume)); }); } }
+    // External drag-out from the lightbox: the <img> src is already the
+    // /full/ URL so external apps receive the right bytes, but they name
+    // the file from the URL path ("123" instead of the real filename).
+    // DownloadURL fixes that.
+    if (!img.is_video) {
+        const detailImg = ov.querySelector("#gal-detail-img");
+        if (detailImg && img.filename) {
+            detailImg.addEventListener("dragstart", e => {
+                const ext = img.filename.split(".").pop().toLowerCase();
+                const mime = _mimeForExt(ext);
+                const fullUrl = window.location.origin + API_BASE + "/full/" + img.id;
+                e.dataTransfer.effectAllowed = "copy";
+                e.dataTransfer.setData("DownloadURL", mime + ":" + img.filename + ":" + fullUrl);
+            });
+        }
+    }
     const area = ov.querySelector("#gal-detail-img-area"); if (area) area.addEventListener("click", e => {
         if (e.target.closest("button") || e.target.closest("video")) return;
         const isImg = e.target.id === "gal-detail-img";
