@@ -1888,13 +1888,23 @@ def setup_studio_routes(app: FastAPI):
                 p.override_settings["save_images_before_highres_fix"] = False
 
                 # Attach the txt2img script runner so wildcards / dynamic
-                # prompts resolve. Empty script_args — we're not invoking
-                # any selectable scripts, just letting alwayson scripts
-                # (DP, etc.) process the prompt.
+                # prompts resolve. Build script_args from each component's
+                # actual default value — passing None makes alwayson
+                # scripts (AR Selector, ControlNet, compile, etc.) crash
+                # because they expect real values, not None. Reading
+                # comp.value is what Gradio would pass if the user opened
+                # txt2img fresh and clicked Generate without changing
+                # anything.
                 runner = mod_scripts.scripts_txt2img
                 if runner and getattr(runner, 'inputs', None):
                     p.scripts = runner
-                    p.script_args = tuple([None] * len(runner.inputs))
+                    script_args = []
+                    for comp in runner.inputs:
+                        if comp is None:
+                            script_args.append(None)
+                        else:
+                            script_args.append(getattr(comp, 'value', None))
+                    p.script_args = tuple(script_args)
                 else:
                     p.scripts = None
                     p.script_args = ()
