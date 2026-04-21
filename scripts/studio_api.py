@@ -1772,13 +1772,14 @@ def setup_studio_routes(app: FastAPI):
         # Shared imports for the worker thread
         _build_native_ad_dicts = _import("studio_generation", "_build_native_ad_dicts")
         _run_studio_ad = _import("studio_generation", "_run_studio_ad")
+        _build_txt2img_obj = _import("studio_generation", "_build_txt2img_obj")
+        GenParams = _import("studio_generation", "GenParams")
         _reset_generation_state = _import("studio_generation", "_reset_generation_state")
         _ensure_model_loaded = _import("studio_generation", "_ensure_model_loaded")
         _get_output_dir = _import("studio_generation", "_get_output_dir")
 
         def _worker():
-            from modules.processing import StableDiffusionProcessingTxt2Img, process_images
-            import modules.scripts as mod_scripts
+            from modules.processing import process_images
 
             # Decode image once at the top — no further base64 round-trips.
             raw = req.image_b64
@@ -1837,41 +1838,53 @@ def setup_studio_routes(app: FastAPI):
             # gen sampling (our input is already the "base output"),
             # runs the upscaler + hires denoise inside one call, and
             # keeps the model hot the whole way through.
+            #
+            # Reuses _build_txt2img_obj so script attachment matches the
+            # main generate path byte-for-byte: proper type coercion via
+            # _cast_arg, DP force-enable, AR-selector suppression,
+            # Sampler/Seed script slot patching. Rolling our own
+            # script_args (even with comp.value) misses these and leaves
+            # alwayson scripts in an inconsistent state.
             studio_outdir = _get_output_dir("txt2img")
 
             try:
-                p = StableDiffusionProcessingTxt2Img(
-                    sd_model=shared.sd_model,
-                    outpath_samples=studio_outdir,
-                    outpath_grids=studio_outdir,
+                gp = GenParams(
                     prompt=req.prompt or "",
-                    negative_prompt=req.neg_prompt or "",
-                    seed=seed,
-                    # Dimensions are the ORIGINAL source image, NOT the
-                    # target. HiRes Fix scales up from here via hr_scale.
-                    width=orig_w,
-                    height=orig_h,
-                    cfg_scale=float(req.cfg_scale),
-                    sampler_name=req.sampler_name or "Euler a",
-                    batch_size=1,
-                    n_iter=1,
+                    neg_prompt=req.neg_prompt or "",
                     steps=int(req.steps),
-                    # ── HiRes Fix configuration ────────────────────
-                    enable_hr=True,
-                    hr_scale=float(req.scale),
-                    hr_upscaler=req.upscaler,
-                    hr_second_pass_steps=int(req.steps),
-                    denoising_strength=float(req.denoising),
-                    hr_sampler_name=None,   # use same sampler
-                    hr_scheduler=None,      # use same scheduler
-                    # ──────────────────────────────────────────────
-                    do_not_save_samples=True,
-                    do_not_save_grid=True,
+                    sampler_name=req.sampler_name or "Euler a",
+                    schedule_type=req.schedule_type or "Automatic",
+                    cfg_scale=float(req.cfg_scale),
+                    denoising=float(req.denoising),
+                    # Base dims = ORIGINAL source image. HiRes scales up
+                    # from here via hr_scale.
+                    width=orig_w, height=orig_h, seed=seed,
+                    batch_count=1, batch_size=1,
                 )
 
-                # Scheduler for base + hires passes
-                if req.schedule_type and req.schedule_type != "Automatic" and hasattr(p, 'scheduler'):
-                    p.scheduler = req.schedule_type
+                # No native AD — Studio runs its own AD post-hires.
+                # Passing None makes _build_txt2img_obj force native AD's
+                # enable bool to False in script_args.
+                p = _build_txt2img_obj(
+                    gp, studio_outdir, seed,
+                    cn_units=None, extension_args=None, ad_params=None,
+                )
+
+                # ── HiRes Fix configuration ─────────────────────────
+                # Matches the main generate path's txt2img+hires block.
+                # hr_additional_modules MUST be a string (not None) —
+                # Forge does `"Use same choices" not in self.hr_additional_modules`
+                # which raises TypeError if the attr is None.
+                p.enable_hr = True
+                p.hr_upscaler = req.upscaler or "Latent"
+                p.hr_scale = float(req.scale)
+                p.hr_second_pass_steps = int(req.steps) if int(req.steps) > 0 else 0
+                p.denoising_strength = float(req.denoising)
+                p.hr_additional_modules = "Use same choices"
+                p.hr_cfg_scale = float(req.cfg_scale)
+                p.hr_cfg = float(req.cfg_scale)
+                p.hr_sampler_name = None  # use same sampler
+                p.hr_scheduler = None     # use same scheduler
 
                 # The crucial attribute — tells Forge to use our pixels
                 # as the "base gen" output and skip sampling it entirely.
@@ -1887,31 +1900,12 @@ def setup_studio_routes(app: FastAPI):
                 p.override_settings = dict(getattr(p, 'override_settings', {}) or {})
                 p.override_settings["save_images_before_highres_fix"] = False
 
-                # Attach the txt2img script runner so wildcards / dynamic
-                # prompts resolve. Build script_args from each component's
-                # actual default value — passing None makes alwayson
-                # scripts (AR Selector, ControlNet, compile, etc.) crash
-                # because they expect real values, not None. Reading
-                # comp.value is what Gradio would pass if the user opened
-                # txt2img fresh and clicked Generate without changing
-                # anything.
-                runner = mod_scripts.scripts_txt2img
-                if runner and getattr(runner, 'inputs', None):
-                    p.scripts = runner
-                    script_args = []
-                    for comp in runner.inputs:
-                        if comp is None:
-                            script_args.append(None)
-                        else:
-                            script_args.append(getattr(comp, 'value', None))
-                    p.script_args = tuple(script_args)
-                else:
-                    p.scripts = None
-                    p.script_args = ()
-
-                # Studio runs its own AD post-process; stock AD must bail.
+                # Studio runs its own AD post-process; stock AD must bail
+                # even if a script happens to re-enable it somewhere.
                 if ad_has_work:
                     p._ad_disabled = True
+
+                runner = p.scripts  # set by _build_txt2img_obj
 
                 shared.state.job_count = 1
                 shared.state.job_no = 0
