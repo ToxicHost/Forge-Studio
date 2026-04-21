@@ -1067,7 +1067,7 @@ function showGalleryCtx(e, imgId) {
     if (!G.selectedImages.has(imgId)) { G.selectedImages.clear(); G.selectedImages.add(imgId); updateSelectionUI(); }
     const n = G.selectedImages.size; const label = n > 1 ? n + " images" : "image";
     const items = [{ icon: IC.explorer, label: "Open in Explorer", fn: bulkOpenExplorer }];
-    if (n === 1 && typeof displayOnCanvas === "function") items.push({ icon: IC.canvas, label: "Send to Canvas", fn: () => sendToCanvas(imgId) });
+    if (n === 1 && typeof displayOnCanvas === "function") { items.push({ icon: IC.canvas, label: "Send to Canvas", fn: () => sendToCanvas(imgId) }); items.push({ icon: IC.canvas, label: "Send to Canvas — raw prompt", fn: () => sendToCanvas(imgId, "raw") }); items.push({ icon: IC.canvas, label: "Send to Canvas — resolved prompt", fn: () => sendToCanvas(imgId, "resolved") }); }
     items.push({ icon: IC.move, label: "Move to folder\u2026", fn: showMoveModal });
     items.push(null);
     items.push({ icon: IC.copy, label: "Copy " + label, fn: copyToClipboard });
@@ -1288,13 +1288,13 @@ async function downloadImage(imgId) {
     } catch (e) { toast("Download failed: " + e.message); }
 }
 async function _sendImageOnlyToCanvas(imgId) { try { const resp = await fetch(API_BASE + "/full/" + imgId); const blob = await resp.blob(); const dataUrl = await new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = reject; reader.readAsDataURL(blob); }); if (typeof displayOnCanvas === "function") { if (window.State) { window.State.baseGenW = 0; window.State.baseGenH = 0; } displayOnCanvas(dataUrl, { newLayer: true, layerName: "Gallery", undoLabel: "Gallery send" }); setTimeout(() => { if (window.StudioModules) window.StudioModules.activateStudio(); }, 100); return true; } } catch (e) { toast("Failed: " + e.message); } return false; }
-async function _sendParamsOnlyToCanvas(imgId) { try { const meta = await api("/image/" + imgId + "/metadata"); const raw = meta.raw_parameters || meta.raw_infotext; if (raw && typeof _applyInfotextToUI === "function") { _applyInfotextToUI(raw); const pref = localStorage.getItem("gal_send_prompt_version") || "resolved"; if (pref === "raw" && meta.prompt) { const el = document.getElementById("paramPrompt"); if (el) el.value = meta.prompt; } return true; } } catch (_) {} return false; }
+async function _sendParamsOnlyToCanvas(imgId, promptOverride) { try { const meta = await api("/image/" + imgId + "/metadata"); const raw = meta.raw_parameters || meta.raw_infotext; if (raw && typeof _applyInfotextToUI === "function") { _applyInfotextToUI(raw); const pref = promptOverride || localStorage.getItem("gal_send_prompt_version") || "resolved"; if (pref === "raw" && meta.prompt) { const el = document.getElementById("paramPrompt"); if (el) el.value = meta.prompt; } else if (pref === "resolved") { const resolved = _parseResolvedPrompt(raw); if (resolved) { const el = document.getElementById("paramPrompt"); if (el) el.value = resolved; } } return true; } } catch (_) {} return false; }
 // Combined: apply params first (UI ready), then place image. Missing metadata
 // is a silent no-op — image placement proceeds either way.
-async function sendToCanvas(imgId) {
-    const paramsApplied = await _sendParamsOnlyToCanvas(imgId);
+async function sendToCanvas(imgId, promptOverride) {
+    const paramsApplied = await _sendParamsOnlyToCanvas(imgId, promptOverride);
     const placed = await _sendImageOnlyToCanvas(imgId);
-    if (placed) toast(paramsApplied ? "Sent to canvas (with params)" : "Sent to canvas", "success");
+    if (placed) { const tag = promptOverride ? " (" + promptOverride + " prompt)" : (paramsApplied ? " (with params)" : ""); toast("Sent to canvas" + tag, "success"); }
 }
 
 // ========================================================================
@@ -1964,7 +1964,7 @@ function wireGlobalEvents() {
     c.addEventListener("dragstart", e => { const card = e.target.closest(".gal-card"); if (card) onGalleryDragStart(e, parseInt(card.dataset.id)); }, sig);
     c.addEventListener("dragend", e => { if (e.target.closest(".gal-card")) onGalleryDragEnd(); }, sig);
     c.addEventListener("click", e => { const rm = e.target.closest("[data-remove-word]"); if (rm) removeIgnoreWord(rm.dataset.removeWord); if (e.target.id === "gal-ignore-toggle") { const el = c.querySelector("#gal-ignore-inline"), btn = c.querySelector("#gal-ignore-toggle"); if (el.classList.contains("open")) { el.classList.remove("open"); btn.style.display = ""; } else { el.classList.add("open"); btn.style.display = "none"; c.querySelector("#gal-ignore-input")?.focus(); } } }, sig);
-    c.addEventListener("change", e => { if (e.target && e.target.name === "gal-send-prompt-ver") localStorage.setItem("gal_send_prompt_version", e.target.value); }, sig);
+    c.addEventListener("change", e => { if (e.target && e.target.name === "gal-send-prompt-ver") { localStorage.setItem("gal_send_prompt_version", e.target.value); toast("Send to Canvas: " + e.target.value + " prompt", "success"); } }, sig);
 
     if (G.page === "gallery") requestAnimationFrame(() => { const m = c.querySelector(".gal-main"); if (m) m.scrollTop = G.scrollPosition; });
     setupResizers();
