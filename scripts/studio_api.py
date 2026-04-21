@@ -1576,10 +1576,11 @@ def setup_studio_routes(app: FastAPI):
 
     @app.get("/studio/models")
     async def get_models():
-        return [{
+        return sorted([{
             "title": m.title, "name": m.model_name,
             "hash": m.shorthash, "filename": m.filename,
-        } for m in sd_models.checkpoints_list.values()]
+        } for m in sd_models.checkpoints_list.values()],
+        key=lambda x: x["title"].lower())
 
     @app.get("/studio/current_model")
     async def get_current_model():
@@ -2138,7 +2139,10 @@ def setup_studio_routes(app: FastAPI):
                         vae_list.append({"name": name})
                 if len(vae_list) > 2:
                     print(f"{TAG} VAE fallback scan found {len(vae_list) - 2} VAEs")
-            return vae_list
+            # Keep Automatic/None pinned at the top, alphabetize the rest.
+            pinned = vae_list[:2]
+            rest = sorted(vae_list[2:], key=lambda x: x["name"].lower())
+            return pinned + rest
         except Exception as e:
             print(f"{TAG} VAE list error: {e}")
             return [{"name": "Automatic"}, {"name": "None"}]
@@ -2197,7 +2201,7 @@ def setup_studio_routes(app: FastAPI):
                         name = os.path.relpath(p, te_dir).replace("\\", "/")
                         if name not in results:
                             results.append(name)
-            results.sort()
+            results.sort(key=lambda x: x.lower())
             return JSONResponse(results)
         except Exception as e:
             print(f"{TAG} Text encoder list error: {e}")
@@ -2328,6 +2332,7 @@ def setup_studio_routes(app: FastAPI):
                         "preferred_weight": preferred_weight,
                     })
 
+        loras.sort(key=lambda x: x["name"].lower())
         return loras
 
     @app.post("/studio/lora_preview")
@@ -2447,7 +2452,7 @@ def setup_studio_routes(app: FastAPI):
             emb_dir = os.path.join(models_path, "..", "embeddings")
         embeddings = []
         if emb_dir and os.path.isdir(emb_dir):
-            for f in sorted(os.listdir(emb_dir)):
+            for f in sorted(os.listdir(emb_dir), key=lambda s: s.lower()):
                 if f.endswith(('.safetensors', '.pt', '.bin')):
                     embeddings.append({"name": os.path.splitext(f)[0], "file": f})
         return embeddings
