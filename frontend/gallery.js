@@ -1480,7 +1480,7 @@ async function scanDuplicates() {
             const thumbUrl = API_BASE + "/thumb/" + item.id + "?v=" + item.fphash;
             html += '<label class="gal-dup-item">';
             html += '<input type="checkbox" class="gal-dup-item-check" data-img-id="' + item.id + '" />';
-            html += '<img src="' + thumbUrl + '" alt="" loading="lazy" draggable="false" />';
+            html += '<img src="' + thumbUrl + '" alt="" loading="lazy" draggable="true" data-img-id="' + item.id + '" data-full-url="' + API_BASE + '/full/' + item.id + '" />';
             html += '<div class="gal-dup-item-info">';
             html += '<div class="gal-dup-item-name" title="' + esc(item.filepath || item.filename) + '">' + esc(item.filename) + '</div>';
             html += '<div class="gal-dup-item-folder">' + esc(item.folder) + '</div>';
@@ -1687,14 +1687,28 @@ function renderFolderSidebar() {
 // GALLERY GRID
 // ========================================================================
 
-function cardMediaHtml(img) { const u = API_BASE + "/thumb/" + img.id + "?h=" + img.fphash; if (img.is_video || img.media_type === "video") return '<img src="' + u + '" alt="' + esc(img.filename) + '" loading="lazy" draggable="false"/><span class="video-badge">' + IC.play + ' VIDEO</span>'; if (img.media_type === "gif") return '<img src="' + u + '" alt="' + esc(img.filename) + '" loading="lazy" draggable="false"/><span class="video-badge">GIF</span>'; const ext = img.filename.split(".").pop().toLowerCase(); if (ext === "gif") return '<img src="' + u + '" alt="' + esc(img.filename) + '" loading="lazy" draggable="false"/><span class="video-badge">GIF</span>'; return '<img src="' + u + '" alt="' + esc(img.filename) + '" loading="lazy" draggable="false"/>'; }
+function cardMediaHtml(img) {
+    const u = API_BASE + "/thumb/" + img.id + "?h=" + img.fphash;
+    const fullUrl = API_BASE + "/full/" + img.id;
+    // <img> is the drag source, not the outer card div. Firefox's native
+    // image-drag path (nsContentAreaDragDrop) only attaches the
+    // x-moz-file-promise flavor carrying the image bytes when the drag
+    // source is an <img>; a wrapping draggable <div> silently falls back
+    // to URL-shortcut drop, which is the whole v6.10.3–.5 saga.
+    const dragAttrs = 'draggable="true" data-img-id="' + img.id + '" data-full-url="' + fullUrl + '"';
+    if (img.is_video || img.media_type === "video") return '<img src="' + u + '" alt="' + esc(img.filename) + '" loading="lazy" ' + dragAttrs + '/><span class="video-badge">' + IC.play + ' VIDEO</span>';
+    if (img.media_type === "gif") return '<img src="' + u + '" alt="' + esc(img.filename) + '" loading="lazy" ' + dragAttrs + '/><span class="video-badge">GIF</span>';
+    const ext = img.filename.split(".").pop().toLowerCase();
+    if (ext === "gif") return '<img src="' + u + '" alt="' + esc(img.filename) + '" loading="lazy" ' + dragAttrs + '/><span class="video-badge">GIF</span>';
+    return '<img src="' + u + '" alt="' + esc(img.filename) + '" loading="lazy" ' + dragAttrs + '/>';
+}
 function renderMainContent() {
-    let h = '<div class="gal-grid" id="gal-grid">' + G.images.map(img => { const sel = G.selectedImages.has(img.id) ? " selected" : ""; return '<div class="gal-card' + sel + '" data-id="' + img.id + '" draggable="true"><div class="img-wrap">' + cardMediaHtml(img) + '</div><div class="card-info"><div class="card-filename">' + esc(img.filename) + '</div><div class="card-folder"><span class="gal-tree-icon">' + IC.folder + '</span> ' + esc(img.folder) + '</div></div></div>'; }).join("") + '</div>';
+    let h = '<div class="gal-grid" id="gal-grid">' + G.images.map(img => { const sel = G.selectedImages.has(img.id) ? " selected" : ""; return '<div class="gal-card' + sel + '" data-id="' + img.id + '"><div class="img-wrap">' + cardMediaHtml(img) + '</div><div class="card-info"><div class="card-filename">' + esc(img.filename) + '</div><div class="card-folder"><span class="gal-tree-icon">' + IC.folder + '</span> ' + esc(img.folder) + '</div></div></div>'; }).join("") + '</div>';
     if (!G.images.length) h = '<div class="gal-empty"><div style="opacity:0.12">' + IC.image + '</div><div>No images found.</div></div>';
     if (!G.allLoaded && G.images.length) h += '<div class="gal-load-more"><div id="gal-load-trigger"><span class="gal-spinner"></span></div></div>';
     return h;
 }
-function appendGalleryItems(items) { const g = G._container.querySelector("#gal-grid"); if (!g) return; const ids = new Set(); g.querySelectorAll(".gal-card").forEach(el => ids.add(el.dataset.id)); items.forEach(img => { if (ids.has(String(img.id))) return; const d = document.createElement("div"); d.className = "gal-card"; d.dataset.id = img.id; d.draggable = true; d.innerHTML = '<div class="img-wrap">' + cardMediaHtml(img) + '</div><div class="card-info"><div class="card-filename">' + esc(img.filename) + '</div><div class="card-folder"><span class="gal-tree-icon">' + IC.folder + '</span> ' + esc(img.folder) + '</div></div>'; g.appendChild(d); }); if (G.allLoaded) { const lt = G._container.querySelector("#gal-load-trigger"); if (lt && lt.parentElement) lt.parentElement.remove(); } else setupInfiniteScroll(); }
+function appendGalleryItems(items) { const g = G._container.querySelector("#gal-grid"); if (!g) return; const ids = new Set(); g.querySelectorAll(".gal-card").forEach(el => ids.add(el.dataset.id)); items.forEach(img => { if (ids.has(String(img.id))) return; const d = document.createElement("div"); d.className = "gal-card"; d.dataset.id = img.id; d.innerHTML = '<div class="img-wrap">' + cardMediaHtml(img) + '</div><div class="card-info"><div class="card-filename">' + esc(img.filename) + '</div><div class="card-folder"><span class="gal-tree-icon">' + IC.folder + '</span> ' + esc(img.folder) + '</div></div>'; g.appendChild(d); }); if (G.allLoaded) { const lt = G._container.querySelector("#gal-load-trigger"); if (lt && lt.parentElement) lt.parentElement.remove(); } else setupInfiniteScroll(); }
 
 // ========================================================================
 // DETAIL VIEW
@@ -2027,8 +2041,47 @@ function wireGlobalEvents() {
     c.addEventListener("drop", e => { const t = e.target.closest(".gal-tree-toggle"); if (t) { const idx = parseInt(t.dataset.fidx); if (!isNaN(idx)) onFolderDrop(e, idx); } }, sig);
     c.addEventListener("click", e => { const card = e.target.closest(".gal-card"); if (card) { onItemClick(parseInt(card.dataset.id), e); return; } if (G.selectedImages.size && e.target.closest(".gal-main") && !e.target.closest(".gal-card") && !e.target.closest(".gal-topbar")) clearSelection(); }, sig);
     c.addEventListener("contextmenu", e => { const card = e.target.closest(".gal-card"); if (card) showGalleryCtx(e, parseInt(card.dataset.id)); }, sig);
-    c.addEventListener("dragstart", e => { const card = e.target.closest(".gal-card"); if (card) onGalleryDragStart(e, parseInt(card.dataset.id)); }, sig);
-    c.addEventListener("dragend", e => { if (e.target.closest(".gal-card")) onGalleryDragEnd(); }, sig);
+    // Drag-out uses the inner <img> as the drag source (not the card div)
+    // so Firefox's native image-drag path attaches file-promise bytes.
+    // On mousedown we hot-swap the img src from /thumb/ to /full/ so the
+    // byte stream the OS receives is the full original. dragend / mouseup
+    // restore the thumbnail src to release decoded bitmap memory.
+    const _dragImgSel = ".gal-card img[data-full-url], .gal-dup-item img[data-full-url]";
+    c.addEventListener("mousedown", e => {
+        const img = e.target.closest(_dragImgSel);
+        if (!img) return;
+        const fullUrl = img.dataset.fullUrl;
+        if (fullUrl && img.src !== fullUrl) {
+            if (!img.dataset.thumbUrl) img.dataset.thumbUrl = img.src;
+            img.src = fullUrl;
+        }
+    }, sig);
+    c.addEventListener("mouseup", e => {
+        const img = e.target.closest(_dragImgSel);
+        if (!img) return;
+        // Click without drag — restore thumb after a short delay so a
+        // racing dragstart can still read the full URL.
+        setTimeout(() => {
+            if (img.dataset.thumbUrl) {
+                img.src = img.dataset.thumbUrl;
+                delete img.dataset.thumbUrl;
+            }
+        }, 100);
+    }, sig);
+    c.addEventListener("dragstart", e => {
+        const img = e.target.closest(_dragImgSel);
+        if (!img) return;
+        const imgId = parseInt(img.dataset.imgId);
+        if (!isNaN(imgId)) onGalleryDragStart(e, imgId);
+    }, sig);
+    c.addEventListener("dragend", e => {
+        const img = e.target.closest(_dragImgSel);
+        if (img && img.dataset.thumbUrl) {
+            img.src = img.dataset.thumbUrl;
+            delete img.dataset.thumbUrl;
+        }
+        if (e.target.closest(".gal-card") || e.target.closest(".gal-dup-item")) onGalleryDragEnd();
+    }, sig);
     c.addEventListener("click", e => { const rm = e.target.closest("[data-remove-word]"); if (rm) removeIgnoreWord(rm.dataset.removeWord); if (e.target.id === "gal-ignore-toggle") { const el = c.querySelector("#gal-ignore-inline"), btn = c.querySelector("#gal-ignore-toggle"); if (el.classList.contains("open")) { el.classList.remove("open"); btn.style.display = ""; } else { el.classList.add("open"); btn.style.display = "none"; c.querySelector("#gal-ignore-input")?.focus(); } } }, sig);
     c.addEventListener("change", e => { if (e.target && e.target.name === "gal-send-prompt-ver") { localStorage.setItem("gal_send_prompt_version", e.target.value); toast("Send to Canvas: " + e.target.value + " prompt", "success"); } }, sig);
 
