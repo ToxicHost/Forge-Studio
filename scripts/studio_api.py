@@ -2184,15 +2184,6 @@ def setup_studio_routes(app: FastAPI):
         load_model uses. We preserve any non-VAE additional modules
         (text encoders, etc.) and only replace the VAE entry.
         """
-        # Guard: never reload during active generation. forge_model_reload()
-        # destroys shared.sd_model mid-pipeline, which corrupts Forge's
-        # LoadedModel weakref tracking and crashes every subsequent batch
-        # until restart.
-        if shared.state.job_count > 0 or getattr(shared.state, 'time_start', None) is not None:
-            return JSONResponse(
-                {"error": "Cannot switch VAE during generation — wait for it to finish"},
-                status_code=409,
-            )
         vae_name = body.get("name", "Automatic")
         try:
             from modules import sd_vae
@@ -2628,15 +2619,6 @@ def setup_studio_routes(app: FastAPI):
 
     @app.post("/studio/load_model")
     async def load_model(body: dict):
-        # Guard: never reload during active generation. forge_model_reload()
-        # destroys shared.sd_model mid-pipeline, which corrupts Forge's
-        # LoadedModel weakref tracking and crashes every subsequent batch
-        # until restart.
-        if shared.state.job_count > 0 or getattr(shared.state, 'time_start', None) is not None:
-            return JSONResponse(
-                {"error": "Cannot switch model during generation — wait for it to finish"},
-                status_code=409,
-            )
         title = body.get("title", "")
         text_encoder = body.get("text_encoder", "")
         vae = body.get("vae", "")
