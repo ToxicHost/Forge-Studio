@@ -313,7 +313,7 @@
     switch (ctx.mode) {
       case "lora": {
         // Replace from <lora: to cursor with full lora syntax
-        const fullInsert = `<lora:${selectedItem.name}:1>`;
+        const fullInsert = `<lora:${selectedItem.name.split("/").pop()}:1>`;
         const triggerStart = ctx.triggerStart;
         // Position cursor on the weight number
         const newText = text.substring(0, triggerStart) + fullInsert + text.substring(ctx.replaceEnd);

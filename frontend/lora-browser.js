@@ -660,7 +660,7 @@
     if (!textarea) return;
     const weight = (lora.preferred_weight && lora.preferred_weight > 0)
       ? lora.preferred_weight : insertWeight;
-    let text = `<lora:${lora.name}:${weight}>`;
+    let text = `<lora:${lora.name.split("/").pop()}:${weight}>`;
     if (lora.activation_text) text += " " + lora.activation_text;
     insertAtCursor(textarea, text);
     console.log(`${TAG} Inserted ${text}`);
