@@ -1087,6 +1087,13 @@ async function doGenerate() {
   StatusBar.setStatus("generating");
   Progress.startPolling();
 
+  // Lock model/VAE dropdowns — switching mid-generation triggers a
+  // forge_model_reload() that destroys shared.sd_model and corrupts Forge's
+  // weakref tracking. Backend 409 is the authoritative guard; this is the
+  // UI-level belt to match.
+  document.getElementById("paramModel")?.setAttribute("disabled", "");
+  document.getElementById("paramVAE")?.setAttribute("disabled", "");
+
   // Generation timer
   State._genStartTime = Date.now();
   State._genTimerInterval = setInterval(() => {
@@ -1300,6 +1307,10 @@ async function doGenerate() {
   if (btn) { btn.innerHTML = '<span class="gen-shine"></span>Generate'; btn.classList.remove("generating"); }
   if (fill) fill.style.width = "0%";
   StatusBar.setStatus("ready");
+
+  // Unlock model/VAE dropdowns now that the pipeline is idle.
+  document.getElementById("paramModel")?.removeAttribute("disabled");
+  document.getElementById("paramVAE")?.removeAttribute("disabled");
 
   // UX-013: Refresh VRAM readout after generation
   _refreshVRAM();
