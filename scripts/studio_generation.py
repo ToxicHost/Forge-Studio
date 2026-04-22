@@ -244,10 +244,49 @@ def _swap_checkpoint(checkpoint_name):
         return False
 
     # Method 1: Forge Neo — modules_forge.main_entry.checkpoint_change()
+    # Newer Neo builds require a second `preset` argument. Inspect the
+    # signature at runtime so both older (name-only) and newer (name + preset)
+    # variants succeed without guessing a default value.
     try:
         from modules_forge import main_entry
         if hasattr(main_entry, 'checkpoint_change'):
-            main_entry.checkpoint_change(checkpoint_name)
+            import inspect
+            try:
+                sig = inspect.signature(main_entry.checkpoint_change)
+                required = [
+                    p for p in sig.parameters.values()
+                    if p.default is inspect.Parameter.empty
+                    and p.kind in (
+                        inspect.Parameter.POSITIONAL_ONLY,
+                        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+                    )
+                ]
+                needs_preset = len(required) >= 2
+            except (TypeError, ValueError):
+                # Signature introspection failed (e.g., C-extension wrapper).
+                # Try name-only first; the fallback except-block catches the
+                # missing-preset TypeError and retries with preset=None.
+                needs_preset = False
+
+            try:
+                if needs_preset:
+                    # Use the current preset if Forge exposes it, else None.
+                    # main_entry.refresh_model_loading_parameters() does not
+                    # return the preset, so we read shared.opts when present.
+                    current_preset = None
+                    try:
+                        current_preset = getattr(shared.opts, "forge_preset", None)
+                    except Exception:
+                        current_preset = None
+                    main_entry.checkpoint_change(checkpoint_name, current_preset)
+                else:
+                    main_entry.checkpoint_change(checkpoint_name)
+            except TypeError as te:
+                # Signature introspection missed it — retry with explicit preset.
+                if "preset" in str(te) or "positional argument" in str(te):
+                    main_entry.checkpoint_change(checkpoint_name, None)
+                else:
+                    raise
             print(f"[Studio HR] Swapped via main_entry.checkpoint_change: {checkpoint_name}")
             return True
     except (ImportError, Exception) as e:
