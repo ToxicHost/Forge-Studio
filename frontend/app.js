@@ -77,6 +77,12 @@ function _escapeHtml(s) {
   return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/\n/g, "<br>");
 }
 
+// NaN-safe numeric read: `parseFloat("0") || fallback` treats 0 as missing because 0 is falsy.
+function _num(id, fallback) {
+  const v = parseFloat(document.getElementById(id)?.value);
+  return isNaN(v) ? fallback : v;
+}
+
 /**
  * Apply parsed A1111 infotext parameters to UI fields.
  * Best-effort: sets whatever fields match, skips the rest.
@@ -445,7 +451,7 @@ const Live = {
       // Read from existing Canvas generation params
       sampler_name: document.getElementById("paramSampler")?.value || "Euler",
       scheduler: document.getElementById("paramScheduler")?.value || "Automatic",
-      cfg_scale: parseFloat(document.getElementById("paramCFG")?.value) || 7.0,
+      cfg_scale: _num("paramCFG", 7.0),
       steps: parseInt(document.getElementById("paramSteps")?.value) || 20,
       input_hash: inputHash,
     };
@@ -1148,8 +1154,8 @@ async function doGenerate() {
     steps:         parseInt(document.getElementById("paramSteps")?.value) || 30,
     sampler_name:  document.getElementById("paramSampler")?.value || "DPM++ 2M SDE",
     schedule_type: document.getElementById("paramScheduler")?.value || "Karras",
-    cfg_scale:     parseFloat(document.getElementById("paramCFG")?.value) || 5.0,
-    denoising:     parseFloat(document.getElementById("paramDenoise")?.value) || 0.81,
+    cfg_scale:     _num("paramCFG", 5.0),
+    denoising:     _num("paramDenoise", 0.81),
     width:         parseInt(document.getElementById("paramWidth")?.value) || 768,
     height:        parseInt(document.getElementById("paramHeight")?.value) || 768,
     seed:          parseInt(document.getElementById("paramSeed")?.value) || -1,
@@ -1158,7 +1164,7 @@ async function doGenerate() {
 
     // Variation seed
     subseed:              document.getElementById("checkExtra")?.checked ? parseInt(document.getElementById("paramVarSeed")?.value) || -1 : -1,
-    subseed_strength:     document.getElementById("checkExtra")?.checked ? parseFloat(document.getElementById("paramVarStrengthVal")?.value) || 0 : 0,
+    subseed_strength:     document.getElementById("checkExtra")?.checked ? _num("paramVarStrengthVal", 0) : 0,
     seed_resize_from_w:   document.getElementById("checkExtra")?.checked ? parseInt(document.getElementById("paramResizeSeedW")?.value) || 0 : 0,
     seed_resize_from_h:   document.getElementById("checkExtra")?.checked ? parseInt(document.getElementById("paramResizeSeedH")?.value) || 0 : 0,
 
@@ -1170,20 +1176,20 @@ async function doGenerate() {
 
     // Soft Inpainting
     soft_inpaint_enabled: document.getElementById("checkSoftInpaint")?.classList.contains("checked") || false,
-    soft_inpaint_schedule_bias:       parseFloat(document.getElementById("paramSoftBias")?.value) || 1.0,
-    soft_inpaint_preservation:        parseFloat(document.getElementById("paramSoftPreserve")?.value) || 0.5,
-    soft_inpaint_transition_contrast: parseFloat(document.getElementById("paramSoftContrast")?.value) || 4.0,
-    soft_inpaint_mask_influence:      parseFloat(document.getElementById("paramSoftMaskInf")?.value) || 0.0,
-    soft_inpaint_diff_threshold:      parseFloat(document.getElementById("paramSoftDiffThresh")?.value) || 0.5,
-    soft_inpaint_diff_contrast:       parseFloat(document.getElementById("paramSoftDiffContrast")?.value) || 2.0,
+    soft_inpaint_schedule_bias:       _num("paramSoftBias", 1.0),
+    soft_inpaint_preservation:        _num("paramSoftPreserve", 0.5),
+    soft_inpaint_transition_contrast: _num("paramSoftContrast", 4.0),
+    soft_inpaint_mask_influence:      _num("paramSoftMaskInf", 0.0),
+    soft_inpaint_diff_threshold:      _num("paramSoftDiffThresh", 0.5),
+    soft_inpaint_diff_contrast:       _num("paramSoftDiffContrast", 2.0),
 
     // Hires Fix
     hr_enable:     document.getElementById("checkHires")?.classList.contains("checked") || false,
     hr_upscaler:   document.getElementById("paramHrUpscaler")?.value || "Latent",
-    hr_scale:      parseFloat(document.getElementById("paramHrScale")?.value) || 2.0,
+    hr_scale:      _num("paramHrScale", 2.0),
     hr_steps:      parseInt(document.getElementById("paramHrSteps")?.value) || 0,
-    hr_denoise:    parseFloat(document.getElementById("paramHrDenoise")?.value) || 0.3,
-    hr_cfg:        parseFloat(document.getElementById("paramHrCFG")?.value) || 0,
+    hr_denoise:    _num("paramHrDenoise", 0.3),
+    hr_cfg:        _num("paramHrCFG", 0),
     hr_checkpoint: document.getElementById("paramHrCheckpoint")?.value || "Same",
 
     // ADetailer
@@ -1191,8 +1197,8 @@ async function doGenerate() {
     ad_slots:      [1, 2, 3].map(n => ({
       enable:     document.getElementById(`checkAD${n}`)?.classList.contains("checked") || false,
       model:      document.getElementById(`paramAD${n}Model`)?.value || "None",
-      confidence: parseFloat(document.getElementById(`paramAD${n}Conf`)?.value) || 0.3,
-      denoise:    parseFloat(document.getElementById(`paramAD${n}Denoise`)?.value) || 0.4,
+      confidence: _num(`paramAD${n}Conf`, 0.3),
+      denoise:    _num(`paramAD${n}Denoise`, 0.4),
       mask_blur:  parseInt(document.getElementById(`paramAD${n}Blur`)?.value) || 4,
       prompt:     document.getElementById(`paramAD${n}Prompt`)?.value || "",
       neg_prompt: "",
@@ -1384,7 +1390,7 @@ function _updateHiresWarning() {
   if (!hiresEnabled) { icon.style.display = "none"; return; }
   var w = parseInt(document.getElementById("paramWidth")?.value) || 768;
   var h = parseInt(document.getElementById("paramHeight")?.value) || 768;
-  var scale = parseFloat(document.getElementById("paramHrScale")?.value) || 2.0;
+  var scale = _num("paramHrScale", 2.0);
   var outW = Math.round(w * scale), outH = Math.round(h * scale);
   icon.style.display = (outW > 2000 || outH > 2000) ? "inline" : "none";
   icon.title = "Output will be " + outW + "\u00d7" + outH + ". This may cause significant VRAM usage and slow generation on most hardware.";
@@ -1494,9 +1500,9 @@ function buildCNJson() {
       module: document.getElementById(`paramCN${n}Module`)?.value || "None",
       model: document.getElementById(`paramCN${n}Model`)?.value || "None",
       source: document.getElementById(`paramCN${n}Source`)?.value || "Canvas",
-      weight: parseFloat(document.getElementById(`paramCN${n}Weight`)?.value) || 1.0,
-      guidance_start: parseFloat(document.getElementById(`paramCN${n}Start`)?.value) || 0.0,
-      guidance_end: parseFloat(document.getElementById(`paramCN${n}End`)?.value) || 1.0,
+      weight: _num(`paramCN${n}Weight`, 1.0),
+      guidance_start: _num(`paramCN${n}Start`, 0.0),
+      guidance_end: _num(`paramCN${n}End`, 1.0),
       control_mode: document.getElementById(`paramCN${n}Mode`)?.value || "Balanced",
       pixel_perfect: true,
     };
@@ -1881,7 +1887,7 @@ function bindUI() {
     const S = Core.state;
 
     const upscaler = document.getElementById("paramUpscaleModel")?.value || "R-ESRGAN 4x+";
-    const scale = parseFloat(document.getElementById("paramUpscaleScale")?.value) || 2.0;
+    const scale = _num("paramUpscaleScale", 2.0);
     const runRefine = document.getElementById("checkUpscaleRefine")?.classList.contains("checked") || false;
     const runAD     = document.getElementById("checkUpscaleAD")?.classList.contains("checked") || false;
 
@@ -1913,7 +1919,7 @@ function bindUI() {
     await _refreshVRAM();
 
     const userSteps   = parseInt(document.getElementById("paramUpscaleSteps")?.value) || 20;
-    const userDenoise = parseFloat(document.getElementById("paramUpscaleDenoise")?.value) || 0.3;
+    const userDenoise = _num("paramUpscaleDenoise", 0.3);
 
     // Progress streaming: the new backend endpoint pushes sampling_step /
     // job_count over the WebSocket during process_images() and
@@ -1934,14 +1940,14 @@ function bindUI() {
         steps:         userSteps,
         sampler_name:  document.getElementById("paramSampler")?.value || "DPM++ 2M SDE",
         schedule_type: document.getElementById("paramScheduler")?.value || "Karras",
-        cfg_scale:     parseFloat(document.getElementById("paramCFG")?.value) || 5.0,
+        cfg_scale:     _num("paramCFG", 5.0),
         denoising:     userDenoise,
         seed:          -1,
         ad_slots:      [1, 2, 3].map(n => ({
           enable:     document.getElementById(`checkAD${n}`)?.classList.contains("checked") || false,
           model:      document.getElementById(`paramAD${n}Model`)?.value || "None",
-          confidence: parseFloat(document.getElementById(`paramAD${n}Conf`)?.value) || 0.3,
-          denoise:    parseFloat(document.getElementById(`paramAD${n}Denoise`)?.value) || 0.4,
+          confidence: _num(`paramAD${n}Conf`, 0.3),
+          denoise:    _num(`paramAD${n}Denoise`, 0.4),
           mask_blur:  parseInt(document.getElementById(`paramAD${n}Blur`)?.value) || 4,
           prompt:     document.getElementById(`paramAD${n}Prompt`)?.value || "",
           neg_prompt: "",

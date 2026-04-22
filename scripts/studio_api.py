@@ -1320,6 +1320,17 @@ def setup_studio_routes(app: FastAPI):
             except Exception:
                 pass
 
+        # Preserve raw wildcard template in embedded metadata — Forge's infotext
+        # only contains the resolved prompt, so we append the un-resolved source.
+        if _parsed_settings and _parsed_infotexts:
+            _raw_prompt = _parsed_settings.get("prompt", "")
+            if _raw_prompt:
+                for idx in range(len(_parsed_infotexts)):
+                    if _parsed_infotexts[idx] and "Template:" not in _parsed_infotexts[idx]:
+                        first_line = _parsed_infotexts[idx].split("\n")[0].strip()
+                        if first_line != _raw_prompt.strip():
+                            _parsed_infotexts[idx] += f"\nTemplate: {_raw_prompt}"
+
         try:
             _parsed_base_seed = int(_parsed_settings.get("seed", -1)) if _parsed_settings else -1
         except Exception:
