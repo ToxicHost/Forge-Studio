@@ -1583,12 +1583,13 @@ function displayOnCanvas(imgSrc, opts) {
       Core.resizeCanvas(outW, outH);
     }
 
-    // Update UI dimensions — if baseGenW/H are set (hires fix scenario),
-    // restore base dims so the next gen doesn't use the upscaled size.
-    // Otherwise (gallery send, drag-drop, etc.) use the actual image dims.
-    const bW = State.baseGenW, bH = State.baseGenH;
-    const paramW = (bW && outW > bW) ? bW : outW;
-    const paramH = (bH && outH > bH) ? bH : outH;
+    // Width/Height fields follow the canvas. The previous logic clamped
+    // to State.baseGenW/H so the next gen wouldn't double up on hires
+    // output, but it left the UI mismatched: the canvas showed the
+    // upscaled size while the fields showed the base. Mirror the actual
+    // canvas dims and let the user adjust down explicitly.
+    const paramW = outW;
+    const paramH = outH;
     const wEl = document.getElementById("paramWidth");
     const hEl = document.getElementById("paramHeight");
     if (wEl) wEl.value = paramW;
