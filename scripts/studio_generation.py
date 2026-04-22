@@ -254,6 +254,8 @@ def _swap_checkpoint(checkpoint_name):
         print(f"[Studio HR] main_entry method unavailable: {e}")
 
     # Method 2: Forge — forge_model_reload with forge_loading_parameters
+    # Preserves any existing additional_modules (text encoders, VAE) so a
+    # checkpoint swap doesn't silently drop the user's external components.
     try:
         if hasattr(sd_models, 'forge_model_reload') and hasattr(sd_models, 'model_data'):
             ci = None
@@ -267,10 +269,17 @@ def _swap_checkpoint(checkpoint_name):
                         ci = v
                         break
             if ci:
-                sd_models.model_data.forge_loading_parameters = {
-                    "checkpoint_info": ci,
-                    "additional_modules": [],
-                }
+                existing_params = {}
+                try:
+                    existing_params = dict(sd_models.model_data.forge_loading_parameters or {})
+                except Exception:
+                    existing_params = {}
+                new_params = dict(existing_params)
+                new_params["checkpoint_info"] = ci
+                new_params.setdefault("additional_modules",
+                                      existing_params.get("additional_modules") or [])
+                new_params.setdefault("unet_storage_dtype", None)
+                sd_models.model_data.forge_loading_parameters = new_params
                 sd_models.forge_model_reload()
                 print(f"[Studio HR] Swapped via forge_model_reload: {checkpoint_name}")
                 return True
@@ -303,6 +312,17 @@ def run_hires_fix(image, upscaler_name, scale, hr_steps, hr_denoise, hr_cfg, p_o
     if not image or scale <= 1.0:
         return image
     original_checkpoint = None
+    # Snapshot full Forge loading params (checkpoint + additional_modules:
+    # text encoder, VAE, etc.) so the post-hires restore is complete. Just
+    # restoring the checkpoint name nukes the user's external VAE, which
+    # causes severe artifacts on checkpoints without a baked VAE.
+    original_loading_params = None
+    try:
+        fp = getattr(sd_models.model_data, 'forge_loading_parameters', None)
+        if fp:
+            original_loading_params = dict(fp)
+    except Exception:
+        original_loading_params = None
 
     # Save original state so we can restore after hires pass
     _saved = {
@@ -416,14 +436,30 @@ def run_hires_fix(image, upscaler_name, scale, hr_steps, hr_denoise, hr_cfg, p_o
         for k, v in _saved.items():
             setattr(p_orig, k, v)
         p_orig._ad_disabled = _saved_ad_disabled
-        # Always restore original checkpoint
+        # Always restore original checkpoint. Prefer restoring the full
+        # forge_loading_parameters snapshot — that brings back checkpoint
+        # AND additional_modules (text encoder, VAE) in a single reload.
+        # A bare checkpoint swap would leave the user's external VAE gone,
+        # which produces severe artifacts on checkpoints lacking a baked VAE.
         if original_checkpoint:
-            try:
-                print(f"[Studio HR] Restoring checkpoint: {original_checkpoint}")
-                _swap_checkpoint(original_checkpoint)
-                print(f"[Studio HR] Checkpoint restored")
-            except Exception as e:
-                print(f"[Studio HR] WARNING: Failed to restore checkpoint: {e}")
+            restored = False
+            if original_loading_params is not None:
+                try:
+                    print(f"[Studio HR] Restoring checkpoint + modules: {original_checkpoint}")
+                    sd_models.model_data.forge_loading_parameters = original_loading_params
+                    sd_models.forge_model_reload()
+                    print(f"[Studio HR] Full loading parameters restored")
+                    restored = True
+                except Exception as e:
+                    print(f"[Studio HR] WARNING: Full restore failed, "
+                          f"falling back to checkpoint swap: {e}")
+            if not restored:
+                try:
+                    print(f"[Studio HR] Restoring checkpoint: {original_checkpoint}")
+                    _swap_checkpoint(original_checkpoint)
+                    print(f"[Studio HR] Checkpoint restored")
+                except Exception as e:
+                    print(f"[Studio HR] WARNING: Failed to restore checkpoint: {e}")
 
 
 # =========================================================================
