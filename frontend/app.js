@@ -2330,12 +2330,10 @@ function bindUI() {
     try {
       // Check if model needs external text encoder (near-instant header scan)
       let textEncoder = "None";
-      let needsExternalVAE = false;
       try {
         const teCheck = await fetch(API.base + "/studio/check_model_te?title=" + encodeURIComponent(title)).then(r => r.json());
         const teRow = document.getElementById("textEncoderRow");
         const teSelect = document.getElementById("paramTextEncoder");
-        needsExternalVAE = teCheck.needs_vae || false;
         if (teCheck.needs_te) {
           // Show TE row — model needs external text encoder
           if (teRow) teRow.style.display = "";
@@ -2360,13 +2358,11 @@ function bindUI() {
         console.warn("[Studio] TE check failed:", teErr);
       }
 
-      // Include VAE as additional_module when model has no bundled VAE
+      // Always send the user's explicit VAE — needs_vae can't distinguish a good baked VAE from garbage merged weights.
       const loadBody = { title, text_encoder: textEncoder };
-      if (needsExternalVAE) {
-        const vaeVal = document.getElementById("paramVAE")?.value;
-        if (vaeVal && vaeVal !== "Automatic" && vaeVal !== "None") {
-          loadBody.vae = vaeVal;
-        }
+      const vaeVal = document.getElementById("paramVAE")?.value;
+      if (vaeVal && vaeVal !== "Automatic" && vaeVal !== "None") {
+        loadBody.vae = vaeVal;
       }
 
       const r = await fetch(API.base + "/studio/load_model", {
