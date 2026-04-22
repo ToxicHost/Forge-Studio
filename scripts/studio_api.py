@@ -2158,23 +2158,82 @@ def setup_studio_routes(app: FastAPI):
 
     @app.post("/studio/load_vae")
     async def load_vae(body: dict):
-        """Switch VAE. Values: 'Automatic', 'None', or a VAE filename."""
+        """Switch VAE. Values: 'Automatic', 'None', or a VAE filename.
+
+        Forge Neo removed sd_vae.reload_vae_weights(). Swap goes through
+        forge_loading_parameters + forge_model_reload() instead — same path
+        load_model uses. We preserve any non-VAE additional modules
+        (text encoders, etc.) and only replace the VAE entry.
+        """
         vae_name = body.get("name", "Automatic")
         try:
             from modules import sd_vae
+            sd_vae.refresh_vae_list()
 
-            # Update the setting and reload if a real model is loaded
+            # Persist the opts setting regardless of whether a model is loaded
             shared.opts.set("sd_vae", vae_name)
-            if hasattr(shared.sd_model, 'first_stage_model'):
-                vae_file = sd_vae.vae_dict.get(vae_name)
-                if vae_file:
-                    sd_vae.reload_vae_weights(vae_file)
-
-            # Persist to config.json
             try:
                 shared.opts.save(shared.config_filename)
             except Exception:
                 pass
+
+            # If no real model is loaded yet, the setting is enough — Forge will
+            # pick up the VAE via additional_modules on first load.
+            if not hasattr(shared.sd_model, 'first_stage_model'):
+                print(f"{TAG} VAE preference set to: {vae_name} (no model loaded)")
+                return {"ok": True, "loaded": vae_name}
+
+            # Resolve the checkpoint currently in use for the reload
+            ci = getattr(shared.sd_model, 'sd_checkpoint_info', None)
+            existing_params = {}
+            try:
+                existing_params = dict(sd_models.model_data.forge_loading_parameters or {})
+            except Exception:
+                existing_params = {}
+            if ci is None:
+                ci = existing_params.get("checkpoint_info")
+            if ci is None:
+                print(f"{TAG} Cannot resolve current checkpoint for VAE swap")
+                return JSONResponse(
+                    {"error": "No active checkpoint to reload"}, status_code=400
+                )
+
+            # Preserve existing additional modules except any current VAE
+            # (we're replacing it). Known VAE paths come from sd_vae.vae_dict.
+            known_vae_paths = {
+                os.path.normcase(os.path.abspath(p))
+                for p in sd_vae.vae_dict.values()
+                if p
+            }
+            prior_additional = existing_params.get("additional_modules") or []
+            preserved = []
+            for mod in prior_additional:
+                if not mod:
+                    continue
+                try:
+                    norm = os.path.normcase(os.path.abspath(mod))
+                except Exception:
+                    norm = mod
+                if norm in known_vae_paths:
+                    continue  # drop old VAE, we're swapping it
+                preserved.append(mod)
+
+            # Append the newly selected VAE (if a concrete one was chosen)
+            if vae_name and vae_name not in ("Automatic", "None", ""):
+                vae_path = sd_vae.vae_dict.get(vae_name)
+                if vae_path and os.path.isfile(vae_path):
+                    preserved.append(vae_path)
+                    print(f"{TAG} VAE (additional module): {vae_name}")
+                else:
+                    print(f"{TAG} Warning: VAE not found in vae_dict: {vae_name}")
+
+            new_params = dict(existing_params)
+            new_params["checkpoint_info"] = ci
+            new_params["additional_modules"] = preserved
+            new_params.setdefault("unet_storage_dtype", None)
+            sd_models.model_data.forge_loading_parameters = new_params
+
+            await asyncio.to_thread(sd_models.forge_model_reload)
 
             print(f"{TAG} VAE changed to: {vae_name}")
             return {"ok": True, "loaded": vae_name}
