@@ -237,6 +237,8 @@ const Progress = {
 const State = {
   // Generation
   generating: false,
+  _pendingModelSwitch: null, // checkpoint title queued while generating
+  _pendingVAESwitch: null,   // VAE name queued while generating
   lastResult: null,        // last GenerateResponse
   lastSeed: -1,            // last resolved seed (for recycle button)
   outputImages: [],        // array of image URLs (file URLs or data URLs)
@@ -1087,13 +1089,6 @@ async function doGenerate() {
   StatusBar.setStatus("generating");
   Progress.startPolling();
 
-  // Lock model/VAE dropdowns — switching mid-generation triggers a
-  // forge_model_reload() that destroys shared.sd_model and corrupts Forge's
-  // weakref tracking. Backend 409 is the authoritative guard; this is the
-  // UI-level belt to match.
-  document.getElementById("paramModel")?.setAttribute("disabled", "");
-  document.getElementById("paramVAE")?.setAttribute("disabled", "");
-
   // Generation timer
   State._genStartTime = Date.now();
   State._genTimerInterval = setInterval(() => {
@@ -1308,9 +1303,30 @@ async function doGenerate() {
   if (fill) fill.style.width = "0%";
   StatusBar.setStatus("ready");
 
-  // Unlock model/VAE dropdowns now that the pipeline is idle.
-  document.getElementById("paramModel")?.removeAttribute("disabled");
-  document.getElementById("paramVAE")?.removeAttribute("disabled");
+  // Apply any model/VAE switch the user queued while this generation was
+  // running. forge_model_reload() destroys shared.sd_model, which would
+  // corrupt Forge's weakref tracking if it fired during process_images();
+  // we defer the switch to here where the pipeline is idle. Model first,
+  // then VAE — the VAE handler resolves against the currently loaded
+  // checkpoint, so the model needs to settle first.
+  if (State._pendingModelSwitch) {
+    const title = State._pendingModelSwitch;
+    State._pendingModelSwitch = null;
+    const modelSelect = document.getElementById("paramModel");
+    if (modelSelect) {
+      modelSelect.value = title;
+      modelSelect.dispatchEvent(new Event("change"));
+    }
+  }
+  if (State._pendingVAESwitch) {
+    const name = State._pendingVAESwitch;
+    State._pendingVAESwitch = null;
+    const vaeSelect = document.getElementById("paramVAE");
+    if (vaeSelect) {
+      vaeSelect.value = name;
+      vaeSelect.dispatchEvent(new Event("change"));
+    }
+  }
 
   // UX-013: Refresh VRAM readout after generation
   _refreshVRAM();
@@ -2338,6 +2354,14 @@ function bindUI() {
   document.getElementById("paramModel")?.addEventListener("change", async (e) => {
     const title = e.target.value;
     if (!title) return;
+    // If a generation is in flight, queue the switch and apply after it
+    // completes. forge_model_reload() mid-pipeline would destroy
+    // shared.sd_model out from under process_images().
+    if (State.generating) {
+      State._pendingModelSwitch = title;
+      showToast("Model will switch after generation completes", "info");
+      return;
+    }
     // FR-002: Show progress bar during model load
     const btn = document.getElementById("genBtn");
     const fill = document.getElementById("progressFill");
@@ -2408,6 +2432,14 @@ function bindUI() {
   document.getElementById("paramVAE")?.addEventListener("change", async (e) => {
     const name = e.target.value;
     if (!name) return;
+    // If a generation is in flight, queue the switch and apply after it
+    // completes. forge_model_reload() mid-pipeline would destroy
+    // shared.sd_model out from under process_images().
+    if (State.generating) {
+      State._pendingVAESwitch = name;
+      showToast("VAE will switch after generation completes", "info");
+      return;
+    }
     showToast("Switching VAE...", "info");
     try {
       const r = await fetch(API.base + "/studio/load_vae", {

@@ -1118,16 +1118,6 @@ def register_video_routes(app):
         to forge_loading_parameters, which merges them into the main
         state dict during model loading.
         """
-        # Guard: never reload during active generation. forge_model_reload()
-        # destroys shared.sd_model mid-pipeline, which corrupts Forge's
-        # LoadedModel weakref tracking and crashes every subsequent batch
-        # until restart.
-        from modules import shared as _shared_guard
-        if _shared_guard.state.job_count > 0 or getattr(_shared_guard.state, 'time_start', None) is not None:
-            return JSONResponse(
-                {"error": "Cannot switch model during generation — wait for it to finish"},
-                status_code=409,
-            )
         title = body.get("title", "")
         text_encoder = body.get("text_encoder", "")
         vae = body.get("vae", "")
