@@ -854,56 +854,75 @@ async function populateDropdowns() {
     State.schedulers = schedulers;
     State.upscalers = upscalers;
 
+    // Preserve current selection across rebuild if the value still exists.
+    const restoreSelection = (el, prev) => {
+      if (prev && [...el.options].some(o => o.value === prev)) {
+        el.value = prev;
+      }
+    };
+
     // Model selector in settings
     const modelSelect = document.getElementById("paramModel");
     if (modelSelect) {
+      const prev = modelSelect.value;
       modelSelect.innerHTML = models.map(m =>
         `<option value="${m.title}">${m.title}</option>`
       ).join("");
+      restoreSelection(modelSelect, prev);
     }
 
     // Sampler dropdown
     const samplerSelect = document.getElementById("paramSampler");
     if (samplerSelect) {
+      const prev = samplerSelect.value;
       samplerSelect.innerHTML = samplers.map(s =>
         `<option value="${s.name}" ${s.name === "DPM++ 2M SDE" ? "selected" : ""}>${s.name}</option>`
       ).join("");
+      restoreSelection(samplerSelect, prev);
     }
 
     // Scheduler dropdown
     const schedSelect = document.getElementById("paramScheduler");
     if (schedSelect) {
+      const prev = schedSelect.value;
       schedSelect.innerHTML = schedulers.map(s =>
         `<option value="${s.label}" ${s.label === "Karras" ? "selected" : ""}>${s.label}</option>`
       ).join("");
+      restoreSelection(schedSelect, prev);
     }
 
     // Hires Fix upscaler dropdown
     const hrUpscaler = document.getElementById("paramHrUpscaler");
     if (hrUpscaler && upscalers.length) {
+      const prev = hrUpscaler.value;
       hrUpscaler.innerHTML =
         '<option value="Latent">Latent</option>' +
         upscalers.map(u =>
           `<option value="${u.name}">${u.name}</option>`
         ).join("");
+      restoreSelection(hrUpscaler, prev);
     }
 
     // Standalone upscale dropdown (no Latent option — always real upscaler)
     const upscaleModel = document.getElementById("paramUpscaleModel");
     if (upscaleModel && upscalers.length) {
+      const prev = upscaleModel.value;
       upscaleModel.innerHTML = upscalers.map(u =>
         `<option value="${u.name}" ${u.name === "R-ESRGAN 4x+" ? "selected" : ""}>${u.name}</option>`
       ).join("");
+      restoreSelection(upscaleModel, prev);
     }
 
     // Hires Fix checkpoint dropdown
     const hrCheckpoint = document.getElementById("paramHrCheckpoint");
     if (hrCheckpoint) {
+      const prev = hrCheckpoint.value;
       hrCheckpoint.innerHTML =
         '<option value="Same">Same</option>' +
         models.map(m =>
           `<option value="${m.title}">${m.title}</option>`
         ).join("");
+      restoreSelection(hrCheckpoint, prev);
     }
 
     // Status bar — fetch actual loaded model
