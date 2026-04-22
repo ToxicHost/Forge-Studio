@@ -671,11 +671,25 @@ function bindCanvas() {
     cv.style.touchAction = "none";
 
     // === PAN (right-click, middle-click, or Space+drag) ===
+    // === ZOOM-DRAG (Krita-style Shift+Space+drag) ===
     let _spaceHeld = false;
-    document.addEventListener("keydown", e => { if (e.code === "Space" && !["INPUT","TEXTAREA","SELECT"].includes(e.target.tagName)) { _spaceHeld = true; if (S.canvas) S.canvas.style.cursor = "grab"; e.preventDefault(); } });
-    document.addEventListener("keyup", e => { if (e.code === "Space") { _spaceHeld = false; if (S.canvas && !S.zoom.panning) setTool(S.tool); } });
+    let _zoomDrag = { active: false, startY: 0, startScale: 1, anchorX: 0, anchorY: 0 };
+    document.addEventListener("keydown", e => { if (e.code === "Space" && !["INPUT","TEXTAREA","SELECT"].includes(e.target.tagName)) { _spaceHeld = true; if (S.canvas) S.canvas.style.cursor = e.shiftKey ? "ns-resize" : "grab"; e.preventDefault(); } });
+    document.addEventListener("keyup", e => { if (e.code === "Space") { _spaceHeld = false; if (S.canvas && !S.zoom.panning && !_zoomDrag.active) setTool(S.tool); } });
 
     cv.addEventListener("pointerdown", e => {
+        // Shift+Space+LeftClick → zoom-drag (Krita-style). Must come before pan check.
+        if (e.button === 0 && _spaceHeld && e.shiftKey) {
+            _zoomDrag.active = true;
+            _zoomDrag.startY = e.clientY;
+            _zoomDrag.startScale = S.zoom.scale;
+            _zoomDrag.anchorX = e.clientX;
+            _zoomDrag.anchorY = e.clientY;
+            cv.setPointerCapture(e.pointerId);
+            if (S.canvas) S.canvas.style.cursor = "ns-resize";
+            e.preventDefault();
+            return;
+        }
         if (e.button === 2 || e.button === 1 || (e.button === 0 && _spaceHeld) ||
             (e.button === 0 && e.altKey && S.tool !== "clone")) {
             S.zoom.panning = true;
@@ -698,6 +712,13 @@ function bindCanvas() {
         e.preventDefault();
     });
     cv.addEventListener("pointermove", e => {
+        if (_zoomDrag.active) {
+            const deltaY = _zoomDrag.startY - e.clientY; // up = zoom in
+            const targetScale = Math.min(16, Math.max(0.1, _zoomDrag.startScale * Math.pow(1.005, deltaY)));
+            const factor = targetScale / S.zoom.scale;
+            if (factor !== 1) { C.zoomAt(_zoomDrag.anchorX, _zoomDrag.anchorY, factor); updateStatus(); _redraw(); }
+            return;
+        }
         if (S.zoom.panning) {
             const dx = e.clientX - S.zoom.panStartX;
             const dy = e.clientY - S.zoom.panStartY;
@@ -709,6 +730,13 @@ function bindCanvas() {
         }
     });
     cv.addEventListener("pointerup", e => {
+        if (_zoomDrag.active) {
+            _zoomDrag.active = false;
+            try { cv.releasePointerCapture(e.pointerId); } catch (_) {}
+            if (S.canvas) S.canvas.style.cursor = _spaceHeld ? "grab" : "";
+            if (!_spaceHeld) setTool(S.tool);
+            return;
+        }
         if (S.zoom.panning) {
             const didMove = S.zoom._panMoved;
             S.zoom.panning = false;
@@ -1359,7 +1387,7 @@ function bindCanvas() {
         // Regular stroke up
         if (S.drawing) {
             try { cv.releasePointerCapture(e.pointerId); } catch (_) {}
-            if (S.tool === "brush" || S.tool === "eraser") C.commitStroke();
+            if ((S.tool === "brush" || S.tool === "eraser") && !S.regionMode) C.commitStroke();
             S.smudgeBuffer = null;
             if (S.tool === "brush" && !S.editingMask) C.addColor(S.color);
         }
@@ -1373,7 +1401,7 @@ function bindCanvas() {
 
     cv.addEventListener("pointerleave", () => {
         if (S.drawing) {
-            if (S.tool === "brush" || S.tool === "eraser") C.commitStroke();
+            if ((S.tool === "brush" || S.tool === "eraser") && !S.regionMode) C.commitStroke();
             if (S.tool === "liquify") S._liquifySnapshot = null;
             S.smudgeBuffer = null;
             // Notify Live Painting of canvas change
