@@ -247,6 +247,35 @@ async function loadVaes() {
     try { WS.vaes = await fetchJSON(API + "/vaes"); } catch (e) { console.error(TAG, "Failed to load VAEs:", e); }
 }
 
+async function refreshAssets() {
+    // Ask the backend to rescan every configured asset directory, then
+    // repopulate the Workshop dropdowns. Useful after moving files into
+    // an external --ckpt-dir/--lora-dir or saving a new merge.
+    const btn = _els && _els.refreshAssets;
+    const prevLabel = btn ? btn.textContent : null;
+    if (btn) { btn.disabled = true; btn.textContent = "Scanning…"; }
+    try {
+        let summary = null;
+        try { summary = await fetchJSON(API + "/refresh", { method: "POST" }); }
+        catch (e) { console.error(TAG, "Refresh rescan failed:", e); }
+        await Promise.all([loadModels(), loadLoras(), loadVaes()]);
+        _populateVaeSelect();
+        if (window.showToast) {
+            if (summary && summary.ok) {
+                const parts = [];
+                if (typeof summary.checkpoints === "number") parts.push(summary.checkpoints + " models");
+                if (typeof summary.loras === "number") parts.push(summary.loras + " LoRAs");
+                if (typeof summary.vaes === "number") parts.push(summary.vaes + " VAEs");
+                window.showToast("Workshop rescanned — " + (parts.join(", ") || "done"), "success");
+            } else {
+                window.showToast("Workshop rescanned", "success");
+            }
+        }
+    } finally {
+        if (btn) { btn.disabled = false; btn.textContent = prevLabel || "↻ Refresh"; }
+    }
+}
+
 // ========================================================================
 // INSPECTION & PREFLIGHT
 // ========================================================================
@@ -1038,6 +1067,7 @@ function _buildUI(container) {
 
     // ── Models ──
     + '<div class="ws-merge-section ws-merge-models">'
+    + '<div class="ws-merge-models-header"><span class="ws-merge-models-title">Models</span><button id="wsRefreshAssets" class="ws-small-btn ws-refresh-btn" title="Rescan every model, LoRA and VAE directory">↻ Refresh</button></div>'
     + '<div class="ws-merge-model-row"><label class="ws-merge-model-label">Model A <span class="ws-card-hint">(base)</span></label><select id="wsModelA" class="param-select ws-model-select"></select><div id="wsArchA" class="ws-arch-badge"></div></div>'
     + '<div class="ws-merge-model-row"><label class="ws-merge-model-label">Model B <span class="ws-card-hint">(merge with \u2014 leave empty for bake-only)</span></label><select id="wsModelB" class="param-select ws-model-select"></select><div id="wsArchB" class="ws-arch-badge"></div></div>'
     + '</div>'
@@ -1156,6 +1186,7 @@ function _buildUI(container) {
         loraList: container.querySelector("#wsLoraList"),
         loraAdd: container.querySelector("#wsLoraAdd"),
         recipeVae: container.querySelector("#wsRecipeVae"),
+        refreshAssets: container.querySelector("#wsRefreshAssets"),
         // Tabs
         tabRecipe: container.querySelector("#wsTabRecipe"),
         tabHistory: container.querySelector("#wsTabHistory"),
@@ -1226,6 +1257,9 @@ function _bindEvents() {
     _els.loraAdd.addEventListener("click", _addRecipeLora);
     _els.foldAdd.addEventListener("click", _addFoldMerge);
     _els.recipeVae.addEventListener("change", () => { WS.recipeVae = _els.recipeVae.value || null; _updateActionButtons(); });
+
+    // Rescan asset directories (checkpoints, LoRAs, VAEs) on demand
+    if (_els.refreshAssets) _els.refreshAssets.addEventListener("click", refreshAssets);
 
     // Tab switching
     _els.tabs.forEach(tab => {

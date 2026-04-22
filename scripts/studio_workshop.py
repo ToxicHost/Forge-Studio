@@ -1948,7 +1948,7 @@ _LORA_PREFIXES = {
 
 
 def _get_lora_dir() -> str:
-    """Get the LoRA directory path."""
+    """Get the primary LoRA directory path."""
     try:
         from modules.paths import models_path
         lora_dir = os.path.join(models_path, "Lora")
@@ -1960,14 +1960,47 @@ def _get_lora_dir() -> str:
     return os.path.join(models_dir, "Lora")
 
 
+def _lora_dir_candidates() -> list:
+    """All configured LoRA directories, primary first, deduped.
+
+    Combines the default models/Lora folder with any --lora-dir /
+    --lora-dirs CLI paths Forge was launched with, so workshop sees
+    everything Canvas can see.
+    """
+    candidates = []
+    primary = _get_lora_dir()
+    if primary:
+        candidates.append(primary)
+    cli_dir = getattr(shared.cmd_opts, 'lora_dir', None) if hasattr(shared, 'cmd_opts') else None
+    if cli_dir and cli_dir not in candidates:
+        candidates.append(cli_dir)
+    for d in (getattr(shared.cmd_opts, 'lora_dirs', None) or []) if hasattr(shared, 'cmd_opts') else []:
+        if d and d not in candidates:
+            candidates.append(d)
+    return candidates
+
+
 def _resolve_lora_path(filename: str) -> str:
-    """Resolve a LoRA filename to full path."""
+    """Resolve a LoRA filename to full path across every configured dir."""
     if os.path.isabs(filename) and os.path.isfile(filename):
         return filename
-    lora_dir = _get_lora_dir()
-    full = os.path.join(lora_dir, filename)
-    if os.path.isfile(full):
-        return full
+    candidates = _lora_dir_candidates()
+    for base in candidates:
+        if not base:
+            continue
+        full = os.path.join(base, filename)
+        if os.path.isfile(full):
+            return full
+    # Basename fallback: scan each candidate dir recursively for a match
+    basename = os.path.basename(filename)
+    if basename:
+        for base in candidates:
+            if not base or not os.path.isdir(base):
+                continue
+            for root, dirs, files in os.walk(base):
+                for f in files:
+                    if f == basename:
+                        return os.path.join(root, f)
     raise FileNotFoundError(f"LoRA not found: {filename}")
 
 
@@ -2696,12 +2729,37 @@ def _get_vae_dir() -> str:
 
 
 def _resolve_vae_path(filename: str) -> str:
-    """Resolve a VAE filename to full path."""
+    """Resolve a VAE filename to full path.
+
+    Checks the primary VAE directory first, then falls back to
+    sd_vae.vae_dict so checkpoint-sibling VAEs and any registered
+    external VAE files still resolve.
+    """
     if os.path.isabs(filename) and os.path.isfile(filename):
         return filename
     vae_dir = _get_vae_dir()
-    full = os.path.join(vae_dir, filename)
-    if os.path.isfile(full): return full
+    if vae_dir:
+        full = os.path.join(vae_dir, filename)
+        if os.path.isfile(full):
+            return full
+    try:
+        from modules import sd_vae
+        try:
+            sd_vae.refresh_vae_list()
+        except Exception:
+            pass
+        direct = sd_vae.vae_dict.get(filename)
+        if direct and os.path.isfile(direct):
+            return direct
+        basename = os.path.basename(filename)
+        for name, path in sd_vae.vae_dict.items():
+            if not path:
+                continue
+            if name == filename or os.path.basename(path) == basename:
+                if os.path.isfile(path):
+                    return path
+    except Exception:
+        pass
     raise FileNotFoundError(f"VAE not found: {filename}")
 
 
@@ -3256,19 +3314,51 @@ def setup_workshop_routes(app: FastAPI):
 
     @app.get("/studio/workshop/models")
     async def workshop_models():
-        models_dir = _get_models_dir()
+        # Iterate Forge's registry so every configured checkpoint directory is
+        # visible (--ckpt-dir, extra paths from settings) — not just the Neo
+        # install's models/Stable-diffusion/. Matches what Canvas sees.
+        primary_dir = _get_models_dir()
+        primary_abs = None
+        if primary_dir and os.path.isdir(primary_dir):
+            try:
+                primary_abs = os.path.realpath(primary_dir)
+            except Exception:
+                primary_abs = None
         models = []
-        if os.path.isdir(models_dir):
-            for root, dirs, files in os.walk(models_dir):
-                for f in files:
-                    if f.endswith(".safetensors"):
-                        full = os.path.join(root, f)
-                        rel = os.path.relpath(full, models_dir)
-                        size_gb = os.path.getsize(full) / (1024 ** 3)
-                        models.append({
-                            "filename": rel, "basename": f,
-                            "size_gb": round(size_gb, 2), "path": full,
-                        })
+        seen_paths = set()
+        for info in sd_models.checkpoints_list.values():
+            full = getattr(info, "filename", None)
+            if not full or not os.path.isfile(full):
+                continue
+            try:
+                real = os.path.realpath(full)
+            except Exception:
+                real = full
+            if real in seen_paths:
+                continue
+            seen_paths.add(real)
+            # Prefer a path relative to the primary models dir for display
+            # continuity with older saved recipes; outside that tree, fall
+            # back to model_name or basename.
+            display = None
+            if primary_abs:
+                try:
+                    if real == primary_abs or real.startswith(primary_abs + os.sep):
+                        display = os.path.relpath(real, primary_abs).replace("\\", "/")
+                except Exception:
+                    display = None
+            if not display:
+                display = getattr(info, "model_name", None) or os.path.basename(full)
+            try:
+                size_gb = os.path.getsize(full) / (1024 ** 3)
+            except OSError:
+                size_gb = 0
+            models.append({
+                "filename": display,
+                "basename": os.path.basename(full),
+                "size_gb": round(size_gb, 2),
+                "path": full,
+            })
         models.sort(key=lambda m: m["filename"].lower())
         return models
 
@@ -3678,26 +3768,88 @@ def setup_workshop_routes(app: FastAPI):
         sd_models.list_models()
         return {"ok": True, "count": len(sd_models.checkpoints_list)}
 
+    @app.post("/studio/workshop/refresh")
+    async def workshop_refresh_all():
+        """Rescan every asset directory Workshop reads from.
+
+        Triggers Forge's built-in list_models() and sd_vae.refresh_vae_list()
+        so newly-added checkpoints and VAEs in any configured path show up,
+        including external directories from --ckpt-dir / --lora-dir. LoRAs
+        are scanned on-demand at listing time, so no cache to invalidate.
+        """
+        result = {"ok": True}
+        try:
+            sd_models.list_models()
+            result["checkpoints"] = len(sd_models.checkpoints_list)
+        except Exception as e:
+            result["checkpoints_error"] = str(e)
+        try:
+            from modules import sd_vae
+            sd_vae.refresh_vae_list()
+            result["vaes"] = len(sd_vae.vae_dict)
+        except Exception as e:
+            result["vaes_error"] = str(e)
+        try:
+            # LoRA count for the toast — walk only top-level configured dirs
+            lora_count = 0
+            seen = set()
+            for base in _lora_dir_candidates():
+                if not base or not os.path.isdir(base):
+                    continue
+                for root, _dirs, files in os.walk(base):
+                    for f in files:
+                        if f.endswith(".safetensors"):
+                            try:
+                                real = os.path.realpath(os.path.join(root, f))
+                            except Exception:
+                                real = os.path.join(root, f)
+                            if real not in seen:
+                                seen.add(real)
+                                lora_count += 1
+            result["loras"] = lora_count
+        except Exception as e:
+            result["loras_error"] = str(e)
+        return result
+
     # ------------------------------------------------------------------
     # LoRA Baking — Phase 6
     # ------------------------------------------------------------------
 
     @app.get("/studio/workshop/loras")
     async def workshop_loras():
-        """List LoRA files."""
-        lora_dir = _get_lora_dir()
+        """List LoRA files across every configured LoRA directory.
+
+        Honors Forge's --lora-dir / --lora-dirs in addition to the default
+        models/Lora/ folder so external directories show up here just like
+        they do in Canvas.
+        """
         loras = []
-        if os.path.isdir(lora_dir):
-            for root, dirs, files in os.walk(lora_dir):
-                for f in files:
-                    if f.endswith(".safetensors"):
-                        full = os.path.join(root, f)
-                        rel = os.path.relpath(full, lora_dir)
+        seen_paths = set()
+        for base_dir in _lora_dir_candidates():
+            if not base_dir or not os.path.isdir(base_dir):
+                continue
+            for root, dirs, files in os.walk(base_dir):
+                dirs.sort()
+                for f in sorted(files):
+                    if not f.endswith(".safetensors"):
+                        continue
+                    full = os.path.join(root, f)
+                    try:
+                        real = os.path.realpath(full)
+                    except Exception:
+                        real = full
+                    if real in seen_paths:
+                        continue
+                    seen_paths.add(real)
+                    rel = os.path.relpath(full, base_dir).replace("\\", "/")
+                    try:
                         size_mb = os.path.getsize(full) / (1024 ** 2)
-                        loras.append({
-                            "filename": rel, "basename": f,
-                            "size_mb": round(size_mb, 2),
-                        })
+                    except OSError:
+                        size_mb = 0
+                    loras.append({
+                        "filename": rel, "basename": f,
+                        "size_mb": round(size_mb, 2),
+                    })
         loras.sort(key=lambda m: m["filename"].lower())
         return loras
 
@@ -3848,20 +4000,54 @@ def setup_workshop_routes(app: FastAPI):
 
     @app.get("/studio/workshop/vaes")
     async def workshop_vaes():
-        """List VAE files."""
+        """List VAE files via Forge's registry.
+
+        sd_vae.vae_dict aggregates every VAE Forge knows about (the VAE
+        folder plus any checkpoint-sibling .vae.* files). This is wider
+        than a single-directory walk and matches the Canvas VAE dropdown.
+        """
+        from modules import sd_vae
+        try:
+            sd_vae.refresh_vae_list()
+        except Exception:
+            pass
         vae_dir = _get_vae_dir()
+        vae_abs = None
+        if vae_dir and os.path.isdir(vae_dir):
+            try:
+                vae_abs = os.path.realpath(vae_dir)
+            except Exception:
+                vae_abs = None
         vaes = []
-        if os.path.isdir(vae_dir):
-            for root, dirs, files in os.walk(vae_dir):
-                for f in files:
-                    if f.endswith(".safetensors") or f.endswith(".pt"):
-                        full = os.path.join(root, f)
-                        rel = os.path.relpath(full, vae_dir)
-                        size_mb = os.path.getsize(full) / (1024 ** 2)
-                        vaes.append({
-                            "filename": rel, "basename": f,
-                            "size_mb": round(size_mb, 2),
-                        })
+        seen_paths = set()
+        for name, full in sd_vae.vae_dict.items():
+            if not full or not os.path.isfile(full):
+                continue
+            try:
+                real = os.path.realpath(full)
+            except Exception:
+                real = full
+            if real in seen_paths:
+                continue
+            seen_paths.add(real)
+            display = None
+            if vae_abs:
+                try:
+                    if real == vae_abs or real.startswith(vae_abs + os.sep):
+                        display = os.path.relpath(real, vae_abs).replace("\\", "/")
+                except Exception:
+                    display = None
+            if not display:
+                display = name
+            try:
+                size_mb = os.path.getsize(full) / (1024 ** 2)
+            except OSError:
+                size_mb = 0
+            vaes.append({
+                "filename": display,
+                "basename": os.path.basename(full),
+                "size_mb": round(size_mb, 2),
+            })
         vaes.sort(key=lambda m: m["filename"].lower())
         return vaes
 
