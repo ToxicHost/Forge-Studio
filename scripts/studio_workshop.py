@@ -46,6 +46,13 @@ from modules import shared, sd_models
 TAG = "[Workshop]"
 VERSION = "0.6.0"
 
+_NAT_SORT_RE = re.compile(r'(\d+)')
+
+
+def _natural_sort_key(text):
+    """Split text into string/int segments so v3 sorts before v10."""
+    return [int(c) if c.isdigit() else c for c in _NAT_SORT_RE.split(str(text).lower())]
+
 VAE_PREFIX = "first_stage_model."
 
 # =========================================================================
@@ -3359,7 +3366,7 @@ def setup_workshop_routes(app: FastAPI):
                 "size_gb": round(size_gb, 2),
                 "path": full,
             })
-        models.sort(key=lambda m: m["filename"].lower())
+        models.sort(key=lambda m: _natural_sort_key(m["filename"]))
         return models
 
     @app.get("/studio/workshop/inspect")
@@ -3829,8 +3836,8 @@ def setup_workshop_routes(app: FastAPI):
             if not base_dir or not os.path.isdir(base_dir):
                 continue
             for root, dirs, files in os.walk(base_dir):
-                dirs.sort()
-                for f in sorted(files):
+                dirs.sort(key=_natural_sort_key)
+                for f in sorted(files, key=_natural_sort_key):
                     if not f.endswith(".safetensors"):
                         continue
                     full = os.path.join(root, f)
@@ -3850,7 +3857,7 @@ def setup_workshop_routes(app: FastAPI):
                         "filename": rel, "basename": f,
                         "size_mb": round(size_mb, 2),
                     })
-        loras.sort(key=lambda m: m["filename"].lower())
+        loras.sort(key=lambda m: _natural_sort_key(m["filename"]))
         return loras
 
     @app.get("/studio/workshop/inspect_lora")
@@ -4048,7 +4055,7 @@ def setup_workshop_routes(app: FastAPI):
                 "basename": os.path.basename(full),
                 "size_mb": round(size_mb, 2),
             })
-        vaes.sort(key=lambda m: m["filename"].lower())
+        vaes.sort(key=lambda m: _natural_sort_key(m["filename"]))
         return vaes
 
     class VaeBakeRequest(BaseModel):
