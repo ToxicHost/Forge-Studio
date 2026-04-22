@@ -1072,11 +1072,11 @@ def _progress_polling_thread():
                             _last_preview[0] = preview_b64
                             _last_preview_step[0] = current_key
                             _last_preview_time[0] = now
-                except Exception as e:
-                    # Preview decode failed — non-fatal, use cached preview
-                    if not _logged_error[0]:
-                        print(f"{TAG} Preview decode error (non-fatal, using cache): {e}")
-                        _logged_error[0] = True
+                except Exception:
+                    # Preview decode failed — non-fatal, cached preview is used below.
+                    # Common during model reloads where shared.sd_model briefly lacks
+                    # model_config; not actionable, so don't log.
+                    pass
 
             data = {
                 "type": "progress",
