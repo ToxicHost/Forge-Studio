@@ -42,6 +42,14 @@ from modules import shared, sd_models, sd_samplers, sd_schedulers
 TAG = "[Studio API]"
 
 
+_NAT_SORT_RE = re.compile(r'(\d+)')
+
+
+def _natural_sort_key(text):
+    """Split text into string/int segments so v3 sorts before v10."""
+    return [int(c) if c.isdigit() else c for c in _NAT_SORT_RE.split(str(text).lower())]
+
+
 # =========================================================================
 # MODULE IMPORT HELPER
 # =========================================================================
@@ -1580,7 +1588,7 @@ def setup_studio_routes(app: FastAPI):
             "title": m.title, "name": m.model_name,
             "hash": m.shorthash, "filename": m.filename,
         } for m in sd_models.checkpoints_list.values()],
-        key=lambda x: x["title"].lower())
+        key=lambda x: _natural_sort_key(x["title"]))
 
     @app.get("/studio/current_model")
     async def get_current_model():
@@ -2141,7 +2149,7 @@ def setup_studio_routes(app: FastAPI):
                     print(f"{TAG} VAE fallback scan found {len(vae_list) - 2} VAEs")
             # Keep Automatic/None pinned at the top, alphabetize the rest.
             pinned = vae_list[:2]
-            rest = sorted(vae_list[2:], key=lambda x: x["name"].lower())
+            rest = sorted(vae_list[2:], key=lambda x: _natural_sort_key(x["name"]))
             return pinned + rest
         except Exception as e:
             print(f"{TAG} VAE list error: {e}")
@@ -2260,7 +2268,7 @@ def setup_studio_routes(app: FastAPI):
                         name = os.path.relpath(p, te_dir).replace("\\", "/")
                         if name not in results:
                             results.append(name)
-            results.sort(key=lambda x: x.lower())
+            results.sort(key=_natural_sort_key)
             return JSONResponse(results)
         except Exception as e:
             print(f"{TAG} Text encoder list error: {e}")
@@ -2344,8 +2352,8 @@ def setup_studio_routes(app: FastAPI):
             if not base_dir or not os.path.isdir(base_dir):
                 continue
             for root, dirs, files in os.walk(base_dir):
-                dirs.sort()
-                for f in sorted(files):
+                dirs.sort(key=_natural_sort_key)
+                for f in sorted(files, key=_natural_sort_key):
                     if not f.endswith(('.safetensors', '.ckpt', '.pt')):
                         continue
                     full_path = os.path.join(root, f)
@@ -2391,7 +2399,7 @@ def setup_studio_routes(app: FastAPI):
                         "preferred_weight": preferred_weight,
                     })
 
-        loras.sort(key=lambda x: x["name"].lower())
+        loras.sort(key=lambda x: _natural_sort_key(x["name"]))
         return loras
 
     @app.post("/studio/lora_preview")
@@ -2511,7 +2519,7 @@ def setup_studio_routes(app: FastAPI):
             emb_dir = os.path.join(models_path, "..", "embeddings")
         embeddings = []
         if emb_dir and os.path.isdir(emb_dir):
-            for f in sorted(os.listdir(emb_dir), key=lambda s: s.lower()):
+            for f in sorted(os.listdir(emb_dir), key=_natural_sort_key):
                 if f.endswith(('.safetensors', '.pt', '.bin')):
                     embeddings.append({"name": os.path.splitext(f)[0], "file": f})
         return embeddings
@@ -2535,7 +2543,7 @@ def setup_studio_routes(app: FastAPI):
             ]
         for wc_dir in candidates:
             if wc_dir.is_dir():
-                for f in sorted(wc_dir.rglob("*.txt")):
+                for f in sorted(wc_dir.rglob("*.txt"), key=lambda p: _natural_sort_key(str(p))):
                     rel = f.relative_to(wc_dir)
                     # Convert path separators to forward slashes, strip .txt
                     name = str(rel).replace("\\", "/").replace(".txt", "")

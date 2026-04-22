@@ -2665,13 +2665,33 @@ function bindUI() {
     }
   });
 
-  // VRAM Reserve slider
+  // GPU Weights slider — the displayed/saved value is GB for model weights.
+  // Backend still expects "GB to reserve", so we invert at send time:
+  //   reserveGB = totalGB - weightsGB
+  // At weightsGB === 0 the slider shows "Auto" and we send a reset.
   const _vramSlider = document.getElementById("vramReserveSlider");
   const _vramSliderVal = document.getElementById("vramReserveVal");
   const _vramLabel = (v) => parseFloat(v) === 0 ? "Auto" : parseFloat(v).toFixed(1) + " GB";
+  const _vramSendWeights = async (weightsGB) => {
+    if (weightsGB === 0) {
+      return fetch(API.base + "/studio/vram_reserve", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ gb: 0, reset: true }),
+      }).then(res => res.json());
+    }
+    const totalGB = parseFloat(_vramSlider.dataset.totalGb || _vramSlider.max) || 0;
+    const reserveGB = Math.max(0, totalGB - weightsGB);
+    return fetch(API.base + "/studio/vram_reserve", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ gb: reserveGB }),
+    }).then(res => res.json());
+  };
   if (_vramSlider) {
-    // Restore from localStorage
-    const saved = localStorage.getItem("studio-vram-reserve");
+    // New storage key — old "studio-vram-reserve" values meant the opposite
+    // semantic, so ignore them and start at Auto until the user adjusts.
+    const saved = localStorage.getItem("studio-vram-weights");
     if (saved) {
       _vramSlider.value = saved;
       if (_vramSliderVal) _vramSliderVal.textContent = _vramLabel(saved);
@@ -2681,49 +2701,37 @@ function bindUI() {
     });
     _vramSlider.addEventListener("change", async () => {
       const gb = parseFloat(_vramSlider.value);
-      localStorage.setItem("studio-vram-reserve", String(gb));
+      localStorage.setItem("studio-vram-weights", String(gb));
       if (gb === 0) {
-        // Reset to Forge default — set_reserved_memory with val that disables override
         try {
-          await fetch(API.base + "/studio/vram_reserve", {
-            method: "POST",
-            headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ gb: 0, reset: true }),
-          }).then(res => res.json());
-          showToast("VRAM reserve reset to Forge default", "success");
+          await _vramSendWeights(0);
+          showToast("GPU weights reset to Forge default", "success");
           _refreshVRAM();
-        } catch (e) { showToast("VRAM reserve error: " + e.message, "error"); }
+        } catch (e) { showToast("GPU weights error: " + e.message, "error"); }
         return;
       }
       try {
-        const r = await fetch(API.base + "/studio/vram_reserve", {
-          method: "POST",
-          headers: { "Content-Type": "application/json" },
-          body: JSON.stringify({ gb }),
-        }).then(res => res.json());
+        const r = await _vramSendWeights(gb);
         if (r.ok) {
-          showToast(`VRAM reserve set to ${gb.toFixed(1)} GB`, "success");
+          showToast(`GPU weights set to ${gb.toFixed(1)} GB`, "success");
           _refreshVRAM();
         } else {
-          showToast("Failed to set VRAM reserve: " + (r.error || ""), "error");
+          showToast("Failed to set GPU weights: " + (r.error || ""), "error");
         }
       } catch (e) {
-        showToast("VRAM reserve error: " + e.message, "error");
+        showToast("GPU weights error: " + e.message, "error");
       }
     });
-    // Re-apply saved reserve on boot (only if user explicitly set one > 0)
-    if (saved && parseFloat(saved) > 0) {
-      fetch(API.base + "/studio/vram_reserve", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ gb: parseFloat(saved) }),
-      }).catch(() => {});
-    }
-    // Set slider max to actual VRAM
+    // Set slider max to actual VRAM (leave 0.5 GB headroom for safety) and
+    // re-apply saved weights on boot once we know the total.
     API.vram().then(v => {
       if (v.available && v.total_gb > 0) {
-        const maxReserve = Math.floor(v.total_gb * 4) / 4; // round down to 0.25
-        _vramSlider.max = maxReserve;
+        _vramSlider.dataset.totalGb = String(v.total_gb);
+        const maxWeights = Math.max(1, Math.floor((v.total_gb - 0.5) * 4) / 4);
+        _vramSlider.max = maxWeights;
+        if (saved && parseFloat(saved) > 0) {
+          _vramSendWeights(parseFloat(saved)).catch(() => {});
+        }
       }
     }).catch(() => {});
   }
