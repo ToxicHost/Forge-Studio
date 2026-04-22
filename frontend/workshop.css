@@ -115,6 +115,25 @@
     gap: 10px;
 }
 
+.ws-merge-models-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    gap: 8px;
+}
+
+.ws-merge-models-title {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-3);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+}
+
+.ws-refresh-btn {
+    padding: 0 10px;
+}
+
 .ws-merge-model-row {
     display: flex;
     flex-direction: column;
