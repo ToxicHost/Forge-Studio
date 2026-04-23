@@ -1,6 +1,6 @@
 # Forge Studio
 
-An AI-first creative suite built on top of Forge Neo. Studio replaces the Gradio interface with a canvas-based workflow, adds painting and layer tools, and bundles Video Lab (WAN video generation), Comic Lab, Workshop (model merging), and a Gallery.
+An AI-first creative suite built on top of Forge Neo. Studio replaces the Gradio interface with a canvas-based workflow, adds painting and layer tools, and bundles Video Lab (WAN video generation), Workshop (model merging), and a Gallery.
 
 Studio is a Forge Neo extension. It doesn't replace Forge Neo — it rides on top of it and reuses its pipeline and extension ecosystem.
 
@@ -63,7 +63,7 @@ Then click the refresh button (↻) next to the Model dropdown in the Generate p
 2. Pick a model from the Model dropdown below the prompts.
 3. Press **Ctrl+Enter** (or click Generate).
 
-Your image appears on the canvas. You can paint on it, inpaint parts, send it to Video Lab, send it to Comic Lab, or start over.
+Your image appears on the canvas. You can paint on it, inpaint parts, send it to Video Lab, or start over.
 
 For everything else, the **Codex** tab is the in-app documentation. 62 entries covering every tool, parameter, and workflow. Most entries have a **Show Me** button that walks you through the feature interactively.
 
@@ -75,7 +75,6 @@ For everything else, the **Codex** tab is the in-app documentation. 62 entries c
 - **Multi-document workspace** — tabs across the top of the canvas let you keep several independent projects open at once. Each tab has its own layers, undo stack, zoom, *and its own prompt and generation settings*. Switch between them like browser tabs. Ctrl+] / Ctrl+[ to cycle.
 - **Live Painting** — a completion-triggered img2img loop. Toggle the ▶ Live button and Studio regenerates the canvas every time you stop painting, with your current prompt as guidance. Seed stays locked so iterations stay coherent. Use *Apply* to commit the current preview to a new layer and keep going.
 - **Video Lab** — WAN 2.1 / 2.2 video generation with dual-expert model support, TeaCache, NAG, SageAttention 2. Currently WAN-only; other video architectures (Hunyuan, LTX, etc.) are not supported yet.
-- **Comic Lab** — multi-page comic editor with panels, speech bubbles, and per-panel generation.
 - **Workshop** — model merging with several SVD-based methods, LoRA baking, VAE baking, and a journal of previous merges.
 - **Gallery** — image library with character tag parsing, metadata search, bulk operations, and duplicate detection.
 - **Wildcards** — full editor for Dynamic Prompts wildcard files.
@@ -85,7 +84,6 @@ For everything else, the **Codex** tab is the in-app documentation. 62 entries c
 ## Known Limitations
 
 - **Video Lab is in active beta.** Usable and producing results, but still being refined. Expect occasional rough edges and report anything that breaks.
-- **Comic Lab is in active beta.** Same deal — functional for real work, but we're still tuning it and you may hit unpolished corners.
 - **Blackwell (RTX 50-series) + FP8 video models may produce corrupted output in Video Lab.** If you hit this, use GGUF-quantized video models instead. Root cause is still under investigation — the same models work fine in other frontends, so it's likely something specific to Studio's generation path.
 
 ---

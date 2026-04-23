@@ -3,15 +3,15 @@
  * by ToxicHost & Moritz
  *
  * Plug-and-play module architecture. Core canvas + generation is always present.
- * Modules (Comic Lab, Workshop, Corkboard, etc.) register at runtime and get:
+ * Modules (Workshop, Corkboard, etc.) register at runtime and get:
  *   - A tab button in the title bar
  *   - A container div for their UI (viewport takeover)
  *   - Access to shared services (generation API, canvas, toasts, status)
  *
  * Modules register via:
- *   StudioModules.register("comic", {
- *     label: "Comic Lab",
- *     icon: "📖",
+ *   StudioModules.register("workshop", {
+ *     label: "Workshop",
+ *     icon: "🔧",
  *     init(container, services) { ... },   // called once on first activation
  *     activate(container, services) { ... }, // called every time tab is shown
  *     deactivate() { ... },                 // called when switching away
@@ -111,7 +111,6 @@ function _createContainer(id) {
 function _removeBuiltinPlaceholder(id) {
     // Map module ids to the hardcoded placeholder ids in index.html
     const builtinMap = {
-        "comic":     "app-comic",
         "workshop":  "app-workshop",
         "corkboard": "app-corkboard",
     };
@@ -253,7 +252,7 @@ function _hookTabBar() {
 const StudioModules = {
     /**
      * Register a module.
-     * @param {string} id - Unique module identifier (e.g. "comic", "workshop")
+     * @param {string} id - Unique module identifier (e.g. "workshop", "gallery")
      * @param {object} config - Module configuration:
      *   @param {string} config.label - Display name for the tab
      *   @param {string} [config.icon] - Emoji or short icon text
@@ -364,7 +363,7 @@ const StudioModules = {
 // ========================================================================
 
 // Canonical tab order — applied inside register() after each new tab is added
-const TAB_ORDER = ["studio", "gallery", "workshop", "video", "comic", "lexicon", "codex"];
+const TAB_ORDER = ["studio", "gallery", "workshop", "video", "lexicon", "codex"];
 
 function _reorderTabs() {
     const bar = _getTabBar();

@@ -2,7 +2,7 @@
  * Forge Studio — Module Tours
  * by ToxicHost & Moritz
  *
- * First-visit orientation tours for Workshop, Gallery, and Comic Lab.
+ * First-visit orientation tours for Studio modules.
  * Uses StudioModules.onInit() to fire on first activation.
  * Each tour is 3-4 steps and runs only once (persisted via localStorage).
  */
@@ -90,55 +90,6 @@ if (window.StudioModules) {
         ],
         persist: false,
         onComplete: function () { console.log(TAG, "Gallery tour complete"); },
-        onCancel: function () {},
-        confirmCancel: false,
-      }).start(0);
-    }, 600);
-  });
-
-  // ========================================================================
-  // COMIC LAB TOUR
-  // ========================================================================
-
-  StudioModules.onInit("comic", function () {
-    if (_seen("comic") || !window.StudioTour) return;
-    _markSeen("comic");
-
-    setTimeout(function () {
-      StudioTour.create({
-        id: "tour-comic",
-        steps: [
-          {
-            id: "cl_canvas",
-            text: "This is <em>Comic Lab</em> \u2014 a comic page creation system.\n\nThe canvas holds your panels. Use templates from the toolbar for quick layouts, or draw custom panel arrangements.",
-            spotlight: null,
-            advance: "click", btn: "Next",
-            position: { bottom: "80px", left: "calc(50% - 190px)" }
-          },
-          {
-            id: "cl_generate",
-            text: "Select a panel, write a prompt, and hit <em>Generate</em> (or <span class=\"cx-kbd\">Ctrl+Enter</span>). The AI image fills that panel with proper clipping and transforms.\n\nEach panel gets its own prompt and its own generation.",
-            spotlight: null,
-            advance: "click", btn: "Next",
-            position: { bottom: "80px", left: "calc(50% - 190px)" }
-          },
-          {
-            id: "cl_bubbles",
-            text: "Add <em>speech bubbles</em> and <em>SFX text</em> from the sidebar. Multiple styles, fonts, and text stroke controls. Reorder with <span class=\"cx-kbd\">[</span>/<span class=\"cx-kbd\">]</span> keys.",
-            spotlight: null,
-            advance: "click", btn: "Next",
-            position: { bottom: "80px", left: "calc(50% - 190px)" }
-          },
-          {
-            id: "cl_export",
-            text: "Multi-page support \u2014 each page has its own panels, bubbles, and undo stack. Use the page strip at the bottom to navigate.\n\nExport as <em>PNG</em> (<span class=\"cx-kbd\">Ctrl+E</span>) or <em>PDF</em> (<span class=\"cx-kbd\">Ctrl+Shift+E</span>). Save projects as <code>.comic.json</code> with <span class=\"cx-kbd\">Ctrl+S</span>.",
-            spotlight: null,
-            advance: "click", btn: "Got it",
-            position: { bottom: "80px", left: "calc(50% - 190px)" }
-          },
-        ],
-        persist: false,
-        onComplete: function () { console.log(TAG, "Comic Lab tour complete"); },
         onCancel: function () {},
         confirmCancel: false,
       }).start(0);

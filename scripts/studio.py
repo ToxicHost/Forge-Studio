@@ -39,7 +39,7 @@ def on_ui_tabs():
         <div style="display:flex;flex-direction:column;align-items:center;justify-content:center;padding:40px 20px;min-height:200px;text-align:center;">
           <div style="font-size:20px;font-weight:700;color:#e0dfd8;margin-bottom:8px;">Forge Studio</div>
           <div style="font-size:12px;color:#9c9a92;margin-bottom:20px;max-width:400px;">
-            Full canvas editor with layers, brushes, regional prompting, ADetailer, ControlNet, Comic Lab, and more.
+            Full canvas editor with layers, brushes, regional prompting, ADetailer, ControlNet, and more.
           </div>
           <button onclick="window.open('/studio','_blank')"
             style="padding:10px 32px;background:#7b8fff;color:#fff;border:none;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;transition:filter 0.15s;"

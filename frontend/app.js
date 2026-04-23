@@ -4558,7 +4558,7 @@ const PromptScope = {
   },
 };
 
-// Expose shared objects for modules (Comic Lab, Workshop, etc.)
+// Expose shared objects for modules (Workshop, etc.)
 window.API = API;
 window.State = State;
 window.StatusBar = StatusBar;
