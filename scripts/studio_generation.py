@@ -2,7 +2,7 @@
 Forge Studio — Generation Core
 by ToxicHost & Moritz
 
-Extracted from studio.py to support reuse by Comic Lab and other consumers.
+Extracted from studio.py to support reuse across Studio modules.
 Contains: dataclasses, utilities, checkpoint swap, hires fix, processing object
 construction, script runner attachment, and the batch generation loop.
 """

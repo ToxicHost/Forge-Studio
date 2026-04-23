@@ -3,8 +3,8 @@
  * by ToxicHost & Moritz
  *
  * Multi-file tabs for the canvas workspace. Each document has its own
- * layers, mask, regions, undo stack, and zoom state. Follows Comic Lab's
- * multi-page pattern: working state is a window into the active document.
+ * layers, mask, regions, undo stack, and zoom state. Uses a multi-page
+ * pattern: working state is a window into the active document.
  *
  * Loaded after canvas-core.js, canvas-ui.js, app.js, and module-system.js.
  *
