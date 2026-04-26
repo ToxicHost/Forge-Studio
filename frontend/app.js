@@ -245,6 +245,7 @@ const State = {
   outputImagesB64: [],     // array of base64 data URLs (for canvas operations)
   outputInfotexts: [],     // array of infotext strings, parallel to outputImages
   outputFilenames: [],     // array of original filenames (without ext), parallel to outputImages
+  outputContentHashes: [], // SHA256 of decoded RGB pixels, parallel to outputImages; "" when not saved
   selectedOutputIdx: 0,
   embedMetadata: true,     // whether to embed generation params in saved images
   saveOutputs: true,       // auto-save generated images to disk
@@ -508,6 +509,7 @@ const Live = {
     // Also populate output gallery so Result → Canvas works
     State.outputImages = [data.image];
     State.outputImagesB64 = [data.image];
+    State.outputContentHashes = [""];  // live preview isn't saved → no Gallery row
     State.selectedOutputIdx = 0;
     const outputSection = document.getElementById("outputSection");
     if (outputSection) outputSection.style.display = "";
@@ -1249,6 +1251,7 @@ async function doGenerate() {
       }
       const newB64 = result.images;
       const newInfotexts = result.infotexts || [];
+      const newContentHashes = result.content_hashes || [];
       // Extract original filenames (without extension) from server paths
       const newFilenames = (result.image_paths || []).map(p => {
         const base = p.replace(/\\/g, "/").split("/").pop() || "";
@@ -1258,11 +1261,13 @@ async function doGenerate() {
       while (newFilenames.length < newB64.length) newFilenames.push("");
       // Pad infotexts to match image count
       while (newInfotexts.length < newB64.length) newInfotexts.push("");
+      while (newContentHashes.length < newB64.length) newContentHashes.push("");
 
       State.outputImages = [...newFileUrls, ...State.outputImages].slice(0, MAX_GALLERY);
       State.outputImagesB64 = [...newB64, ...State.outputImagesB64].slice(0, MAX_GALLERY);
       State.outputInfotexts = [...newInfotexts, ...State.outputInfotexts].slice(0, MAX_GALLERY);
       State.outputFilenames = [...newFilenames, ...State.outputFilenames].slice(0, MAX_GALLERY);
+      State.outputContentHashes = [...newContentHashes, ...State.outputContentHashes].slice(0, MAX_GALLERY);
       State.selectedOutputIdx = 0;
       renderOutputGallery();
       addHistoryEntry(`Generate (seed ${result.seed})`);
@@ -2042,26 +2047,29 @@ function bindUI() {
       _showResultPreview(State.selectedOutputIdx);
       _updateOutputInfo();
     });
-    _grid.addEventListener("dblclick", (e) => {
+    _grid.addEventListener("dblclick", async (e) => {
       const thumb = e.target.closest(".output-thumb");
       if (!thumb) return;
       const idx = parseInt(thumb.dataset.idx);
       const imgSrc = State.outputImages[idx];
+      if (await _openCanvasOutput(idx)) return;
       if (imgSrc) _openOutputLightbox(imgSrc);
     });
 
     // Preview click → lightbox for currently selected image
     const _vpPreview = document.getElementById("canvasPreviewWrap");
     if (_vpPreview) {
-      _vpPreview.addEventListener("click", (e) => {
+      _vpPreview.addEventListener("click", async (e) => {
         // Close button click
         if (e.target.id === "canvasPreviewClose") {
           _vpPreview.style.display = "none";
           State._resultPreviewActive = false;
           return;
         }
-        // Click on image → lightbox
-        const imgSrc = State.outputImages[State.selectedOutputIdx];
+        // Click on image → Gallery detail (or fallback lightbox)
+        const idx = State.selectedOutputIdx;
+        const imgSrc = State.outputImages[idx];
+        if (await _openCanvasOutput(idx)) return;
         if (imgSrc) _openOutputLightbox(imgSrc);
       });
     }
@@ -2133,6 +2141,26 @@ function bindUI() {
         }, { once: true });
       }, 0);
     });
+  }
+
+  /** Build a navContext from the current Canvas batch. Slots without an
+   * id get resolved on demand by Gallery's _resolveByHash. */
+  function _buildCanvasNavContext() {
+    return State.outputImages.map((url, i) => ({
+      hash: State.outputContentHashes[i] || "",
+      b64Url: State.outputImagesB64[i] || url,
+      filename: State.outputFilenames[i] || "",
+    }));
+  }
+
+  /** Try to open Canvas output `idx` in Gallery's detail view. Returns
+   * true on success, false to let the caller fall back to the throwaway
+   * lightbox. Skips the lookup when there's no hash (saveOutputs off,
+   * pre-existing entries, etc.). */
+  async function _openCanvasOutput(idx) {
+    const hash = State.outputContentHashes[idx];
+    if (!hash || !window.StudioGallery || !State.saveOutputs) return false;
+    return window.StudioGallery.openByHash(hash, _buildCanvasNavContext());
   }
 
   /** Open a zoomable lightbox overlay for an output image. */
