@@ -431,8 +431,8 @@
 }
 .lex-preview-label:not(:first-child) { margin-top: 8px; }
 
-.lex-preview-raw { font-family: var(--mono); font-size: 12px; color: var(--text-2); word-break: break-all; line-height: 1.4; }
-.lex-preview-result { font-family: var(--mono); font-size: 12px; color: var(--accent-bright); word-break: break-all; line-height: 1.4; }
+.lex-preview-raw { font-family: var(--mono); font-size: 12px; color: var(--text-2); word-break: break-all; line-height: 1.4; user-select: text; cursor: text; }
+.lex-preview-result { font-family: var(--mono); font-size: 12px; color: var(--accent-bright); word-break: break-all; line-height: 1.4; user-select: text; cursor: text; }
 .lex-preview-result.lex-preview-error { color: var(--red); }
 
 /* ═══════════════════════════════════════════
