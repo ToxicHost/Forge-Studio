@@ -705,6 +705,8 @@
   color: var(--text-2);
   word-break: break-all;
   line-height: 1.5;
+  user-select: text;
+  cursor: text;
 }
 .gal-meta-value.prompt {
   max-height: 120px;
