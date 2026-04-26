@@ -2226,6 +2226,40 @@ def setup_gallery_routes(app: FastAPI):
         finally:
             db.close()
 
+    @app.get("/studio/gallery/by-hash/{content_hash}")
+    async def gallery_image_by_hash(content_hash: str):
+        # Lookup for the Canvas → Gallery detail view bridge. Returns the
+        # same row shape that /studio/gallery/images returns, so gallery.js's
+        # showDetailOverlay can consume it directly.
+        db = _get_db()
+        try:
+            row = db.execute(
+                "SELECT * FROM images WHERE content_hash=?", (content_hash,)
+            ).fetchone()
+            if not row:
+                return JSONResponse({"error": "Not found"}, status_code=404)
+            chars = db.execute(
+                "SELECT c.name FROM characters c "
+                "JOIN image_characters ic ON c.id=ic.character_id "
+                "WHERE ic.image_id=? ORDER BY ic.position",
+                (row["id"],),
+            ).fetchall()
+            ext = Path(row["filename"]).suffix.lower()
+            mt = row["media_type"] if ("media_type" in row.keys() and row["media_type"]) else (
+                "video" if ext in VIDEO_EXTENSIONS else ("gif" if ext == ".gif" else "image")
+            )
+            return {
+                "id": row["id"], "filename": row["filename"], "folder": row["folder"],
+                "filepath": row["filepath"], "width": row["width"], "height": row["height"],
+                "file_date": row["file_date"],
+                "fphash": get_filepath_hash(row["filepath"]),
+                "is_video": mt == "video",
+                "media_type": mt,
+                "characters": [c["name"] for c in chars],
+            }
+        finally:
+            db.close()
+
     @app.get("/studio/gallery/image/{image_id}/metadata")
     async def gallery_image_metadata(image_id: int):
         db = _get_db()

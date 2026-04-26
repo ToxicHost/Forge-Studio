@@ -281,6 +281,7 @@ class GenerateResponse(BaseModel):
     """Generation result."""
     images: List[str] = []
     image_paths: List[str] = []   # server-side file paths for /file= URLs
+    content_hashes: List[str] = []  # SHA256 of decoded RGB pixels, "" if not saved
     infotexts: List[str] = []
     settings: dict = {}
     seed: int = -1
@@ -1291,6 +1292,7 @@ def setup_studio_routes(app: FastAPI):
 
         images_b64 = []
         image_paths = []
+        content_hashes = []  # parallel to images_b64; "" when not saved/hashed
 
         # Auto-save images to output/studio/{mode}/ (unless disabled by user)
         mode_folder = {"Create": "create", "Edit": "edit", "img2img": "img2img"}.get(req.mode, "create")
@@ -1339,6 +1341,7 @@ def setup_studio_routes(app: FastAPI):
         _base_counter = _next_forge_counter(output_dir) if req.save_outputs else 1
 
         for i, img in enumerate(images_list or []):
+            _per_image_hash = ""
             if isinstance(img, Image.Image):
                 # When saving as PNG, encode once to buffer and reuse for both
                 # disk save and b64 response (avoids double PNG compression).
@@ -1371,17 +1374,16 @@ def setup_studio_routes(app: FastAPI):
                         with open(str(fpath), "wb") as f:
                             f.write(png_bytes)
                         image_paths.append(str(fpath))
-                        # Save metadata to Gallery DB by content hash (fire-and-forget).
-                        # Always saves regardless of embed_metadata toggle — the DB is
-                        # the durable metadata store, embed just controls the PNG chunk.
+                        # Hash the saved image so the frontend can look it up in
+                        # Gallery (Canvas → Gallery detail view bridge).
                         try:
                             _hash_fn = _import("studio_gallery", "compute_content_hash")
                             _gallery_save = _import("studio_gallery", "save_metadata_by_hash")
-                            if _hash_fn and _gallery_save and _parsed_infotexts and i < len(_parsed_infotexts) and _parsed_infotexts[i]:
+                            if _hash_fn:
                                 # PNG is lossless — hash the original PIL pixels directly (faster, no re-decode)
-                                _ch = _hash_fn(img)
-                                if _ch:
-                                    _gallery_save(_ch, _parsed_infotexts[i], _parsed_settings)
+                                _per_image_hash = _hash_fn(img) or ""
+                                if _per_image_hash and _gallery_save and _parsed_infotexts and i < len(_parsed_infotexts) and _parsed_infotexts[i]:
+                                    _gallery_save(_per_image_hash, _parsed_infotexts[i], _parsed_settings)
                         except Exception:
                             pass
                         # b64 from same buffer (no re-encode)
@@ -1435,22 +1437,23 @@ def setup_studio_routes(app: FastAPI):
 
                             img.save(str(fpath), **save_kwargs)
                             image_paths.append(str(fpath))
-                            # Save metadata to Gallery DB by content hash (fire-and-forget).
-                            # Always saves regardless of embed_metadata toggle.
+                            # Hash the saved image so the frontend can look it up in
+                            # Gallery (Canvas → Gallery detail view bridge).
                             # Lossy formats: must hash from file (post-encode pixels differ from original).
                             try:
                                 _hash_fn = _import("studio_gallery", "compute_content_hash")
                                 _gallery_save = _import("studio_gallery", "save_metadata_by_hash")
-                                if _hash_fn and _gallery_save and _parsed_infotexts and i < len(_parsed_infotexts) and _parsed_infotexts[i]:
-                                    _ch = _hash_fn(str(fpath))
-                                    if _ch:
-                                        _gallery_save(_ch, _parsed_infotexts[i], _parsed_settings)
+                                if _hash_fn:
+                                    _per_image_hash = _hash_fn(str(fpath)) or ""
+                                    if _per_image_hash and _gallery_save and _parsed_infotexts and i < len(_parsed_infotexts) and _parsed_infotexts[i]:
+                                        _gallery_save(_per_image_hash, _parsed_infotexts[i], _parsed_settings)
                             except Exception:
                                 pass
                         except Exception as e:
                             print(f"{TAG} Auto-save error: {e}")
             elif isinstance(img, str):
                 images_b64.append(img)
+            content_hashes.append(_per_image_hash)
 
         settings = {}
         infotexts = []
@@ -1478,6 +1481,7 @@ def setup_studio_routes(app: FastAPI):
         return GenerateResponse(
             images=images_b64,
             image_paths=image_paths,
+            content_hashes=content_hashes,
             infotexts=infotexts,
             settings=settings,
             seed=seed_val,

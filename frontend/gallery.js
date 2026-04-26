@@ -64,6 +64,7 @@ const G = {
     tagColW: parseInt(localStorage.getItem("gal_tagColW")) || 200,
     selectedFolders: new Set(),
     lastSelectedFolderIdx: -1,
+    navContext: null,
 };
 
 // ========================================================================
@@ -1714,8 +1715,8 @@ function appendGalleryItems(items) { const g = G._container.querySelector("#gal-
 // DETAIL VIEW
 // ========================================================================
 
-function openImage(id) { const m = G._container.querySelector(".gal-main"); if (m) G.scrollPosition = m.scrollTop; G.currentImageIndex = G.images.findIndex(i => i.id === id); G.currentImageId = id; G.page = "detail"; G.tagsModified = false; showDetailOverlay(); }
-function closeDetail() { document.getElementById("gal-detail-overlay")?.remove(); if (G.page === "detail") G.page = "gallery"; if (G.tagsModified) { G.tagsModified = false; loadCharacters().then(renderTagList); loadImagesReset().then(renderMain); } }
+function openImage(id) { const m = G._container?.querySelector(".gal-main"); if (m) G.scrollPosition = m.scrollTop; G.currentImageIndex = G.images.findIndex(i => i.id === id); G.currentImageId = id; G.page = "detail"; G.tagsModified = false; showDetailOverlay(); }
+function closeDetail() { document.getElementById("gal-detail-overlay")?.remove(); if (G.page === "detail") G.page = "gallery"; G.navContext = null; if (G.tagsModified && G._container) { G.tagsModified = false; loadCharacters().then(renderTagList); loadImagesReset().then(renderMain); } }
 function buildDetailTagsHtml(imgId, chars) { return chars.map(c => { const isLast = chars.length === 1; return '<span class="tag-pill' + (isLast ? " tag-last" : "") + '" data-tag-action="' + (isLast ? "" : "remove") + '" data-img-id="' + imgId + '" data-tag="' + esc(c) + '">' + esc(c) + '</span>'; }).join("") + '<button class="gal-add-tag-btn" id="gal-add-tag-toggle" title="Add tag">+</button><div class="gal-add-tag-inline" id="gal-add-tag-inline"><input id="gal-add-tag-input" placeholder="Tag name..." /></div>'; }
 const BROWSER_VIDEO = { mp4: 1, webm: 1, m4v: 1, mov: 1 };
 
@@ -1733,9 +1734,11 @@ function _mimeForExt(ext) {
     }[ext] || "application/octet-stream";
 }
 
+function _navList() { return G.navContext || G.images; }
 function showDetailOverlay() {
     document.getElementById("gal-detail-overlay")?.remove();
-    const img = G.images[G.currentImageIndex]; if (!img) return;
+    const list = _navList();
+    const img = list[G.currentImageIndex]; if (!img) return;
     const ov = document.createElement("div"); ov.id = "gal-detail-overlay"; ov.className = "gal-detail";
     const fullUrl = API_BASE + "/full/" + img.id; const ext = img.filename.split(".").pop().toLowerCase();
     let mediaHtml;
@@ -1743,7 +1746,7 @@ function showDetailOverlay() {
     else if (img.is_video) mediaHtml = '<div style="display:flex;flex-direction:column;align-items:center;gap:16px"><img src="' + API_BASE + '/thumb/' + img.id + '?h=' + img.fphash + '" style="max-width:80%;max-height:70vh;border-radius:8px;object-fit:contain"/><button class="gal-btn-primary" data-action="open-file" data-img-id="' + img.id + '" style="padding:10px 28px">' + IC.play + ' Open in Player</button></div>';
     else mediaHtml = '<img id="gal-detail-img" src="' + fullUrl + '" alt="' + esc(img.filename) + '"/>';
     const hasCanvas = typeof displayOnCanvas === "function";
-    ov.innerHTML = '<div class="gal-detail-img-area" id="gal-detail-img-area">' + mediaHtml + '</div><div class="gal-detail-sidebar"><div class="gal-detail-panel"><input class="gal-detail-filename" id="gal-rename-input" value="' + esc(img.filename) + '" /><div class="gal-detail-folder"><span class="gal-tree-icon">' + IC.folder + '</span> ' + esc(img.folder) + '</div>' + (img.width ? '<div class="gal-detail-dims">' + img.width + ' \u00d7 ' + img.height + ' px</div>' : '') + '<div class="gal-detail-actions"><button class="gal-detail-btn" data-action="explorer" data-img-id="' + img.id + '">' + IC.explorer + ' Browse</button><button class="gal-detail-btn" data-action="copy-image" data-img-id="' + img.id + '">&#x1F4CB; Copy</button><button class="gal-detail-btn" data-action="download-image" data-img-id="' + img.id + '">&#x2B07; Save</button>' + (hasCanvas ? '<span class="gal-detail-btn-split"><button class="gal-detail-btn accent split-main" data-action="send-canvas" data-img-id="' + img.id + '">' + IC.canvas + ' Send to Canvas</button><button class="gal-detail-btn accent split-arrow" data-action="send-canvas-menu" data-img-id="' + img.id + '" title="Choose prompt version">▾</button></span>' : '') + '<span class="gal-detail-sep"></span><button class="gal-detail-btn" data-action="strip-metadata" data-img-id="' + img.id + '">' + IC.stripMeta + ' Strip metadata</button><button class="gal-detail-btn" data-action="convert" data-img-id="' + img.id + '">' + IC.convert + ' Convert\u2026</button><button class="gal-detail-btn danger" data-action="delete" data-img-id="' + img.id + '">' + IC.trash + ' Delete</button></div><div class="gal-detail-chars" id="gal-detail-chars">' + buildDetailTagsHtml(img.id, img.characters) + '</div><div class="gal-detail-nav"><button class="gal-detail-btn nav" data-action="prev" ' + (G.currentImageIndex <= 0 ? "disabled" : "") + '>' + IC.chevLeft + '</button><button class="gal-btn" data-action="back" style="flex:1">Back</button><button class="gal-detail-btn nav" data-action="next" ' + (G.currentImageIndex >= G.images.length - 1 ? "disabled" : "") + '>' + IC.chevRight + '</button></div></div><div class="gal-meta-panel" id="gal-meta-panel"><div class="gal-meta-section-title">Metadata</div><div class="gal-meta-empty">Loading...</div></div></div>';
+    ov.innerHTML = '<div class="gal-detail-img-area" id="gal-detail-img-area">' + mediaHtml + '</div><div class="gal-detail-sidebar"><div class="gal-detail-panel"><input class="gal-detail-filename" id="gal-rename-input" value="' + esc(img.filename) + '" /><div class="gal-detail-folder"><span class="gal-tree-icon">' + IC.folder + '</span> ' + esc(img.folder) + '</div>' + (img.width ? '<div class="gal-detail-dims">' + img.width + ' \u00d7 ' + img.height + ' px</div>' : '') + '<div class="gal-detail-actions"><button class="gal-detail-btn" data-action="explorer" data-img-id="' + img.id + '">' + IC.explorer + ' Browse</button><button class="gal-detail-btn" data-action="copy-image" data-img-id="' + img.id + '">&#x1F4CB; Copy</button><button class="gal-detail-btn" data-action="download-image" data-img-id="' + img.id + '">&#x2B07; Save</button>' + (hasCanvas ? '<span class="gal-detail-btn-split"><button class="gal-detail-btn accent split-main" data-action="send-canvas" data-img-id="' + img.id + '">' + IC.canvas + ' Send to Canvas</button><button class="gal-detail-btn accent split-arrow" data-action="send-canvas-menu" data-img-id="' + img.id + '" title="Choose prompt version">▾</button></span>' : '') + '<span class="gal-detail-sep"></span><button class="gal-detail-btn" data-action="strip-metadata" data-img-id="' + img.id + '">' + IC.stripMeta + ' Strip metadata</button><button class="gal-detail-btn" data-action="convert" data-img-id="' + img.id + '">' + IC.convert + ' Convert\u2026</button><button class="gal-detail-btn danger" data-action="delete" data-img-id="' + img.id + '">' + IC.trash + ' Delete</button></div><div class="gal-detail-chars" id="gal-detail-chars">' + buildDetailTagsHtml(img.id, img.characters) + '</div><div class="gal-detail-nav"><button class="gal-detail-btn nav" data-action="prev" ' + (G.currentImageIndex <= 0 ? "disabled" : "") + '>' + IC.chevLeft + '</button><button class="gal-btn" data-action="back" style="flex:1">Back</button><button class="gal-detail-btn nav" data-action="next" ' + (G.currentImageIndex >= list.length - 1 ? "disabled" : "") + '>' + IC.chevRight + '</button></div></div><div class="gal-meta-panel" id="gal-meta-panel"><div class="gal-meta-section-title">Metadata</div><div class="gal-meta-empty">Loading...</div></div></div>';
     document.body.appendChild(ov); G.detailZoom = 1; G.detailPan = { x: 0, y: 0 };
     _wireDetailEvents(ov, img); setTimeout(() => loadMetadata(img.id), 50);
 }
@@ -1810,8 +1813,77 @@ function applyDetailZoom() {
     area.classList.toggle("zoomed", G.detailZoom > 1);
     imgEl.style.transform = "translate(" + G.detailPan.x + "px," + G.detailPan.y + "px) scale(" + G.detailZoom + ")";
 }
-function prevImage() { if (G.currentImageIndex > 0) { G.currentImageIndex--; G.currentImageId = G.images[G.currentImageIndex].id; showDetailOverlay(); } }
-function nextImage() { if (G.currentImageIndex < G.images.length - 1) { G.currentImageIndex++; G.currentImageId = G.images[G.currentImageIndex].id; showDetailOverlay(); } }
+// Try lookup by content_hash with backoff. Watcher debounce is ~2s plus
+// SQLite write + scan loop, so the tail delays cover the typical race.
+// Bump them if real-world testing shows misses.
+async function _resolveByHash(hash) {
+    if (!hash) return null;
+    const delays = [0, 200, 500, 1000, 1500];
+    for (const d of delays) {
+        if (d) await new Promise(r => setTimeout(r, d));
+        try {
+            const r = await fetch(API_BASE + "/by-hash/" + hash);
+            if (r.ok) return await r.json();
+        } catch {}
+    }
+    return null;
+}
+// Walk navContext in `dir` (+1 next, -1 prev). Skip slots whose hash is
+// empty or that fail to resolve; advance to the first that does. Toast
+// only when the entire remaining direction is unresolvable.
+async function _navStep(dir) {
+    const list = _navList();
+    if (!G.navContext) {
+        // Default Gallery nav — no resolution needed, slots are full rows.
+        const next = G.currentImageIndex + dir;
+        if (next < 0 || next >= list.length) return;
+        G.currentImageIndex = next;
+        G.currentImageId = list[next].id;
+        showDetailOverlay();
+        return;
+    }
+    for (let i = G.currentImageIndex + dir; i >= 0 && i < list.length; i += dir) {
+        const slot = list[i];
+        if (!slot) continue;
+        if (slot.id) {
+            G.currentImageIndex = i;
+            G.currentImageId = slot.id;
+            showDetailOverlay();
+            return;
+        }
+        if (!slot.hash) continue;
+        const resolved = await _resolveByHash(slot.hash);
+        if (resolved) {
+            list[i] = { ...slot, ...resolved };
+            G.currentImageIndex = i;
+            G.currentImageId = resolved.id;
+            showDetailOverlay();
+            return;
+        }
+    }
+    toast("No more images in this direction");
+}
+function prevImage() { _navStep(-1); }
+function nextImage() { _navStep(1); }
+async function openByHash(hash, navContext) {
+    const resolved = await _resolveByHash(hash);
+    if (!resolved) return false;
+    if (navContext) {
+        const idx = navContext.findIndex(n => n.hash === hash);
+        if (idx >= 0) navContext[idx] = { ...navContext[idx], ...resolved };
+        G.navContext = navContext;
+        G.currentImageIndex = idx >= 0 ? idx : 0;
+    } else {
+        G.images = [resolved];
+        G.currentImageIndex = 0;
+        G.navContext = null;
+    }
+    G.currentImageId = resolved.id;
+    G.page = "detail";
+    G.tagsModified = false;
+    showDetailOverlay();
+    return true;
+}
 async function renameFile() {
     const inp = document.getElementById("gal-rename-input");
     if (!inp) return;
@@ -2202,6 +2274,10 @@ function onKeyDown(e) {
 // ========================================================================
 // MODULE REGISTRATION
 // ========================================================================
+
+// Public API for cross-module callers (e.g. Canvas's output gallery
+// dblclick → Gallery detail view). Keep the surface tiny.
+window.StudioGallery = { openByHash };
 
 if (window.StudioModules) {
     StudioModules.register("gallery", {
