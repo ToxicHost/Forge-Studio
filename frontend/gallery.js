@@ -1740,20 +1740,72 @@ function showDetailOverlay() {
     const list = _navList();
     const img = list[G.currentImageIndex]; if (!img) return;
     const ov = document.createElement("div"); ov.id = "gal-detail-overlay"; ov.className = "gal-detail";
-    const fullUrl = API_BASE + "/full/" + img.id; const ext = img.filename.split(".").pop().toLowerCase();
+    // Ephemeral images live entirely in memory; the <img>/<video> src is
+    // the data URL the Canvas already has, no /full/{id} round-trip.
+    const eph = !!img.ephemeral;
+    const mediaSrc = eph ? img.b64Url : (API_BASE + "/full/" + img.id);
+    const ext = img.filename.split(".").pop().toLowerCase();
     let mediaHtml;
-    if (img.is_video && BROWSER_VIDEO[ext]) mediaHtml = '<video id="gal-detail-video" src="' + fullUrl + '" controls autoplay style="max-width:100%;max-height:100%;object-fit:contain"></video>';
+    if (img.is_video && BROWSER_VIDEO[ext]) mediaHtml = '<video id="gal-detail-video" src="' + mediaSrc + '" controls autoplay style="max-width:100%;max-height:100%;object-fit:contain"></video>';
     else if (img.is_video) mediaHtml = '<div style="display:flex;flex-direction:column;align-items:center;gap:16px"><img src="' + API_BASE + '/thumb/' + img.id + '?h=' + img.fphash + '" style="max-width:80%;max-height:70vh;border-radius:8px;object-fit:contain"/><button class="gal-btn-primary" data-action="open-file" data-img-id="' + img.id + '" style="padding:10px 28px">' + IC.play + ' Open in Player</button></div>';
-    else mediaHtml = '<img id="gal-detail-img" src="' + fullUrl + '" alt="' + esc(img.filename) + '"/>';
+    else mediaHtml = '<img id="gal-detail-img" src="' + mediaSrc + '" alt="' + esc(img.filename) + '"/>';
     const hasCanvas = typeof displayOnCanvas === "function";
-    ov.innerHTML = '<div class="gal-detail-img-area" id="gal-detail-img-area">' + mediaHtml + '</div><div class="gal-detail-sidebar"><div class="gal-detail-panel"><input class="gal-detail-filename" id="gal-rename-input" value="' + esc(img.filename) + '" /><div class="gal-detail-folder"><span class="gal-tree-icon">' + IC.folder + '</span> ' + esc(img.folder) + '</div>' + (img.width ? '<div class="gal-detail-dims">' + img.width + ' \u00d7 ' + img.height + ' px</div>' : '') + '<div class="gal-detail-actions"><button class="gal-detail-btn" data-action="explorer" data-img-id="' + img.id + '">' + IC.explorer + ' Browse</button><button class="gal-detail-btn" data-action="copy-image" data-img-id="' + img.id + '">&#x1F4CB; Copy</button><button class="gal-detail-btn" data-action="download-image" data-img-id="' + img.id + '">&#x2B07; Save</button>' + (hasCanvas ? '<span class="gal-detail-btn-split"><button class="gal-detail-btn accent split-main" data-action="send-canvas" data-img-id="' + img.id + '">' + IC.canvas + ' Send to Canvas</button><button class="gal-detail-btn accent split-arrow" data-action="send-canvas-menu" data-img-id="' + img.id + '" title="Choose prompt version">▾</button></span>' : '') + '<span class="gal-detail-sep"></span><button class="gal-detail-btn" data-action="strip-metadata" data-img-id="' + img.id + '">' + IC.stripMeta + ' Strip metadata</button><button class="gal-detail-btn" data-action="convert" data-img-id="' + img.id + '">' + IC.convert + ' Convert\u2026</button><button class="gal-detail-btn danger" data-action="delete" data-img-id="' + img.id + '">' + IC.trash + ' Delete</button></div><div class="gal-detail-chars" id="gal-detail-chars">' + buildDetailTagsHtml(img.id, img.characters) + '</div><div class="gal-detail-nav"><button class="gal-detail-btn nav" data-action="prev" ' + (G.currentImageIndex <= 0 ? "disabled" : "") + '>' + IC.chevLeft + '</button><button class="gal-btn" data-action="back" style="flex:1">Back</button><button class="gal-detail-btn nav" data-action="next" ' + (G.currentImageIndex >= list.length - 1 ? "disabled" : "") + '>' + IC.chevRight + '</button></div></div><div class="gal-meta-panel" id="gal-meta-panel"><div class="gal-meta-section-title">Metadata</div><div class="gal-meta-empty">Loading...</div></div></div>';
+    ov.innerHTML = '<div class="gal-detail-img-area" id="gal-detail-img-area">' + mediaHtml + '</div><div class="gal-detail-sidebar"><div class="gal-detail-panel"><input class="gal-detail-filename" id="gal-rename-input" value="' + esc(img.filename) + '"' + (eph ? ' readonly' : '') + ' />' + (eph ? '' : '<div class="gal-detail-folder"><span class="gal-tree-icon">' + IC.folder + '</span> ' + esc(img.folder) + '</div>') + '' + (img.width ? '<div class="gal-detail-dims">' + img.width + ' \u00d7 ' + img.height + ' px</div>' : '') + '<div class="gal-detail-actions">' + (eph ? '' : '<button class="gal-detail-btn" data-action="explorer" data-img-id="' + img.id + '">' + IC.explorer + ' Browse</button>') + '<button class="gal-detail-btn" data-action="copy-image" data-img-id="' + img.id + '">&#x1F4CB; Copy</button><button class="gal-detail-btn" data-action="download-image" data-img-id="' + img.id + '">&#x2B07; Save</button>' + (hasCanvas ? '<span class="gal-detail-btn-split"><button class="gal-detail-btn accent split-main" data-action="send-canvas" data-img-id="' + img.id + '">' + IC.canvas + ' Send to Canvas</button><button class="gal-detail-btn accent split-arrow" data-action="send-canvas-menu" data-img-id="' + img.id + '" title="Choose prompt version">▾</button></span>' : '') + '' + (eph ? '' : '<span class="gal-detail-sep"></span><button class="gal-detail-btn" data-action="strip-metadata" data-img-id="' + img.id + '">' + IC.stripMeta + ' Strip metadata</button><button class="gal-detail-btn" data-action="convert" data-img-id="' + img.id + '">' + IC.convert + ' Convert\u2026</button><button class="gal-detail-btn danger" data-action="delete" data-img-id="' + img.id + '">' + IC.trash + ' Delete</button>') + '</div>' + (eph ? '' : '<div class="gal-detail-chars" id="gal-detail-chars">' + buildDetailTagsHtml(img.id, img.characters || []) + '</div>') + '<div class="gal-detail-nav"><button class="gal-detail-btn nav" data-action="prev" ' + (G.currentImageIndex <= 0 ? "disabled" : "") + '>' + IC.chevLeft + '</button><button class="gal-btn" data-action="back" style="flex:1">Back</button><button class="gal-detail-btn nav" data-action="next" ' + (G.currentImageIndex >= list.length - 1 ? "disabled" : "") + '>' + IC.chevRight + '</button></div></div><div class="gal-meta-panel" id="gal-meta-panel"><div class="gal-meta-section-title">Metadata</div><div class="gal-meta-empty">Loading...</div></div></div>';
     document.body.appendChild(ov); G.detailZoom = 1; G.detailPan = { x: 0, y: 0 };
-    _wireDetailEvents(ov, img); setTimeout(() => loadMetadata(img.id), 50);
+    _wireDetailEvents(ov, img); setTimeout(() => loadMetadata(img), 50);
 }
 
 function _wireDetailEvents(ov, img) {
     const ri = ov.querySelector("#gal-rename-input"); if (ri) { ri.addEventListener("keydown", e => { if (e.key === "Enter") ri.blur(); else if (e.key === "Escape") { e.stopPropagation(); ri.value = img.filename; ri.blur(); } }); ri.addEventListener("blur", renameFile); attachAutocomplete(ri, { mode: "rename", getItems: getCharItems }); }
     ov.addEventListener("click", e => { const a = e.target.closest("[data-action]"); if (!a) return; const act = a.dataset.action, id = parseInt(a.dataset.imgId);
+        // Ephemeral (unsaved Canvas output): no DB row, no /full/{id}.
+        // Each action operates on the in-memory `img` we closed over.
+        if (img.ephemeral) {
+            if (act === "send-canvas" || act === "send-canvas-menu") {
+                if (typeof _applyInfotextToUI === "function" && img.infotext) {
+                    try { _applyInfotextToUI(img.infotext); } catch (_) {}
+                }
+                if (typeof displayOnCanvas === "function") {
+                    displayOnCanvas(img.b64Url, { newLayer: true, layerName: "Gallery", undoLabel: "Gallery send" });
+                    setTimeout(() => { if (window.StudioModules) window.StudioModules.activateStudio(); }, 100);
+                    toast("Sent to canvas", "success");
+                }
+                return;
+            }
+            if (act === "copy-image") {
+                (async () => {
+                    try {
+                        const resp = await fetch(img.b64Url);
+                        const blob = await resp.blob();
+                        let pngBlob = blob;
+                        if (blob.type !== "image/png") {
+                            const bmp = await createImageBitmap(blob);
+                            const canvas = document.createElement("canvas");
+                            canvas.width = bmp.width; canvas.height = bmp.height;
+                            canvas.getContext("2d").drawImage(bmp, 0, 0);
+                            pngBlob = await new Promise(r => canvas.toBlob(r, "image/png"));
+                        }
+                        await navigator.clipboard.write([new ClipboardItem({ "image/png": pngBlob })]);
+                        toast("Copied to clipboard", "success");
+                    } catch (e) { toast("Copy failed: " + e.message); }
+                })();
+                return;
+            }
+            if (act === "download-image") {
+                const anchor = document.createElement("a");
+                anchor.href = img.b64Url;
+                anchor.download = img.filename || "output.png";
+                document.body.appendChild(anchor); anchor.click();
+                setTimeout(() => document.body.removeChild(anchor), 100);
+                return;
+            }
+            if (act === "prev") { prevImage(); return; }
+            if (act === "next") { nextImage(); return; }
+            if (act === "back") { closeDetail(); return; }
+            // explorer / strip / convert / delete / open-file / tags don't
+            // exist in ephemeral mode (buttons are hidden) — ignore.
+            return;
+        }
         if (act === "explorer") api("/image/" + id + "/open-explorer", { method: "POST" });
         else if (act === "send-canvas") sendToCanvas(id);
         else if (act === "send-canvas-menu") { e.stopPropagation(); hideCtx(); const r = a.getBoundingClientRect(); _buildCtxMenu([{ icon: IC.canvas, label: "Send to Canvas — raw prompt", fn: () => sendToCanvas(id, "raw") }, { icon: IC.canvas, label: "Send to Canvas — resolved prompt", fn: () => sendToCanvas(id, "resolved") }], r.left, r.bottom + 2); }
@@ -1851,17 +1903,45 @@ async function _navStep(dir) {
             showDetailOverlay();
             return;
         }
-        if (!slot.hash) continue;
-        const resolved = await _resolveByHash(slot.hash);
-        if (resolved) {
-            list[i] = { ...slot, ...resolved };
+        // Try to resolve to a saved Gallery row first…
+        if (slot.hash) {
+            const resolved = await _resolveByHash(slot.hash);
+            if (resolved) {
+                list[i] = { ...slot, ...resolved };
+                G.currentImageIndex = i;
+                G.currentImageId = resolved.id;
+                showDetailOverlay();
+                return;
+            }
+        }
+        // …otherwise render in ephemeral mode if we have enough to do so.
+        if (slot.b64Url) {
+            list[i] = _ephemeralizeSlot(slot);
             G.currentImageIndex = i;
-            G.currentImageId = resolved.id;
+            G.currentImageId = null;
             showDetailOverlay();
             return;
         }
     }
     toast("No more images in this direction");
+}
+// Convert a navContext slot ({hash, b64Url, filename, infotext}) into a
+// shape showDetailOverlay can render. Width/height are best-effort: they
+// come from a "Size: WxH" line in the infotext when present, else 0.
+// (The dims line is conditional on img.width truthiness, so 0 just hides it.)
+function _ephemeralizeSlot(slot) {
+    let width = 0, height = 0;
+    const sm = String(slot.infotext || "").match(/Size:\s*(\d+)\s*x\s*(\d+)/i);
+    if (sm) { width = parseInt(sm[1]); height = parseInt(sm[2]); }
+    return {
+        id: null, ephemeral: true, is_video: false,
+        filename: slot.filename || "Untitled.png",
+        folder: "", characters: [],
+        width, height,
+        b64Url: slot.b64Url,
+        infotext: slot.infotext || "",
+        hash: slot.hash || "",
+    };
 }
 function prevImage() { _navStep(-1); }
 function nextImage() { _navStep(1); }
@@ -1879,6 +1959,28 @@ async function openByHash(hash, navContext) {
         G.navContext = null;
     }
     G.currentImageId = resolved.id;
+    G.page = "detail";
+    G.tagsModified = false;
+    showDetailOverlay();
+    return true;
+}
+// Open the detail view for an in-memory image. Used when there's no DB
+// row to look up (saveOutputs off, watcher race, etc.). The detail view
+// hides disk-file-bound features automatically when img.ephemeral is true.
+function openEphemeral(slot, navContext) {
+    if (!slot || !slot.b64Url) return false;
+    const eph = _ephemeralizeSlot(slot);
+    if (navContext) {
+        const idx = navContext.findIndex(n => n === slot || n.b64Url === slot.b64Url);
+        if (idx >= 0) navContext[idx] = eph;
+        G.navContext = navContext;
+        G.currentImageIndex = idx >= 0 ? idx : 0;
+    } else {
+        G.images = [eph];
+        G.currentImageIndex = 0;
+        G.navContext = null;
+    }
+    G.currentImageId = null;
     G.page = "detail";
     G.tagsModified = false;
     showDetailOverlay();
@@ -1978,7 +2080,7 @@ async function stripMetaFromDetail(id) {
     if (r.error) return toast("Error: " + r.error);
     toast("Metadata stripped", "success");
     // Reload the metadata panel so it reflects the new state (DB fallback should keep it populated)
-    setTimeout(() => loadMetadata(id), 100);
+    setTimeout(() => loadMetadata(_navList()[G.currentImageIndex]), 100);
 }
 function toggleAddTag() { const el = document.getElementById("gal-add-tag-inline"), btn = document.getElementById("gal-add-tag-toggle"); if (!el) return; if (el.classList.contains("open")) { el.classList.remove("open"); if (btn) btn.style.display = ""; } else { el.classList.add("open"); if (btn) btn.style.display = "none"; document.getElementById("gal-add-tag-input")?.focus(); } }
 function prettyLabel(k) { return k.replace(/_/g, " ").replace(/\b\w/g, c => c.toUpperCase()); }
@@ -1990,9 +2092,50 @@ function _parseResolvedPrompt(raw_infotext) {
     for (let i = 0; i < lines.length; i++) { if (lines[i].startsWith("Negative prompt:") || /^Steps:\s*\d/.test(lines[i])) { end = i; break; } }
     return lines.slice(0, end).join("\n").trim() || null;
 }
-async function loadMetadata(id) {
+// Build a metadata object in the same shape /image/{id}/metadata returns,
+// using only the in-memory A1111 infotext. Used for ephemeral (unsaved)
+// images where there's no DB row to fetch from. PngMetadata.parseInfotext
+// returns camelCase; the metadata-panel render loop expects snake_case
+// (see the `ord` array in loadMetadata), so we translate here.
+function _metaFromInfotext(infotext) {
+    const m = { raw_infotext: infotext || "" };
+    if (!infotext || typeof PngMetadata === "undefined" || !PngMetadata.parseInfotext) return m;
+    let pp;
+    try { pp = PngMetadata.parseInfotext(infotext) || {}; } catch (_) { return m; }
+    const map = {
+        prompt: "prompt",
+        negativePrompt: "negative_prompt",
+        model: "model",
+        modelHash: "model_hash",
+        steps: "steps",
+        sampler: "sampler",
+        scheduler: "scheduler",
+        scheduleType: "scheduler",
+        cfgScale: "cfg_scale",
+        seed: "seed",
+        size: "size",
+        clipSkip: "clip_skip",
+        denoisingStrength: "denoising",
+        hiresUpscaler: "hires_upscaler",
+        hiresSteps: "hires_steps",
+        hiresUpscale: "hires_upscale",
+    };
+    for (const [src, dst] of Object.entries(map)) {
+        if (pp[src] !== undefined && pp[src] !== "") m[dst] = pp[src];
+    }
+    return m;
+}
+async function loadMetadata(img) {
     const p = document.getElementById("gal-meta-panel"); if (!p) return;
-    try { const m = await api("/image/" + id + "/metadata"); let h = '<div class="gal-meta-section-title">Metadata</div>'; let has = false; const img = G.images[G.currentImageIndex];
+    // Accept either a row object (preferred) or a numeric id (legacy callers).
+    if (typeof img === "number" || typeof img === "string") {
+        img = _navList()[G.currentImageIndex] || { id: img };
+    }
+    try {
+        const m = img && img.ephemeral
+            ? _metaFromInfotext(img.infotext || "")
+            : await api("/image/" + img.id + "/metadata");
+        let h = '<div class="gal-meta-section-title">Metadata</div>'; let has = false;
         const dv = m.date_original || m.date_time || ""; if (dv) { has = true; h += '<div class="gal-meta-row"><div class="gal-meta-label">Date</div><div class="gal-meta-value">' + esc(dv) + '</div></div>'; } else if (img && img.file_date) { has = true; h += '<div class="gal-meta-row"><div class="gal-meta-label">Date</div><div class="gal-meta-value">' + new Date(img.file_date * 1000).toLocaleDateString("en-US", { day: "2-digit", month: "2-digit", year: "numeric", hour: "2-digit", minute: "2-digit" }) + '</div></div>'; }
         if (img && img.width) { has = true; h += '<div class="gal-meta-row"><div class="gal-meta-label">Dimensions</div><div class="gal-meta-value">' + img.width + ' \u00d7 ' + img.height + ' px</div></div>'; }
         if (m.file_size) { has = true; const mb = m.file_size / (1024 * 1024); h += '<div class="gal-meta-row"><div class="gal-meta-label">File Size</div><div class="gal-meta-value">' + (mb >= 1 ? mb.toFixed(1) + " MB" : (m.file_size / 1024).toFixed(0) + " KB") + '</div></div>'; }
@@ -2277,7 +2420,7 @@ function onKeyDown(e) {
 
 // Public API for cross-module callers (e.g. Canvas's output gallery
 // dblclick → Gallery detail view). Keep the surface tiny.
-window.StudioGallery = { openByHash };
+window.StudioGallery = { openByHash, openEphemeral };
 
 if (window.StudioModules) {
     StudioModules.register("gallery", {

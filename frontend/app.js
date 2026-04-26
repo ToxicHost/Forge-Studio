@@ -506,10 +506,14 @@ const Live = {
       State._previewShown = true;
     }
 
-    // Also populate output gallery so Result → Canvas works
+    // Also populate output gallery so Result → Canvas works. Live preview
+    // isn't saved (no hash, no DB row) and we don't have its infotext yet,
+    // so all the parallel arrays get reset to length 1 with empties.
     State.outputImages = [data.image];
     State.outputImagesB64 = [data.image];
-    State.outputContentHashes = [""];  // live preview isn't saved → no Gallery row
+    State.outputContentHashes = [""];
+    State.outputInfotexts = [""];
+    State.outputFilenames = [""];
     State.selectedOutputIdx = 0;
     const outputSection = document.getElementById("outputSection");
     if (outputSection) outputSection.style.display = "";
@@ -2051,26 +2055,20 @@ function bindUI() {
       const thumb = e.target.closest(".output-thumb");
       if (!thumb) return;
       const idx = parseInt(thumb.dataset.idx);
-      const imgSrc = State.outputImages[idx];
-      if (await _openCanvasOutput(idx)) return;
-      if (imgSrc) _openOutputLightbox(imgSrc);
+      _openCanvasOutput(idx);
     });
 
-    // Preview click → lightbox for currently selected image
+    // Preview click → Gallery detail (saved or ephemeral)
     const _vpPreview = document.getElementById("canvasPreviewWrap");
     if (_vpPreview) {
-      _vpPreview.addEventListener("click", async (e) => {
+      _vpPreview.addEventListener("click", (e) => {
         // Close button click
         if (e.target.id === "canvasPreviewClose") {
           _vpPreview.style.display = "none";
           State._resultPreviewActive = false;
           return;
         }
-        // Click on image → Gallery detail (or fallback lightbox)
-        const idx = State.selectedOutputIdx;
-        const imgSrc = State.outputImages[idx];
-        if (await _openCanvasOutput(idx)) return;
-        if (imgSrc) _openOutputLightbox(imgSrc);
+        _openCanvasOutput(State.selectedOutputIdx);
       });
     }
 
@@ -2143,95 +2141,31 @@ function bindUI() {
     });
   }
 
-  /** Build a navContext from the current Canvas batch. Slots without an
-   * id get resolved on demand by Gallery's _resolveByHash. */
+  /** Build a navContext from the current Canvas batch. Each slot carries
+   * everything Gallery needs for ephemeral fallback (b64Url, filename,
+   * infotext) plus the hash for the saved-image lookup path. */
   function _buildCanvasNavContext() {
     return State.outputImages.map((url, i) => ({
       hash: State.outputContentHashes[i] || "",
       b64Url: State.outputImagesB64[i] || url,
       filename: State.outputFilenames[i] || "",
+      infotext: State.outputInfotexts[i] || "",
     }));
   }
 
-  /** Try to open Canvas output `idx` in Gallery's detail view. Returns
-   * true on success, false to let the caller fall back to the throwaway
-   * lightbox. Skips the lookup when there's no hash (saveOutputs off,
-   * pre-existing entries, etc.). */
+  /** Open Canvas output `idx` in Gallery's detail view. Tries the saved
+   * (DB-backed) path first when a hash is present; falls back to
+   * ephemeral mode otherwise. Always returns true if Gallery is loaded. */
   async function _openCanvasOutput(idx) {
-    const hash = State.outputContentHashes[idx];
-    if (!hash || !window.StudioGallery || !State.saveOutputs) return false;
-    return window.StudioGallery.openByHash(hash, _buildCanvasNavContext());
-  }
-
-  /** Open a zoomable lightbox overlay for an output image. */
-  function _openOutputLightbox(imgSrc) {
-    let lbZoom = 1, lbPanX = 0, lbPanY = 0, lbDragging = false, lbDragStartX = 0, lbDragStartY = 0;
-    const overlay = document.createElement("div");
-    overlay.className = "lightbox-overlay";
-    overlay.innerHTML = `<img src="${imgSrc}" alt="Preview" draggable="false">`;
-    const img = overlay.querySelector("img");
-
-    function _applyTransform() {
-      img.style.transform = `translate(${lbPanX}px, ${lbPanY}px) scale(${lbZoom})`;
-      overlay.classList.toggle("zoomed", lbZoom > 1.01);
+    if (!window.StudioGallery) return false;
+    const ctx = _buildCanvasNavContext();
+    const slot = ctx[idx];
+    if (!slot) return false;
+    if (slot.hash && State.saveOutputs) {
+      if (await window.StudioGallery.openByHash(slot.hash, ctx)) return true;
+      // Hash didn't resolve (server hiccup, weird race) — fall through.
     }
-    function _close() {
-      overlay.remove();
-      document.removeEventListener("keydown", _esc);
-    }
-    function _esc(ev) { if (ev.key === "Escape") _close(); }
-    document.addEventListener("keydown", _esc);
-
-    let _clickTimer = null;
-    overlay.addEventListener("click", (ev) => {
-      if (lbDragging) return;
-      if (_clickTimer) { clearTimeout(_clickTimer); _clickTimer = null; return; }
-      _clickTimer = setTimeout(() => {
-        _clickTimer = null;
-        if (lbZoom <= 1.01) _close();
-        else { lbZoom = 1; lbPanX = 0; lbPanY = 0; _applyTransform(); }
-      }, 250);
-    });
-    overlay.addEventListener("dblclick", (ev) => {
-      ev.stopPropagation();
-      if (lbZoom <= 1.01) { lbZoom = 2; lbPanX = 0; lbPanY = 0; }
-      else { lbZoom = 1; lbPanX = 0; lbPanY = 0; }
-      _applyTransform();
-    });
-    overlay.addEventListener("wheel", (ev) => {
-      ev.preventDefault();
-      const delta = ev.deltaY > 0 ? 0.85 : 1.18;
-      const newZoom = Math.max(0.5, Math.min(10, lbZoom * delta));
-      const rect = img.getBoundingClientRect();
-      const cx = ev.clientX - rect.left - rect.width / 2;
-      const cy = ev.clientY - rect.top - rect.height / 2;
-      const scale = newZoom / lbZoom;
-      lbPanX = cx - scale * (cx - lbPanX);
-      lbPanY = cy - scale * (cy - lbPanY);
-      lbZoom = newZoom;
-      if (lbZoom <= 1.01) { lbPanX = 0; lbPanY = 0; lbZoom = 1; }
-      _applyTransform();
-    }, { passive: false });
-    overlay.addEventListener("pointerdown", (ev) => {
-      if (lbZoom <= 1.01) return;
-      lbDragging = false; lbDragStartX = ev.clientX - lbPanX; lbDragStartY = ev.clientY - lbPanY;
-      overlay.setPointerCapture(ev.pointerId);
-      overlay.style.cursor = "grabbing";
-      const _move = (me) => {
-        lbDragging = true;
-        lbPanX = me.clientX - lbDragStartX; lbPanY = me.clientY - lbDragStartY;
-        _applyTransform();
-      };
-      const _up = () => {
-        overlay.removeEventListener("pointermove", _move);
-        overlay.removeEventListener("pointerup", _up);
-        overlay.style.cursor = "";
-        setTimeout(() => { lbDragging = false; }, 50);
-      };
-      overlay.addEventListener("pointermove", _move);
-      overlay.addEventListener("pointerup", _up);
-    });
-    document.body.appendChild(overlay);
+    return window.StudioGallery.openEphemeral(slot, ctx);
   }
 
   // Gallery drag release — check if over canvas area
