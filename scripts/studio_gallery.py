@@ -1505,17 +1505,120 @@ _META_INSERT_SQL = """
 """
 
 
-def save_metadata_by_hash(content_hash, infotext, settings=None):
+def _preinsert_image_row(db, filepath, content_hash):
+    """Insert a freshly-saved file into the images table without waiting
+    for the watcher to discover it. Mirrors the relevant bits of
+    _incremental_sync but synchronous and proactive.
+
+    Returns the image_id on success (existing or new), or None when the
+    file isn't under any configured scan folder (in which case the
+    watcher won't pick it up either, so there's no point pre-inserting).
+    """
+    if not filepath or not os.path.exists(filepath):
+        return None
+    norm = os.path.normpath(filepath)
+
+    # Find which scan folder this file lives under so we can compute the
+    # display folder string the same way the watcher does.
+    scan_folders = db.execute("SELECT path FROM scan_folders").fetchall()
+    folder_display = None
+    rel_folder = None
+    for sf in scan_folders:
+        try:
+            root = Path(sf["path"]).resolve()
+            rel = Path(filepath).resolve().relative_to(root)
+            rel_folder = str(rel.parent)
+            folder_display = (
+                f"{root.name}\\{rel_folder}" if rel_folder != "." else root.name
+            )
+            break
+        except (ValueError, OSError):
+            continue
+    if folder_display is None:
+        return None
+
+    filename = os.path.basename(filepath)
+    file_date = get_file_date(filepath)
+
+    # Read dimensions. Cheap if PIL can stat-and-header-parse without
+    # decoding pixels.
+    w, h = 0, 0
+    if HAS_PILLOW:
+        try:
+            with Image.open(filepath) as im:
+                w, h = im.size
+        except Exception:
+            pass
+
+    search = ""
+    try:
+        search = extract_search_text(filepath)
+    except Exception:
+        pass
+
+    ext = Path(filename).suffix.lower()
+    is_video = ext in VIDEO_EXTENSIONS
+    media_type = "video" if is_video else ("gif" if ext == ".gif" else "image")
+
+    # Race-safe: if the watcher beat us to insertion, INSERT OR IGNORE
+    # is a no-op and we look up the existing row.
+    cur = db.execute(
+        "INSERT OR IGNORE INTO images "
+        "(filename,folder,filepath,width,height,file_date,search_text,media_type,content_hash) "
+        "VALUES (?,?,?,?,?,?,?,?,?)",
+        (filename, folder_display, norm, w, h, file_date, search, media_type, content_hash),
+    )
+    image_id = cur.lastrowid
+    if not image_id:
+        row = db.execute(
+            "SELECT id FROM images WHERE content_hash=? OR filepath=? OR filepath=? LIMIT 1",
+            (content_hash, norm, filepath),
+        ).fetchone()
+        return row["id"] if row else None
+
+    # Wire up character tags from the filename. Skipping phash and
+    # thumbnail generation — those are handled by background passes
+    # already and are too slow to run inline with generation.
+    try:
+        ignore_words = {
+            r["word"].lower()
+            for r in db.execute("SELECT word FROM ignore_words").fetchall()
+        }
+        for pos, cn in enumerate(parse_characters_from_filename(filename, ignore_words)):
+            db.execute("INSERT OR IGNORE INTO characters (name) VALUES (?)", (cn,))
+            cr = db.execute(
+                "SELECT id FROM characters WHERE name=? COLLATE NOCASE", (cn,)
+            ).fetchone()
+            if cr:
+                db.execute(
+                    "INSERT OR IGNORE INTO image_characters "
+                    "(image_id,character_id,position) VALUES (?,?,?)",
+                    (image_id, cr["id"], pos),
+                )
+    except Exception as e:
+        print(f"[Gallery] Pre-insert tag wiring failed: {e}")
+
+    return image_id
+
+
+def save_metadata_by_hash(content_hash, infotext, settings=None, filepath=None):
     """Save generation metadata keyed by content hash.
 
     Called from studio_api.py immediately after saving an image to disk.
     No Gallery scan required — metadata is stored by pixel-identity hash
     and linked to the Gallery image row when the scan eventually runs.
 
+    When `filepath` is provided and no Gallery row exists yet for this
+    content_hash, also pre-insert the images row directly. This bypasses
+    the ~2s watcher debounce so the Canvas → Gallery detail view lookup
+    succeeds on the very first attempt instead of going through the
+    retry loop. Idempotent with the watcher (INSERT OR IGNORE).
+
     Args:
         content_hash: SHA256 hex of decoded RGB pixel data
         infotext: A1111-format parameters string
         settings: Optional dict with structured generation params
+        filepath: Optional disk path; enables pre-insertion when given
     """
     if not content_hash:
         return
@@ -1530,6 +1633,13 @@ def save_metadata_by_hash(content_hash, infotext, settings=None):
             "SELECT id FROM images WHERE content_hash=?", (content_hash,)
         ).fetchone()
         image_id = img_row["id"] if img_row else None
+        if image_id is None and filepath:
+            try:
+                image_id = _preinsert_image_row(db, filepath, content_hash)
+            except Exception as e:
+                print(f"[Gallery] Pre-insert failed (hash {content_hash[:12]}): {e}")
+                # Fall through with image_id=None; the watcher will catch
+                # up later and link the orphan metadata row by hash.
         db.execute(_META_INSERT_SQL, _meta_row_values(meta, content_hash, image_id))
         db.commit()
     except Exception as e:
@@ -1548,7 +1658,7 @@ def save_metadata_for_image(filepath, infotext, settings=None):
     """
     ch = compute_content_hash(filepath)
     if ch:
-        save_metadata_by_hash(ch, infotext, settings)
+        save_metadata_by_hash(ch, infotext, settings, filepath=filepath)
     else:
         # Fallback: try old filepath-based approach (should rarely hit)
         try:

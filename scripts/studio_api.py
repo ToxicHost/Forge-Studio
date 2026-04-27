@@ -1383,7 +1383,7 @@ def setup_studio_routes(app: FastAPI):
                                 # PNG is lossless — hash the original PIL pixels directly (faster, no re-decode)
                                 _per_image_hash = _hash_fn(img) or ""
                                 if _per_image_hash and _gallery_save and _parsed_infotexts and i < len(_parsed_infotexts) and _parsed_infotexts[i]:
-                                    _gallery_save(_per_image_hash, _parsed_infotexts[i], _parsed_settings)
+                                    _gallery_save(_per_image_hash, _parsed_infotexts[i], _parsed_settings, filepath=str(fpath))
                         except Exception:
                             pass
                         # b64 from same buffer (no re-encode)
@@ -1392,65 +1392,73 @@ def setup_studio_routes(app: FastAPI):
                         print(f"{TAG} Auto-save error: {e}")
                         # Fallback: at least get the b64
                         images_b64.append(_pil_to_b64(img))
-                else:
-                    # Non-PNG save or no save: encode b64 normally
-                    images_b64.append(_pil_to_b64(img))
-                    # Save to disk if enabled (non-PNG formats)
-                    if req.save_outputs:
-                        try:
-                            ext_map = {"png": "png", "jpeg": "jpg", "webp": "webp"}
-                            ext = ext_map.get(req.save_format, "png")
-                            image_seed = (_parsed_base_seed + i) if _parsed_base_seed != -1 else 0
-                            counter = _base_counter + i
-                            while True:
-                                fname = f"Studio-{counter:05d}-{image_seed}.{ext}"
-                                fpath = output_dir / fname
-                                if not fpath.exists():
-                                    break
-                                counter += 1
-                            save_kwargs = {}
+                elif req.save_outputs and req.save_format in ("jpeg", "webp"):
+                    # Lossy save: encode once to a buffer in the target
+                    # format, write that buffer to disk AND base64-encode
+                    # it for the response. This makes the Canvas preview
+                    # reflect the actual saved bytes (compression artifacts
+                    # included) instead of the lossless PNG of the source
+                    # PIL image.
+                    try:
+                        ext = "jpg" if req.save_format == "jpeg" else "webp"
+                        pil_format = "JPEG" if req.save_format == "jpeg" else "WEBP"
+                        mime = "image/jpeg" if req.save_format == "jpeg" else "image/webp"
+                        image_seed = (_parsed_base_seed + i) if _parsed_base_seed != -1 else 0
+                        counter = _base_counter + i
+                        while True:
+                            fname = f"Studio-{counter:05d}-{image_seed}.{ext}"
+                            fpath = output_dir / fname
+                            if not fpath.exists():
+                                break
+                            counter += 1
+                        save_kwargs = {}
 
-                            if req.save_format == "jpeg":
-                                img = img.convert("RGB")  # Drop alpha for JPEG
-                                save_kwargs = {"quality": req.save_quality, "optimize": True}
-                                if req.embed_metadata and _parsed_infotexts:
-                                    try:
-                                        if i < len(_parsed_infotexts) and _parsed_infotexts[i]:
-                                            exif_bytes = _build_exif_usercomment(_parsed_infotexts[i])
-                                            if exif_bytes:
-                                                save_kwargs["exif"] = exif_bytes
-                                    except Exception:
-                                        pass
-                            elif req.save_format == "webp":
-                                if req.save_lossless:
-                                    save_kwargs = {"lossless": True}
-                                else:
-                                    save_kwargs = {"quality": req.save_quality}
-                                if req.embed_metadata and _parsed_infotexts:
-                                    try:
-                                        if i < len(_parsed_infotexts) and _parsed_infotexts[i]:
-                                            exif_bytes = _build_exif_usercomment(_parsed_infotexts[i])
-                                            if exif_bytes:
-                                                save_kwargs["exif"] = exif_bytes
-                                    except Exception:
-                                        pass
-
-                            img.save(str(fpath), **save_kwargs)
-                            image_paths.append(str(fpath))
-                            # Hash the saved image so the frontend can look it up in
-                            # Gallery (Canvas → Gallery detail view bridge).
-                            # Lossy formats: must hash from file (post-encode pixels differ from original).
+                        if req.save_format == "jpeg":
+                            img = img.convert("RGB")  # Drop alpha for JPEG
+                            save_kwargs = {"quality": req.save_quality, "optimize": True}
+                        else:  # webp
+                            if req.save_lossless:
+                                save_kwargs = {"lossless": True}
+                            else:
+                                save_kwargs = {"quality": req.save_quality}
+                        if req.embed_metadata and _parsed_infotexts:
                             try:
-                                _hash_fn = _import("studio_gallery", "compute_content_hash")
-                                _gallery_save = _import("studio_gallery", "save_metadata_by_hash")
-                                if _hash_fn:
-                                    _per_image_hash = _hash_fn(str(fpath)) or ""
-                                    if _per_image_hash and _gallery_save and _parsed_infotexts and i < len(_parsed_infotexts) and _parsed_infotexts[i]:
-                                        _gallery_save(_per_image_hash, _parsed_infotexts[i], _parsed_settings)
+                                if i < len(_parsed_infotexts) and _parsed_infotexts[i]:
+                                    exif_bytes = _build_exif_usercomment(_parsed_infotexts[i])
+                                    if exif_bytes:
+                                        save_kwargs["exif"] = exif_bytes
                             except Exception:
                                 pass
-                        except Exception as e:
-                            print(f"{TAG} Auto-save error: {e}")
+
+                        # Encode once, reuse for disk and b64 (no double-encode).
+                        buf = io.BytesIO()
+                        img.save(buf, format=pil_format, **save_kwargs)
+                        file_bytes = buf.getvalue()
+                        with open(str(fpath), "wb") as f:
+                            f.write(file_bytes)
+                        image_paths.append(str(fpath))
+                        images_b64.append(f"data:{mime};base64," + base64.b64encode(file_bytes).decode())
+                        # Hash the saved image so the frontend can look it up in
+                        # Gallery (Canvas → Gallery detail view bridge).
+                        # Lossy formats: must hash from file (post-encode pixels differ from original).
+                        try:
+                            _hash_fn = _import("studio_gallery", "compute_content_hash")
+                            _gallery_save = _import("studio_gallery", "save_metadata_by_hash")
+                            if _hash_fn:
+                                _per_image_hash = _hash_fn(str(fpath)) or ""
+                                if _per_image_hash and _gallery_save and _parsed_infotexts and i < len(_parsed_infotexts) and _parsed_infotexts[i]:
+                                    _gallery_save(_per_image_hash, _parsed_infotexts[i], _parsed_settings, filepath=str(fpath))
+                        except Exception:
+                            pass
+                    except Exception as e:
+                        print(f"{TAG} Auto-save error: {e}")
+                        # Fallback: at least get a (PNG) b64 so the client has something to show.
+                        images_b64.append(_pil_to_b64(img))
+                else:
+                    # No save (or unrecognised format): keep the original
+                    # pixels as PNG b64 — that's the most accurate
+                    # representation of the in-memory image.
+                    images_b64.append(_pil_to_b64(img))
             elif isinstance(img, str):
                 images_b64.append(img)
             content_hashes.append(_per_image_hash)
@@ -2105,7 +2113,7 @@ def setup_studio_routes(app: FastAPI):
                         if _hash_fn and _gallery_save:
                             _ch = _hash_fn(result if req.save_format == "png" else str(fpath))
                             if _ch:
-                                _gallery_save(_ch, infotext, {"infotexts": [infotext]})
+                                _gallery_save(_ch, infotext, {"infotexts": [infotext]}, filepath=str(fpath))
                     except Exception:
                         pass
             except Exception as e:

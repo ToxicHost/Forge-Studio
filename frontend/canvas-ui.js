@@ -703,12 +703,13 @@ function bindCanvas() {
     });
     cv.addEventListener("contextmenu", e => e.preventDefault());
     // Prevent browser context menu in Studio canvas — it's a full-screen app.
-    // Allow native menu on text inputs (paste/spellcheck), lightbox images
-    // (save/open in new tab), and gallery detail images.
+    // Allow native menu on text inputs (paste/spellcheck), gallery detail
+    // images (save/open in new tab), and the gallery detail sidebar so
+    // users can right-click → Copy on prompt / metadata text.
     document.addEventListener("contextmenu", e => {
         if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName)) return;
-        if (e.target.closest(".lightbox-overlay")) return;
         if (e.target.closest(".gal-detail-img-area")) return;
+        if (e.target.closest(".gal-detail-sidebar")) return;
         e.preventDefault();
     });
     cv.addEventListener("pointermove", e => {

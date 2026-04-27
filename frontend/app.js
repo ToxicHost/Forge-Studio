@@ -2051,7 +2051,7 @@ function bindUI() {
       _showResultPreview(State.selectedOutputIdx);
       _updateOutputInfo();
     });
-    _grid.addEventListener("dblclick", async (e) => {
+    _grid.addEventListener("dblclick", (e) => {
       const thumb = e.target.closest(".output-thumb");
       if (!thumb) return;
       const idx = parseInt(thumb.dataset.idx);
@@ -2153,19 +2153,25 @@ function bindUI() {
     }));
   }
 
-  /** Open Canvas output `idx` in Gallery's detail view. Tries the saved
-   * (DB-backed) path first when a hash is present; falls back to
-   * ephemeral mode otherwise. Always returns true if Gallery is loaded. */
-  async function _openCanvasOutput(idx) {
+  /** Open Canvas output `idx` in Gallery's detail view. Always opens
+   * ephemeral immediately so the user sees the image + prompt without
+   * waiting for any DB round-trip. If the slot has a hash, kick off a
+   * background upgrade that swaps the overlay to DB-backed mode the
+   * moment the row resolves (gaining rename / Browse / tags etc.).
+   * Returns true if Gallery is loaded; false if the IIFE hasn't booted. */
+  function _openCanvasOutput(idx) {
     if (!window.StudioGallery) return false;
     const ctx = _buildCanvasNavContext();
     const slot = ctx[idx];
     if (!slot) return false;
-    if (slot.hash && State.saveOutputs) {
-      if (await window.StudioGallery.openByHash(slot.hash, ctx)) return true;
-      // Hash didn't resolve (server hiccup, weird race) — fall through.
+    window.StudioGallery.openEphemeral(slot, ctx);
+    if (slot.hash && State.saveOutputs && window.StudioGallery.upgradeByHash) {
+      // Fire-and-forget. upgradeByHash runs identity checks before
+      // mutating state, so a stale promise won't clobber a user's
+      // subsequent navigation.
+      window.StudioGallery.upgradeByHash(slot.hash);
     }
-    return window.StudioGallery.openEphemeral(slot, ctx);
+    return true;
   }
 
   // Gallery drag release — check if over canvas area
