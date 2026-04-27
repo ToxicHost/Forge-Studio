@@ -2527,6 +2527,17 @@ function onKeyDown(e) {
 
 // Public API for cross-module callers (e.g. Canvas's output gallery
 // dblclick → Gallery detail view). Keep the surface tiny.
+// Load gallery.css eagerly. The detail view is reachable from Canvas
+// (window.StudioGallery.openEphemeral / openByHash) before the Gallery
+// panel is ever activated; without these styles the overlay renders
+// with default block layout and the image displays at its natural size.
+if (!document.querySelector('link[href*="gallery.css"]')) {
+    const _galLink = document.createElement("link");
+    _galLink.rel = "stylesheet";
+    _galLink.href = "/studio/static/gallery.css?v=" + VERSION;
+    document.head.appendChild(_galLink);
+}
+
 window.StudioGallery = { openByHash, openEphemeral, upgradeByHash };
 
 if (window.StudioModules) {
@@ -2534,7 +2545,6 @@ if (window.StudioModules) {
         label: "Gallery", icon: "\uD83D\uDDBC",
         async init(container) {
             console.log(TAG, "Initializing"); G._container = container;
-            if (!document.querySelector('link[href*="gallery.css"]')) { const link = document.createElement("link"); link.rel = "stylesheet"; link.href = "/studio/static/gallery.css?v=" + VERSION; document.head.appendChild(link); }
             document.addEventListener("keydown", onKeyDown);
             document.addEventListener("click", e => { if (!e.target.closest(".gal-ctx-menu")) hideCtx(); });
             G.scanFolders = await api("/scan-folders"); G.initialized = G.scanFolders.length > 0;
