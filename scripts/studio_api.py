@@ -1383,7 +1383,7 @@ def setup_studio_routes(app: FastAPI):
                                 # PNG is lossless — hash the original PIL pixels directly (faster, no re-decode)
                                 _per_image_hash = _hash_fn(img) or ""
                                 if _per_image_hash and _gallery_save and _parsed_infotexts and i < len(_parsed_infotexts) and _parsed_infotexts[i]:
-                                    _gallery_save(_per_image_hash, _parsed_infotexts[i], _parsed_settings)
+                                    _gallery_save(_per_image_hash, _parsed_infotexts[i], _parsed_settings, filepath=str(fpath))
                         except Exception:
                             pass
                         # b64 from same buffer (no re-encode)
@@ -1447,7 +1447,7 @@ def setup_studio_routes(app: FastAPI):
                             if _hash_fn:
                                 _per_image_hash = _hash_fn(str(fpath)) or ""
                                 if _per_image_hash and _gallery_save and _parsed_infotexts and i < len(_parsed_infotexts) and _parsed_infotexts[i]:
-                                    _gallery_save(_per_image_hash, _parsed_infotexts[i], _parsed_settings)
+                                    _gallery_save(_per_image_hash, _parsed_infotexts[i], _parsed_settings, filepath=str(fpath))
                         except Exception:
                             pass
                     except Exception as e:
@@ -2113,7 +2113,7 @@ def setup_studio_routes(app: FastAPI):
                         if _hash_fn and _gallery_save:
                             _ch = _hash_fn(result if req.save_format == "png" else str(fpath))
                             if _ch:
-                                _gallery_save(_ch, infotext, {"infotexts": [infotext]})
+                                _gallery_save(_ch, infotext, {"infotexts": [infotext]}, filepath=str(fpath))
                     except Exception:
                         pass
             except Exception as e:

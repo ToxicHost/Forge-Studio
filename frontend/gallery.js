@@ -1743,7 +1743,11 @@ function showDetailOverlay() {
     // Ephemeral images live entirely in memory; the <img>/<video> src is
     // the data URL the Canvas already has, no /full/{id} round-trip.
     const eph = !!img.ephemeral;
-    const mediaSrc = eph ? img.b64Url : (API_BASE + "/full/" + img.id);
+    // Prefer the in-memory b64 when present (Canvas-originated rows
+    // carry it). Same pixels as /full/{id} for any saved image, but
+    // avoids a re-fetch flicker when an ephemeral row is upgraded
+    // in place to DB-backed mode.
+    const mediaSrc = img.b64Url || (API_BASE + "/full/" + img.id);
     const ext = img.filename.split(".").pop().toLowerCase();
     let mediaHtml;
     if (img.is_video && BROWSER_VIDEO[ext]) mediaHtml = '<video id="gal-detail-video" src="' + mediaSrc + '" controls autoplay style="max-width:100%;max-height:100%;object-fit:contain"></video>';
@@ -1985,6 +1989,97 @@ function openEphemeral(slot, navContext) {
     G.tagsModified = false;
     showDetailOverlay();
     return true;
+}
+// Background upgrade: an ephemeral overlay is already open for `hash`;
+// once the DB row resolves, swap the slot to DB-backed mode and patch
+// the DOM in place (no re-render → preserves text selection, scroll
+// position, focused element). No-op if the user has already navigated
+// away. Fire-and-forget; does not return a useful value.
+async function upgradeByHash(hash) {
+    if (!hash) return;
+    // Capture identity at call time.
+    const startList = G.navContext;
+    const startIdx = G.currentImageIndex;
+    const startSlot = startList && startList[startIdx];
+    if (!startSlot || !startSlot.ephemeral || startSlot.hash !== hash) return;
+
+    const resolved = await _resolveByHash(hash);
+    if (!resolved) return;
+
+    // Still showing the same slot?
+    if (G.navContext !== startList) return;
+    if (G.currentImageIndex !== startIdx) return;
+    const cur = G.navContext[startIdx];
+    if (!cur || cur.hash !== hash || !cur.ephemeral) return;
+
+    // Splice resolved row in. Keep b64Url so the image src stays
+    // identical and the browser doesn't re-fetch /full/{id}.
+    const upgraded = { ...cur, ...resolved, ephemeral: false, b64Url: cur.b64Url };
+    G.navContext[startIdx] = upgraded;
+    G.currentImageId = resolved.id;
+    _upgradeOverlayInPlace(upgraded);
+}
+// Surgical DOM updates that turn an ephemeral overlay into a DB-backed
+// one without touching the image area or re-rendering the metadata
+// panel. Each addition is idempotent so this can run safely even if
+// some of the elements somehow already exist.
+function _upgradeOverlayInPlace(img) {
+    const ov = document.getElementById("gal-detail-overlay");
+    if (!ov) return;
+    const idStr = String(img.id);
+
+    // Filename input becomes editable.
+    const renameInput = ov.querySelector("#gal-rename-input");
+    if (renameInput) renameInput.removeAttribute("readonly");
+
+    // Folder line — insert after rename input if missing.
+    if (renameInput && !ov.querySelector(".gal-detail-folder")) {
+        const folderDiv = document.createElement("div");
+        folderDiv.className = "gal-detail-folder";
+        folderDiv.innerHTML = '<span class="gal-tree-icon">' + IC.folder + '</span> ' + esc(img.folder || "");
+        renameInput.insertAdjacentElement("afterend", folderDiv);
+    }
+
+    // Stamp data-img-id on the existing buttons that were rendered
+    // without it (Copy, Save, Send-to-Canvas, send-canvas-menu).
+    ov.querySelectorAll("[data-action]").forEach(btn => {
+        if (!btn.dataset.imgId) btn.dataset.imgId = idStr;
+    });
+
+    const actionsDiv = ov.querySelector(".gal-detail-actions");
+    if (actionsDiv) {
+        // Browse button at the front.
+        if (!actionsDiv.querySelector('[data-action="explorer"]')) {
+            const browseBtn = document.createElement("button");
+            browseBtn.className = "gal-detail-btn";
+            browseBtn.dataset.action = "explorer";
+            browseBtn.dataset.imgId = idStr;
+            browseBtn.innerHTML = IC.explorer + ' Browse';
+            actionsDiv.insertAdjacentElement("afterbegin", browseBtn);
+        }
+        // Strip / Convert / Delete cluster at the end.
+        if (!actionsDiv.querySelector('[data-action="strip-metadata"]')) {
+            actionsDiv.insertAdjacentHTML("beforeend",
+                '<span class="gal-detail-sep"></span>'
+                + '<button class="gal-detail-btn" data-action="strip-metadata" data-img-id="' + idStr + '">' + IC.stripMeta + ' Strip metadata</button>'
+                + '<button class="gal-detail-btn" data-action="convert" data-img-id="' + idStr + '">' + IC.convert + ' Convert…</button>'
+                + '<button class="gal-detail-btn danger" data-action="delete" data-img-id="' + idStr + '">' + IC.trash + ' Delete</button>'
+            );
+        }
+    }
+
+    // Tags row — insert after actions if missing.
+    if (actionsDiv && !ov.querySelector("#gal-detail-chars")) {
+        const tagsDiv = document.createElement("div");
+        tagsDiv.className = "gal-detail-chars";
+        tagsDiv.id = "gal-detail-chars";
+        tagsDiv.innerHTML = buildDetailTagsHtml(img.id, img.characters || []);
+        actionsDiv.insertAdjacentElement("afterend", tagsDiv);
+    }
+
+    // Refresh metadata panel from the DB row — it may carry fields
+    // (file_size, EXIF, etc.) that aren't in the in-memory infotext.
+    setTimeout(() => loadMetadata(img), 0);
 }
 async function renameFile() {
     const inp = document.getElementById("gal-rename-input");
@@ -2423,7 +2518,7 @@ function onKeyDown(e) {
 
 // Public API for cross-module callers (e.g. Canvas's output gallery
 // dblclick → Gallery detail view). Keep the surface tiny.
-window.StudioGallery = { openByHash, openEphemeral };
+window.StudioGallery = { openByHash, openEphemeral, upgradeByHash };
 
 if (window.StudioModules) {
     StudioModules.register("gallery", {
