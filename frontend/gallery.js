@@ -2080,6 +2080,15 @@ function _upgradeOverlayInPlace(img) {
     // Refresh metadata panel from the DB row — it may carry fields
     // (file_size, EXIF, etc.) that aren't in the in-memory infotext.
     setTimeout(() => loadMetadata(img), 0);
+
+    // Swap <img src> from the in-memory data: URL to /full/{id}. The
+    // server attaches Content-Disposition with the real filename, so
+    // right-click → "Save image as..." now suggests the correct name
+    // instead of the browser's "untitled" fallback for data URLs. Same
+    // pixels, browser usually serves from disk/HTTP cache so the swap
+    // is near-imperceptible.
+    const detailImg = ov.querySelector("#gal-detail-img");
+    if (detailImg) detailImg.src = API_BASE + "/full/" + img.id;
 }
 async function renameFile() {
     const inp = document.getElementById("gal-rename-input");
