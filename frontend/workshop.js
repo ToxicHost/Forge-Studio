@@ -211,6 +211,9 @@ function _newRow(initial) {
         method: "weighted_sum", alpha: 0.5,
         density: 0.2, dropRate: 0.9, cosineShift: 0.0, eta: 0.1,
         useBlockWeights: false, blockWeights: null,
+        // Transient UI: line 2 (advanced) opt-in for methods that have
+        // nothing else on line 2 (e.g. weighted_sum). Not persisted.
+        expanded: false,
     }, initial || {});
 }
 
@@ -1152,92 +1155,84 @@ function _rowHtml(rowIdx) {
         ? "Cannot delete — referenced by " + refList
         : "Delete row";
 
+    // Line 2 visible if anything inside it has content:
+    //   - tertiary required (Add Difference)
+    //   - method has params (density / drop_rate / eta / cosine_shift)
+    //   - method supports block weights AND row has block weights enabled,
+    //     OR user manually expanded the row to opt in.
+    const expanded = !!row.expanded;
+    const showTertiary = !!info.needsC;
+    const showParams = info.params.length > 0;
+    const showBlockToggle = !!info.blockWeights && (expanded || row.useBlockWeights);
+    const line2Visible = showTertiary || showParams || showBlockToggle;
+    // Expand button only useful when its sole purpose is opting into blocks
+    const expandBtnVisible = !!info.blockWeights && !showTertiary && !showParams;
+
     let html = '<div class="ws-row' + (isActive ? ' ws-row-active' : '') + '" data-row="' + rowIdx + '">';
 
-    // Header
-    html += '<div class="ws-row-header">'
-        + '<span class="ws-row-num">Row ' + (rowIdx + 1) + '</span>'
-        + '<button class="ws-row-delete' + (referenced ? ' ws-row-delete-blocked' : '') + '" data-row="' + rowIdx + '"'
+    // ── Line 1: compact horizontal strip ──
+    html += '<div class="ws-row-line ws-row-line1">';
+    html += '<span class="ws-row-num" title="Row ' + (rowIdx + 1) + '">' + (rowIdx + 1) + '</span>';
+    html += '<select class="param-select ws-model-select ws-row-primary ws-row-cell-grow" data-row="' + rowIdx + '" title="Primary (base)">'
+        + _modelOptionsForRow(rowIdx, row.primary, "— Primary —")
+        + '</select>';
+    html += '<select class="param-select ws-model-select ws-row-secondary ws-row-cell-grow" data-row="' + rowIdx + '" title="Secondary (merge target)">'
+        + _modelOptionsForRow(rowIdx, row.secondary, "— Secondary —")
+        + '</select>';
+    html += '<select class="param-select ws-row-method ws-row-cell-method" data-row="' + rowIdx + '" title="Merge method">'
+        + _methodOptions(row.method)
+        + '</select>';
+    // Alpha cell — slider + value, hidden for methods without alpha (cosine_adaptive)
+    html += '<div class="ws-row-alpha-cell" data-row="' + rowIdx + '"' + (info.showAlpha ? '' : ' style="visibility:hidden;"') + '>'
+        + '<input type="range" min="0" max="1" step="0.01" value="' + row.alpha + '" class="ws-slider ws-row-alpha-slider" data-row="' + rowIdx + '" title="' + _esc(info.alphaLabel || "Weight") + '">'
+        + '<input type="number" min="0" max="1" step="0.01" value="' + row.alpha.toFixed(2) + '" class="param-val ws-row-alpha-val" data-row="' + rowIdx + '">'
+        + '</div>';
+    // Expand button (⚙) — only shown when there is something hidden behind it
+    html += '<button class="ws-row-expand' + (expanded || row.useBlockWeights ? ' ws-row-expanded' : '') + '" data-row="' + rowIdx + '" title="Per-block weights / advanced"' + (expandBtnVisible ? '' : ' style="visibility:hidden;"') + '>⚙</button>';
+    // Delete button
+    html += '<button class="ws-row-delete' + (referenced ? ' ws-row-delete-blocked' : '') + '" data-row="' + rowIdx + '"'
         + (referenced ? ' disabled' : '')
-        + ' title="' + _esc(deleteTitle) + '">×</button>'
-        + '</div>';
-
-    // Models
-    html += '<div class="ws-row-section ws-row-models">';
-    html += '<div class="ws-row-model-row">'
-        + '<label class="ws-merge-model-label">Primary <span class="ws-card-hint">(base)</span></label>'
-        + '<select class="param-select ws-model-select ws-row-primary" data-row="' + rowIdx + '">'
-        + _modelOptionsForRow(rowIdx, row.primary, "— Select Model —")
-        + '</select>'
-        + '<div class="ws-arch-badge ws-row-arch-primary" data-row="' + rowIdx + '"></div>'
-        + '</div>';
-    html += '<div class="ws-row-model-row">'
-        + '<label class="ws-merge-model-label">Secondary <span class="ws-card-hint">(merge target)</span></label>'
-        + '<select class="param-select ws-model-select ws-row-secondary" data-row="' + rowIdx + '">'
-        + _modelOptionsForRow(rowIdx, row.secondary, "— Select Model —")
-        + '</select>'
-        + '<div class="ws-arch-badge ws-row-arch-secondary" data-row="' + rowIdx + '"></div>'
-        + '</div>';
-    html += '<div class="ws-row-model-row ws-row-tertiary-field"' + (info.needsC ? '' : ' style="display:none;"') + '>'
-        + '<label class="ws-merge-model-label">Tertiary <span class="ws-card-hint">(base of secondary — for difference)</span></label>'
-        + '<select class="param-select ws-model-select ws-row-tertiary" data-row="' + rowIdx + '">'
-        + _modelOptionsForRow(rowIdx, row.tertiary, "— Select Model —")
-        + '</select>'
-        + '<div class="ws-card-hint ws-c-hint">θ_A + α·(θ_B − θ_C)</div>'
-        + '</div>';
+        + ' title="' + _esc(deleteTitle) + '">×</button>';
     html += '</div>';
 
-    // Method + alpha
-    html += '<div class="ws-row-section">';
-    html += '<div class="ws-merge-row"><div class="ws-merge-field"><label>Method</label>'
-        + '<select class="param-select ws-row-method" data-row="' + rowIdx + '">' + _methodOptions(row.method) + '</select>'
-        + '</div></div>';
-    html += '<div class="ws-param ws-param-alpha ws-row-alpha-row" data-row="' + rowIdx + '"' + (info.showAlpha ? '' : ' style="display:none;"') + '>'
-        + '<label class="ws-row-alpha-label" data-row="' + rowIdx + '">' + _esc(info.alphaLabel || "Weight") + '</label>'
-        + '<div class="ws-alpha-row">'
-        + '<input type="range" min="0" max="1" step="0.01" value="' + row.alpha + '" class="ws-slider ws-row-alpha-slider" data-row="' + rowIdx + '">'
-        + '<input type="number" min="0" max="1" step="0.01" value="' + row.alpha.toFixed(2) + '" class="param-val ws-alpha-input ws-row-alpha-val" data-row="' + rowIdx + '">'
-        + '</div>'
-        + '<div class="ws-param-context-hint ws-row-alpha-hint" data-row="' + rowIdx + '">' + _esc(info.alphaHint || "") + '</div>'
-        + '</div>';
+    // ── Line 2: conditional — tertiary + params + block-weights toggle row ──
+    html += '<div class="ws-row-line ws-row-line2"' + (line2Visible ? '' : ' style="display:none;"') + '>';
+    // Tertiary
+    html += '<select class="param-select ws-model-select ws-row-tertiary ws-row-cell-grow ws-row-tertiary-field" data-row="' + rowIdx + '" title="Tertiary (Model C — base of Secondary)"' + (showTertiary ? '' : ' style="display:none;"') + '>'
+        + _modelOptionsForRow(rowIdx, row.tertiary, "— Tertiary —")
+        + '</select>';
+    // Param sliders
+    html += _paramCellHtml(rowIdx, "density", row.density, info.params.includes("density"), "Density");
+    html += _paramCellHtml(rowIdx, "drop_rate", row.dropRate, info.params.includes("drop_rate"), "Drop");
+    html += _paramCellHtml(rowIdx, "cosine_shift", row.cosineShift, info.params.includes("cosine_shift"), "Shift");
+    html += _paramCellHtml(rowIdx, "eta", row.eta, info.params.includes("eta"), "η");
+    // Block weights toggle + preset/auto/diff
+    if (info.blockWeights) {
+        html += '<div class="ws-row-blocks-toggle"' + (showBlockToggle ? '' : ' style="display:none;"') + '>'
+            + '<label class="ws-checkbox-label ws-row-blocks-label"><input type="checkbox" class="ws-row-block-toggle" data-row="' + rowIdx + '"' + (row.useBlockWeights ? ' checked' : '') + '><span>Blocks</span></label>'
+            + '<select class="param-select ws-row-preset" data-row="' + rowIdx + '" disabled><option value="">— Preset —</option></select>'
+            + '<button class="ws-small-btn ws-row-auto" data-row="' + rowIdx + '" disabled title="Auto-alpha via Model Stock">Auto</button>'
+            + '<button class="ws-small-btn ws-row-diff" data-row="' + rowIdx + '" disabled title="Compute cosine similarity">Diff</button>'
+            + '</div>';
+    }
     html += '</div>';
 
-    // Method-specific params
-    html += '<div class="ws-row-section ws-row-params" data-row="' + rowIdx + '"' + (info.params.length ? '' : ' style="display:none;"') + '>';
-    html += _paramRowHtml(rowIdx, "density", row.density, "(fraction to keep)", "Keeps the top N% of weight changes by magnitude. 0.2 = top 20%. Lower = cleaner but weaker effect.", info.params.includes("density"));
-    html += _paramRowHtml(rowIdx, "drop_rate", row.dropRate, "(fraction to randomly drop)", "Randomly zeroes out this fraction of changes, rescales survivors. 0.9 = drop 90%, rescale 10×.", info.params.includes("drop_rate"));
-    html += _paramRowHtml(rowIdx, "cosine_shift", row.cosineShift, "(+ keep A, − take B)", "Biases the automatic blending. 0 = neutral. Positive = conservative (more A). Negative = aggressive (more B).", info.params.includes("cosine_shift"));
-    html += _paramRowHtml(rowIdx, "eta", row.eta, "(truncation threshold)", "Removes singular values below this fraction of the largest. 0 = keep everything. Higher = more denoising.", info.params.includes("eta"));
-    html += '</div>';
-
-    // Block weights
-    html += '<div class="ws-row-section ws-merge-block-footer ws-row-block-section" data-row="' + rowIdx + '"' + (info.blockWeights ? '' : ' style="display:none;"') + '>';
-    html += '<div class="ws-block-header">'
-        + '<label class="ws-checkbox-label"><input type="checkbox" class="ws-row-block-toggle" data-row="' + rowIdx + '"' + (row.useBlockWeights ? ' checked' : '') + '><span>Per-Block Weights</span></label>'
-        + '<div class="ws-block-actions">'
-        + '<select class="param-select ws-preset-select ws-row-preset" data-row="' + rowIdx + '" disabled><option value="">— Preset —</option></select>'
-        + '<button class="ws-small-btn ws-row-auto" data-row="' + rowIdx + '" disabled title="Auto-alpha via Model Stock">Auto</button>'
-        + '<button class="ws-small-btn ws-row-diff" data-row="' + rowIdx + '" disabled title="Compute cosine similarity for this row">Diff</button>'
-        + '</div></div>';
-    html += '<div class="ws-block-sliders ws-row-block-sliders" data-row="' + rowIdx + '"' + (row.useBlockWeights ? '' : ' style="display:none;"') + '></div>';
-    html += '</div>';
+    // ── Line 3: block sliders (only when row.useBlockWeights) ──
+    html += '<div class="ws-row-line ws-row-line3 ws-block-sliders ws-row-block-sliders" data-row="' + rowIdx + '"' + (row.useBlockWeights ? '' : ' style="display:none;"') + '></div>';
 
     html += '</div>';
     return html;
 }
 
-function _paramRowHtml(rowIdx, paramKey, value, hint, contextHint, visible) {
+function _paramCellHtml(rowIdx, paramKey, value, visible, shortLabel) {
     const def = PARAM_DEFS[paramKey];
     if (!def) return "";
-    return '<div class="ws-method-param-row ws-row-param-row" data-row="' + rowIdx + '" data-param="' + paramKey + '"' + (visible ? '' : ' style="display:none;"') + '>'
-        + '<div class="ws-param">'
-        + '<label>' + _esc(def.label) + ' <span class="ws-param-hint">' + _esc(hint) + '</span></label>'
-        + '<div class="ws-alpha-row">'
+    return '<div class="ws-row-param-cell" data-row="' + rowIdx + '" data-param="' + paramKey + '"' + (visible ? '' : ' style="display:none;"')
+        + ' title="' + _esc(def.label) + '">'
+        + '<span class="ws-row-param-label">' + _esc(shortLabel) + '</span>'
         + '<input type="range" min="' + def.min + '" max="' + def.max + '" step="' + def.step + '" value="' + value + '" class="ws-slider ws-row-param-slider" data-row="' + rowIdx + '" data-param="' + paramKey + '">'
-        + '<input type="number" min="' + def.min + '" max="' + def.max + '" step="' + def.step + '" value="' + Number(value).toFixed(2) + '" class="param-val ws-alpha-input ws-row-param-val" data-row="' + rowIdx + '" data-param="' + paramKey + '">'
-        + '</div>'
-        + '<div class="ws-param-context-hint">' + _esc(contextHint) + '</div>'
-        + '</div></div>';
+        + '<input type="number" min="' + def.min + '" max="' + def.max + '" step="' + def.step + '" value="' + Number(value).toFixed(2) + '" class="param-val ws-row-param-val" data-row="' + rowIdx + '" data-param="' + paramKey + '">'
+        + '</div>';
 }
 
 function _populateVaeSelect() {
@@ -1350,6 +1345,17 @@ function _bindRowEvents(rowIdx) {
         });
     });
 
+    // Expand toggle (⚙) — opts the row into the line-2 advanced row when
+    // there's no other reason to show line 2.
+    const expandBtn = rowEl.querySelector(".ws-row-expand");
+    if (expandBtn) {
+        expandBtn.addEventListener("click", (ev) => {
+            ev.stopPropagation();
+            row.expanded = !row.expanded;
+            _applyRowMethodVisibility(rowIdx);
+        });
+    }
+
     // Block weights toggle / preset / auto / diff
     const blockToggle = rowEl.querySelector(".ws-row-block-toggle");
     if (blockToggle) {
@@ -1361,6 +1367,7 @@ function _bindRowEvents(rowIdx) {
             if (preset) preset.disabled = !row.useBlockWeights;
             _updateRowAutoDiffButtons(rowIdx);
             if (row.useBlockWeights && !row.blockWeights) _initRowBlockWeights(rowIdx, row.alpha);
+            _applyRowMethodVisibility(rowIdx);
         });
     }
 
@@ -1426,37 +1433,47 @@ function _applyRowMethodVisibility(rowIdx) {
     const rowEl = _els.rowList.querySelector('.ws-row[data-row="' + rowIdx + '"]');
     if (!rowEl) return;
 
-    const tertiaryField = rowEl.querySelector(".ws-row-tertiary-field");
-    if (tertiaryField) tertiaryField.style.display = info.needsC ? "" : "none";
+    // Line 1 — alpha cell hidden (but keep slot) when method has no alpha
+    const alphaCell = rowEl.querySelector(".ws-row-alpha-cell");
+    if (alphaCell) alphaCell.style.visibility = info.showAlpha ? "" : "hidden";
+    const alphaSlider = rowEl.querySelector(".ws-row-alpha-slider");
+    if (alphaSlider) alphaSlider.title = info.alphaLabel || "Weight";
 
-    const alphaRow = rowEl.querySelector(".ws-row-alpha-row");
-    if (alphaRow) alphaRow.style.display = info.showAlpha ? "" : "none";
-    if (info.showAlpha) {
-        const lbl = rowEl.querySelector(".ws-row-alpha-label");
-        const hint = rowEl.querySelector(".ws-row-alpha-hint");
-        if (lbl) lbl.textContent = info.alphaLabel || "Weight";
-        if (hint) {
-            hint.textContent = info.alphaHint || "";
-            hint.style.display = info.alphaHint ? "" : "none";
-        }
-    }
+    // Tertiary (lives on line 2)
+    const tertiary = rowEl.querySelector(".ws-row-tertiary");
+    if (tertiary) tertiary.style.display = info.needsC ? "" : "none";
 
-    const paramSection = rowEl.querySelector(".ws-row-params");
-    if (paramSection) paramSection.style.display = info.params.length ? "" : "none";
-    rowEl.querySelectorAll(".ws-row-param-row").forEach(el => {
+    // Method-specific param cells (line 2)
+    rowEl.querySelectorAll(".ws-row-param-cell").forEach(el => {
         const p = el.dataset.param;
         el.style.display = info.params.includes(p) ? "" : "none";
     });
 
-    const blockSection = rowEl.querySelector(".ws-row-block-section");
-    if (blockSection) blockSection.style.display = info.blockWeights ? "" : "none";
+    // Block-weights toggle (line 2) — visible only when method supports
+    // blocks AND (row was expanded OR block weights are already on)
     if (!info.blockWeights && r.useBlockWeights) {
         r.useBlockWeights = false;
-        const toggle = rowEl.querySelector(".ws-row-block-toggle");
-        if (toggle) toggle.checked = false;
-        const sliders = rowEl.querySelector(".ws-row-block-sliders");
-        if (sliders) sliders.style.display = "none";
     }
+    const blocksToggleRow = rowEl.querySelector(".ws-row-blocks-toggle");
+    const showBlockToggle = !!info.blockWeights && (!!r.expanded || !!r.useBlockWeights);
+    if (blocksToggleRow) blocksToggleRow.style.display = showBlockToggle ? "" : "none";
+
+    // Expand button — only meaningful when blocks are the only hidden thing
+    const expandBtn = rowEl.querySelector(".ws-row-expand");
+    const expandBtnVisible = !!info.blockWeights && !info.needsC && info.params.length === 0;
+    if (expandBtn) {
+        expandBtn.style.visibility = expandBtnVisible ? "" : "hidden";
+        expandBtn.classList.toggle("ws-row-expanded", !!r.expanded || !!r.useBlockWeights);
+    }
+
+    // Line 2 visibility — show iff anything inside it is shown
+    const line2Visible = info.needsC || info.params.length > 0 || showBlockToggle;
+    const line2 = rowEl.querySelector(".ws-row-line2");
+    if (line2) line2.style.display = line2Visible ? "" : "none";
+
+    // Line 3 (block sliders)
+    const blockSliders = rowEl.querySelector(".ws-row-block-sliders");
+    if (blockSliders) blockSliders.style.display = r.useBlockWeights ? "" : "none";
 }
 
 // ========================================================================

@@ -1856,9 +1856,10 @@
     max-width: 680px;
     display: flex;
     flex-direction: column;
-    gap: 8px;
+    gap: 4px;
 }
 
+/* Compact horizontal-strip row */
 .ws-row {
     background: var(--bg-surface);
     border: 1px solid var(--border);
@@ -1875,39 +1876,110 @@
     box-shadow: 0 0 0 1px var(--accent);
 }
 
-.ws-row-header {
+.ws-row-line {
     display: flex;
     align-items: center;
-    justify-content: space-between;
-    gap: 8px;
-    padding: 8px 14px;
-    background: var(--bg-raised);
-    border-bottom: 1px solid var(--border-subtle);
+    gap: 6px;
+    padding: 6px 8px;
+    min-height: 32px;
 }
 
+.ws-row-line + .ws-row-line {
+    border-top: 1px solid var(--border-subtle);
+}
+
+/* Row number — fixed-width pill, doesn't shrink */
 .ws-row-num {
+    flex-shrink: 0;
+    width: 22px;
+    height: 22px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
     font-size: 10px;
     font-weight: 600;
     color: var(--pink);
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
+    background: var(--bg-raised);
+    border-radius: var(--radius-sm);
+    font-family: var(--mono);
 }
 
+/* Line-1 dropdowns are tight */
+.ws-row .ws-row-cell-grow {
+    flex: 1 1 0;
+    min-width: 0;
+    height: 26px;
+    font-size: 11px !important;
+    padding: 2px 22px 2px 6px !important;
+}
+
+.ws-row .ws-row-cell-method {
+    flex: 0 0 auto;
+    width: 110px;
+    height: 26px;
+    font-size: 10px !important;
+    padding: 2px 18px 2px 6px !important;
+}
+
+/* Alpha cell — compact slider + numeric value */
+.ws-row-alpha-cell {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    width: 130px;
+}
+
+.ws-row-alpha-cell .ws-row-alpha-slider {
+    flex: 1;
+    height: 3px;
+    accent-color: var(--accent);
+    cursor: pointer;
+    min-width: 0;
+}
+
+.ws-row .ws-row-alpha-val {
+    width: 42px !important;
+    height: 22px;
+    flex-shrink: 0;
+    font-size: 10px !important;
+    text-align: right;
+    padding: 0 4px !important;
+    -moz-appearance: textfield;
+    background: var(--bg-input, var(--bg-raised));
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-1);
+    font-family: var(--mono);
+}
+.ws-row .ws-row-alpha-val::-webkit-inner-spin-button,
+.ws-row .ws-row-alpha-val::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+/* Expand & delete buttons match dropdown height */
+.ws-row-expand,
 .ws-row-delete {
-    width: 24px;
-    height: 24px;
+    width: 22px;
+    height: 22px;
+    flex-shrink: 0;
     background: var(--bg-raised);
     border: 1px solid var(--border-subtle);
     border-radius: var(--radius-sm);
     color: var(--text-3);
-    font-size: 14px;
+    font-size: 11px;
+    line-height: 1;
     cursor: pointer;
-    display: flex;
+    display: inline-flex;
     align-items: center;
     justify-content: center;
-    flex-shrink: 0;
     transition: all 0.12s;
+    padding: 0;
 }
+
+.ws-row-expand:hover { color: var(--accent); border-color: var(--accent); }
+.ws-row-expanded { color: var(--accent); border-color: var(--accent); }
 
 .ws-row-delete:hover:not(:disabled) {
     color: var(--red);
@@ -1920,42 +1992,117 @@
     cursor: not-allowed;
 }
 
-.ws-row-section {
-    padding: 12px 16px;
+/* ── Line 2 — tertiary + params + block-weights toggle ── */
+.ws-row-line2 {
+    background: var(--bg-raised);
+    flex-wrap: wrap;
 }
 
-.ws-row-section + .ws-row-section {
-    border-top: 1px solid var(--border-subtle);
+.ws-row-line2 .ws-row-tertiary {
+    flex: 1 1 200px;
+    min-width: 160px;
+    height: 26px;
+    font-size: 11px !important;
+    padding: 2px 22px 2px 6px !important;
 }
 
-.ws-row-models {
-    display: flex;
-    flex-direction: column;
-    gap: 10px;
+/* Param cell on line 2 — short label + slider + value */
+.ws-row-param-cell {
+    flex: 1 1 140px;
+    min-width: 130px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 24px;
 }
 
-.ws-row-model-row {
-    display: flex;
-    flex-direction: column;
+.ws-row-param-label {
+    font-size: 9px;
+    color: var(--text-3);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    width: 36px;
+    flex-shrink: 0;
+}
+
+.ws-row-param-cell .ws-row-param-slider {
+    flex: 1;
+    height: 3px;
+    accent-color: var(--accent);
+    cursor: pointer;
+    min-width: 0;
+}
+
+.ws-row .ws-row-param-val {
+    width: 42px !important;
+    height: 22px;
+    flex-shrink: 0;
+    font-size: 10px !important;
+    text-align: right;
+    padding: 0 4px !important;
+    -moz-appearance: textfield;
+    background: var(--bg-input, var(--bg-raised));
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-1);
+    font-family: var(--mono);
+}
+.ws-row .ws-row-param-val::-webkit-inner-spin-button,
+.ws-row .ws-row-param-val::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+/* Block-weights toggle group on line 2 */
+.ws-row-blocks-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.ws-row-blocks-label {
+    font-size: 10px;
     gap: 4px;
 }
 
-.ws-row-tertiary-field {
-    padding-top: 10px;
-    border-top: 1px dashed var(--amber);
+.ws-row-blocks-toggle .ws-row-preset {
+    width: 100px;
+    height: 22px;
+    font-size: 10px !important;
+    padding: 0 18px 0 6px !important;
 }
 
+.ws-row-blocks-toggle .ws-small-btn {
+    height: 22px;
+    padding: 0 8px;
+    font-size: 9px;
+}
+
+/* ── Line 3 — block-weight sliders ── */
+.ws-row-line3 {
+    padding: 8px 14px 12px;
+    background: var(--bg-raised);
+}
+
+.ws-row .ws-block-sliders {
+    padding: 0;
+    min-height: 80px;
+    max-height: 50vh;
+}
+
+/* Add Row button */
 .ws-row-add-btn {
     width: 100%;
     max-width: 680px;
-    height: 36px;
-    margin-top: 8px;
+    height: 30px;
+    margin-top: 6px;
     background: none;
     border: 1px dashed var(--border);
     border-radius: var(--radius);
     color: var(--text-3);
     font-family: var(--font);
-    font-size: 11px;
+    font-size: 10px;
     font-weight: 500;
     text-transform: uppercase;
     letter-spacing: 0.5px;
@@ -1974,42 +2121,4 @@
     padding: 0 12px;
     height: 26px;
     margin-top: 0;
-}
-
-/* Block sliders inside a row */
-.ws-row .ws-block-sliders {
-    padding: 8px 14px 24px;
-    min-height: 80px;
-    max-height: 50vh;
-}
-
-/* Row alpha row spacing */
-.ws-row-alpha-row {
-    margin-top: 10px;
-}
-
-.ws-row-alpha-row > label {
-    display: block;
-    font-size: 10px;
-    color: var(--text-3);
-    margin-bottom: 4px;
-    text-transform: uppercase;
-    letter-spacing: 0.5px;
-}
-
-/* Row method-specific param section */
-.ws-row-params {
-    padding-top: 8px;
-    padding-bottom: 8px;
-}
-
-/* Row block-weights footer (shares the existing footer styling but lives
-   inside a row, no full-card bg). */
-.ws-row .ws-merge-block-footer {
-    background: var(--bg-raised);
-    padding: 0;
-}
-
-.ws-row .ws-merge-block-footer .ws-block-header {
-    padding: 10px 14px;
 }
