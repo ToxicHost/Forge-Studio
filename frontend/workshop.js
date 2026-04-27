@@ -1156,17 +1156,16 @@ function _rowHtml(rowIdx) {
         : "Delete row";
 
     // Line 2 visible if anything inside it has content:
-    //   - tertiary required (Add Difference)
     //   - method has params (density / drop_rate / eta / cosine_shift)
-    //   - method supports block weights AND row has block weights enabled,
-    //     OR user manually expanded the row to opt in.
+    //   - block weights enabled, OR user manually expanded the row
+    //   (Tertiary lives on line 1 so it never forces line 2.)
     const expanded = !!row.expanded;
     const showTertiary = !!info.needsC;
     const showParams = info.params.length > 0;
     const showBlockToggle = !!info.blockWeights && (expanded || row.useBlockWeights);
-    const line2Visible = showTertiary || showParams || showBlockToggle;
+    const line2Visible = showParams || showBlockToggle;
     // Expand button only useful when its sole purpose is opting into blocks
-    const expandBtnVisible = !!info.blockWeights && !showTertiary && !showParams;
+    const expandBtnVisible = !!info.blockWeights && !showParams;
 
     let html = '<div class="ws-row' + (isActive ? ' ws-row-active' : '') + '" data-row="' + rowIdx + '">';
 
@@ -1178,6 +1177,10 @@ function _rowHtml(rowIdx) {
         + '</select>';
     html += '<select class="param-select ws-model-select ws-row-secondary ws-row-cell-grow" data-row="' + rowIdx + '" title="Secondary (merge target)">'
         + _modelOptionsForRow(rowIdx, row.secondary, "— Secondary —")
+        + '</select>';
+    // Tertiary lives on line 1, hidden unless method.needsC
+    html += '<select class="param-select ws-model-select ws-row-tertiary ws-row-cell-grow" data-row="' + rowIdx + '" title="Tertiary (Model C — base of Secondary)"' + (showTertiary ? '' : ' style="display:none;"') + '>'
+        + _modelOptionsForRow(rowIdx, row.tertiary, "— Tertiary —")
         + '</select>';
     html += '<select class="param-select ws-row-method ws-row-cell-method" data-row="' + rowIdx + '" title="Merge method">'
         + _methodOptions(row.method)
@@ -1195,12 +1198,8 @@ function _rowHtml(rowIdx) {
         + ' title="' + _esc(deleteTitle) + '">×</button>';
     html += '</div>';
 
-    // ── Line 2: conditional — tertiary + params + block-weights toggle row ──
+    // ── Line 2: conditional — params + block-weights toggle row ──
     html += '<div class="ws-row-line ws-row-line2"' + (line2Visible ? '' : ' style="display:none;"') + '>';
-    // Tertiary
-    html += '<select class="param-select ws-model-select ws-row-tertiary ws-row-cell-grow ws-row-tertiary-field" data-row="' + rowIdx + '" title="Tertiary (Model C — base of Secondary)"' + (showTertiary ? '' : ' style="display:none;"') + '>'
-        + _modelOptionsForRow(rowIdx, row.tertiary, "— Tertiary —")
-        + '</select>';
     // Param sliders
     html += _paramCellHtml(rowIdx, "density", row.density, info.params.includes("density"), "Density");
     html += _paramCellHtml(rowIdx, "drop_rate", row.dropRate, info.params.includes("drop_rate"), "Drop");
@@ -1439,7 +1438,7 @@ function _applyRowMethodVisibility(rowIdx) {
     const alphaSlider = rowEl.querySelector(".ws-row-alpha-slider");
     if (alphaSlider) alphaSlider.title = info.alphaLabel || "Weight";
 
-    // Tertiary (lives on line 2)
+    // Tertiary (lives on line 1)
     const tertiary = rowEl.querySelector(".ws-row-tertiary");
     if (tertiary) tertiary.style.display = info.needsC ? "" : "none";
 
@@ -1458,16 +1457,16 @@ function _applyRowMethodVisibility(rowIdx) {
     const showBlockToggle = !!info.blockWeights && (!!r.expanded || !!r.useBlockWeights);
     if (blocksToggleRow) blocksToggleRow.style.display = showBlockToggle ? "" : "none";
 
-    // Expand button — only meaningful when blocks are the only hidden thing
+    // Expand button — meaningful when blocks are the only line-2 content
     const expandBtn = rowEl.querySelector(".ws-row-expand");
-    const expandBtnVisible = !!info.blockWeights && !info.needsC && info.params.length === 0;
+    const expandBtnVisible = !!info.blockWeights && info.params.length === 0;
     if (expandBtn) {
         expandBtn.style.visibility = expandBtnVisible ? "" : "hidden";
         expandBtn.classList.toggle("ws-row-expanded", !!r.expanded || !!r.useBlockWeights);
     }
 
-    // Line 2 visibility — show iff anything inside it is shown
-    const line2Visible = info.needsC || info.params.length > 0 || showBlockToggle;
+    // Line 2 visibility — params or block toggle. Tertiary is on line 1.
+    const line2Visible = info.params.length > 0 || showBlockToggle;
     const line2 = rowEl.querySelector(".ws-row-line2");
     if (line2) line2.style.display = line2Visible ? "" : "none";
 
