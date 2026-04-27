@@ -718,6 +718,8 @@
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-subtle);
   font-family: var(--mono);
+  user-select: text;
+  cursor: text;
 }
 .gal-meta-empty {
   color: var(--text-4);
