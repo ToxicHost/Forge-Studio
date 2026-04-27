@@ -2,18 +2,16 @@
  * Forge Studio — Workshop Module (Frontend)
  * by ToxicHost & Moritz
  *
- * v0.7.0 — Recipe-based UI
- * Replaces the pipeline/chain step system with a unified recipe form:
- *   Model A → optionally merge with B → optionally fold in more models →
- *   apply LoRAs → bake VAE → save.
+ * v0.8.0 — Merge Board
+ * Replaces the sequential pipeline with a row-based merge board: every row
+ * is identical (Primary / Secondary / optional Tertiary / Method / Alpha /
+ * method-specific params / optional per-block weights). A row may reference
+ * outputs of earlier rows as inputs via stable row IDs that are mapped to
+ * positional __ON__ at chain-build time. LoRA bake, VAE bake, output
+ * filename, and "save fp16" remain as separate sections below the board.
  *
- * Phase 0: Infrastructure — merge stack, model selection, progress
- * Phase 1: Cosine diff heatmap in inspector
- * Phase 2: Block weight sliders, presets, Model Stock auto-alpha, SLERP
- * Phase 3: In-memory merge — hot-swap UNet weights
- * Phase 4: Add Difference (Model C), TIES, DARE, DARE-TIES, Cosine Adaptive
- * Phase 4b: Educational layer — method descriptions, block tooltips, UX polish
- * Phase 5: Recipe UI — unified form, kill pipeline, chain assembled internally
+ * Backend chain endpoint already handles __ON__ resolution — pure frontend
+ * restructure.
  *
  * Registers via StudioModules.register("workshop", {...})
  */
@@ -22,7 +20,7 @@
 
 const TAG = "[Workshop]";
 const API = "/studio/workshop";
-const VERSION = "0.7.0";
+const VERSION = "0.8.0";
 
 // ========================================================================
 // METHOD METADATA
@@ -31,90 +29,86 @@ const VERSION = "0.7.0";
 const METHOD_INFO = {
     weighted_sum: {
         label: "Weighted Sum", needsC: false, params: [], blockWeights: true,
-        showAlpha: true, alphaLabel: "Weight (A \u2190 \u2192 B)",
+        showAlpha: true, alphaLabel: "Weight (A ← → B)",
         alphaHint: "0 = 100% Model A. 1 = 100% Model B. 0.5 = equal blend.",
-        desc: "The simplest merge \u2014 blends every weight between A and B by the alpha value. Good starting point for any merge. If results look washed out, try SLERP instead.",
+        desc: "The simplest merge — blends every weight between A and B by the alpha value. Good starting point for any merge. If results look washed out, try SLERP instead.",
     },
     slerp: {
         label: "SLERP", needsC: false, params: [], blockWeights: true,
-        showAlpha: true, alphaLabel: "Weight (A \u2190 \u2192 B)",
+        showAlpha: true, alphaLabel: "Weight (A ← → B)",
         alphaHint: "0 = 100% Model A, 1 = 100% Model B.",
-        desc: "Spherical interpolation \u2014 preserves the magnitude of weight vectors instead of averaging them. Usually produces sharper, more vibrant results than Weighted Sum at the same alpha. Best for blending two models of similar quality.",
+        desc: "Spherical interpolation — preserves the magnitude of weight vectors instead of averaging them. Usually produces sharper, more vibrant results than Weighted Sum at the same alpha. Best for blending two models of similar quality.",
     },
     add_difference: {
         label: "Add Difference", needsC: true, params: [], blockWeights: true,
         showAlpha: true, alphaLabel: "Strength",
-        alphaHint: "How much of B\u2019s training to apply. 0.5 = half strength, 1.0 = full.",
-        desc: "Extracts what Model B learned from Model C (its base), then applies that training to Model A. Use this to transplant a finetune\u2019s skills (e.g. anime style, specific subject) into a different model. Requires Model C \u2014 the base model B was finetuned from.",
+        alphaHint: "How much of B’s training to apply. 0.5 = half strength, 1.0 = full.",
+        desc: "Extracts what Model B learned from Model C (its base), then applies that training to Model A. Use this to transplant a finetune’s skills (e.g. anime style, specific subject) into a different model. Requires Model C — the base model B was finetuned from.",
     },
     ties: {
         label: "TIES", needsC: false, params: ["density"], blockWeights: false,
-        showAlpha: true, alphaLabel: "Lambda (\u03bb)",
-        alphaHint: "Strength of the trimmed task vector. Start at 0.5\u20131.0.",
-        desc: "Trim, Elect Sign & Merge \u2014 extracts B\u2019s training over A, then trims away the weakest changes, keeping only the most significant ones. The Density parameter controls how aggressively to trim. Great for noisy finetunes where you want only the strongest signal.",
+        showAlpha: true, alphaLabel: "Lambda (λ)",
+        alphaHint: "Strength of the trimmed task vector. Start at 0.5–1.0.",
+        desc: "Trim, Elect Sign & Merge — extracts B’s training over A, then trims away the weakest changes, keeping only the most significant ones. The Density parameter controls how aggressively to trim. Great for noisy finetunes where you want only the strongest signal.",
     },
     dare: {
         label: "DARE", needsC: false, params: ["drop_rate"], blockWeights: false,
-        showAlpha: true, alphaLabel: "Lambda (\u03bb)",
-        alphaHint: "Strength of the sparsified task vector. Start at 0.5\u20131.0.",
-        desc: "Drop And REscale \u2014 randomly drops most of B\u2019s training changes and rescales the survivors to compensate. Neural networks are redundant, so even dropping 90% of changes often preserves the effect. Produces surprisingly clean results from messy finetunes.",
+        showAlpha: true, alphaLabel: "Lambda (λ)",
+        alphaHint: "Strength of the sparsified task vector. Start at 0.5–1.0.",
+        desc: "Drop And REscale — randomly drops most of B’s training changes and rescales the survivors to compensate. Neural networks are redundant, so even dropping 90% of changes often preserves the effect. Produces surprisingly clean results from messy finetunes.",
     },
     dare_ties: {
         label: "DARE-TIES", needsC: false, params: ["density", "drop_rate"], blockWeights: false,
-        showAlpha: true, alphaLabel: "Lambda (\u03bb)",
-        alphaHint: "Strength of the processed task vector. Start at 0.5\u20131.0.",
-        desc: "Combines DARE and TIES \u2014 randomly drops changes first, then trims the survivors by magnitude. The most aggressive filtering. Best when B is a very noisy finetune and you want only the absolute strongest signal.",
+        showAlpha: true, alphaLabel: "Lambda (λ)",
+        alphaHint: "Strength of the processed task vector. Start at 0.5–1.0.",
+        desc: "Combines DARE and TIES — randomly drops changes first, then trims the survivors by magnitude. The most aggressive filtering. Best when B is a very noisy finetune and you want only the absolute strongest signal.",
     },
     cosine_adaptive: {
         label: "Cosine Adaptive", needsC: false, params: ["cosine_shift"], blockWeights: true,
         showAlpha: false, alphaLabel: null, alphaHint: null,
-        desc: "Automatically computes a unique blend ratio for every weight based on how similar A and B are at that point. Where they already agree, it keeps A. Where they diverge, it incorporates B. The Shift parameter adjusts how conservative (positive) or aggressive (negative) the blending is. No alpha needed \u2014 the math decides.",
+        desc: "Automatically computes a unique blend ratio for every weight based on how similar A and B are at that point. Where they already agree, it keeps A. Where they diverge, it incorporates B. The Shift parameter adjusts how conservative (positive) or aggressive (negative) the blending is. No alpha needed — the math decides.",
     },
     star: {
-        label: "STAR (Spectral)", needsC: false, params: ["eta"],
-        blockWeights: true,
-        showAlpha: true, alphaLabel: "Lambda (\u03bb)",
-        alphaHint: "Strength of the denoised task vector. Start at 0.5\u20131.0.",
-        desc: "Spectral Truncation and Rescale \u2014 decomposes B\u2019s training via SVD and strips noisy components before merging. Produces cleaner results than element-wise methods, especially from overtrained or messy finetunes. The Eta parameter controls how aggressively noise is removed.",
+        label: "STAR (Spectral)", needsC: false, params: ["eta"], blockWeights: true,
+        showAlpha: true, alphaLabel: "Lambda (λ)",
+        alphaHint: "Strength of the denoised task vector. Start at 0.5–1.0.",
+        desc: "Spectral Truncation and Rescale — decomposes B’s training via SVD and strips noisy components before merging. Produces cleaner results than element-wise methods, especially from overtrained or messy finetunes. The Eta parameter controls how aggressively noise is removed.",
     },
     svd_struct_a_mag_b: {
-        label: "SVD: Structure A + Mag B", needsC: false, params: [],
-        blockWeights: true,
+        label: "SVD: Structure A + Mag B", needsC: false, params: [], blockWeights: true,
         showAlpha: true, alphaLabel: "Blend Strength",
-        alphaHint: "0 = pure A. 1 = full spectral swap. Start at 0.3\u20130.5.",
-        desc: "Decomposes both models via SVD, then takes A\u2019s feature directions (what the layer detects) and B\u2019s magnitudes (how strongly it responds). Example: photorealism model\u2019s composition + anime model\u2019s vibrancy. Produces results impossible from any weight-averaging method.",
+        alphaHint: "0 = pure A. 1 = full spectral swap. Start at 0.3–0.5.",
+        desc: "Decomposes both models via SVD, then takes A’s feature directions (what the layer detects) and B’s magnitudes (how strongly it responds). Example: photorealism model’s composition + anime model’s vibrancy. Produces results impossible from any weight-averaging method.",
     },
     svd_struct_b_mag_a: {
-        label: "SVD: Structure B + Mag A", needsC: false, params: [],
-        blockWeights: true,
+        label: "SVD: Structure B + Mag A", needsC: false, params: [], blockWeights: true,
         showAlpha: true, alphaLabel: "Blend Strength",
-        alphaHint: "0 = pure A. 1 = full spectral swap. Start at 0.3\u20130.5.",
-        desc: "The inverse \u2014 takes B\u2019s feature directions (what the layer detects) and A\u2019s magnitudes (how strongly it responds). Same concept as Structure A + Mag B but swapped. Try both and compare \u2014 the results are surprisingly different.",
+        alphaHint: "0 = pure A. 1 = full spectral swap. Start at 0.3–0.5.",
+        desc: "The inverse — takes B’s feature directions (what the layer detects) and A’s magnitudes (how strongly it responds). Same concept as Structure A + Mag B but swapped. Try both and compare — the results are surprisingly different.",
     },
     svd_blend: {
-        label: "SVD: Spectral Blend", needsC: false, params: [],
-        blockWeights: true,
-        showAlpha: true, alphaLabel: "Weight (A \u2190 \u2192 B)",
+        label: "SVD: Spectral Blend", needsC: false, params: [], blockWeights: true,
+        showAlpha: true, alphaLabel: "Weight (A ← → B)",
         alphaHint: "0 = pure A, 1 = pure B. Interpolates in spectral space.",
-        desc: "Aligns both models\u2019 spectral decompositions via Procrustes rotation, then interpolates structure and magnitude together in spectral space. Smoother than Weighted Sum because it respects the geometric relationship between feature directions rather than averaging raw weights.",
+        desc: "Aligns both models’ spectral decompositions via Procrustes rotation, then interpolates structure and magnitude together in spectral space. Smoother than Weighted Sum because it respects the geometric relationship between feature directions rather than averaging raw weights.",
     },
     della: {
         label: "DELLA", needsC: false, params: ["drop_rate"], blockWeights: false,
-        showAlpha: true, alphaLabel: "Lambda (\u03bb)",
-        alphaHint: "Strength of the sparsified task vector. Start at 0.5\u20131.0.",
-        desc: "Like DARE but smarter about what it drops \u2014 drop probability is inversely proportional to magnitude, so large important changes survive while small noisy ones are more likely to be removed. Produces slightly more reliable results than DARE\u2019s uniform random masking.",
+        showAlpha: true, alphaLabel: "Lambda (λ)",
+        alphaHint: "Strength of the sparsified task vector. Start at 0.5–1.0.",
+        desc: "Like DARE but smarter about what it drops — drop probability is inversely proportional to magnitude, so large important changes survive while small noisy ones are more likely to be removed. Produces slightly more reliable results than DARE’s uniform random masking.",
     },
     della_ties: {
         label: "DELLA-TIES", needsC: false, params: ["density", "drop_rate"], blockWeights: false,
-        showAlpha: true, alphaLabel: "Lambda (\u03bb)",
-        alphaHint: "Strength of the processed task vector. Start at 0.5\u20131.0.",
-        desc: "Combines DELLA and TIES \u2014 magnitude-weighted dropout first, then trims survivors by magnitude. Like DARE-TIES but with smarter dropout that preferentially keeps important parameters.",
+        showAlpha: true, alphaLabel: "Lambda (λ)",
+        alphaHint: "Strength of the processed task vector. Start at 0.5–1.0.",
+        desc: "Combines DELLA and TIES — magnitude-weighted dropout first, then trims survivors by magnitude. Like DARE-TIES but with smarter dropout that preferentially keeps important parameters.",
     },
     breadcrumbs: {
         label: "Breadcrumbs", needsC: false, params: ["density", "drop_rate"], blockWeights: false,
-        showAlpha: true, alphaLabel: "Lambda (\u03bb)",
-        alphaHint: "Strength of the trimmed task vector. Start at 0.5\u20131.0.",
-        desc: "Dual-threshold trimming \u2014 like TIES but also removes the largest outlier changes, not just the smallest. Density controls the lower cutoff (how much to keep), Drop Rate controls the upper cutoff (how many outliers to remove). Best for finetunes with both noise and overfitting artifacts.",
+        showAlpha: true, alphaLabel: "Lambda (λ)",
+        alphaHint: "Strength of the trimmed task vector. Start at 0.5–1.0.",
+        desc: "Dual-threshold trimming — like TIES but also removes the largest outlier changes, not just the smallest. Density controls the lower cutoff (how much to keep), Drop Rate controls the upper cutoff (how many outliers to remove). Best for finetunes with both noise and overfitting artifacts.",
     },
 };
 
@@ -122,64 +116,48 @@ const PARAM_DEFS = {
     density: { label: "Density", min: 0, max: 1, step: 0.05, default: 0.2 },
     drop_rate: { label: "Drop Rate", min: 0, max: 0.99, step: 0.05, default: 0.9 },
     cosine_shift: { label: "Cosine Shift", min: -1, max: 1, step: 0.05, default: 0.0 },
-    eta: { label: "Eta (\u03b7)", min: 0, max: 0.5, step: 0.01, default: 0.1 },
+    eta: { label: "Eta (η)", min: 0, max: 0.5, step: 0.01, default: 0.1 },
 };
-
-// ========================================================================
-// BLOCK DESCRIPTIONS
-// ========================================================================
 
 const BLOCK_TOOLTIPS = {
     "Text Encoder": "Controls how text prompts are interpreted. Merging this changes what words mean to the model.",
     "Input Blocks": "Progressively compress the image. Early = fine details (texture, linework). Later = composition and structure.",
-    "Middle": "Most compressed representation \u2014 the model\u2019s core understanding of the image. Affects global coherence.",
+    "Middle": "Most compressed representation — the model’s core understanding of the image. Affects global coherence.",
     "Output Blocks": "Expand back to full resolution. Early = structure/composition. Later = fine details and rendering quality.",
     "Double Stream Blocks": "FLUX dual-stream blocks. Process image and text simultaneously with cross-attention.",
     "Single Stream Blocks": "FLUX single-stream blocks. Process merged image+text representations.",
     "Joint Blocks": "SD3 MMDiT blocks. Jointly process image and text tokens at each layer.",
-    "IN00": "Full res \u2014 Surface details: skin pores, hair strands, line quality",
-    "IN01": "Full res \u2014 Fine textures and micro-patterns",
-    "IN02": "Full res \u2014 Local color and fine shading",
-    "IN03": "Half res \u2014 Mid-level features: facial features, fabric folds",
-    "IN04": "Half res \u2014 Object parts and local structure",
-    "IN05": "Half \u2192 quarter res \u2014 Transition to structural features",
-    "IN06": "Quarter res \u2014 Large-scale shapes and object boundaries",
-    "IN07": "Quarter res \u2014 Scene layout and spatial relationships",
-    "IN08": "Quarter \u2192 eighth res \u2014 High-level composition",
-    "IN09": "Eighth res \u2014 Abstract composition and pose",
-    "IN10": "Eighth res \u2014 Global scene structure",
-    "IN11": "Eighth res \u2014 Most abstract input representation",
-    "M00": "Deepest layer \u2014 The model\u2019s core understanding of the whole image",
-    "OUT00": "Eighth res \u2014 Mirrors IN11: rebuilding from abstract structure",
-    "OUT01": "Eighth res \u2014 Large-scale composition decisions",
-    "OUT02": "Eighth res \u2014 Spatial arrangement and layout",
-    "OUT03": "Eighth \u2192 quarter res \u2014 Structure to shape transition",
-    "OUT04": "Quarter res \u2014 Object shapes and boundaries",
-    "OUT05": "Quarter res \u2014 Scene geometry and spatial detail",
-    "OUT06": "Quarter \u2192 half res \u2014 Shape to feature transition",
-    "OUT07": "Half res \u2014 Object details and mid-level features",
-    "OUT08": "Half res \u2014 Fine structural details and rendering",
-    "OUT09": "Half \u2192 full res \u2014 Feature to texture transition",
-    "OUT10": "Full res \u2014 Surface rendering and shading style",
-    "OUT11": "Full res \u2014 Final detail: texture, color, rendering quality",
-    "BASE": "Text encoder weights \u2014 changes how prompts are understood",
-    "VAE": "Image encoder/decoder \u2014 usually identical between models of the same architecture",
+    "IN00": "Full res — Surface details: skin pores, hair strands, line quality",
+    "IN01": "Full res — Fine textures and micro-patterns",
+    "IN02": "Full res — Local color and fine shading",
+    "IN03": "Half res — Mid-level features: facial features, fabric folds",
+    "IN04": "Half res — Object parts and local structure",
+    "IN05": "Half → quarter res — Transition to structural features",
+    "IN06": "Quarter res — Large-scale shapes and object boundaries",
+    "IN07": "Quarter res — Scene layout and spatial relationships",
+    "IN08": "Quarter → eighth res — High-level composition",
+    "IN09": "Eighth res — Abstract composition and pose",
+    "IN10": "Eighth res — Global scene structure",
+    "IN11": "Eighth res — Most abstract input representation",
+    "M00": "Deepest layer — The model’s core understanding of the whole image",
+    "OUT00": "Eighth res — Mirrors IN11: rebuilding from abstract structure",
+    "OUT01": "Eighth res — Large-scale composition decisions",
+    "OUT02": "Eighth res — Spatial arrangement and layout",
+    "OUT03": "Eighth → quarter res — Structure to shape transition",
+    "OUT04": "Quarter res — Object shapes and boundaries",
+    "OUT05": "Quarter res — Scene geometry and spatial detail",
+    "OUT06": "Quarter → half res — Shape to feature transition",
+    "OUT07": "Half res — Object details and mid-level features",
+    "OUT08": "Half res — Fine structural details and rendering",
+    "OUT09": "Half → full res — Feature to texture transition",
+    "OUT10": "Full res — Surface rendering and shading style",
+    "OUT11": "Full res — Final detail: texture, color, rendering quality",
+    "BASE": "Text encoder weights — changes how prompts are understood",
+    "VAE": "Image encoder/decoder — usually identical between models of the same architecture",
     "OTHER": "Miscellaneous keys not classified into standard blocks",
 };
 
 function _getBlockTooltip(name) { return BLOCK_TOOLTIPS[name] || null; }
-
-// Compact method list for additional fold-in merges
-const FOLD_METHODS = [
-    { value: "weighted_sum", label: "Weighted Sum" },
-    { value: "slerp", label: "SLERP" },
-    { value: "add_difference", label: "Add Difference" },
-    { value: "ties", label: "TIES" },
-    { value: "dare", label: "DARE" },
-    { value: "dare_ties", label: "DARE-TIES" },
-    { value: "cosine_adaptive", label: "Cosine Adaptive" },
-    { value: "star", label: "STAR" },
-];
 
 // ========================================================================
 // STATE
@@ -187,30 +165,110 @@ const FOLD_METHODS = [
 
 const WS = {
     models: [], loras: [], vaes: [],
-    // Primary merge
-    modelA: null, modelB: null, modelC: null,
-    method: "weighted_sum", alpha: 0.5,
-    blockWeights: null, blockList: [], presets: {}, useBlockWeights: false, arch: null,
-    density: 0.2, dropRate: 0.9, cosineShift: 0.0, eta: 0.1,
-    // Recipe: additional fold-in models (each merges into running result)
-    additionalMerges: [],  // [{model, method, alpha}]
-    // Recipe: LoRAs to bake (applied after all merging)
-    recipeLoras: [],  // [{filename, strength}]
-    // Recipe: VAE to bake (applied last)
+
+    // Merge board: each row is a self-contained merge step.
+    rows: [],
+    activeRow: 0,
+
+    // Block list and presets are keyed by architecture; loaded once when arch
+    // changes. Each row stores its own per-block weights independently.
+    blockList: [], presets: {}, arch: null,
+
+    // Global recipe extras (applied after the board)
+    recipeLoras: [],     // [{filename, strength}]
     recipeVae: null,
-    // Output
     outputName: "", saveFp16: true,
-    // Merge state
+
+    // Run state
     merging: false, progress: 0, status: "idle", error: null, result: null,
     elapsed: 0, keysDone: 0, keysTotal: 0,
     memoryMergeActive: false, testMerging: false,
-    // Inspector
+
+    // Inspector (driven by activeRow)
     inspectA: null, inspectB: null, preflight: null, cosineDiff: null,
     compatibility: null, healthScan: null, healthLoading: false, diffLoading: false,
+
     // Journal
     journalEntries: [], journalSearch: "", journalFilter: "all", journalExpanded: null,
 };
 let _els = {};
+
+// ========================================================================
+// ROW HELPERS — stable IDs, ref resolution, board mutation
+// ========================================================================
+
+function _genRowId() {
+    if (typeof crypto !== "undefined" && crypto.randomUUID) {
+        return "row_" + crypto.randomUUID().replace(/-/g, "").slice(0, 12);
+    }
+    return "row_" + Math.random().toString(36).slice(2, 10) + Date.now().toString(36).slice(-4);
+}
+
+function _newRow(initial) {
+    return Object.assign({
+        id: _genRowId(),
+        primary: null, secondary: null, tertiary: null,
+        method: "weighted_sum", alpha: 0.5,
+        density: 0.2, dropRate: 0.9, cosineShift: 0.0, eta: 0.1,
+        useBlockWeights: false, blockWeights: null,
+    }, initial || {});
+}
+
+// A reference value stored in a row's primary/secondary/tertiary slot looks
+// like "__ref:<rowId>__". This is independent of the row's current visual
+// position, so deletions / reorderings cannot silently rewire references.
+function _refValue(rowId) { return "__ref:" + rowId + "__"; }
+function _isRefValue(v) { return typeof v === "string" && v.indexOf("__ref:") === 0 && v.endsWith("__"); }
+function _refRowId(v) {
+    if (!_isRefValue(v)) return null;
+    return v.slice(6, -2);
+}
+
+// True if any row strictly *after* `idx` references the row at `idx` via its
+// stable id. Used to block deletion.
+function _isRowReferenced(idx) {
+    if (idx < 0 || idx >= WS.rows.length) return false;
+    const ref = _refValue(WS.rows[idx].id);
+    for (let i = idx + 1; i < WS.rows.length; i++) {
+        const r = WS.rows[i];
+        if (r.primary === ref || r.secondary === ref || r.tertiary === ref) return true;
+    }
+    return false;
+}
+
+// Names of later rows that reference this one (for the deletion tooltip).
+function _rowsReferencing(idx) {
+    const out = [];
+    if (idx < 0 || idx >= WS.rows.length) return out;
+    const ref = _refValue(WS.rows[idx].id);
+    for (let i = idx + 1; i < WS.rows.length; i++) {
+        const r = WS.rows[i];
+        if (r.primary === ref || r.secondary === ref || r.tertiary === ref) {
+            out.push("Row " + (i + 1));
+        }
+    }
+    return out;
+}
+
+function _rowIndexById(id) {
+    for (let i = 0; i < WS.rows.length; i++) if (WS.rows[i].id === id) return i;
+    return -1;
+}
+
+// Maps a stored row-input value to the API-ready string for a chain step.
+// Concrete filename returned as-is. __ref:<rowId>__ → __O<positional>__
+// where positional is the 1-based index of the referenced row in WS.rows
+// (which equals the chain step number for that row).
+function _resolveRowInput(value) {
+    if (value === null || value === undefined || value === "") return null;
+    if (!_isRefValue(value)) return value;
+    const rowId = _refRowId(value);
+    const idx = _rowIndexById(rowId);
+    if (idx < 0) return null;
+    return "__O" + (idx + 1) + "__";
+}
+
+function _isConcreteModel(v) { return !!v && !_isRefValue(v); }
 
 // ========================================================================
 // API HELPERS
@@ -232,7 +290,8 @@ async function fetchJSON(url, opts) {
 async function loadModels() {
     try {
         WS.models = await fetchJSON(API + "/models");
-        _populateModelSelects();
+        _renderRows();
+        _populateVaeSelect();
     } catch (e) {
         console.error(TAG, "Failed to load models:", e);
         if (window.showToast) window.showToast("Failed to load model list", "error");
@@ -240,17 +299,14 @@ async function loadModels() {
 }
 
 async function loadLoras() {
-    try { WS.loras = await fetchJSON(API + "/loras"); } catch (e) { console.error(TAG, "Failed to load LoRAs:", e); }
+    try { WS.loras = await fetchJSON(API + "/loras"); _renderRecipeLoras(); } catch (e) { console.error(TAG, "Failed to load LoRAs:", e); }
 }
 
 async function loadVaes() {
-    try { WS.vaes = await fetchJSON(API + "/vaes"); } catch (e) { console.error(TAG, "Failed to load VAEs:", e); }
+    try { WS.vaes = await fetchJSON(API + "/vaes"); _populateVaeSelect(); } catch (e) { console.error(TAG, "Failed to load VAEs:", e); }
 }
 
 async function refreshAssets() {
-    // Ask the backend to rescan every configured asset directory, then
-    // repopulate the Workshop dropdowns. Useful after moving files into
-    // an external --ckpt-dir/--lora-dir or saving a new merge.
     const btn = _els && _els.refreshAssets;
     const prevLabel = btn ? btn.textContent : null;
     if (btn) { btn.disabled = true; btn.textContent = "Scanning…"; }
@@ -259,7 +315,6 @@ async function refreshAssets() {
         try { summary = await fetchJSON(API + "/refresh", { method: "POST" }); }
         catch (e) { console.error(TAG, "Refresh rescan failed:", e); }
         await Promise.all([loadModels(), loadLoras(), loadVaes()]);
-        _populateVaeSelect();
         if (window.showToast) {
             if (summary && summary.ok) {
                 const parts = [];
@@ -277,30 +332,43 @@ async function refreshAssets() {
 }
 
 // ========================================================================
-// INSPECTION & PREFLIGHT
+// INSPECTION & PREFLIGHT — driven by the active row
 // ========================================================================
 
+function _activeRow() { return WS.rows[WS.activeRow] || null; }
+
+function _activeInputs() {
+    const r = _activeRow();
+    if (!r) return { a: null, b: null };
+    return {
+        a: _isConcreteModel(r.primary) ? r.primary : null,
+        b: _isConcreteModel(r.secondary) ? r.secondary : null,
+    };
+}
+
 async function inspectModel(filename, which) {
-    if (!filename) { WS[which === "A" ? "inspectA" : "inspectB"] = null; _onModelsChanged(); return; }
+    if (!filename) { WS[which === "A" ? "inspectA" : "inspectB"] = null; _onActiveModelsChanged(); return; }
     try {
         const info = await fetchJSON(API + "/inspect?filename=" + encodeURIComponent(filename));
         WS[which === "A" ? "inspectA" : "inspectB"] = info;
-        _onModelsChanged();
+        _onActiveModelsChanged();
     } catch (e) { console.error(TAG, "Inspect " + which + " failed:", e); }
 }
 
 async function runPreflight() {
-    if (!WS.modelA || !WS.modelB) { WS.preflight = null; _renderInfo(); return; }
+    const { a, b } = _activeInputs();
+    if (!a || !b) { WS.preflight = null; _renderInfo(); return; }
     try {
-        WS.preflight = await fetchJSON(API + "/preflight?model_a=" + encodeURIComponent(WS.modelA) + "&model_b=" + encodeURIComponent(WS.modelB));
+        WS.preflight = await fetchJSON(API + "/preflight?model_a=" + encodeURIComponent(a) + "&model_b=" + encodeURIComponent(b));
         _renderInfo();
     } catch (e) { console.error(TAG, "Preflight failed:", e); }
 }
 
 async function runCompatibility() {
-    if (!WS.modelA || !WS.modelB) { WS.compatibility = null; _renderInfo(); return; }
+    const { a, b } = _activeInputs();
+    if (!a || !b) { WS.compatibility = null; _renderInfo(); return; }
     try {
-        WS.compatibility = await fetchJSON(API + "/compatibility?model_a=" + encodeURIComponent(WS.modelA) + "&model_b=" + encodeURIComponent(WS.modelB));
+        WS.compatibility = await fetchJSON(API + "/compatibility?model_a=" + encodeURIComponent(a) + "&model_b=" + encodeURIComponent(b));
         _renderInfo();
     } catch (e) { console.error(TAG, "Compatibility check failed:", e); }
 }
@@ -318,10 +386,11 @@ async function runHealthScan(filename) {
 }
 
 async function loadCosineDiff() {
-    if (!WS.modelA || !WS.modelB) { WS.cosineDiff = null; _renderInfo(); return; }
+    const { a, b } = _activeInputs();
+    if (!a || !b) { WS.cosineDiff = null; _renderInfo(); return; }
     WS.diffLoading = true; _renderInfo();
     try {
-        WS.cosineDiff = await fetchJSON(API + "/cosine_diff?model_a=" + encodeURIComponent(WS.modelA) + "&model_b=" + encodeURIComponent(WS.modelB));
+        WS.cosineDiff = await fetchJSON(API + "/cosine_diff?model_a=" + encodeURIComponent(a) + "&model_b=" + encodeURIComponent(b));
     } catch (e) {
         console.error(TAG, "Cosine diff failed:", e);
         if (window.showToast) window.showToast("Cosine diff failed: " + e.message, "error");
@@ -333,23 +402,31 @@ async function loadPresets(arch) {
     try {
         const data = await fetchJSON(API + "/presets?arch=" + encodeURIComponent(arch));
         WS.presets = data.presets || {}; WS.blockList = data.blocks || [];
-        _populatePresetSelect(); _buildBlockSliders();
+        for (let i = 0; i < WS.rows.length; i++) {
+            _populatePresetSelectForRow(i);
+            _buildBlockSlidersForRow(i);
+        }
     } catch (e) { console.error(TAG, "Presets failed:", e); }
 }
 
-async function loadModelStock() {
-    if (!WS.modelA || !WS.modelB) return;
+async function loadModelStockForRow(rowIdx) {
+    const r = WS.rows[rowIdx];
+    if (!r) return;
+    const a = _isConcreteModel(r.primary) ? r.primary : null;
+    const b = _isConcreteModel(r.secondary) ? r.secondary : null;
+    if (!a || !b) return;
     try {
-        if (window.showToast) window.showToast("Computing Model Stock auto-alpha...", "info");
-        const data = await fetchJSON(API + "/model_stock?model_a=" + encodeURIComponent(WS.modelA) + "&model_b=" + encodeURIComponent(WS.modelB));
+        if (window.showToast) window.showToast("Computing Model Stock auto-alpha…", "info");
+        const data = await fetchJSON(API + "/model_stock?model_a=" + encodeURIComponent(a) + "&model_b=" + encodeURIComponent(b));
         if (data.alphas && Object.keys(data.alphas).length) {
-            WS.blockWeights = data.alphas; WS.useBlockWeights = true; _els.blockToggle.checked = true;
-            _syncBlockSlidersFromState(); _renderInfo();
-            if (data.cosine_diff) {
+            r.blockWeights = data.alphas;
+            r.useBlockWeights = true;
+            _syncRowBlockUI(rowIdx);
+            if (data.cosine_diff && rowIdx === WS.activeRow) {
                 WS.cosineDiff = { blocks: data.cosine_diff, global_similarity: data.global_similarity, architecture: WS.inspectA?.architecture };
                 _renderInfo();
             }
-            if (window.showToast) window.showToast("Model Stock alphas applied", "success");
+            if (window.showToast) window.showToast("Model Stock alphas applied to Row " + (rowIdx + 1), "success");
         }
     } catch (e) {
         console.error(TAG, "Model Stock failed:", e);
@@ -363,61 +440,40 @@ async function loadModelStock() {
 
 function _buildRecipeChain() {
     /**
-     * Converts the recipe form state into a chain of steps for the backend.
-     *
-     * Possible flows:
-     *   Single model + LoRAs/VAE:
-     *     step 1: lora_bake(modelA), step 2: vae_bake(__O1__)
-     *   Two models + LoRAs/VAE:
-     *     step 1: merge(A, B), step 2: lora_bake(__O1__), step 3: vae_bake(__O2__)
-     *   Multi-model fold + LoRAs/VAE:
-     *     step 1: merge(A, B), step 2: merge(__O1__, C), ..., step N: lora_bake, step N+1: vae_bake
-     *
-     * The output_name always goes on the LAST step.
+     * Each row in WS.rows becomes a chain step (1-based step number == row
+     * index + 1). Stable row-id refs are mapped to positional __ON__ here.
+     * LoRA bake / VAE bake steps are appended, taking the last row's output
+     * as their checkpoint. Final step receives the user-supplied output_name.
      */
     const steps = [];
     let stepNum = 0;
-    const isMerging = !!WS.modelB;
 
-    // --- Primary merge ---
-    if (isMerging) {
+    for (let i = 0; i < WS.rows.length; i++) {
+        const row = WS.rows[i];
+        if (!row.primary || !row.secondary) continue;
+
         stepNum++;
-        const mergeParams = {
-            model_a: WS.modelA, model_b: WS.modelB,
-            method: WS.method, alpha: WS.alpha,
-            block_weights: WS.useBlockWeights ? WS.blockWeights : null,
+        const params = {
+            model_a: _resolveRowInput(row.primary),
+            model_b: _resolveRowInput(row.secondary),
+            method: row.method,
+            alpha: row.alpha,
+            block_weights: row.useBlockWeights ? row.blockWeights : null,
             save_fp16: WS.saveFp16,
         };
-        const info = METHOD_INFO[WS.method] || {};
-        if (info.needsC && WS.modelC) mergeParams.model_c = WS.modelC;
-        if (info.params.includes("density")) mergeParams.density = WS.density;
-        if (info.params.includes("drop_rate")) mergeParams.drop_rate = WS.dropRate;
-        if (info.params.includes("cosine_shift")) mergeParams.cosine_shift = WS.cosineShift;
-        if (info.params.includes("eta")) mergeParams.eta = WS.eta;
-        steps.push({ step: stepNum, type: "merge", params: mergeParams });
+        const info = METHOD_INFO[row.method] || {};
+        if (info.needsC && row.tertiary) params.model_c = _resolveRowInput(row.tertiary);
+        if (info.params.includes("density")) params.density = row.density;
+        if (info.params.includes("drop_rate")) params.drop_rate = row.dropRate;
+        if (info.params.includes("cosine_shift")) params.cosine_shift = row.cosineShift;
+        if (info.params.includes("eta")) params.eta = row.eta;
+        steps.push({ step: stepNum, type: "merge", params });
     }
 
-    // --- Additional fold-in merges ---
-    for (const fold of WS.additionalMerges) {
-        if (!fold.model) continue;
-        stepNum++;
-        const prevRef = stepNum === 1 ? WS.modelA : "__O" + (stepNum - 1) + "__";
-        steps.push({
-            step: stepNum, type: "merge",
-            params: {
-                model_a: prevRef, model_b: fold.model,
-                method: fold.method || "weighted_sum",
-                alpha: fold.alpha ?? 0.5,
-                save_fp16: WS.saveFp16,
-            },
-        });
-    }
-
-    // --- LoRA bake ---
     const activeLoras = WS.recipeLoras.filter(l => l.filename);
     if (activeLoras.length) {
         stepNum++;
-        const checkpoint = stepNum === 1 ? WS.modelA : "__O" + (stepNum - 1) + "__";
+        const checkpoint = stepNum === 1 ? null : "__O" + (stepNum - 1) + "__";
         steps.push({
             step: stepNum, type: "lora_bake",
             params: {
@@ -428,10 +484,9 @@ function _buildRecipeChain() {
         });
     }
 
-    // --- VAE bake ---
     if (WS.recipeVae) {
         stepNum++;
-        const checkpoint = stepNum === 1 ? WS.modelA : "__O" + (stepNum - 1) + "__";
+        const checkpoint = stepNum === 1 ? null : "__O" + (stepNum - 1) + "__";
         steps.push({
             step: stepNum, type: "vae_bake",
             params: {
@@ -442,7 +497,6 @@ function _buildRecipeChain() {
         });
     }
 
-    // --- Apply output_name to last step ---
     if (steps.length && WS.outputName) {
         steps[steps.length - 1].params.output_name = WS.outputName;
     }
@@ -451,48 +505,63 @@ function _buildRecipeChain() {
 }
 
 function _canTestMerge() {
-    // Test merge only works for simple 2-model merge with no post-processing
-    return WS.modelA && WS.modelB
-        && WS.additionalMerges.filter(m => m.model).length === 0
-        && WS.recipeLoras.filter(l => l.filename).length === 0
-        && !WS.recipeVae
-        && !WS.merging && !WS.testMerging;
+    // Test merge: only with exactly one row, two concrete-file models,
+    // a satisfied tertiary slot if the method needs one, and no LoRAs/VAE.
+    if (WS.rows.length !== 1) return false;
+    const r = WS.rows[0];
+    if (!_isConcreteModel(r.primary) || !_isConcreteModel(r.secondary)) return false;
+    if (r.primary === r.secondary) return false;
+    const info = METHOD_INFO[r.method] || {};
+    if (info.needsC && (!_isConcreteModel(r.tertiary) || r.tertiary === r.primary || r.tertiary === r.secondary)) return false;
+    if (WS.recipeLoras.filter(l => l.filename).length > 0) return false;
+    if (WS.recipeVae) return false;
+    if (WS.merging || WS.testMerging) return false;
+    return true;
 }
 
 function _getTestMergeTooltip() {
-    if (!WS.modelA || !WS.modelB) return "Select two models to test merge";
-    if (WS.additionalMerges.filter(m => m.model).length > 0) return "Test merge unavailable with additional fold-in models";
-    if (WS.recipeLoras.filter(l => l.filename).length > 0) return "Test merge unavailable with LoRAs \u2014 save to disk instead";
-    if (WS.recipeVae) return "Test merge unavailable with VAE bake \u2014 save to disk instead";
-    return "Hot-swap UNet weights \u2014 no disk write, instant iteration";
+    if (WS.rows.length !== 1) return "Test merge unavailable with more than one row — save to disk instead";
+    const r = WS.rows[0];
+    if (!_isConcreteModel(r.primary) || !_isConcreteModel(r.secondary)) return "Test merge requires two concrete files (no row references)";
+    const info = METHOD_INFO[r.method] || {};
+    if (info.needsC && !_isConcreteModel(r.tertiary)) return "Add Difference needs Tertiary (Model C) for test merge";
+    if (WS.recipeLoras.filter(l => l.filename).length > 0) return "Test merge unavailable with LoRAs — save to disk instead";
+    if (WS.recipeVae) return "Test merge unavailable with VAE bake — save to disk instead";
+    return "Hot-swap UNet weights — no disk write, instant iteration";
+}
+
+function _buildMergeBody() {
+    // Body for the in-memory single-step merge endpoint.
+    const r = WS.rows[0];
+    const body = {
+        model_a: r.primary, model_b: r.secondary,
+        alpha: r.alpha, method: r.method,
+        block_weights: r.useBlockWeights ? r.blockWeights : null,
+    };
+    const info = METHOD_INFO[r.method] || {};
+    if (info.needsC && r.tertiary) body.model_c = r.tertiary;
+    if (info.params.includes("density")) body.density = r.density;
+    if (info.params.includes("drop_rate")) body.drop_rate = r.dropRate;
+    if (info.params.includes("cosine_shift")) body.cosine_shift = r.cosineShift;
+    if (info.params.includes("eta")) body.eta = r.eta;
+    return body;
 }
 
 // ========================================================================
 // MERGE / TEST / CANCEL
 // ========================================================================
 
-function _buildMergeBody() {
-    // For test merge (simple 2-model only)
-    const body = { model_a: WS.modelA, model_b: WS.modelB, alpha: WS.alpha, method: WS.method, block_weights: WS.useBlockWeights ? WS.blockWeights : null };
-    const info = METHOD_INFO[WS.method] || {};
-    if (info.needsC && WS.modelC) body.model_c = WS.modelC;
-    if (info.params.includes("density")) body.density = WS.density;
-    if (info.params.includes("drop_rate")) body.drop_rate = WS.dropRate;
-    if (info.params.includes("cosine_shift")) body.cosine_shift = WS.cosineShift;
-    if (info.params.includes("eta")) body.eta = WS.eta;
-    return body;
-}
-
 async function startMerge() {
     if (WS.merging) return;
     const chainSteps = _buildRecipeChain();
     if (!chainSteps.length) {
-        if (window.showToast) window.showToast("Nothing to do \u2014 add a merge, LoRA, or VAE first", "warning");
+        if (window.showToast) window.showToast("Nothing to do — fill at least one row, or add a LoRA / VAE", "warning");
         return;
     }
 
-    // Single merge with no post-processing? Use direct merge endpoint for simplicity
-    if (chainSteps.length === 1 && chainSteps[0].type === "merge") {
+    // One simple merge step → use the direct merge endpoint.
+    if (chainSteps.length === 1 && chainSteps[0].type === "merge"
+        && _isConcreteModel(WS.rows[0].primary) && _isConcreteModel(WS.rows[0].secondary)) {
         const body = _buildMergeBody();
         body.output_name = WS.outputName || null;
         body.save_fp16 = WS.saveFp16;
@@ -508,11 +577,11 @@ async function startMerge() {
         return;
     }
 
-    // Multi-step: use chain endpoint
+    // Multi-step (or any step using __ON__) — chain endpoint.
     try {
         WS.merging = true; WS.status = "running"; WS.progress = 0; WS.error = null; WS.result = null;
         _renderProgress(); _setMergeButtonState(true);
-        if (window.showToast) window.showToast("Running " + chainSteps.length + "-step recipe\u2026", "info");
+        if (window.showToast) window.showToast("Running " + chainSteps.length + "-step recipe…", "info");
         await fetchJSON(API + "/chain", {
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ steps: chainSteps, save_intermediates: false }),
@@ -527,11 +596,11 @@ async function testMerge() {
     if (!_canTestMerge()) return;
     const body = _buildMergeBody();
     try {
-        WS.testMerging = true; _els.testMergeBtn.disabled = true; _els.testMergeBtn.textContent = "Merging\u2026";
-        if (window.showToast) window.showToast("Computing in-memory merge\u2026", "info");
+        WS.testMerging = true; _els.testMergeBtn.disabled = true; _els.testMergeBtn.textContent = "Merging…";
+        if (window.showToast) window.showToast("Computing in-memory merge…", "info");
         const res = await fetchJSON(API + "/merge_memory", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
         WS.memoryMergeActive = true; _renderMemoryStatus(res);
-        if (res.validation?.passed) { if (window.showToast) window.showToast("Test merge applied in " + res.total_time + "s \u2014 generate to preview!", "success"); }
+        if (res.validation?.passed) { if (window.showToast) window.showToast("Test merge applied in " + res.total_time + "s — generate to preview!", "success"); }
         else { if (window.showToast) window.showToast("Test merge applied but validation had warnings", "warning"); }
         if (res.non_unet_warning && window.showToast) window.showToast(res.non_unet_warning, "info");
     } catch (e) { WS.memoryMergeActive = false; if (window.showToast) window.showToast("Test merge failed: " + e.message, "error"); }
@@ -540,7 +609,7 @@ async function testMerge() {
 
 async function revertMerge() {
     try {
-        _els.revertBtn.disabled = true; _els.revertBtn.textContent = "Reverting\u2026";
+        _els.revertBtn.disabled = true; _els.revertBtn.textContent = "Reverting…";
         const res = await fetchJSON(API + "/revert", { method: "POST" });
         WS.memoryMergeActive = false; _els.memoryStatus.style.display = "none"; _updateActionButtons();
         if (window.showToast) window.showToast("Reverted in " + res.elapsed + "s", "success");
@@ -557,7 +626,7 @@ function _renderMemoryStatus(res) {
 }
 
 // ========================================================================
-// RECIPE — LORA LIST
+// RECIPE — LORA LIST (global)
 // ========================================================================
 
 function _addRecipeLora() {
@@ -573,7 +642,7 @@ function _removeRecipeLora(idx) {
 }
 
 function _getLoraOpts() {
-    return '<option value="">\u2014 Select LoRA \u2014</option>' + WS.loras.map(l => '<option value="' + _esc(l.filename) + '">' + _esc(l.filename) + '</option>').join("");
+    return '<option value="">— Select LoRA —</option>' + WS.loras.map(l => '<option value="' + _esc(l.filename) + '">' + _esc(l.filename) + '</option>').join("");
 }
 
 function _renderRecipeLoras() {
@@ -584,7 +653,7 @@ function _renderRecipeLoras() {
         html += '<div class="ws-lora-row" data-idx="' + i + '">'
             + '<div class="ws-lora-row-top">'
             + '<select class="param-select ws-model-select ws-rl-lora" data-idx="' + i + '">' + _getLoraOpts() + '</select>'
-            + '<button class="ws-lora-remove-btn ws-rl-remove" data-idx="' + i + '" title="Remove">\u00d7</button>'
+            + '<button class="ws-lora-remove-btn ws-rl-remove" data-idx="' + i + '" title="Remove">×</button>'
             + '</div>'
             + '<div class="ws-lora-row-bottom">'
             + '<span class="ws-lora-strength-label">Strength</span>'
@@ -614,73 +683,9 @@ function _bindLoraEvents() {
 }
 
 // ========================================================================
-// RECIPE — ADDITIONAL FOLD-IN MERGES
-// ========================================================================
-
-function _addFoldMerge() {
-    if (WS.additionalMerges.length >= 6) {
-        if (window.showToast) window.showToast("Maximum 8 models total (A + B + 6 additional)", "warning");
-        return;
-    }
-    WS.additionalMerges.push({ model: null, method: "weighted_sum", alpha: 0.5 });
-    _renderFoldMerges();
-    _updateActionButtons();
-}
-
-function _removeFoldMerge(idx) {
-    WS.additionalMerges.splice(idx, 1);
-    _renderFoldMerges();
-    _updateActionButtons();
-}
-
-function _getModelOpts() {
-    return '<option value="">\u2014 Select Model \u2014</option>' + WS.models.map(m => '<option value="' + _esc(m.filename) + '" title="' + m.size_gb + ' GB">' + _esc(m.filename) + ' (' + m.size_gb + ' GB)</option>').join("");
-}
-
-function _renderFoldMerges() {
-    if (!_els.foldList) return;
-    let html = '';
-    for (let i = 0; i < WS.additionalMerges.length; i++) {
-        const f = WS.additionalMerges[i];
-        const methodOpts = FOLD_METHODS.map(m => '<option value="' + m.value + '"' + (m.value === f.method ? ' selected' : '') + '>' + m.label + '</option>').join("");
-        html += '<div class="ws-fold-row" data-idx="' + i + '">'
-            + '<div class="ws-fold-row-top">'
-            + '<span class="ws-fold-label">\u2192</span>'
-            + '<select class="param-select ws-model-select ws-fold-model" data-idx="' + i + '">' + _getModelOpts() + '</select>'
-            + '<button class="ws-lora-remove-btn ws-fold-remove" data-idx="' + i + '" title="Remove">\u00d7</button>'
-            + '</div>'
-            + '<div class="ws-fold-row-bottom">'
-            + '<select class="param-select ws-fold-method" data-idx="' + i + '" style="max-width:160px;">' + methodOpts + '</select>'
-            + '<input type="range" min="0" max="1" step="0.01" value="' + f.alpha + '" class="ws-slider ws-fold-alpha" data-idx="' + i + '">'
-            + '<span class="ws-fold-alpha-val" data-idx="' + i + '">' + f.alpha.toFixed(2) + '</span>'
-            + '</div></div>';
-    }
-    _els.foldList.innerHTML = html;
-    _bindFoldEvents();
-}
-
-function _bindFoldEvents() {
-    _els.foldList.querySelectorAll(".ws-fold-model").forEach(sel => {
-        const idx = parseInt(sel.dataset.idx);
-        if (WS.additionalMerges[idx]?.model) sel.value = WS.additionalMerges[idx].model;
-        sel.addEventListener("change", () => { WS.additionalMerges[idx].model = sel.value || null; _updateActionButtons(); });
-    });
-    _els.foldList.querySelectorAll(".ws-fold-method").forEach(sel => {
-        const idx = parseInt(sel.dataset.idx);
-        sel.addEventListener("change", () => { WS.additionalMerges[idx].method = sel.value; });
-    });
-    _els.foldList.querySelectorAll(".ws-fold-alpha").forEach(slider => {
-        const idx = parseInt(slider.dataset.idx);
-        const valEl = _els.foldList.querySelector('.ws-fold-alpha-val[data-idx="' + idx + '"]');
-        slider.addEventListener("input", () => { WS.additionalMerges[idx].alpha = parseFloat(slider.value); if (valEl) valEl.textContent = parseFloat(slider.value).toFixed(2); });
-    });
-    _els.foldList.querySelectorAll(".ws-fold-remove").forEach(btn => {
-        btn.addEventListener("click", () => _removeFoldMerge(parseInt(btn.dataset.idx)));
-    });
-}
-
-// ========================================================================
-// JOURNAL
+// JOURNAL — backend writes per-step entries; renderer handles old + new
+// shape (old single-merge had model_a/model_b, new chain steps have the
+// same shape per step).
 // ========================================================================
 
 async function _loadJournal() {
@@ -734,7 +739,7 @@ function _renderJournal() {
 
     if (!entries.length) {
         _els.journalList.innerHTML = '<div class="ws-info-placeholder" style="padding:32px 0;">'
-            + (WS.journalEntries.length ? 'No matches for current filter' : 'No history yet \u2014 completed merges and bakes will appear here automatically')
+            + (WS.journalEntries.length ? 'No matches for current filter' : 'No history yet — completed merges and bakes will appear here automatically')
             + '</div>';
         return;
     }
@@ -750,7 +755,7 @@ function _renderJournal() {
         let starsHtml = '';
         for (let s = 1; s <= 5; s++) {
             const filled = s <= (e.rating || 0);
-            starsHtml += '<span class="ws-journal-star' + (filled ? ' ws-star-filled' : '') + '" data-id="' + _esc(e.id) + '" data-rating="' + s + '">\u2605</span>';
+            starsHtml += '<span class="ws-journal-star' + (filled ? ' ws-star-filled' : '') + '" data-id="' + _esc(e.id) + '" data-rating="' + s + '">★</span>';
         }
 
         html += '<div class="ws-journal-entry' + (isExpanded ? ' ws-je-expanded' : '') + '" data-id="' + _esc(e.id) + '">';
@@ -759,7 +764,7 @@ function _renderJournal() {
             + '<span class="ws-journal-name">' + _esc(e.name || "Untitled") + '</span>'
             + '<span class="ws-journal-stars-row">' + starsHtml + '</span>'
             + '<span class="ws-journal-date">' + date + '</span>'
-            + '<span class="ws-je-chevron">' + (isExpanded ? '\u25b4' : '\u25be') + '</span>'
+            + '<span class="ws-je-chevron">' + (isExpanded ? '▴' : '▾') + '</span>'
             + '</div>';
 
         if (isExpanded) {
@@ -946,71 +951,6 @@ function _bindJournalEvents() {
 }
 
 // ========================================================================
-// CHANGE HANDLERS
-// ========================================================================
-
-function _onModelsChanged() {
-    const arch = WS.inspectA?.architecture?.arch || WS.inspectB?.architecture?.arch || null;
-    if (arch && arch !== WS.arch) { WS.arch = arch; loadPresets(arch); }
-    WS.cosineDiff = null; _renderInfo();
-}
-
-function _onMethodChanged() {
-    const info = METHOD_INFO[WS.method] || {};
-    _els.modelCCard.style.display = info.needsC ? "" : "none";
-    _els.alphaRow.style.display = info.showAlpha ? "" : "none";
-    if (info.showAlpha) {
-        _els.alphaLabel.textContent = info.alphaLabel || "Weight";
-        _els.alphaHint.textContent = info.alphaHint || "";
-        _els.alphaHint.style.display = info.alphaHint ? "" : "none";
-    }
-    const hasParams = info.params.length > 0;
-    _els.methodParams.style.display = hasParams ? "" : "none";
-    _els.densityRow.style.display = info.params.includes("density") ? "" : "none";
-    _els.dropRateRow.style.display = info.params.includes("drop_rate") ? "" : "none";
-    _els.cosineShiftRow.style.display = info.params.includes("cosine_shift") ? "" : "none";
-    _els.etaRow.style.display = info.params.includes("eta") ? "" : "none";
-    _els.blockSection.style.display = info.blockWeights ? "" : "none";
-    if (!info.blockWeights && WS.useBlockWeights) {
-        WS.useBlockWeights = false;
-        _els.blockToggle.checked = false;
-        _els.blockSliders.style.display = "none";
-    }
-    _renderMethodDesc();
-    _updateActionButtons();
-}
-
-function _onModelBChanged() {
-    // Show/hide merge controls based on whether Model B is selected
-    const hasMerge = !!WS.modelB;
-    _els.mergeControls.style.display = hasMerge ? "" : "none";
-    _els.foldSection.style.display = hasMerge ? "" : "none";
-    if (!hasMerge) {
-        // Clear additional merges when disabling merge mode
-        WS.additionalMerges = [];
-        _renderFoldMerges();
-    }
-}
-
-function _renderMethodDesc() {
-    const info = METHOD_INFO[WS.method] || {};
-    if (!info.desc) return;
-    const infoEl = _els.inspectorBody.querySelector("#wsInfoContent");
-    if (infoEl) {
-        let html = '<div class="ws-info-block">'
-            + '<div class="ws-info-label">' + (info.label || WS.method) + '</div>'
-            + '<div class="ws-method-help-text">' + _esc(info.desc) + '</div>'
-            + '</div>';
-        const existing = infoEl.innerHTML;
-        if (!existing.includes("ws-method-help-text")) {
-            infoEl.innerHTML = html + existing.replace(/<div class="ws-info-placeholder">.*?<\/div>/s, '');
-        } else {
-            infoEl.innerHTML = html + existing.replace(/<div class="ws-info-block">.*?ws-method-help-text.*?<\/div><\/div>/s, '');
-        }
-    }
-}
-
-// ========================================================================
 // WEBSOCKET
 // ========================================================================
 
@@ -1048,58 +988,35 @@ function _hookWebSocket() {
 }
 
 // ========================================================================
-// UI BUILDER
+// UI BUILDER — top-level scaffold (rows are rendered into #wsRowList)
 // ========================================================================
 
 function _buildUI(container) {
-    const methodOpts = Object.entries(METHOD_INFO).map(([val, info]) => '<option value="' + val + '">' + info.label + '</option>').join("");
-    const vaeOpts = '<option value="">\u2014 None \u2014</option>';
+    const vaeOpts = '<option value="">— None —</option>';
 
     container.innerHTML = '<div class="ws-layout"><div class="ws-center">'
     + '<div class="ws-header"><span class="ws-title">Workshop</span><span class="ws-subtitle">v' + VERSION + '</span></div>'
-    // Tab bar
     + '<div class="ws-tabs"><button class="ws-tab ws-tab-active" data-tab="recipe">Recipe</button><button class="ws-tab" data-tab="history">History</button></div>'
 
     // ── Recipe tab ──
     + '<div id="wsTabRecipe" class="ws-tab-content">'
     + '<div class="ws-stack">'
-    + '<div class="ws-merge-panel">'
 
-    // ── Models ──
-    + '<div class="ws-merge-section ws-merge-models">'
-    + '<div class="ws-merge-models-header"><span class="ws-merge-models-title">Models</span><button id="wsRefreshAssets" class="ws-small-btn ws-refresh-btn" title="Rescan every model, LoRA and VAE directory">↻ Refresh</button></div>'
-    + '<div class="ws-merge-model-row"><label class="ws-merge-model-label">Model A <span class="ws-card-hint">(base)</span></label><select id="wsModelA" class="param-select ws-model-select"></select><div id="wsArchA" class="ws-arch-badge"></div></div>'
-    + '<div class="ws-merge-model-row"><label class="ws-merge-model-label">Model B <span class="ws-card-hint">(merge with \u2014 leave empty for bake-only)</span></label><select id="wsModelB" class="param-select ws-model-select"></select><div id="wsArchB" class="ws-arch-badge"></div></div>'
+    // Board header (refresh button lives here, replaces the old Models card header)
+    + '<div class="ws-board-header">'
+    + '<span class="ws-board-title">Merge Board</span>'
+    + '<button id="wsRefreshAssets" class="ws-small-btn ws-refresh-btn" title="Rescan every model, LoRA and VAE directory">↻ Refresh</button>'
     + '</div>'
 
-    // ── Merge controls (hidden unless Model B selected) ──
-    + '<div id="wsMergeControls" class="ws-merge-controls" style="display:none;">'
-    + '<div class="ws-merge-section">'
-    + '<div class="ws-merge-row"><div class="ws-merge-field ws-merge-method"><label>Method <button id="wsMethodHelp" class="ws-method-help-btn" title="About this method">?</button></label><select id="wsMethod" class="param-select">' + methodOpts + '</select></div></div>'
-    + '<div class="ws-param ws-param-alpha" id="wsAlphaRow"><label id="wsAlphaLabel">Weight (A \u2190 \u2192 B)</label><div class="ws-alpha-row"><input type="range" id="wsAlphaSlider" min="0" max="1" step="0.01" value="0.5" class="ws-slider"><input type="number" id="wsAlphaVal" min="0" max="1" step="0.01" value="0.5" class="param-val ws-alpha-input"></div><div id="wsAlphaHint" class="ws-param-context-hint">0 = 100% Model A, 1 = 100% Model B. 0.5 = equal blend.</div></div>'
-    + '</div>'
-    // Model C (for Add Difference)
-    + '<div id="wsModelCCard" class="ws-merge-section ws-merge-model-c" style="display:none;"><div class="ws-merge-model-row"><label class="ws-merge-model-label">Model C <span class="ws-card-hint">(base of B \u2014 for difference)</span></label><select id="wsModelC" class="param-select ws-model-select"></select><div class="ws-card-hint ws-c-hint">\u03b8_A + \u03b1\u00b7(\u03b8_B \u2212 \u03b8_C)</div></div></div>'
-    // Method-specific params
-    + '<div id="wsMethodParams" class="ws-merge-section ws-merge-method-params" style="display:none;">'
-    + '<div id="wsDensityRow" class="ws-method-param-row" style="display:none;"><div class="ws-param"><label>Density <span class="ws-param-hint">(fraction to keep)</span></label><div class="ws-alpha-row"><input type="range" id="wsDensitySlider" min="0" max="1" step="0.05" value="0.2" class="ws-slider"><input type="number" id="wsDensityVal" min="0" max="1" step="0.05" value="0.2" class="param-val ws-alpha-input"></div><div class="ws-param-context-hint">Keeps the top N% of weight changes by magnitude. 0.2 = top 20%. Lower = cleaner but weaker effect.</div></div></div>'
-    + '<div id="wsDropRateRow" class="ws-method-param-row" style="display:none;"><div class="ws-param"><label>Drop Rate <span class="ws-param-hint">(fraction to randomly drop)</span></label><div class="ws-alpha-row"><input type="range" id="wsDropRateSlider" min="0" max="0.99" step="0.05" value="0.9" class="ws-slider"><input type="number" id="wsDropRateVal" min="0" max="0.99" step="0.05" value="0.9" class="param-val ws-alpha-input"></div><div class="ws-param-context-hint">Randomly zeroes out this fraction of changes, rescales survivors. 0.9 = drop 90%, rescale 10\u00d7.</div></div></div>'
-    + '<div id="wsCosineShiftRow" class="ws-method-param-row" style="display:none;"><div class="ws-param"><label>Cosine Shift <span class="ws-param-hint">(+ keep A, \u2212 take B)</span></label><div class="ws-alpha-row"><input type="range" id="wsCosineShiftSlider" min="-1" max="1" step="0.05" value="0" class="ws-slider"><input type="number" id="wsCosineShiftVal" min="-1" max="1" step="0.05" value="0" class="param-val ws-alpha-input"></div><div class="ws-param-context-hint">Biases the automatic blending. 0 = neutral. Positive = conservative (more A). Negative = aggressive (more B).</div></div></div>'
-    + '<div id="wsEtaRow" class="ws-method-param-row" style="display:none;"><div class="ws-param"><label>Eta (\u03b7) <span class="ws-param-hint">(truncation threshold)</span></label><div class="ws-alpha-row"><input type="range" id="wsEtaSlider" min="0" max="0.5" step="0.01" value="0.1" class="ws-slider"><input type="number" id="wsEtaVal" min="0" max="0.5" step="0.01" value="0.1" class="param-val ws-alpha-input"></div><div class="ws-param-context-hint">Removes singular values below this fraction of the largest. 0 = keep everything (weighted sum). 0.1 = strip bottom 10%. Higher = more denoising.</div></div></div>'
-    + '</div>'
-    // Block weights
-    + '<div class="ws-merge-section ws-merge-block-footer" id="wsBlockSection"><div class="ws-block-header"><label class="ws-checkbox-label"><input type="checkbox" id="wsBlockToggle"><span>Per-Block Weights</span></label><div class="ws-block-actions"><select id="wsPresetSelect" class="param-select ws-preset-select" disabled><option value="">\u2014 Preset \u2014</option></select><button id="wsModelStockBtn" class="ws-small-btn" disabled title="Auto-alpha via Model Stock">Auto</button><button id="wsDiffBtn" class="ws-small-btn" disabled title="Compute cosine similarity">Diff</button></div></div><div id="wsBlockSliders" class="ws-block-sliders" style="display:none;"></div></div>'
-    + '</div>' // close merge controls
+    // The row container
+    + '<div id="wsRowList" class="ws-board"></div>'
 
-    // ── Additional fold-in models (shown when merging) ──
-    + '<div id="wsFoldSection" class="ws-recipe-section" style="display:none;">'
-    + '<div class="ws-recipe-section-header"><span class="ws-recipe-section-label">Additional Models</span><button id="wsFoldAdd" class="ws-bake-add-btn">+ Merge with another model</button></div>'
-    + '<div id="wsFoldList" class="ws-fold-list"></div>'
-    + '</div>'
+    // Add Row button
+    + '<button id="wsRowAdd" class="ws-row-add-btn">+ Add Row</button>'
 
     // ── LoRAs ──
     + '<div class="ws-recipe-section">'
-    + '<div class="ws-recipe-section-header"><span class="ws-recipe-section-label">LoRAs</span><button id="wsLoraAdd" class="ws-bake-add-btn">+ Add LoRA</button></div>'
+    + '<div class="ws-recipe-section-header"><span class="ws-recipe-section-label">LoRAs</span><button id="wsLoraAdd" class="ws-bake-add-btn ws-bake-add-btn-inline">+ Add LoRA</button></div>'
     + '<div id="wsLoraList" class="ws-lora-list"></div>'
     + '</div>'
 
@@ -1109,8 +1026,6 @@ function _buildUI(container) {
     + '<select id="wsRecipeVae" class="param-select ws-model-select">' + vaeOpts + '</select>'
     + '</div>'
 
-    + '</div>' // close ws-merge-panel
-
     // ── Output ──
     + '<div class="ws-output-section"><div class="ws-param"><label>Output Filename</label><input type="text" id="wsOutputName" class="param-val ws-output-input" placeholder="auto-generated if empty" style="text-align:left;"></div><div class="ws-output-opts"><label class="ws-checkbox-label"><input type="checkbox" id="wsFp16" checked><span>Save as fp16</span></label></div></div>'
 
@@ -1118,7 +1033,7 @@ function _buildUI(container) {
     + '<div id="wsMemoryStatus" class="ws-memory-status" style="display:none;"><span class="ws-memory-badge">Test merge active</span><span id="wsMemoryInfo" class="ws-memory-info"></span><button id="wsRevertBtn" class="ws-revert-btn">Revert</button></div>'
 
     // Actions
-    + '<div class="ws-action-row"><button id="wsTestMergeBtn" class="ws-test-merge-btn" disabled title="Hot-swap UNet weights \u2014 no disk write, instant iteration">Test Merge</button><button id="wsMergeBtn" class="ws-merge-btn" disabled>Save to Disk</button><button id="wsCancelBtn" class="ws-cancel-btn" style="display:none;">Cancel</button></div>'
+    + '<div class="ws-action-row"><button id="wsTestMergeBtn" class="ws-test-merge-btn" disabled title="Hot-swap UNet weights — no disk write, instant iteration">Test Merge</button><button id="wsMergeBtn" class="ws-merge-btn" disabled>Save to Disk</button><button id="wsCancelBtn" class="ws-cancel-btn" style="display:none;">Cancel</button></div>'
 
     // Progress
     + '<div id="wsProgressSection" class="ws-progress-section" style="display:none;"><div class="ws-progress-bar-bg"><div id="wsProgressFill" class="ws-progress-bar-fill"></div></div><div class="ws-progress-info"><span id="wsProgressText">0%</span><span id="wsProgressKeys"></span><span id="wsProgressTime"></span></div><div id="wsProgressStatus" class="ws-progress-status"></div></div>'
@@ -1144,124 +1059,486 @@ function _buildUI(container) {
 
     + '</div>'
     // Inspector
-    + '<div class="ws-inspector" id="wsInspector"><div class="ws-inspector-header"><span>Inspector</span><button id="wsInspectorToggle" class="ws-inspector-toggle" title="Toggle inspector">\u25c0</button></div><div class="ws-inspector-body" id="wsInspectorBody"><div id="wsInfoContent" class="ws-info-content"><div class="ws-info-placeholder">Select models to inspect</div></div></div></div>'
+    + '<div class="ws-inspector" id="wsInspector"><div class="ws-inspector-header"><span>Inspector</span><button id="wsInspectorToggle" class="ws-inspector-toggle" title="Toggle inspector">◀</button></div><div class="ws-inspector-body" id="wsInspectorBody"><div id="wsInfoContent" class="ws-info-content"><div class="ws-info-placeholder">Select models to inspect</div></div></div></div>'
     + '</div>';
 
-    // ── Cache element refs ──
+    // Cache element refs
     _els = {
-        modelA: container.querySelector("#wsModelA"), modelB: container.querySelector("#wsModelB"),
-        modelC: container.querySelector("#wsModelC"), modelCCard: container.querySelector("#wsModelCCard"),
-        mergeControls: container.querySelector("#wsMergeControls"),
-        method: container.querySelector("#wsMethod"),
-        alphaRow: container.querySelector("#wsAlphaRow"), alphaSlider: container.querySelector("#wsAlphaSlider"),
-        alphaVal: container.querySelector("#wsAlphaVal"), alphaLabel: container.querySelector("#wsAlphaLabel"),
-        alphaHint: container.querySelector("#wsAlphaHint"),
+        rowList: container.querySelector("#wsRowList"),
+        rowAdd: container.querySelector("#wsRowAdd"),
         outputName: container.querySelector("#wsOutputName"), fp16: container.querySelector("#wsFp16"),
         mergeBtn: container.querySelector("#wsMergeBtn"), cancelBtn: container.querySelector("#wsCancelBtn"),
         progressSection: container.querySelector("#wsProgressSection"), progressFill: container.querySelector("#wsProgressFill"),
         progressText: container.querySelector("#wsProgressText"), progressKeys: container.querySelector("#wsProgressKeys"),
         progressTime: container.querySelector("#wsProgressTime"), progressStatus: container.querySelector("#wsProgressStatus"),
-        archA: container.querySelector("#wsArchA"), archB: container.querySelector("#wsArchB"),
         infoContent: container.querySelector("#wsInfoContent"),
         inspector: container.querySelector("#wsInspector"), inspectorToggle: container.querySelector("#wsInspectorToggle"),
         inspectorBody: container.querySelector("#wsInspectorBody"),
-        blockSection: container.querySelector("#wsBlockSection"),
-        blockToggle: container.querySelector("#wsBlockToggle"), blockSliders: container.querySelector("#wsBlockSliders"),
-        presetSelect: container.querySelector("#wsPresetSelect"), modelStockBtn: container.querySelector("#wsModelStockBtn"),
-        diffBtn: container.querySelector("#wsDiffBtn"),
         testMergeBtn: container.querySelector("#wsTestMergeBtn"), revertBtn: container.querySelector("#wsRevertBtn"),
         memoryStatus: container.querySelector("#wsMemoryStatus"), memoryInfo: container.querySelector("#wsMemoryInfo"),
-        methodParams: container.querySelector("#wsMethodParams"),
-        densityRow: container.querySelector("#wsDensityRow"), dropRateRow: container.querySelector("#wsDropRateRow"),
-        cosineShiftRow: container.querySelector("#wsCosineShiftRow"), etaRow: container.querySelector("#wsEtaRow"),
-        densitySlider: container.querySelector("#wsDensitySlider"), densityVal: container.querySelector("#wsDensityVal"),
-        dropRateSlider: container.querySelector("#wsDropRateSlider"), dropRateVal: container.querySelector("#wsDropRateVal"),
-        cosineShiftSlider: container.querySelector("#wsCosineShiftSlider"), cosineShiftVal: container.querySelector("#wsCosineShiftVal"),
-        etaSlider: container.querySelector("#wsEtaSlider"), etaVal: container.querySelector("#wsEtaVal"),
-        methodHelp: container.querySelector("#wsMethodHelp"),
-        // Recipe sections
-        foldSection: container.querySelector("#wsFoldSection"),
-        foldList: container.querySelector("#wsFoldList"),
-        foldAdd: container.querySelector("#wsFoldAdd"),
         loraList: container.querySelector("#wsLoraList"),
         loraAdd: container.querySelector("#wsLoraAdd"),
         recipeVae: container.querySelector("#wsRecipeVae"),
         refreshAssets: container.querySelector("#wsRefreshAssets"),
-        // Tabs
         tabRecipe: container.querySelector("#wsTabRecipe"),
         tabHistory: container.querySelector("#wsTabHistory"),
         tabs: container.querySelectorAll(".ws-tab"),
-        // Journal
         journalSearch: container.querySelector("#wsJournalSearch"),
         journalList: container.querySelector("#wsJournalList"),
         journalFilters: container.querySelectorAll(".ws-journal-filter-btn"),
         journalAddEntry: container.querySelector("#wsJournalAddEntry"),
     };
-    _bindEvents();
-    _renderMethodDesc();
+
+    // Seed one row, render, bind global events.
+    if (!WS.rows.length) WS.rows.push(_newRow());
+    _renderRows();
+    _renderRecipeLoras();
+    _bindGlobalEvents();
 }
 
 // ========================================================================
-// EVENT BINDING
+// ROW RENDERING — every row is rendered identically
 // ========================================================================
 
-function _bindEvents() {
-    _els.modelA.addEventListener("change", () => {
-        WS.modelA = _els.modelA.value || null;
-        WS.compatibility = null; WS.healthScan = null;
-        inspectModel(WS.modelA, "A"); runPreflight(); runCompatibility();
-        _updateActionButtons();
+function _modelOptionsForRow(rowIdx, currentValue, includeNoneLabel) {
+    let html = '<option value="">' + (includeNoneLabel || "— Select —") + '</option>';
+    if (rowIdx > 0) {
+        html += '<optgroup label="Previous outputs">';
+        for (let i = 0; i < rowIdx; i++) {
+            const r = WS.rows[i];
+            const ref = _refValue(r.id);
+            const sel = currentValue === ref ? ' selected' : '';
+            html += '<option value="' + _esc(ref) + '"' + sel + '>Output of Row ' + (i + 1) + '</option>';
+        }
+        html += '</optgroup>';
+    }
+    html += '<optgroup label="Models on disk">';
+    for (const m of WS.models) {
+        const sel = currentValue === m.filename ? ' selected' : '';
+        html += '<option value="' + _esc(m.filename) + '"' + sel + ' title="' + m.size_gb + ' GB">' + _esc(m.filename) + ' (' + m.size_gb + ' GB)</option>';
+    }
+    html += '</optgroup>';
+    return html;
+}
+
+function _methodOptions(current) {
+    return Object.entries(METHOD_INFO).map(([val, info]) => '<option value="' + val + '"' + (val === current ? ' selected' : '') + '>' + info.label + '</option>').join("");
+}
+
+function _renderRows() {
+    if (!_els.rowList) return;
+    if (WS.activeRow >= WS.rows.length) WS.activeRow = Math.max(0, WS.rows.length - 1);
+    let html = '';
+    for (let i = 0; i < WS.rows.length; i++) html += _rowHtml(i);
+    _els.rowList.innerHTML = html;
+    for (let i = 0; i < WS.rows.length; i++) {
+        _bindRowEvents(i);
+        _populatePresetSelectForRow(i);
+        _buildBlockSlidersForRow(i);
+        _applyRowMethodVisibility(i);
+    }
+    _renderInfo();
+    _refreshActiveRowInspector();
+    _updateActionButtons();
+}
+
+function _rowHtml(rowIdx) {
+    const row = WS.rows[rowIdx];
+    const info = METHOD_INFO[row.method] || {};
+    const isActive = rowIdx === WS.activeRow;
+    const referenced = _isRowReferenced(rowIdx);
+    const refList = referenced ? _rowsReferencing(rowIdx).join(", ") : "";
+    const deleteTitle = referenced
+        ? "Cannot delete — referenced by " + refList
+        : "Delete row";
+
+    let html = '<div class="ws-row' + (isActive ? ' ws-row-active' : '') + '" data-row="' + rowIdx + '">';
+
+    // Header
+    html += '<div class="ws-row-header">'
+        + '<span class="ws-row-num">Row ' + (rowIdx + 1) + '</span>'
+        + '<button class="ws-row-delete' + (referenced ? ' ws-row-delete-blocked' : '') + '" data-row="' + rowIdx + '"'
+        + (referenced ? ' disabled' : '')
+        + ' title="' + _esc(deleteTitle) + '">×</button>'
+        + '</div>';
+
+    // Models
+    html += '<div class="ws-row-section ws-row-models">';
+    html += '<div class="ws-row-model-row">'
+        + '<label class="ws-merge-model-label">Primary <span class="ws-card-hint">(base)</span></label>'
+        + '<select class="param-select ws-model-select ws-row-primary" data-row="' + rowIdx + '">'
+        + _modelOptionsForRow(rowIdx, row.primary, "— Select Model —")
+        + '</select>'
+        + '<div class="ws-arch-badge ws-row-arch-primary" data-row="' + rowIdx + '"></div>'
+        + '</div>';
+    html += '<div class="ws-row-model-row">'
+        + '<label class="ws-merge-model-label">Secondary <span class="ws-card-hint">(merge target)</span></label>'
+        + '<select class="param-select ws-model-select ws-row-secondary" data-row="' + rowIdx + '">'
+        + _modelOptionsForRow(rowIdx, row.secondary, "— Select Model —")
+        + '</select>'
+        + '<div class="ws-arch-badge ws-row-arch-secondary" data-row="' + rowIdx + '"></div>'
+        + '</div>';
+    html += '<div class="ws-row-model-row ws-row-tertiary-field"' + (info.needsC ? '' : ' style="display:none;"') + '>'
+        + '<label class="ws-merge-model-label">Tertiary <span class="ws-card-hint">(base of secondary — for difference)</span></label>'
+        + '<select class="param-select ws-model-select ws-row-tertiary" data-row="' + rowIdx + '">'
+        + _modelOptionsForRow(rowIdx, row.tertiary, "— Select Model —")
+        + '</select>'
+        + '<div class="ws-card-hint ws-c-hint">θ_A + α·(θ_B − θ_C)</div>'
+        + '</div>';
+    html += '</div>';
+
+    // Method + alpha
+    html += '<div class="ws-row-section">';
+    html += '<div class="ws-merge-row"><div class="ws-merge-field"><label>Method</label>'
+        + '<select class="param-select ws-row-method" data-row="' + rowIdx + '">' + _methodOptions(row.method) + '</select>'
+        + '</div></div>';
+    html += '<div class="ws-param ws-param-alpha ws-row-alpha-row" data-row="' + rowIdx + '"' + (info.showAlpha ? '' : ' style="display:none;"') + '>'
+        + '<label class="ws-row-alpha-label" data-row="' + rowIdx + '">' + _esc(info.alphaLabel || "Weight") + '</label>'
+        + '<div class="ws-alpha-row">'
+        + '<input type="range" min="0" max="1" step="0.01" value="' + row.alpha + '" class="ws-slider ws-row-alpha-slider" data-row="' + rowIdx + '">'
+        + '<input type="number" min="0" max="1" step="0.01" value="' + row.alpha.toFixed(2) + '" class="param-val ws-alpha-input ws-row-alpha-val" data-row="' + rowIdx + '">'
+        + '</div>'
+        + '<div class="ws-param-context-hint ws-row-alpha-hint" data-row="' + rowIdx + '">' + _esc(info.alphaHint || "") + '</div>'
+        + '</div>';
+    html += '</div>';
+
+    // Method-specific params
+    html += '<div class="ws-row-section ws-row-params" data-row="' + rowIdx + '"' + (info.params.length ? '' : ' style="display:none;"') + '>';
+    html += _paramRowHtml(rowIdx, "density", row.density, "(fraction to keep)", "Keeps the top N% of weight changes by magnitude. 0.2 = top 20%. Lower = cleaner but weaker effect.", info.params.includes("density"));
+    html += _paramRowHtml(rowIdx, "drop_rate", row.dropRate, "(fraction to randomly drop)", "Randomly zeroes out this fraction of changes, rescales survivors. 0.9 = drop 90%, rescale 10×.", info.params.includes("drop_rate"));
+    html += _paramRowHtml(rowIdx, "cosine_shift", row.cosineShift, "(+ keep A, − take B)", "Biases the automatic blending. 0 = neutral. Positive = conservative (more A). Negative = aggressive (more B).", info.params.includes("cosine_shift"));
+    html += _paramRowHtml(rowIdx, "eta", row.eta, "(truncation threshold)", "Removes singular values below this fraction of the largest. 0 = keep everything. Higher = more denoising.", info.params.includes("eta"));
+    html += '</div>';
+
+    // Block weights
+    html += '<div class="ws-row-section ws-merge-block-footer ws-row-block-section" data-row="' + rowIdx + '"' + (info.blockWeights ? '' : ' style="display:none;"') + '>';
+    html += '<div class="ws-block-header">'
+        + '<label class="ws-checkbox-label"><input type="checkbox" class="ws-row-block-toggle" data-row="' + rowIdx + '"' + (row.useBlockWeights ? ' checked' : '') + '><span>Per-Block Weights</span></label>'
+        + '<div class="ws-block-actions">'
+        + '<select class="param-select ws-preset-select ws-row-preset" data-row="' + rowIdx + '" disabled><option value="">— Preset —</option></select>'
+        + '<button class="ws-small-btn ws-row-auto" data-row="' + rowIdx + '" disabled title="Auto-alpha via Model Stock">Auto</button>'
+        + '<button class="ws-small-btn ws-row-diff" data-row="' + rowIdx + '" disabled title="Compute cosine similarity for this row">Diff</button>'
+        + '</div></div>';
+    html += '<div class="ws-block-sliders ws-row-block-sliders" data-row="' + rowIdx + '"' + (row.useBlockWeights ? '' : ' style="display:none;"') + '></div>';
+    html += '</div>';
+
+    html += '</div>';
+    return html;
+}
+
+function _paramRowHtml(rowIdx, paramKey, value, hint, contextHint, visible) {
+    const def = PARAM_DEFS[paramKey];
+    if (!def) return "";
+    return '<div class="ws-method-param-row ws-row-param-row" data-row="' + rowIdx + '" data-param="' + paramKey + '"' + (visible ? '' : ' style="display:none;"') + '>'
+        + '<div class="ws-param">'
+        + '<label>' + _esc(def.label) + ' <span class="ws-param-hint">' + _esc(hint) + '</span></label>'
+        + '<div class="ws-alpha-row">'
+        + '<input type="range" min="' + def.min + '" max="' + def.max + '" step="' + def.step + '" value="' + value + '" class="ws-slider ws-row-param-slider" data-row="' + rowIdx + '" data-param="' + paramKey + '">'
+        + '<input type="number" min="' + def.min + '" max="' + def.max + '" step="' + def.step + '" value="' + Number(value).toFixed(2) + '" class="param-val ws-alpha-input ws-row-param-val" data-row="' + rowIdx + '" data-param="' + paramKey + '">'
+        + '</div>'
+        + '<div class="ws-param-context-hint">' + _esc(contextHint) + '</div>'
+        + '</div></div>';
+}
+
+function _populateVaeSelect() {
+    if (!_els.recipeVae) return;
+    const opts = '<option value="">— None —</option>' + WS.vaes.map(v => '<option value="' + _esc(v.filename) + '">' + _esc(v.filename) + ' (' + v.size_mb + ' MB)</option>').join("");
+    _els.recipeVae.innerHTML = opts;
+    if (WS.recipeVae) _els.recipeVae.value = WS.recipeVae;
+}
+
+function _populatePresetSelectForRow(rowIdx) {
+    const sel = _els.rowList?.querySelector('.ws-row-preset[data-row="' + rowIdx + '"]');
+    if (!sel) return;
+    let html = '<option value="">— Preset —</option>';
+    for (const name of Object.keys(WS.presets)) html += '<option value="' + _esc(name) + '">' + _esc(name) + '</option>';
+    sel.innerHTML = html;
+    sel.disabled = !WS.rows[rowIdx]?.useBlockWeights;
+}
+
+// ========================================================================
+// PER-ROW EVENT BINDING
+// ========================================================================
+
+function _bindRowEvents(rowIdx) {
+    const rowEl = _els.rowList.querySelector('.ws-row[data-row="' + rowIdx + '"]');
+    if (!rowEl) return;
+    const row = WS.rows[rowIdx];
+
+    // Row body click → set active row (ignore clicks on form controls)
+    rowEl.addEventListener("click", (ev) => {
+        const t = ev.target;
+        if (t.closest("select, input, button, label.ws-checkbox-label")) return;
+        _setActiveRow(rowIdx);
     });
-    _els.modelB.addEventListener("change", () => {
-        WS.modelB = _els.modelB.value || null;
-        WS.compatibility = null; WS.healthScan = null;
-        inspectModel(WS.modelB, "B"); runPreflight(); runCompatibility();
-        _onModelBChanged();
-        _updateActionButtons();
+
+    // Delete
+    const delBtn = rowEl.querySelector(".ws-row-delete");
+    if (delBtn && !delBtn.disabled) {
+        delBtn.addEventListener("click", (ev) => { ev.stopPropagation(); _removeRow(rowIdx); });
+    }
+
+    // Primary / secondary / tertiary
+    const primarySel = rowEl.querySelector(".ws-row-primary");
+    primarySel.addEventListener("change", () => {
+        row.primary = primarySel.value || null;
+        _setActiveRow(rowIdx);
+        if (rowIdx === WS.activeRow) {
+            WS.compatibility = null; WS.healthScan = null;
+            inspectModel(_isConcreteModel(row.primary) ? row.primary : null, "A");
+            runPreflight(); runCompatibility();
+        }
+        _renderRows();   // reflect new ref label availability
     });
-    _els.modelC.addEventListener("change", () => { WS.modelC = _els.modelC.value || null; _updateActionButtons(); });
-    _els.alphaSlider.addEventListener("input", () => { WS.alpha = parseFloat(_els.alphaSlider.value); _els.alphaVal.value = WS.alpha.toFixed(2); });
-    _els.alphaVal.addEventListener("change", () => { let v = parseFloat(_els.alphaVal.value); if (isNaN(v)) v = 0.5; v = Math.max(0, Math.min(1, v)); WS.alpha = v; _els.alphaSlider.value = v; _els.alphaVal.value = v.toFixed(2); });
-    _els.method.addEventListener("change", () => { WS.method = _els.method.value; _onMethodChanged(); });
+
+    const secSel = rowEl.querySelector(".ws-row-secondary");
+    secSel.addEventListener("change", () => {
+        row.secondary = secSel.value || null;
+        _setActiveRow(rowIdx);
+        if (rowIdx === WS.activeRow) {
+            WS.compatibility = null; WS.healthScan = null;
+            inspectModel(_isConcreteModel(row.secondary) ? row.secondary : null, "B");
+            runPreflight(); runCompatibility();
+        }
+        _updateActionButtons();
+        _updateRowAutoDiffButtons(rowIdx);
+    });
+
+    const terSel = rowEl.querySelector(".ws-row-tertiary");
+    if (terSel) {
+        terSel.addEventListener("change", () => {
+            row.tertiary = terSel.value || null;
+            _updateActionButtons();
+        });
+    }
+
+    // Method
+    const methodSel = rowEl.querySelector(".ws-row-method");
+    methodSel.addEventListener("change", () => {
+        row.method = methodSel.value;
+        _onRowMethodChanged(rowIdx);
+    });
+
+    // Alpha
+    const alphaSlider = rowEl.querySelector(".ws-row-alpha-slider");
+    const alphaVal = rowEl.querySelector(".ws-row-alpha-val");
+    alphaSlider.addEventListener("input", () => {
+        row.alpha = parseFloat(alphaSlider.value);
+        alphaVal.value = row.alpha.toFixed(2);
+    });
+    alphaVal.addEventListener("change", () => {
+        let v = parseFloat(alphaVal.value); if (isNaN(v)) v = 0.5;
+        v = Math.max(0, Math.min(1, v));
+        row.alpha = v; alphaSlider.value = v; alphaVal.value = v.toFixed(2);
+    });
+
+    // Method-specific param sliders
+    rowEl.querySelectorAll(".ws-row-param-slider").forEach(slider => {
+        const param = slider.dataset.param;
+        const valEl = rowEl.querySelector('.ws-row-param-val[data-param="' + param + '"]');
+        slider.addEventListener("input", () => {
+            const v = parseFloat(slider.value);
+            valEl.value = v.toFixed(2);
+            _setRowParam(rowIdx, param, v);
+        });
+        valEl.addEventListener("change", () => {
+            let v = parseFloat(valEl.value);
+            if (isNaN(v)) v = parseFloat(slider.value);
+            v = Math.max(parseFloat(slider.min), Math.min(parseFloat(slider.max), v));
+            slider.value = v; valEl.value = v.toFixed(2);
+            _setRowParam(rowIdx, param, v);
+        });
+    });
+
+    // Block weights toggle / preset / auto / diff
+    const blockToggle = rowEl.querySelector(".ws-row-block-toggle");
+    if (blockToggle) {
+        blockToggle.addEventListener("change", () => {
+            row.useBlockWeights = blockToggle.checked;
+            const sliders = rowEl.querySelector(".ws-row-block-sliders");
+            sliders.style.display = row.useBlockWeights ? "" : "none";
+            const preset = rowEl.querySelector(".ws-row-preset");
+            if (preset) preset.disabled = !row.useBlockWeights;
+            _updateRowAutoDiffButtons(rowIdx);
+            if (row.useBlockWeights && !row.blockWeights) _initRowBlockWeights(rowIdx, row.alpha);
+        });
+    }
+
+    const presetSel = rowEl.querySelector(".ws-row-preset");
+    if (presetSel) {
+        presetSel.addEventListener("change", () => {
+            const name = presetSel.value; if (!name) return;
+            const weights = WS.presets[name];
+            if (weights === null || weights === undefined) {
+                _initRowBlockWeights(rowIdx, row.alpha);
+            } else {
+                row.blockWeights = {};
+                for (const b of WS.blockList) row.blockWeights[b] = (b in weights) ? weights[b] : row.alpha;
+            }
+            _syncRowBlockUI(rowIdx);
+        });
+    }
+
+    const autoBtn = rowEl.querySelector(".ws-row-auto");
+    if (autoBtn) autoBtn.addEventListener("click", () => loadModelStockForRow(rowIdx));
+
+    const diffBtn = rowEl.querySelector(".ws-row-diff");
+    if (diffBtn) diffBtn.addEventListener("click", () => {
+        _setActiveRow(rowIdx);
+        loadCosineDiff();
+    });
+
+    _updateRowAutoDiffButtons(rowIdx);
+}
+
+function _setRowParam(rowIdx, param, v) {
+    const r = WS.rows[rowIdx];
+    if (param === "density") r.density = v;
+    else if (param === "drop_rate") r.dropRate = v;
+    else if (param === "cosine_shift") r.cosineShift = v;
+    else if (param === "eta") r.eta = v;
+}
+
+function _updateRowAutoDiffButtons(rowIdx) {
+    const r = WS.rows[rowIdx];
+    if (!r) return;
+    const rowEl = _els.rowList.querySelector('.ws-row[data-row="' + rowIdx + '"]');
+    if (!rowEl) return;
+    const a = _isConcreteModel(r.primary), b = _isConcreteModel(r.secondary);
+    const auto = rowEl.querySelector(".ws-row-auto");
+    const diff = rowEl.querySelector(".ws-row-diff");
+    if (auto) auto.disabled = !(a && b && r.useBlockWeights);
+    if (diff) diff.disabled = !(a && b);
+}
+
+// ========================================================================
+// PER-ROW METHOD CHANGE — visibility of Model C, params, block-weights
+// ========================================================================
+
+function _onRowMethodChanged(rowIdx) {
+    _applyRowMethodVisibility(rowIdx);
+    _updateActionButtons();
+}
+
+function _applyRowMethodVisibility(rowIdx) {
+    const r = WS.rows[rowIdx];
+    const info = METHOD_INFO[r.method] || {};
+    const rowEl = _els.rowList.querySelector('.ws-row[data-row="' + rowIdx + '"]');
+    if (!rowEl) return;
+
+    const tertiaryField = rowEl.querySelector(".ws-row-tertiary-field");
+    if (tertiaryField) tertiaryField.style.display = info.needsC ? "" : "none";
+
+    const alphaRow = rowEl.querySelector(".ws-row-alpha-row");
+    if (alphaRow) alphaRow.style.display = info.showAlpha ? "" : "none";
+    if (info.showAlpha) {
+        const lbl = rowEl.querySelector(".ws-row-alpha-label");
+        const hint = rowEl.querySelector(".ws-row-alpha-hint");
+        if (lbl) lbl.textContent = info.alphaLabel || "Weight";
+        if (hint) {
+            hint.textContent = info.alphaHint || "";
+            hint.style.display = info.alphaHint ? "" : "none";
+        }
+    }
+
+    const paramSection = rowEl.querySelector(".ws-row-params");
+    if (paramSection) paramSection.style.display = info.params.length ? "" : "none";
+    rowEl.querySelectorAll(".ws-row-param-row").forEach(el => {
+        const p = el.dataset.param;
+        el.style.display = info.params.includes(p) ? "" : "none";
+    });
+
+    const blockSection = rowEl.querySelector(".ws-row-block-section");
+    if (blockSection) blockSection.style.display = info.blockWeights ? "" : "none";
+    if (!info.blockWeights && r.useBlockWeights) {
+        r.useBlockWeights = false;
+        const toggle = rowEl.querySelector(".ws-row-block-toggle");
+        if (toggle) toggle.checked = false;
+        const sliders = rowEl.querySelector(".ws-row-block-sliders");
+        if (sliders) sliders.style.display = "none";
+    }
+}
+
+// ========================================================================
+// ROW ADDITION / REMOVAL
+// ========================================================================
+
+function _addRow() {
+    const newRow = _newRow();
+    if (WS.rows.length > 0) {
+        // default the new row's primary to the previous row's output ref —
+        // matches the natural "chain to the last result" expectation
+        newRow.primary = _refValue(WS.rows[WS.rows.length - 1].id);
+    }
+    WS.rows.push(newRow);
+    WS.activeRow = WS.rows.length - 1;
+    _renderRows();
+}
+
+function _removeRow(rowIdx) {
+    if (rowIdx < 0 || rowIdx >= WS.rows.length) return;
+    if (_isRowReferenced(rowIdx)) {
+        if (window.showToast) window.showToast("Row " + (rowIdx + 1) + " is referenced by " + _rowsReferencing(rowIdx).join(", ") + " — cannot delete", "warning");
+        return;
+    }
+    WS.rows.splice(rowIdx, 1);
+    if (WS.rows.length === 0) WS.rows.push(_newRow());
+    if (WS.activeRow >= WS.rows.length) WS.activeRow = WS.rows.length - 1;
+    _renderRows();
+}
+
+function _setActiveRow(rowIdx) {
+    if (rowIdx < 0 || rowIdx >= WS.rows.length || rowIdx === WS.activeRow) return;
+    WS.activeRow = rowIdx;
+    _els.rowList.querySelectorAll(".ws-row").forEach(el => {
+        el.classList.toggle("ws-row-active", parseInt(el.dataset.row) === rowIdx);
+    });
+    _refreshActiveRowInspector();
+}
+
+function _refreshActiveRowInspector() {
+    const r = _activeRow();
+    if (!r) {
+        WS.inspectA = null; WS.inspectB = null; WS.preflight = null;
+        WS.compatibility = null; WS.cosineDiff = null;
+        _renderInfo();
+        return;
+    }
+    const a = _isConcreteModel(r.primary) ? r.primary : null;
+    const b = _isConcreteModel(r.secondary) ? r.secondary : null;
+    WS.preflight = null; WS.compatibility = null; WS.cosineDiff = null;
+    inspectModel(a, "A");
+    inspectModel(b, "B");
+    if (a && b) { runPreflight(); runCompatibility(); }
+    else { _renderInfo(); }
+}
+
+// ========================================================================
+// GLOBAL EVENT BINDING (non-row controls)
+// ========================================================================
+
+function _bindGlobalEvents() {
+    _els.rowAdd.addEventListener("click", _addRow);
+
     _els.outputName.addEventListener("input", () => { WS.outputName = _els.outputName.value.trim(); });
     _els.fp16.addEventListener("change", () => { WS.saveFp16 = _els.fp16.checked; });
     _els.fp16.checked = WS.saveFp16;
+
     _els.mergeBtn.addEventListener("click", startMerge);
     _els.cancelBtn.addEventListener("click", cancelMerge);
-    _els.inspectorToggle.addEventListener("click", () => { _els.inspector.classList.toggle("collapsed"); _els.inspectorToggle.textContent = _els.inspector.classList.contains("collapsed") ? "\u25b6" : "\u25c0"; });
-    _els.blockToggle.addEventListener("change", () => {
-        WS.useBlockWeights = _els.blockToggle.checked;
-        _els.blockSliders.style.display = WS.useBlockWeights ? "" : "none";
-        _els.presetSelect.disabled = !WS.useBlockWeights;
-        _els.modelStockBtn.disabled = !WS.useBlockWeights || !WS.modelA || !WS.modelB;
-        if (WS.useBlockWeights && !WS.blockWeights) _initBlockWeights(WS.alpha);
-    });
-    _els.presetSelect.addEventListener("change", () => {
-        const name = _els.presetSelect.value; if (!name) return;
-        const weights = WS.presets[name];
-        if (weights === null || weights === undefined) { _initBlockWeights(WS.alpha); }
-        else { WS.blockWeights = {}; for (const b of WS.blockList) WS.blockWeights[b] = (b in weights) ? weights[b] : WS.alpha; }
-        _syncBlockSlidersFromState();
-    });
-    _els.modelStockBtn.addEventListener("click", loadModelStock);
-    _els.diffBtn.addEventListener("click", loadCosineDiff);
     _els.testMergeBtn.addEventListener("click", testMerge);
     _els.revertBtn.addEventListener("click", revertMerge);
-    _bindParamSlider(_els.densitySlider, _els.densityVal, (v) => { WS.density = v; });
-    _bindParamSlider(_els.dropRateSlider, _els.dropRateVal, (v) => { WS.dropRate = v; });
-    _bindParamSlider(_els.cosineShiftSlider, _els.cosineShiftVal, (v) => { WS.cosineShift = v; });
-    _bindParamSlider(_els.etaSlider, _els.etaVal, (v) => { WS.eta = v; });
-    _els.methodHelp.addEventListener("click", (e) => { e.preventDefault(); _renderMethodDesc(); });
 
-    // Recipe events
+    _els.inspectorToggle.addEventListener("click", () => {
+        _els.inspector.classList.toggle("collapsed");
+        _els.inspectorToggle.textContent = _els.inspector.classList.contains("collapsed") ? "▶" : "◀";
+    });
+
     _els.loraAdd.addEventListener("click", _addRecipeLora);
-    _els.foldAdd.addEventListener("click", _addFoldMerge);
     _els.recipeVae.addEventListener("change", () => { WS.recipeVae = _els.recipeVae.value || null; _updateActionButtons(); });
 
-    // Rescan asset directories (checkpoints, LoRAs, VAEs) on demand
     if (_els.refreshAssets) _els.refreshAssets.addEventListener("click", refreshAssets);
 
-    // Tab switching
     _els.tabs.forEach(tab => {
         tab.addEventListener("click", () => {
             _els.tabs.forEach(t => t.classList.remove("ws-tab-active"));
@@ -1273,7 +1550,6 @@ function _bindEvents() {
         });
     });
 
-    // Journal events
     _els.journalSearch.addEventListener("input", () => { WS.journalSearch = _els.journalSearch.value; _renderJournal(); });
     _els.journalAddEntry.addEventListener("click", _addManualJournalEntry);
     _els.journalFilters.forEach(btn => {
@@ -1288,19 +1564,25 @@ function _bindEvents() {
     _loadJournal();
 }
 
-function _bindParamSlider(slider, numInput, setter) {
-    slider.addEventListener("input", () => { const v = parseFloat(slider.value); numInput.value = v.toFixed(2); setter(v); });
-    numInput.addEventListener("change", () => { let v = parseFloat(numInput.value); if (isNaN(v)) v = parseFloat(slider.value); v = Math.max(parseFloat(slider.min), Math.min(parseFloat(slider.max), v)); slider.value = v; numInput.value = v.toFixed(2); setter(v); });
+// ========================================================================
+// BLOCK WEIGHT SLIDERS — per row
+// ========================================================================
+
+function _initRowBlockWeights(rowIdx, alpha) {
+    const r = WS.rows[rowIdx];
+    r.blockWeights = {};
+    for (const b of WS.blockList) r.blockWeights[b] = alpha;
+    _syncRowBlockUI(rowIdx);
 }
 
-// ========================================================================
-// BLOCK WEIGHT SLIDERS
-// ========================================================================
-
-function _initBlockWeights(alpha) { WS.blockWeights = {}; for (const b of WS.blockList) WS.blockWeights[b] = alpha; _syncBlockSlidersFromState(); }
-
-function _buildBlockSliders() {
-    if (!WS.blockList.length) { _els.blockSliders.innerHTML = '<div class="ws-info-placeholder">No blocks detected</div>'; return; }
+function _buildBlockSlidersForRow(rowIdx) {
+    const r = WS.rows[rowIdx];
+    const container = _els.rowList?.querySelector('.ws-row-block-sliders[data-row="' + rowIdx + '"]');
+    if (!container) return;
+    if (!WS.blockList.length) {
+        container.innerHTML = '<div class="ws-info-placeholder">No blocks detected — pick two models so the architecture can be inferred</div>';
+        return;
+    }
     const groups = _groupBlocks(WS.blockList);
     let html = '';
     for (const group of groups) {
@@ -1309,24 +1591,38 @@ function _buildBlockSliders() {
             html += '<div class="ws-block-group-label ws-has-tip"' + (tip ? ' data-tip="' + _esc(tip) + '"' : '') + '>' + _esc(group.label) + (tip ? ' <span class="ws-tooltip-icon">?</span>' : '') + '</div>';
         }
         for (const block of group.blocks) {
-            const val = WS.blockWeights?.[block] ?? WS.alpha;
+            const val = r.blockWeights?.[block] ?? r.alpha;
             const tip = _getBlockTooltip(block);
             html += '<div class="ws-block-row" data-block="' + block + '">'
                 + '<span class="ws-block-name ws-has-tip"' + (tip ? ' data-tip="' + _esc(tip) + '"' : '') + '>' + block + (tip ? ' <span class="ws-tooltip-icon">?</span>' : '') + '</span>'
-                + '<input type="range" min="0" max="1" step="0.01" value="' + val + '" class="ws-block-slider" data-block="' + block + '">'
-                + '<span class="ws-block-val" data-block="' + block + '">' + val.toFixed(2) + '</span></div>';
+                + '<input type="range" min="0" max="1" step="0.01" value="' + val + '" class="ws-block-slider" data-row="' + rowIdx + '" data-block="' + block + '">'
+                + '<span class="ws-block-val" data-row="' + rowIdx + '" data-block="' + block + '">' + val.toFixed(2) + '</span></div>';
         }
     }
-    _els.blockSliders.innerHTML = html;
-    _els.blockSliders.querySelectorAll(".ws-block-slider").forEach(slider => {
+    container.innerHTML = html;
+    container.querySelectorAll(".ws-block-slider").forEach(slider => {
         slider.addEventListener("input", (e) => {
-            const block = e.target.dataset.block; const val = parseFloat(e.target.value);
-            if (!WS.blockWeights) WS.blockWeights = {};
-            WS.blockWeights[block] = val;
-            const valSpan = _els.blockSliders.querySelector('.ws-block-val[data-block="' + block + '"]');
+            const block = e.target.dataset.block;
+            const val = parseFloat(e.target.value);
+            if (!r.blockWeights) r.blockWeights = {};
+            r.blockWeights[block] = val;
+            const valSpan = container.querySelector('.ws-block-val[data-block="' + block + '"]');
             if (valSpan) valSpan.textContent = val.toFixed(2);
         });
     });
+}
+
+function _syncRowBlockUI(rowIdx) {
+    const r = WS.rows[rowIdx];
+    const rowEl = _els.rowList.querySelector('.ws-row[data-row="' + rowIdx + '"]');
+    if (!rowEl) return;
+    const toggle = rowEl.querySelector(".ws-row-block-toggle");
+    if (toggle) toggle.checked = !!r.useBlockWeights;
+    const sliders = rowEl.querySelector(".ws-row-block-sliders");
+    if (sliders) sliders.style.display = r.useBlockWeights ? "" : "none";
+    const preset = rowEl.querySelector(".ws-row-preset");
+    if (preset) preset.disabled = !r.useBlockWeights;
+    _buildBlockSlidersForRow(rowIdx);
 }
 
 function _groupBlocks(blocks) {
@@ -1347,80 +1643,92 @@ function _groupBlocks(blocks) {
     return groups;
 }
 
-function _syncBlockSlidersFromState() {
-    if (!WS.blockWeights) return;
-    _els.blockSliders.querySelectorAll(".ws-block-slider").forEach(slider => {
-        const block = slider.dataset.block;
-        if (block in WS.blockWeights) {
-            slider.value = WS.blockWeights[block];
-            const valSpan = _els.blockSliders.querySelector('.ws-block-val[data-block="' + block + '"]');
-            if (valSpan) valSpan.textContent = WS.blockWeights[block].toFixed(2);
-        }
+// ========================================================================
+// CHANGE HANDLERS — active models / arch detection
+// ========================================================================
+
+function _onActiveModelsChanged() {
+    const arch = WS.inspectA?.architecture?.arch || WS.inspectB?.architecture?.arch || null;
+    if (arch && arch !== WS.arch) { WS.arch = arch; loadPresets(arch); }
+    WS.cosineDiff = null;
+    _renderInfo();
+    _renderActiveArchBadges();
+}
+
+function _renderActiveArchBadges() {
+    const rowIdx = WS.activeRow;
+    const rowEl = _els.rowList?.querySelector('.ws-row[data-row="' + rowIdx + '"]');
+    if (!rowEl) return;
+    const a = rowEl.querySelector('.ws-row-arch-primary');
+    const b = rowEl.querySelector('.ws-row-arch-secondary');
+    // clear all rows' badges first
+    _els.rowList.querySelectorAll(".ws-row-arch-primary, .ws-row-arch-secondary").forEach(el => {
+        el.textContent = ""; el.className = el.className.replace(/\bws-arch-\w+\b/g, "").trim();
+        if (el.classList.contains("ws-row-arch-primary")) el.classList.add("ws-arch-badge", "ws-row-arch-primary");
+        else el.classList.add("ws-arch-badge", "ws-row-arch-secondary");
     });
+    if (a && WS.inspectA) { a.textContent = WS.inspectA.architecture?.details || ""; a.classList.add("ws-arch-" + (WS.inspectA.architecture?.arch || "unknown")); }
+    if (b && WS.inspectB) { b.textContent = WS.inspectB.architecture?.details || ""; b.classList.add("ws-arch-" + (WS.inspectB.architecture?.arch || "unknown")); }
 }
 
 // ========================================================================
-// UI UPDATES
+// ACTION-BUTTON & PROGRESS UPDATES
 // ========================================================================
 
-function _populateModelSelects() {
-    const opts = '<option value="">\u2014 Select Model \u2014</option>' + WS.models.map(m => '<option value="' + _esc(m.filename) + '" title="' + m.size_gb + ' GB">' + _esc(m.filename) + ' (' + m.size_gb + ' GB)</option>').join("");
-    _els.modelA.innerHTML = opts; _els.modelB.innerHTML = opts; _els.modelC.innerHTML = opts;
-    if (WS.modelA && WS.models.some(m => m.filename === WS.modelA)) _els.modelA.value = WS.modelA;
-    if (WS.modelB && WS.models.some(m => m.filename === WS.modelB)) _els.modelB.value = WS.modelB;
-    if (WS.modelC && WS.models.some(m => m.filename === WS.modelC)) _els.modelC.value = WS.modelC;
-    // Also refresh fold merge dropdowns and VAE
-    _renderFoldMerges();
-    _populateVaeSelect();
-}
-
-function _populateVaeSelect() {
-    if (!_els.recipeVae) return;
-    const opts = '<option value="">\u2014 None \u2014</option>' + WS.vaes.map(v => '<option value="' + _esc(v.filename) + '">' + _esc(v.filename) + ' (' + v.size_mb + ' MB)</option>').join("");
-    _els.recipeVae.innerHTML = opts;
-    if (WS.recipeVae) _els.recipeVae.value = WS.recipeVae;
-}
-
-function _populatePresetSelect() {
-    let html = '<option value="">\u2014 Preset \u2014</option>';
-    for (const name of Object.keys(WS.presets)) html += '<option value="' + _esc(name) + '">' + _esc(name) + '</option>';
-    _els.presetSelect.innerHTML = html;
+function _validateRows() {
+    // Returns null if all rows look mergeable, otherwise an error string.
+    if (WS.rows.length === 0) return "No rows on the board";
+    for (let i = 0; i < WS.rows.length; i++) {
+        const r = WS.rows[i];
+        if (!r.primary || !r.secondary) return "Row " + (i + 1) + " needs both Primary and Secondary";
+        if (r.primary === r.secondary) return "Row " + (i + 1) + ": Primary and Secondary must differ";
+        const info = METHOD_INFO[r.method] || {};
+        if (info.needsC) {
+            if (!r.tertiary) return "Row " + (i + 1) + " (Add Difference): Tertiary required";
+            if (r.tertiary === r.primary || r.tertiary === r.secondary) return "Row " + (i + 1) + ": Tertiary must differ from Primary and Secondary";
+        }
+        // Refs must point at earlier rows (UI never offers later ones, but
+        // verify just in case state was edited externally).
+        for (const slot of ["primary", "secondary", "tertiary"]) {
+            const v = r[slot];
+            if (_isRefValue(v)) {
+                const refIdx = _rowIndexById(_refRowId(v));
+                if (refIdx < 0) return "Row " + (i + 1) + " " + slot + ": referenced row missing";
+                if (refIdx >= i) return "Row " + (i + 1) + " " + slot + ": cannot reference itself or a later row";
+            }
+        }
+    }
+    return null;
 }
 
 function _updateActionButtons() {
-    const info = METHOD_INFO[WS.method] || {};
-    const hasC = !info.needsC || (WS.modelC && WS.modelC !== WS.modelA && WS.modelC !== WS.modelB);
-
-    // Save button: needs Model A + at least one operation
     const hasLoras = WS.recipeLoras.some(l => l.filename);
     const hasVae = !!WS.recipeVae;
-    const hasMerge = !!WS.modelB;
-    const hasFolds = WS.additionalMerges.some(m => m.model);
-    const hasOperation = hasMerge || hasLoras || hasVae;
-    const mergeValid = !hasMerge || (WS.modelA !== WS.modelB && hasC);
-    const saveReady = WS.modelA && hasOperation && mergeValid && !WS.merging && !WS.testMerging;
-    _els.mergeBtn.disabled = !saveReady;
+    const validationError = _validateRows();
+    const hasRows = WS.rows.length > 0 && WS.rows.some(r => r.primary && r.secondary);
+    const hasOperation = hasRows || hasLoras || hasVae;
+    const saveReady = hasOperation && !validationError && !WS.merging && !WS.testMerging;
+    if (_els.mergeBtn) _els.mergeBtn.disabled = !saveReady;
 
-    // Test merge button
-    const testReady = _canTestMerge() && hasC;
-    _els.testMergeBtn.disabled = !testReady;
-    _els.testMergeBtn.title = _getTestMergeTooltip();
+    if (_els.testMergeBtn) {
+        _els.testMergeBtn.disabled = !_canTestMerge();
+        _els.testMergeBtn.title = _getTestMergeTooltip();
+    }
 
-    // Inspector buttons
-    _els.diffBtn.disabled = !WS.modelA || !WS.modelB;
-    _els.modelStockBtn.disabled = !WS.useBlockWeights || !WS.modelA || !WS.modelB;
+    for (let i = 0; i < WS.rows.length; i++) _updateRowAutoDiffButtons(i);
 
-    // Update save button label
-    const chainSteps = _buildRecipeChain();
-    if (chainSteps.length > 1) {
-        _els.mergeBtn.textContent = "Save to Disk (" + chainSteps.length + " steps)";
-    } else {
-        _els.mergeBtn.textContent = "Save to Disk";
+    if (_els.mergeBtn) {
+        const chainSteps = _buildRecipeChain();
+        _els.mergeBtn.textContent = chainSteps.length > 1
+            ? "Save to Disk (" + chainSteps.length + " steps)"
+            : "Save to Disk";
     }
 }
 
 function _setMergeButtonState(merging) {
-    _els.mergeBtn.style.display = merging ? "none" : ""; _els.cancelBtn.style.display = merging ? "" : "none";
+    if (!_els.mergeBtn) return;
+    _els.mergeBtn.style.display = merging ? "none" : "";
+    _els.cancelBtn.style.display = merging ? "" : "none";
     _els.progressSection.style.display = merging || WS.status === "complete" || WS.status === "error" || WS.status === "cancelled" ? "" : "none";
     _updateActionButtons();
 }
@@ -1432,9 +1740,9 @@ function _renderProgress() {
     _els.progressTime.textContent = WS.elapsed ? WS.elapsed + "s" : "";
     _els.progressSection.style.display = "";
     const s = _els.progressStatus;
-    if (WS.status === "complete") { s.textContent = "\u2713 Complete"; s.className = "ws-progress-status ws-status-ok"; _els.progressFill.className = "ws-progress-bar-fill ws-fill-ok"; }
-    else if (WS.status === "error") { s.textContent = "\u2717 " + (WS.error || "Unknown error"); s.className = "ws-progress-status ws-status-err"; _els.progressFill.className = "ws-progress-bar-fill ws-fill-err"; }
-    else if (WS.status === "cancelled") { s.textContent = "\u2014 Cancelled"; s.className = "ws-progress-status ws-status-warn"; _els.progressFill.className = "ws-progress-bar-fill ws-fill-warn"; }
+    if (WS.status === "complete") { s.textContent = "✓ Complete"; s.className = "ws-progress-status ws-status-ok"; _els.progressFill.className = "ws-progress-bar-fill ws-fill-ok"; }
+    else if (WS.status === "error") { s.textContent = "✗ " + (WS.error || "Unknown error"); s.className = "ws-progress-status ws-status-err"; _els.progressFill.className = "ws-progress-bar-fill ws-fill-err"; }
+    else if (WS.status === "cancelled") { s.textContent = "— Cancelled"; s.className = "ws-progress-status ws-status-warn"; _els.progressFill.className = "ws-progress-bar-fill ws-fill-warn"; }
     else { s.textContent = ""; s.className = "ws-progress-status"; _els.progressFill.className = "ws-progress-bar-fill"; }
 }
 
@@ -1443,24 +1751,53 @@ function _renderProgress() {
 // ========================================================================
 
 function _renderInfo() {
+    const r = _activeRow();
     const parts = [];
-    if (WS.inspectA) { parts.push(_renderModelInfo("Model A", WS.inspectA)); _els.archA.textContent = WS.inspectA.architecture?.details || ""; _els.archA.className = "ws-arch-badge ws-arch-" + (WS.inspectA.architecture?.arch || "unknown"); }
-    else { _els.archA.textContent = ""; _els.archA.className = "ws-arch-badge"; }
-    if (WS.inspectB) { parts.push(_renderModelInfo("Model B", WS.inspectB)); _els.archB.textContent = WS.inspectB.architecture?.details || ""; _els.archB.className = "ws-arch-badge ws-arch-" + (WS.inspectB.architecture?.arch || "unknown"); }
-    else { _els.archB.textContent = ""; _els.archB.className = "ws-arch-badge"; }
+
+    if (r) {
+        const label = "Row " + (WS.activeRow + 1);
+        parts.push('<div class="ws-info-block"><div class="ws-info-label">Active: ' + label + '</div>'
+            + '<div class="ws-info-row"><span>Method</span><span>' + _esc((METHOD_INFO[r.method] || {}).label || r.method) + '</span></div>'
+            + (METHOD_INFO[r.method]?.desc ? '<div class="ws-method-help-text">' + _esc(METHOD_INFO[r.method].desc) + '</div>' : '')
+            + '</div>');
+    }
+
+    // Reference inputs that aren't files cannot be inspected.
+    if (r && _isRefValue(r.primary)) {
+        const refIdx = _rowIndexById(_refRowId(r.primary));
+        parts.push('<div class="ws-info-block"><div class="ws-info-label">Primary</div><div class="ws-info-row"><span>Ref</span><span>Output of Row ' + (refIdx + 1) + '</span></div><div class="ws-card-hint">Resolved at merge time</div></div>');
+    }
+    if (r && _isRefValue(r.secondary)) {
+        const refIdx = _rowIndexById(_refRowId(r.secondary));
+        parts.push('<div class="ws-info-block"><div class="ws-info-label">Secondary</div><div class="ws-info-row"><span>Ref</span><span>Output of Row ' + (refIdx + 1) + '</span></div><div class="ws-card-hint">Resolved at merge time</div></div>');
+    }
+
+    if (WS.inspectA) parts.push(_renderModelInfo("Primary", WS.inspectA));
+    if (WS.inspectB) parts.push(_renderModelInfo("Secondary", WS.inspectB));
+
     if (WS.compatibility) parts.push(_renderCompatibility(WS.compatibility));
-    else if (WS.inspectA && WS.inspectB && WS.inspectA.architecture?.arch !== WS.inspectB.architecture?.arch) parts.push('<div class="ws-info-warning">\u26a0 Architecture mismatch \u2014 merge is not possible</div>');
+    else if (WS.inspectA && WS.inspectB && WS.inspectA.architecture?.arch !== WS.inspectB.architecture?.arch) parts.push('<div class="ws-info-warning">⚠ Architecture mismatch — merge is not possible</div>');
+
     if (WS.preflight) parts.push(_renderPreflight(WS.preflight));
-    if (WS.diffLoading) parts.push('<div class="ws-info-block"><div class="ws-info-label">Block Divergence</div><div class="ws-diff-loading">Computing diff\u2026</div></div>');
+
+    if (WS.diffLoading) parts.push('<div class="ws-info-block"><div class="ws-info-label">Block Divergence</div><div class="ws-diff-loading">Computing diff…</div></div>');
     else if (WS.cosineDiff) parts.push(_renderCosineDiff(WS.cosineDiff));
-    if (WS.healthLoading) parts.push('<div class="ws-info-block"><div class="ws-info-label">Health Scan</div><div class="ws-diff-loading">Scanning tensors\u2026</div></div>');
+
+    if (WS.healthLoading) parts.push('<div class="ws-info-block"><div class="ws-info-label">Health Scan</div><div class="ws-diff-loading">Scanning tensors…</div></div>');
     else if (WS.healthScan) parts.push(_renderHealth(WS.healthScan));
+
     if ((WS.inspectA || WS.inspectB) && !WS.healthLoading && !WS.healthScan) {
         parts.push('<div class="ws-info-block"><button class="ws-small-btn" id="wsHealthScanBtn" style="width:100%;">Scan Health</button></div>');
     }
+
     _els.infoContent.innerHTML = parts.length ? parts.join("") : '<div class="ws-info-placeholder">Select models to inspect</div>';
     const hBtn = _els.infoContent.querySelector("#wsHealthScanBtn");
-    if (hBtn) hBtn.addEventListener("click", () => { runHealthScan(WS.modelA || WS.modelB); });
+    if (hBtn) hBtn.addEventListener("click", () => {
+        const { a, b } = _activeInputs();
+        runHealthScan(a || b);
+    });
+
+    _renderActiveArchBadges();
 }
 
 function _renderModelInfo(label, info) {
@@ -1484,7 +1821,7 @@ function _renderPreflight(pf) {
         + '<div class="ws-info-row"><span>Overhead</span><span>~' + pf.overhead_gb + ' GB</span></div>'
         + '<div class="ws-info-row ws-info-row-highlight"><span>Peak estimate</span><span>' + pf.peak_gb + ' GB</span></div>'
         + '<div class="ws-info-row"><span>Available</span><span>' + pf.available_gb + ' / ' + pf.total_gb + ' GB</span></div>'
-        + (pf.warning ? '<div class="ws-ram-warning">\u26a0 ' + _esc(pf.warning) + '</div>' : '') + '</div>';
+        + (pf.warning ? '<div class="ws-ram-warning">⚠ ' + _esc(pf.warning) + '</div>' : '') + '</div>';
 }
 
 function _renderCosineDiff(diff) {
@@ -1517,12 +1854,12 @@ function _renderCosineDiff(diff) {
         const sDivs = specialEntries.map(([, v]) => (1 - v.similarity) * 100);
         specialHtml = '<div class="ws-diff-separator">Non-UNet</div>' + buildRows(specialEntries, Math.min(...sDivs), Math.max(...sDivs));
     }
-    const nanWarn = diff.nan_keys ? '<div class="ws-diff-nan-warn">\u26a0 ' + diff.nan_keys + ' keys skipped (NaN weights \u2014 likely unused CLIP layers)</div>' : "";
+    const nanWarn = diff.nan_keys ? '<div class="ws-diff-nan-warn">⚠ ' + diff.nan_keys + ' keys skipped (NaN weights — likely unused CLIP layers)</div>' : "";
     const globalDiv = ((1 - (diff.global_similarity || 0)) * 100).toFixed(2);
 
     return '<div class="ws-info-block ws-diff-block">'
         + '<div class="ws-info-label">Block Divergence <span class="ws-diff-global">(global: ' + globalDiv + '% different)</span></div>'
-        + '<div class="ws-diff-legend"><span style="color:var(--green);">\u25fc Similar</span><span style="color:var(--amber);">\u25fc Moderate</span><span style="color:var(--red);">\u25fc Divergent</span></div>'
+        + '<div class="ws-diff-legend"><span style="color:var(--green);">◼ Similar</span><span style="color:var(--amber);">◼ Moderate</span><span style="color:var(--red);">◼ Divergent</span></div>'
         + '<div class="ws-diff-hint">Higher % = more different between the models. These are the blocks worth adjusting.</div>'
         + nanWarn + unetHtml + specialHtml + '</div>';
 }
@@ -1541,38 +1878,28 @@ function _divColor(div, min, max) {
     return "rgb(" + c[0] + "," + c[1] + "," + c[2] + ")";
 }
 
-function _renderMetadata(label, meta) {
-    const entries = Object.entries(meta).slice(0, 20);
-    const rows = entries.map(([k, v]) => {
-        let display = v; try { display = JSON.stringify(JSON.parse(v), null, 2); } catch {}
-        if (typeof display === "string" && display.length > 200) display = display.slice(0, 200) + "\u2026";
-        return '<div class="ws-meta-row"><span class="ws-meta-key">' + _esc(k) + '</span><pre class="ws-meta-val">' + _esc(display) + '</pre></div>';
-    }).join("");
-    return '<div class="ws-info-block"><div class="ws-info-label">' + label + '</div>' + rows + '</div>';
-}
-
 function _renderCompatibility(compat) {
-    const icons = { incompatible: "\u274c", caution: "\u26a0", compatible: "\u2714" };
+    const icons = { incompatible: "❌", caution: "⚠", compatible: "✔" };
     const colors = { incompatible: "var(--red)", caution: "var(--amber)", compatible: "var(--green)" };
     const labels = { incompatible: "Incompatible", caution: "Caution", compatible: "Compatible" };
     const v = compat.verdict;
     let html = '<div class="ws-info-block"><div class="ws-info-label">Compatibility <span style="color:' + colors[v] + ';font-weight:600;font-size:10px;text-transform:none;letter-spacing:0;">' + icons[v] + ' ' + labels[v] + '</span></div>';
     for (const issue of (compat.issues || [])) {
-        html += '<div class="ws-compat-item ws-compat-issue"><span style="color:var(--red);">\u2716</span> ' + _esc(issue.text) + '</div>';
+        html += '<div class="ws-compat-item ws-compat-issue"><span style="color:var(--red);">✖</span> ' + _esc(issue.text) + '</div>';
         if (issue.detail) html += '<div class="ws-compat-detail">' + _esc(issue.detail) + '</div>';
     }
     for (const warn of (compat.warnings || [])) {
-        html += '<div class="ws-compat-item ws-compat-warn"><span style="color:var(--amber);">\u26a0</span> ' + _esc(warn.text) + '</div>';
+        html += '<div class="ws-compat-item ws-compat-warn"><span style="color:var(--amber);">⚠</span> ' + _esc(warn.text) + '</div>';
         if (warn.detail) html += '<div class="ws-compat-detail">' + _esc(warn.detail) + '</div>';
     }
     for (const note of (compat.info || [])) {
-        html += '<div class="ws-compat-item ws-compat-ok"><span style="color:var(--green);">\u2714</span> ' + _esc(note.text) + '</div>';
+        html += '<div class="ws-compat-item ws-compat-ok"><span style="color:var(--green);">✔</span> ' + _esc(note.text) + '</div>';
     }
     return html + '</div>';
 }
 
 function _renderHealth(scan) {
-    const icons = { healthy: "\u2714", minor: "\u26a0", warning: "\u26a0", critical: "\u274c" };
+    const icons = { healthy: "✔", minor: "⚠", warning: "⚠", critical: "❌" };
     const colors = { healthy: "var(--green)", minor: "var(--text-3)", warning: "var(--amber)", critical: "var(--red)" };
     const labels = { healthy: "Healthy", minor: "Minor Issues", warning: "Warning", critical: "Critical" };
     const v = scan.verdict;
@@ -1580,14 +1907,14 @@ function _renderHealth(scan) {
     html += '<div class="ws-info-row"><span>Total keys</span><span>' + scan.total_keys.toLocaleString() + '</span></div>';
     if (scan.total_nan > 0 && scan.nan_clip_only) {
         html += '<div class="ws-info-row" style="color:var(--text-3);"><span>NaN keys (CLIP)</span><span>' + scan.total_nan + '</span></div>';
-        html += '<div style="color:var(--text-4);font-size:9px;padding:2px 0;font-style:italic;">Known artifact \u2014 unused CLIP encoder layers. Not a merge issue.</div>';
+        html += '<div style="color:var(--text-4);font-size:9px;padding:2px 0;font-style:italic;">Known artifact — unused CLIP encoder layers. Not a merge issue.</div>';
     } else if (scan.total_nan > 0) {
         html += '<div class="ws-info-row" style="color:var(--red);"><span>NaN/Inf keys</span><span>' + scan.total_nan + '</span></div>';
     }
     if (scan.total_zero > 0) html += '<div class="ws-info-row" style="color:var(--amber);"><span>All-zero keys</span><span>' + scan.total_zero + '</span></div>';
     if (scan.total_collapsed > 0) html += '<div class="ws-info-row" style="color:var(--amber);"><span>Collapsed variance</span><span>' + scan.total_collapsed + '</span></div>';
     if (scan.verdict === "healthy" && scan.total_nan === 0) {
-        html += '<div style="color:var(--green);font-size:10px;padding:4px 0;">No issues detected \u2014 all tensors look clean.</div>';
+        html += '<div style="color:var(--green);font-size:10px;padding:4px 0;">No issues detected — all tensors look clean.</div>';
     } else if (scan.verdict === "healthy" && scan.nan_clip_only) {
         html += '<div style="color:var(--green);font-size:10px;padding:4px 0;">Model is healthy. NaN keys are expected CLIP artifacts.</div>';
     }
@@ -1621,18 +1948,29 @@ function _esc(s) { if (!s) return ""; const d = document.createElement("div"); d
 
 if (window.StudioModules) {
     StudioModules.register("workshop", {
-        label: "Workshop", icon: "\u2692",
+        label: "Workshop", icon: "⚒",
         init(container, services) {
             console.log(TAG, "Initializing Workshop module v" + VERSION);
-            if (!document.querySelector('link[href*="workshop.css"]')) { const link = document.createElement("link"); link.rel = "stylesheet"; link.href = "/studio/static/workshop.css?v=" + VERSION; document.head.appendChild(link); }
-            _buildUI(container); _hookWebSocket(); loadModels(); loadLoras(); loadVaes();
+            if (!document.querySelector('link[href*="workshop.css"]')) {
+                const link = document.createElement("link");
+                link.rel = "stylesheet";
+                link.href = "/studio/static/workshop.css?v=" + VERSION;
+                document.head.appendChild(link);
+            }
+            _buildUI(container);
+            _hookWebSocket();
+            loadModels(); loadLoras(); loadVaes();
         },
         activate(container, services) {
             loadModels(); loadLoras(); loadVaes();
-            fetchJSON(API + "/memory_status").then(status => { WS.memoryMergeActive = status.active; if (status.active) { _els.memoryStatus.style.display = ""; _els.memoryInfo.textContent = "In-memory merge active"; } else { _els.memoryStatus.style.display = "none"; } }).catch(() => {});
+            fetchJSON(API + "/memory_status").then(status => {
+                WS.memoryMergeActive = status.active;
+                if (status.active) { _els.memoryStatus.style.display = ""; _els.memoryInfo.textContent = "In-memory merge active"; }
+                else { _els.memoryStatus.style.display = "none"; }
+            }).catch(() => {});
         },
         deactivate() {},
     });
-} else { console.warn(TAG, "StudioModules not available \u2014 Workshop cannot register"); }
+} else { console.warn(TAG, "StudioModules not available — Workshop cannot register"); }
 
 })();
