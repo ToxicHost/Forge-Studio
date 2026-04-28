@@ -174,8 +174,9 @@ const WS = {
     // changes. Each row stores its own per-block weights independently.
     blockList: [], presets: {}, arch: null,
 
-    // Global recipe extras (applied after the board). VAE is per-row now.
-    recipeLoras: [],     // [{filename, strength}]
+    // Global recipe extras (applied after the board)
+    recipeLoras: [],     // [{filename, strength}] — LoRA bake (global)
+    recipeVae: null,     // VAE baked once into the chain's final output (global)
     outputName: "", saveFp16: true, saveIntermediates: false,
 
     // Run state
@@ -311,7 +312,7 @@ async function loadLoras() {
 async function loadVaes() {
     try {
         WS.vaes = await fetchJSON(API + "/vaes");
-        // Per-row VAE: refresh every row's dropdown.
+        _populateGlobalVaeSelect();
         for (let i = 0; i < WS.rows.length; i++) _populateRowVae(i);
     } catch (e) { console.error(TAG, "Failed to load VAEs:", e); }
 }
@@ -450,12 +451,21 @@ async function loadModelStockForRow(rowIdx) {
 
 function _buildRecipeChain() {
     /**
-     * Each row in WS.rows becomes a merge chain step. If the row has a
-     * VAE attached, an extra vae_bake step is appended after that row's
-     * merge, taking its output as the checkpoint. Refs from later rows
-     * resolve to a row's *final* step (post-VAE if VAE'd), so a row that
-     * references "Output of Row 1" automatically pulls Row 1's VAE-baked
-     * result. LoRA bake stays global (applied to the chain's final step).
+     * Walks the board into a chain of backend steps:
+     *
+     *   - Each row produces a merge step. If the row carries a *per-row
+     *     VAE override* (row.vae set), an extra vae_bake step is appended
+     *     right after that row's merge, taking the merge's output as
+     *     checkpoint. Without an override, no per-row vae_bake is
+     *     emitted — the global VAE handles it (if set) at the end.
+     *   - Refs from later rows resolve to a row's final step number
+     *     (post-override if any), so chained rows automatically consume
+     *     the VAE-baked result.
+     *   - LoRA bake (global) is appended after all rows.
+     *   - Global VAE (WS.recipeVae) is the chain's last step when set,
+     *     baked into whatever the previous step produced. If no global
+     *     VAE is set and every row has its own override, no final bake
+     *     step is added.
      */
     const steps = [];
     const rowOutputStep = {};   // rowId → last step number contributed by that row
@@ -485,7 +495,7 @@ function _buildRecipeChain() {
 
         let rowFinalStep = mergeStepNum;
 
-        if (row.vae) {
+        if (row.vae) {     // per-row override
             stepNum++;
             steps.push({
                 step: stepNum, type: "vae_bake",
@@ -515,6 +525,20 @@ function _buildRecipeChain() {
         });
     }
 
+    // Global VAE bake — final step when set
+    if (WS.recipeVae) {
+        stepNum++;
+        const checkpoint = stepNum === 1 ? null : "__O" + (stepNum - 1) + "__";
+        steps.push({
+            step: stepNum, type: "vae_bake",
+            params: {
+                checkpoint: checkpoint,
+                vae: WS.recipeVae,
+                save_fp16: WS.saveFp16,
+            },
+        });
+    }
+
     if (steps.length && WS.outputName) {
         steps[steps.length - 1].params.output_name = WS.outputName;
     }
@@ -523,9 +547,9 @@ function _buildRecipeChain() {
 }
 
 function _canTestMerge() {
-    // Test merge: only with exactly one row, two concrete-file models,
-    // a satisfied tertiary slot if the method needs one, and no LoRAs
-    // or VAEs anywhere.
+    // Test merge: exactly one row, two concrete-file models, a satisfied
+    // tertiary slot if the method needs one, no LoRAs, and no VAE bake
+    // (neither global nor per-row override).
     if (WS.rows.length !== 1) return false;
     const r = WS.rows[0];
     if (!_isConcreteModel(r.primary) || !_isConcreteModel(r.secondary)) return false;
@@ -533,6 +557,7 @@ function _canTestMerge() {
     const info = METHOD_INFO[r.method] || {};
     if (info.needsC && (!_isConcreteModel(r.tertiary) || r.tertiary === r.primary || r.tertiary === r.secondary)) return false;
     if (WS.recipeLoras.filter(l => l.filename).length > 0) return false;
+    if (WS.recipeVae) return false;
     if (WS.rows.some(row => row.vae)) return false;
     if (WS.merging || WS.testMerging) return false;
     return true;
@@ -545,7 +570,7 @@ function _getTestMergeTooltip() {
     const info = METHOD_INFO[r.method] || {};
     if (info.needsC && !_isConcreteModel(r.tertiary)) return "Add Difference needs Tertiary (Model C) for test merge";
     if (WS.recipeLoras.filter(l => l.filename).length > 0) return "Test merge unavailable with LoRAs — save to disk instead";
-    if (WS.rows.some(row => row.vae)) return "Test merge unavailable with VAE bake — save to disk instead";
+    if (WS.recipeVae || WS.rows.some(row => row.vae)) return "Test merge unavailable with VAE bake — save to disk instead";
     return "Hot-swap UNet weights — no disk write, instant iteration";
 }
 
@@ -1046,7 +1071,12 @@ function _buildUI(container) {
     + '<div id="wsLoraList" class="ws-lora-list"></div>'
     + '</div>'
 
-    // (VAE is per-row now — see the row's line 2.)
+    // ── VAE (global — applied once at the end of the chain) ──
+    + '<div class="ws-recipe-section">'
+    + '<div class="ws-recipe-section-header"><span class="ws-recipe-section-label">VAE</span></div>'
+    + '<select id="wsRecipeVae" class="param-select ws-model-select"><option value="">— None —</option></select>'
+    + '<div class="ws-recipe-section-hint">Baked into the chain’s final output. Override per-row from a row’s ⚙ menu if you need a different VAE on an intermediate result.</div>'
+    + '</div>'
 
     // ── Output ──
     + '<div class="ws-output-section"><div class="ws-param"><label>Output Filename</label><input type="text" id="wsOutputName" class="param-val ws-output-input" placeholder="auto-generated if empty" style="text-align:left;"></div><div class="ws-output-opts"><label class="ws-checkbox-label"><input type="checkbox" id="wsFp16" checked><span>Save as fp16</span></label><label class="ws-checkbox-label" title="Keep each row’s output as its own .safetensors file (useful for multi-row boards)"><input type="checkbox" id="wsSaveIntermediates"><span>Keep intermediates</span></label></div></div>'
@@ -1101,6 +1131,7 @@ function _buildUI(container) {
         memoryStatus: container.querySelector("#wsMemoryStatus"), memoryInfo: container.querySelector("#wsMemoryInfo"),
         loraList: container.querySelector("#wsLoraList"),
         loraAdd: container.querySelector("#wsLoraAdd"),
+        recipeVae: container.querySelector("#wsRecipeVae"),
         refreshAssets: container.querySelector("#wsRefreshAssets"),
         tabRecipe: container.querySelector("#wsTabRecipe"),
         tabHistory: container.querySelector("#wsTabHistory"),
@@ -1237,9 +1268,11 @@ function _rowHtml(rowIdx) {
             + '<button class="ws-small-btn ws-row-diff" data-row="' + rowIdx + '" disabled title="Compute cosine similarity">Diff</button>'
             + '</div>';
     }
-    // Per-row VAE bake — appended after the merge step that produced this row
-    html += '<select class="param-select ws-row-vae" data-row="' + rowIdx + '" title="Bake a VAE into this row’s output (adds a vae_bake step to the chain)">'
-        + '<option value="">— No VAE —</option>'
+    // Per-row VAE bake (override). Default leaves the global VAE in
+    // charge — picking a filename here adds a vae_bake step right after
+    // this row's merge, on top of (and before) any global VAE at the end.
+    html += '<select class="param-select ws-row-vae" data-row="' + rowIdx + '" title="Per-row VAE override — leave on “Use global” unless you need a different VAE on this row’s output">'
+        + '<option value="">— Use global —</option>'
         + '</select>';
     html += '</div>';
 
@@ -1270,11 +1303,22 @@ function _populatePresetSelectForRow(rowIdx) {
     sel.disabled = !WS.rows[rowIdx]?.useBlockWeights;
 }
 
+function _populateGlobalVaeSelect() {
+    if (!_els.recipeVae) return;
+    let html = '<option value="">— None —</option>';
+    for (const v of WS.vaes) {
+        const sel = WS.recipeVae === v.filename ? ' selected' : '';
+        html += '<option value="' + _esc(v.filename) + '"' + sel + '>' + _esc(v.filename) + ' (' + v.size_mb + ' MB)</option>';
+    }
+    _els.recipeVae.innerHTML = html;
+}
+
 function _populateRowVae(rowIdx) {
     const sel = _els.rowList?.querySelector('.ws-row-vae[data-row="' + rowIdx + '"]');
     if (!sel) return;
     const r = WS.rows[rowIdx];
-    let html = '<option value="">— No VAE —</option>';
+    // null → use global; a filename → per-row override
+    let html = '<option value="">— Use global —</option>';
     for (const v of WS.vaes) {
         const selected = r && r.vae === v.filename ? ' selected' : '';
         html += '<option value="' + _esc(v.filename) + '"' + selected + '>' + _esc(v.filename) + ' (' + v.size_mb + ' MB)</option>';
@@ -1596,6 +1640,10 @@ function _bindGlobalEvents() {
     });
 
     _els.loraAdd.addEventListener("click", _addRecipeLora);
+    _els.recipeVae.addEventListener("change", () => {
+        WS.recipeVae = _els.recipeVae.value || null;
+        _updateActionButtons();
+    });
 
     if (_els.refreshAssets) _els.refreshAssets.addEventListener("click", refreshAssets);
 
@@ -1763,7 +1811,7 @@ function _validateRows() {
 
 function _updateActionButtons() {
     const hasLoras = WS.recipeLoras.some(l => l.filename);
-    const hasVae = WS.rows.some(r => r.vae);
+    const hasVae = !!WS.recipeVae || WS.rows.some(r => r.vae);
     const validationError = _validateRows();
     const hasRows = WS.rows.length > 0 && WS.rows.some(r => r.primary && r.secondary);
     const hasOperation = hasRows || hasLoras || hasVae;
