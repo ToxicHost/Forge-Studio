@@ -2178,6 +2178,14 @@ def _build_key_map(ckpt_keys: set, lora_keys: set, arch: str) -> dict:
         candidate = f"model.diffusion_model.{base}.weight"
         if candidate in ckpt_keys:
             key_map[base] = candidate
+        # Direct-format LoRAs ship base names that already start with
+        # "diffusion_model." (e.g. diffusion_model.input_blocks.0.0).
+        # CompVis SD1.x / SDXL checkpoints use "model.diffusion_model.…",
+        # so prepend just "model." instead of doubling the prefix.
+        if base.startswith("diffusion_model."):
+            candidate = f"model.{base}.weight"
+            if candidate in ckpt_keys:
+                key_map[base] = candidate
         # Try text_encoders. prefix (generic ComfyUI format)
         if base.startswith("text_encoders."):
             # text_encoders.clip_l.transformer... → try various ckpt prefixes

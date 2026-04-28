@@ -456,19 +456,20 @@ function _buildRecipeChain() {
     /**
      * Walks the board into a chain of backend steps:
      *
-     *   - Each row produces a merge step. If the row carries a *per-row
-     *     VAE override* (row.vae set), an extra vae_bake step is appended
-     *     right after that row's merge, taking the merge's output as
-     *     checkpoint. Without an override, no per-row vae_bake is
-     *     emitted — the global VAE handles it (if set) at the end.
+     *   - Each row with both primary and secondary set produces a merge
+     *     step. Primary-only rows are checkpoint sources for bake-only
+     *     flows (LoRA / global VAE bake on a single model — see below).
+     *   - If a merge row carries a per-row VAE override (bakeVae + vae),
+     *     an extra vae_bake step is appended right after that row's
+     *     merge, taking the merge's output as checkpoint.
      *   - Refs from later rows resolve to a row's final step number
-     *     (post-override if any), so chained rows automatically consume
+     *     (post-bakeVae if any), so chained rows automatically consume
      *     the VAE-baked result.
      *   - LoRA bake (global) is appended after all rows.
-     *   - Global VAE (WS.recipeVae) is the chain's last step when set,
-     *     baked into whatever the previous step produced. If no global
-     *     VAE is set and every row has its own override, no final bake
-     *     step is added.
+     *   - Global VAE (WS.recipeVae) is the chain's last step when set.
+     *   - Bake-only fallback: if no merge step is produced but bakes
+     *     (LoRAs or global VAE) are configured, the first row whose
+     *     primary is a concrete file becomes the bake checkpoint.
      */
     const steps = [];
     const rowOutputStep = {};   // rowId → last step number contributed by that row
@@ -476,7 +477,7 @@ function _buildRecipeChain() {
 
     for (let i = 0; i < WS.rows.length; i++) {
         const row = WS.rows[i];
-        if (!row.primary || !row.secondary) continue;
+        if (!row.primary || !row.secondary) continue;   // incomplete row skipped here
 
         stepNum++;
         const mergeStepNum = stepNum;
@@ -518,27 +519,42 @@ function _buildRecipeChain() {
     }
 
     const activeLoras = WS.recipeLoras.filter(l => l.filename);
+    const hasGlobalVae = !!WS.recipeVae;
+    const hasBakes = activeLoras.length > 0 || hasGlobalVae;
+
+    // Determine the checkpoint for downstream bake steps. With merge
+    // steps already in the chain, this is just the latest output. For a
+    // bake-only flow (no merges), fall back to the first row whose
+    // primary is a concrete filename — this restores the pre-merge-board
+    // "single model + LoRAs / VAE" workflow.
+    let bakeCheckpoint = null;
+    if (steps.length > 0) {
+        bakeCheckpoint = "__O" + stepNum + "__";
+    } else if (hasBakes) {
+        const seed = WS.rows.find(r => _isConcreteModel(r.primary));
+        if (seed) bakeCheckpoint = seed.primary;
+    }
+
     if (activeLoras.length) {
         stepNum++;
-        const checkpoint = stepNum === 1 ? null : "__O" + (stepNum - 1) + "__";
         steps.push({
             step: stepNum, type: "lora_bake",
             params: {
-                checkpoint: checkpoint,
+                checkpoint: bakeCheckpoint,
                 loras: activeLoras.map(l => ({ filename: l.filename, strength: l.strength })),
                 save_fp16: WS.saveFp16,
             },
         });
+        bakeCheckpoint = "__O" + stepNum + "__";
     }
 
     // Global VAE bake — final step when set
-    if (WS.recipeVae) {
+    if (hasGlobalVae) {
         stepNum++;
-        const checkpoint = stepNum === 1 ? null : "__O" + (stepNum - 1) + "__";
         steps.push({
             step: stepNum, type: "vae_bake",
             params: {
-                checkpoint: checkpoint,
+                checkpoint: bakeCheckpoint,
                 vae: WS.recipeVae,
                 save_fp16: WS.saveFp16,
             },
@@ -1805,11 +1821,18 @@ function _renderActiveArchBadges() {
 // ========================================================================
 
 function _validateRows() {
-    // Returns null if all rows look mergeable, otherwise an error string.
+    // Returns null when the board can be assembled into a chain. Empty
+    // rows are silently ignored (the user adds blanks then fills them
+    // in). A row with only Primary is allowed — it acts as a checkpoint
+    // source for LoRA / VAE bake-only flows.
     if (WS.rows.length === 0) return "No rows on the board";
     for (let i = 0; i < WS.rows.length; i++) {
         const r = WS.rows[i];
-        if (!r.primary || !r.secondary) return "Row " + (i + 1) + " needs both Primary and Secondary";
+        const hasA = !!r.primary, hasB = !!r.secondary;
+        if (!hasA && !hasB) continue;                       // empty row
+        if (!hasA && hasB) return "Row " + (i + 1) + ": Secondary set without Primary";
+        if (hasA && !hasB) continue;                        // primary-only — bake source
+        // Full merge row
         if (r.primary === r.secondary) return "Row " + (i + 1) + ": Primary and Secondary must differ";
         const info = METHOD_INFO[r.method] || {};
         if (info.needsC) {
@@ -1832,10 +1855,17 @@ function _validateRows() {
 
 function _updateActionButtons() {
     const hasLoras = WS.recipeLoras.some(l => l.filename);
-    const hasVae = !!WS.recipeVae || WS.rows.some(r => r.bakeVae && r.vae);
+    // Per-row VAE bake only fires for full merge rows; count it that way.
+    const hasPerRowVae = WS.rows.some(r => r.primary && r.secondary && r.bakeVae && r.vae);
+    const hasVae = !!WS.recipeVae || hasPerRowVae;
     const validationError = _validateRows();
-    const hasRows = WS.rows.length > 0 && WS.rows.some(r => r.primary && r.secondary);
-    const hasOperation = hasRows || hasLoras || hasVae;
+    const hasMergeRow = WS.rows.some(r => r.primary && r.secondary);
+    const hasAnyPrimary = WS.rows.some(r => _isConcreteModel(r.primary));
+    const hasBakes = hasLoras || hasVae;
+    // Save is enabled when we'd produce at least one chain step:
+    //   - a full merge row, or
+    //   - a bake (LoRA / global VAE) plus at least one primary checkpoint.
+    const hasOperation = hasMergeRow || (hasBakes && hasAnyPrimary);
     const saveReady = hasOperation && !validationError && !WS.merging && !WS.testMerging;
     if (_els.mergeBtn) _els.mergeBtn.disabled = !saveReady;
 

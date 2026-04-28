@@ -2673,12 +2673,21 @@ async function _ctxSaveCanvas(fmt) {
         metadata = State.outputInfotexts[State.selectedOutputIdx] || State.outputInfotexts[0] || null;
     }
 
+    // Use the active Canvas document's name as the save filename hint so
+    // the file lands on disk with a recognizable name (and the URL the
+    // saved image opens at carries that name into the browser's
+    // right-click "Save image as…" suggestion). Without this hint the
+    // backend falls back to studio_<timestamp>_<pid>, and some browsers
+    // suggest "Untitled" when opening the resulting /file= URL.
+    const docName = (window.StudioDocs?.activeDoc?.name || "").trim() || null;
+
     try {
         const result = await window.API.saveImage({
             image_b64: dataUrl,
             format: fmt,
             quality: 95,
             metadata: metadata,
+            filename: docName,
         });
         if (result.ok && result.path) {
             // Open as /file= URL — browser shows image with native Save Image As on right-click

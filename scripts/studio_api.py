@@ -2882,7 +2882,23 @@ def setup_studio_routes(app: FastAPI):
             # Filename
             ext_map = {"png": "png", "jpeg": "jpg", "webp": "webp"}
             ext = ext_map.get(req.format, "png")
-            name = req.filename or f"studio_{int(time.time())}_{os.getpid()}"
+            # Sanitize the user-supplied filename: strip path separators,
+            # trim, and collapse anything that isn't a safe filename
+            # character. Empty result falls back to studio_<ts>_<pid>.
+            raw = (req.filename or "").strip()
+            if raw:
+                # Drop directory components in case a path slipped through
+                raw = os.path.basename(raw)
+                # Strip any extension the caller appended; we add ours below
+                stem = os.path.splitext(raw)[0]
+                # Replace control / separator chars; keep alnum, space,
+                # dash, underscore, dot, parentheses
+                safe = re.sub(r"[^\w\-. ()]", "_", stem).strip(" .")
+                name = safe[:120] if safe else ""
+            else:
+                name = ""
+            if not name:
+                name = f"studio_{int(time.time())}_{os.getpid()}"
             # Ensure unique
             path = output_dir / f"{name}.{ext}"
             counter = 1
