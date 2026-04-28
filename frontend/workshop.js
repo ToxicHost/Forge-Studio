@@ -177,7 +177,7 @@ const WS = {
     // Global recipe extras (applied after the board)
     recipeLoras: [],     // [{filename, strength}]
     recipeVae: null,
-    outputName: "", saveFp16: true,
+    outputName: "", saveFp16: true, saveIntermediates: false,
 
     // Run state
     merging: false, progress: 0, status: "idle", error: null, result: null,
@@ -587,7 +587,7 @@ async function startMerge() {
         if (window.showToast) window.showToast("Running " + chainSteps.length + "-step recipe…", "info");
         await fetchJSON(API + "/chain", {
             method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ steps: chainSteps, save_intermediates: false }),
+            body: JSON.stringify({ steps: chainSteps, save_intermediates: WS.saveIntermediates }),
         });
     } catch (e) {
         WS.merging = false; WS.status = "error"; WS.error = e.message; _renderProgress(); _setMergeButtonState(false);
@@ -1030,7 +1030,7 @@ function _buildUI(container) {
     + '</div>'
 
     // ── Output ──
-    + '<div class="ws-output-section"><div class="ws-param"><label>Output Filename</label><input type="text" id="wsOutputName" class="param-val ws-output-input" placeholder="auto-generated if empty" style="text-align:left;"></div><div class="ws-output-opts"><label class="ws-checkbox-label"><input type="checkbox" id="wsFp16" checked><span>Save as fp16</span></label></div></div>'
+    + '<div class="ws-output-section"><div class="ws-param"><label>Output Filename</label><input type="text" id="wsOutputName" class="param-val ws-output-input" placeholder="auto-generated if empty" style="text-align:left;"></div><div class="ws-output-opts"><label class="ws-checkbox-label"><input type="checkbox" id="wsFp16" checked><span>Save as fp16</span></label><label class="ws-checkbox-label" title="Keep each row’s output as its own .safetensors file (useful for multi-row boards)"><input type="checkbox" id="wsSaveIntermediates"><span>Keep intermediates</span></label></div></div>'
 
     // Memory status
     + '<div id="wsMemoryStatus" class="ws-memory-status" style="display:none;"><span class="ws-memory-badge">Test merge active</span><span id="wsMemoryInfo" class="ws-memory-info"></span><button id="wsRevertBtn" class="ws-revert-btn">Revert</button></div>'
@@ -1070,6 +1070,7 @@ function _buildUI(container) {
         rowList: container.querySelector("#wsRowList"),
         rowAdd: container.querySelector("#wsRowAdd"),
         outputName: container.querySelector("#wsOutputName"), fp16: container.querySelector("#wsFp16"),
+        saveIntermediates: container.querySelector("#wsSaveIntermediates"),
         mergeBtn: container.querySelector("#wsMergeBtn"), cancelBtn: container.querySelector("#wsCancelBtn"),
         progressSection: container.querySelector("#wsProgressSection"), progressFill: container.querySelector("#wsProgressFill"),
         progressText: container.querySelector("#wsProgressText"), progressKeys: container.querySelector("#wsProgressKeys"),
@@ -1539,6 +1540,8 @@ function _bindGlobalEvents() {
     _els.outputName.addEventListener("input", () => { WS.outputName = _els.outputName.value.trim(); });
     _els.fp16.addEventListener("change", () => { WS.saveFp16 = _els.fp16.checked; });
     _els.fp16.checked = WS.saveFp16;
+    _els.saveIntermediates.addEventListener("change", () => { WS.saveIntermediates = _els.saveIntermediates.checked; });
+    _els.saveIntermediates.checked = WS.saveIntermediates;
 
     _els.mergeBtn.addEventListener("click", startMerge);
     _els.cancelBtn.addEventListener("click", cancelMerge);
