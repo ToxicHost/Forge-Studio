@@ -2135,6 +2135,518 @@ function _showTextOverlay(p, e) {
 }
 
 // ========================================================================
+// ADJUSTMENT-LAYER WIDGETS
+// ========================================================================
+// Reusable gradient slider with N draggable handles, and a histogram canvas.
+// Used by the Levels / HSL / Brightness editors below.
+
+function _clamp(v, lo, hi) { return v < lo ? lo : (v > hi ? hi : v); }
+
+// handle kinds: "black" (down-pointing △ on top edge), "white" (△ on bottom),
+// "gamma" (centered ◆), "point" (single tab on top edge for hue/sat/etc).
+function buildGradientSlider(opts) {
+    // opts: { min, max, step, gradient: cssString | "live", paintTrack?(canvas),
+    //        handles: [{ id, value, kind, min?, max?, step? }], onChange(id, value) }
+    const root = document.createElement("div");
+    root.className = "gradient-slider";
+    const track = document.createElement("div");
+    track.className = "gradient-slider__track";
+    if (opts.gradient && opts.gradient !== "live") track.style.background = opts.gradient;
+    let trackCanvas = null;
+    if (opts.paintTrack) {
+        trackCanvas = document.createElement("canvas");
+        trackCanvas.className = "gradient-slider__track-canvas";
+        trackCanvas.width = 256; trackCanvas.height = 1;
+        track.appendChild(trackCanvas);
+    }
+    root.appendChild(track);
+
+    const handleEls = {};
+    const range = (opts.max - opts.min) || 1;
+
+    function valueToPct(v, min, max) { return ((v - min) / ((max - min) || 1)) * 100; }
+    function positionHandles() {
+        // Gamma is positioned proportionally between the live black and white handles,
+        // log-mapped so g=10 sits at the black handle, g=1 at the midpoint, g=0.1 at the white handle.
+        const inBlack = handleEls.black, inWhite = handleEls.white;
+        for (const h of opts.handles) {
+            const el = handleEls[h.id]; if (!el) continue;
+            let pct;
+            if (h.kind === "gamma" && inBlack && inWhite) {
+                const lo = +inBlack.dataset.value, hi = +inWhite.dataset.value;
+                const loPct = valueToPct(lo, opts.min, opts.max);
+                const hiPct = valueToPct(hi, opts.min, opts.max);
+                const g = +el.dataset.value;
+                const frac = _clamp((1 - Math.log10(g)) * 0.5, 0, 1);
+                pct = loPct + (hiPct - loPct) * frac;
+            } else {
+                pct = valueToPct(+el.dataset.value, h.min != null ? h.min : opts.min, h.max != null ? h.max : opts.max);
+            }
+            el.style.left = _clamp(pct, 0, 100) + "%";
+        }
+    }
+
+    function setValue(id, v) {
+        const el = handleEls[id]; if (!el) return;
+        const h = opts.handles.find(x => x.id === id);
+        const lo = h.min != null ? h.min : opts.min;
+        const hi = h.max != null ? h.max : opts.max;
+        el.dataset.value = String(_clamp(v, lo, hi));
+        positionHandles();
+    }
+
+    function attachDrag(el, h) {
+        let active = false;
+        function onMove(ev) {
+            if (!active) return;
+            const r = track.getBoundingClientRect();
+            const rel = _clamp((ev.clientX - r.left) / r.width, 0, 1);
+            const lo = h.min != null ? h.min : opts.min;
+            const hi = h.max != null ? h.max : opts.max;
+            let v;
+            if (h.kind === "gamma") {
+                // Gamma's drag range is the segment between the live black and white
+                // handles, log-mapped so center = 1.0, left edge = 10, right edge = 0.1.
+                const inBlack = handleEls.black, inWhite = handleEls.white;
+                const bPct = inBlack ? valueToPct(+inBlack.dataset.value, opts.min, opts.max) / 100 : 0;
+                const wPct = inWhite ? valueToPct(+inWhite.dataset.value, opts.min, opts.max) / 100 : 1;
+                const span = Math.max(0.001, wPct - bPct);
+                const segRel = _clamp((rel - bPct) / span, 0, 1);
+                const t = 1 - segRel * 2;        // 1 at left, -1 at right
+                v = _clamp(Math.pow(10, t), 0.1, 9.99);
+            } else {
+                v = lo + rel * (hi - lo);
+                if (h.step) v = Math.round(v / h.step) * h.step;
+                else if (opts.step) v = Math.round(v / opts.step) * opts.step;
+            }
+            el.dataset.value = String(v);
+            positionHandles();
+            if (opts.onChange) opts.onChange(h.id, v);
+        }
+        function onUp() {
+            active = false;
+            window.removeEventListener("pointermove", onMove);
+            window.removeEventListener("pointerup", onUp);
+        }
+        el.addEventListener("pointerdown", ev => {
+            ev.stopPropagation(); ev.preventDefault();
+            active = true;
+            el.setPointerCapture && el.setPointerCapture(ev.pointerId);
+            window.addEventListener("pointermove", onMove);
+            window.addEventListener("pointerup", onUp);
+        });
+        el.addEventListener("dblclick", ev => {
+            ev.stopPropagation();
+            if (opts.onResetHandle) opts.onResetHandle(h.id);
+        });
+    }
+
+    for (const h of opts.handles) {
+        const el = document.createElement("div");
+        el.className = "gradient-slider__handle gradient-slider__handle--" + h.kind;
+        el.dataset.value = String(h.value);
+        attachDrag(el, h);
+        track.appendChild(el);
+        handleEls[h.id] = el;
+    }
+    positionHandles();
+
+    function paint() {
+        if (trackCanvas && opts.paintTrack) opts.paintTrack(trackCanvas);
+    }
+    paint();
+
+    return { el: root, setValue, repaint: paint };
+}
+
+function buildHistogram(opts) {
+    // opts: { width, height }
+    const wrap = document.createElement("div");
+    wrap.className = "histogram";
+    const canvas = document.createElement("canvas");
+    canvas.width = opts.width || 256;
+    canvas.height = opts.height || 60;
+    canvas.className = "histogram__canvas";
+    wrap.appendChild(canvas);
+    const ctx = canvas.getContext("2d");
+
+    function setSource(imgData) {
+        const bins = new Uint32Array(256);
+        const d = imgData.data;
+        for (let p = 0, len = d.length; p < len; p += 4) {
+            const a = d[p + 3];
+            if (a === 0) continue;
+            // perceptual luminance
+            const y = (0.2126 * d[p] + 0.7152 * d[p + 1] + 0.0722 * d[p + 2]) | 0;
+            bins[y < 0 ? 0 : (y > 255 ? 255 : y)]++;
+        }
+        let max = 0;
+        for (let i = 0; i < 256; i++) if (bins[i] > max) max = bins[i];
+        const w = canvas.width, h = canvas.height;
+        ctx.clearRect(0, 0, w, h);
+        // log-scale
+        const lmax = Math.log(1 + max);
+        ctx.fillStyle = "rgba(229,231,235,0.85)";
+        const bw = w / 256;
+        for (let i = 0; i < 256; i++) {
+            const v = lmax === 0 ? 0 : Math.log(1 + bins[i]) / lmax;
+            const bh = Math.round(v * h);
+            ctx.fillRect(i * bw, h - bh, Math.ceil(bw), bh);
+        }
+    }
+
+    return { el: wrap, setSource };
+}
+
+// Helper: build a small numeric input bound to an adjustParam key.
+function _buildNumericInput(opts) {
+    const inp = document.createElement("input");
+    inp.type = "number"; inp.className = "adj-numeric-input";
+    inp.min = opts.min; inp.max = opts.max; inp.step = opts.step != null ? opts.step : 1;
+    inp.value = opts.value;
+    inp.addEventListener("click", e => e.stopPropagation());
+    inp.addEventListener("input", () => {
+        let v = parseFloat(inp.value);
+        if (Number.isNaN(v)) return;
+        v = _clamp(v, opts.min, opts.max);
+        opts.onChange(v);
+    });
+    return inp;
+}
+
+function _buildResetButton(onReset, title) {
+    const b = document.createElement("button");
+    b.className = "adj-reset-btn"; b.type = "button";
+    b.textContent = "↺"; b.title = title || "Reset";
+    b.addEventListener("click", e => { e.stopPropagation(); onReset(); });
+    return b;
+}
+
+function _buildAdjEditor(L, redraw) {
+    const wrap = document.createElement("div");
+    wrap.className = "adj-editor";
+    const ap = L.adjustParams;
+    const ad = C._adjustDefaults[L.adjustType];
+
+    // Brightness/Contrast — two -100..100 sliders, plain gray gradient, numeric + reset.
+    if (L.adjustType === "brightness") {
+        function row(label, key, min, max) {
+            const r = document.createElement("div"); r.className = "adj-row";
+            const lbl = document.createElement("span"); lbl.className = "adj-label"; lbl.textContent = label;
+            const num = _buildNumericInput({
+                min, max, step: 1, value: ap[key] | 0,
+                onChange: v => { ap[key] = v | 0; L._lutCache = null; sliderApi.setValue("p", v); redraw(); }
+            });
+            const sliderApi = buildGradientSlider({
+                min, max, step: 1,
+                gradient: "linear-gradient(to right, #1a1a1a, #f4f4f4)",
+                handles: [{ id: "p", value: ap[key] | 0, kind: "point" }],
+                onChange: (_id, v) => {
+                    ap[key] = Math.round(v); L._lutCache = null;
+                    num.value = ap[key]; redraw();
+                },
+                onResetHandle: () => {
+                    ap[key] = ad[key]; L._lutCache = null;
+                    sliderApi.setValue("p", ap[key]); num.value = ap[key]; redraw();
+                }
+            });
+            r.appendChild(lbl); r.appendChild(sliderApi.el); r.appendChild(num);
+            r.appendChild(_buildResetButton(() => {
+                ap[key] = ad[key]; L._lutCache = null;
+                sliderApi.setValue("p", ap[key]); num.value = ap[key]; redraw();
+            }, "Reset " + label));
+            return r;
+        }
+        wrap.appendChild(row("Brightness", "brightness", -100, 100));
+        wrap.appendChild(row("Contrast",   "contrast",   -100, 100));
+        return wrap;
+    }
+
+    // HSL — model selector, colorize toggle, three sliders with live gradients.
+    if (L.adjustType === "hue") {
+        const head = document.createElement("div"); head.className = "adj-row adj-row--head";
+        const segWrap = document.createElement("div"); segWrap.className = "adj-segmented";
+        ["HSL", "HSV"].forEach(m => {
+            const b = document.createElement("button"); b.type = "button"; b.textContent = m;
+            if (ap.model === m) b.classList.add("active");
+            b.addEventListener("click", e => {
+                e.stopPropagation();
+                ap.model = m;
+                segWrap.querySelectorAll("button").forEach(x => x.classList.toggle("active", x.textContent === m));
+                redraw();
+            });
+            segWrap.appendChild(b);
+        });
+        const colLabel = document.createElement("label"); colLabel.className = "adj-checkbox";
+        const colInp = document.createElement("input"); colInp.type = "checkbox"; colInp.checked = !!ap.colorize;
+        colInp.addEventListener("click", e => e.stopPropagation());
+        colInp.addEventListener("change", () => { ap.colorize = colInp.checked; redraw(); });
+        colLabel.appendChild(colInp); colLabel.appendChild(document.createTextNode(" Colorize"));
+        head.appendChild(segWrap); head.appendChild(colLabel);
+        wrap.appendChild(head);
+
+        function paintHueTrack(canvas) {
+            const cx = canvas.getContext("2d");
+            const w = canvas.width, h = canvas.height;
+            for (let x = 0; x < w; x++) {
+                const hue = (x / w) * 360;
+                cx.fillStyle = "hsl(" + hue + ", 100%, 50%)"; cx.fillRect(x, 0, 1, h);
+            }
+        }
+        function paintSatTrack(canvas) {
+            const cx = canvas.getContext("2d"); const w = canvas.width, h = canvas.height;
+            const baseHue = ((ap.hue || 0) % 360 + 360) % 360;
+            for (let x = 0; x < w; x++) {
+                const t = x / w * 100;
+                cx.fillStyle = "hsl(" + baseHue + "," + t + "%, 50%)"; cx.fillRect(x, 0, 1, h);
+            }
+        }
+        function paintLightTrack(canvas) {
+            const cx = canvas.getContext("2d"); const w = canvas.width, h = canvas.height;
+            const baseHue = ((ap.hue || 0) % 360 + 360) % 360;
+            for (let x = 0; x < w; x++) {
+                const t = x / w * 100;
+                cx.fillStyle = "hsl(" + baseHue + ", 100%, " + t + "%)"; cx.fillRect(x, 0, 1, h);
+            }
+        }
+
+        const sliders = {};
+        function makeRow(label, key, min, max, paint) {
+            const r = document.createElement("div"); r.className = "adj-row";
+            const lbl = document.createElement("span"); lbl.className = "adj-label"; lbl.textContent = label;
+            const num = _buildNumericInput({
+                min, max, step: 1, value: ap[key] | 0,
+                onChange: v => { ap[key] = v | 0; sliderApi.setValue("p", v); _repaintDeps(key); redraw(); }
+            });
+            const sliderApi = buildGradientSlider({
+                min, max, step: 1, paintTrack: paint,
+                handles: [{ id: "p", value: ap[key] | 0, kind: "point" }],
+                onChange: (_id, v) => {
+                    ap[key] = Math.round(v); num.value = ap[key];
+                    _repaintDeps(key); redraw();
+                },
+                onResetHandle: () => {
+                    ap[key] = ad[key]; sliderApi.setValue("p", ap[key]);
+                    num.value = ap[key]; _repaintDeps(key); redraw();
+                }
+            });
+            sliders[key] = sliderApi;
+            r.appendChild(lbl); r.appendChild(sliderApi.el); r.appendChild(num);
+            r.appendChild(_buildResetButton(() => {
+                ap[key] = ad[key]; sliderApi.setValue("p", ap[key]);
+                num.value = ap[key]; _repaintDeps(key); redraw();
+            }, "Reset " + label));
+            return r;
+        }
+        function _repaintDeps(changedKey) {
+            // Hue affects sat & light gradients; otherwise self-only.
+            if (changedKey === "hue") {
+                if (sliders.saturation) sliders.saturation.repaint();
+                if (sliders.lightness)  sliders.lightness.repaint();
+            }
+        }
+        wrap.appendChild(makeRow("Hue",        "hue",        -180, 180, paintHueTrack));
+        wrap.appendChild(makeRow("Saturation", "saturation", -100, 100, paintSatTrack));
+        wrap.appendChild(makeRow("Lightness",  "lightness",  -100, 100, paintLightTrack));
+
+        const foot = document.createElement("div"); foot.className = "adj-row adj-row--foot";
+        const resetAll = document.createElement("button"); resetAll.type = "button"; resetAll.className = "adj-button";
+        resetAll.textContent = "Reset all";
+        resetAll.addEventListener("click", e => {
+            e.stopPropagation();
+            Object.assign(ap, ad);
+            renderLayerPanel(); redraw();
+        });
+        foot.appendChild(resetAll);
+        wrap.appendChild(foot);
+        return wrap;
+    }
+
+    // Levels — histogram, input slider with 3 handles, output slider with 2, numerics, auto + reset.
+    if (L.adjustType === "levels") {
+        const layerIdx = S.layers.indexOf(L);
+        const histo = buildHistogram({ width: 256, height: 60 });
+        wrap.appendChild(histo.el);
+
+        let sourceImgData = null;
+        function refreshHistogram() {
+            try {
+                const c = C._compositeLayersBelow(layerIdx);
+                sourceImgData = c.getContext("2d").getImageData(0, 0, c.width, c.height);
+                histo.setSource(sourceImgData);
+            } catch (e) {
+                console.error("[StudioUI] histogram build failed", e);
+            }
+        }
+        refreshHistogram();
+
+        const grayGrad = "linear-gradient(to right, #000, #fff)";
+
+        // Input row with black/gamma/white
+        const inSlider = buildGradientSlider({
+            min: 0, max: 1, step: 0.001,
+            gradient: grayGrad,
+            handles: [
+                { id: "black", value: ap.levInBlack || 0,   kind: "black" },
+                { id: "gamma", value: ap.levGamma   || 1,   kind: "gamma", min: 0.1, max: 9.99 },
+                { id: "white", value: ap.levInWhite || 1,   kind: "white" }
+            ],
+            onChange: (id, v) => {
+                if (id === "black") ap.levInBlack = _clamp(v, 0, ap.levInWhite - 0.001);
+                if (id === "white") ap.levInWhite = _clamp(v, ap.levInBlack + 0.001, 1);
+                if (id === "gamma") ap.levGamma   = _clamp(v, 0.1, 9.99);
+                L._lutCache = null;
+                inBlackNum.value = Math.round(ap.levInBlack * 255);
+                inWhiteNum.value = Math.round(ap.levInWhite * 255);
+                gammaNum.value   = ap.levGamma.toFixed(2);
+                inSlider.setValue("black", ap.levInBlack);
+                inSlider.setValue("white", ap.levInWhite);
+                inSlider.setValue("gamma", ap.levGamma);
+                redraw();
+            },
+            onResetHandle: id => {
+                if (id === "black") { ap.levInBlack = 0; inBlackNum.value = 0; }
+                if (id === "white") { ap.levInWhite = 1; inWhiteNum.value = 255; }
+                if (id === "gamma") { ap.levGamma   = 1; gammaNum.value = "1.00"; }
+                L._lutCache = null;
+                inSlider.setValue(id, id === "white" ? 1 : id === "gamma" ? 1 : 0);
+                redraw();
+            }
+        });
+
+        const inRow = document.createElement("div"); inRow.className = "adj-row";
+        const inLbl = document.createElement("span"); inLbl.className = "adj-label"; inLbl.textContent = "Input";
+        inRow.appendChild(inLbl); inRow.appendChild(inSlider.el);
+        wrap.appendChild(inRow);
+
+        const inNumRow = document.createElement("div"); inNumRow.className = "adj-row adj-row--nums";
+        const inBlackNum = _buildNumericInput({
+            min: 0, max: 254, step: 1, value: Math.round((ap.levInBlack || 0) * 255),
+            onChange: v => {
+                ap.levInBlack = _clamp(v / 255, 0, ap.levInWhite - 0.001);
+                L._lutCache = null;
+                inSlider.setValue("black", ap.levInBlack); redraw();
+            }
+        });
+        const gammaNum = _buildNumericInput({
+            min: 0.1, max: 9.99, step: 0.01, value: (ap.levGamma || 1).toFixed(2),
+            onChange: v => {
+                ap.levGamma = _clamp(v, 0.1, 9.99); L._lutCache = null;
+                inSlider.setValue("gamma", ap.levGamma); redraw();
+            }
+        });
+        const inWhiteNum = _buildNumericInput({
+            min: 1, max: 255, step: 1, value: Math.round((ap.levInWhite != null ? ap.levInWhite : 1) * 255),
+            onChange: v => {
+                ap.levInWhite = _clamp(v / 255, ap.levInBlack + 0.001, 1);
+                L._lutCache = null;
+                inSlider.setValue("white", ap.levInWhite); redraw();
+            }
+        });
+        inNumRow.appendChild(inBlackNum); inNumRow.appendChild(gammaNum); inNumRow.appendChild(inWhiteNum);
+        wrap.appendChild(inNumRow);
+
+        // Output row
+        const outSlider = buildGradientSlider({
+            min: 0, max: 1, step: 0.001,
+            gradient: grayGrad,
+            handles: [
+                { id: "black", value: ap.levOutBlack || 0, kind: "black" },
+                { id: "white", value: ap.levOutWhite || 1, kind: "white" }
+            ],
+            onChange: (id, v) => {
+                if (id === "black") ap.levOutBlack = _clamp(v, 0, ap.levOutWhite - 0.001);
+                if (id === "white") ap.levOutWhite = _clamp(v, ap.levOutBlack + 0.001, 1);
+                L._lutCache = null;
+                outBlackNum.value = Math.round(ap.levOutBlack * 255);
+                outWhiteNum.value = Math.round(ap.levOutWhite * 255);
+                outSlider.setValue("black", ap.levOutBlack);
+                outSlider.setValue("white", ap.levOutWhite);
+                redraw();
+            },
+            onResetHandle: id => {
+                if (id === "black") { ap.levOutBlack = 0; outBlackNum.value = 0; outSlider.setValue("black", 0); }
+                if (id === "white") { ap.levOutWhite = 1; outWhiteNum.value = 255; outSlider.setValue("white", 1); }
+                L._lutCache = null; redraw();
+            }
+        });
+
+        const outRow = document.createElement("div"); outRow.className = "adj-row";
+        const outLbl = document.createElement("span"); outLbl.className = "adj-label"; outLbl.textContent = "Output";
+        outRow.appendChild(outLbl); outRow.appendChild(outSlider.el);
+        wrap.appendChild(outRow);
+
+        const outNumRow = document.createElement("div"); outNumRow.className = "adj-row adj-row--nums";
+        const outBlackNum = _buildNumericInput({
+            min: 0, max: 254, step: 1, value: Math.round((ap.levOutBlack || 0) * 255),
+            onChange: v => {
+                ap.levOutBlack = _clamp(v / 255, 0, ap.levOutWhite - 0.001);
+                L._lutCache = null;
+                outSlider.setValue("black", ap.levOutBlack); redraw();
+            }
+        });
+        const outWhiteNum = _buildNumericInput({
+            min: 1, max: 255, step: 1, value: Math.round((ap.levOutWhite != null ? ap.levOutWhite : 1) * 255),
+            onChange: v => {
+                ap.levOutWhite = _clamp(v / 255, ap.levOutBlack + 0.001, 1);
+                L._lutCache = null;
+                outSlider.setValue("white", ap.levOutWhite); redraw();
+            }
+        });
+        outNumRow.appendChild(outBlackNum); outNumRow.appendChild(outWhiteNum);
+        wrap.appendChild(outNumRow);
+
+        // Buttons row: refresh histogram, auto-levels, reset all
+        const btnRow = document.createElement("div"); btnRow.className = "adj-row adj-row--foot";
+        const refreshBtn = document.createElement("button"); refreshBtn.type = "button"; refreshBtn.className = "adj-button";
+        refreshBtn.textContent = "Refresh histogram";
+        refreshBtn.addEventListener("click", e => { e.stopPropagation(); refreshHistogram(); });
+
+        const autoBtn = document.createElement("button"); autoBtn.type = "button"; autoBtn.className = "adj-button";
+        autoBtn.textContent = "Auto";
+        autoBtn.title = "Stretch input black/white to histogram 0.1% / 99.9% percentile";
+        autoBtn.addEventListener("click", e => {
+            e.stopPropagation();
+            if (!sourceImgData) return;
+            const bins = new Uint32Array(256);
+            const d = sourceImgData.data; let total = 0;
+            for (let p = 0, len = d.length; p < len; p += 4) {
+                if (d[p + 3] === 0) continue;
+                const y = (0.2126 * d[p] + 0.7152 * d[p + 1] + 0.0722 * d[p + 2]) | 0;
+                bins[y < 0 ? 0 : (y > 255 ? 255 : y)]++; total++;
+            }
+            if (!total) return;
+            const lo = total * 0.001, hi = total * 0.999;
+            let acc = 0, bv = 0, wv = 255;
+            for (let i = 0; i < 256; i++) { acc += bins[i]; if (acc >= lo) { bv = i; break; } }
+            acc = 0;
+            for (let i = 0; i < 256; i++) { acc += bins[i]; if (acc >= hi) { wv = i; break; } }
+            ap.levInBlack = bv / 255;
+            ap.levInWhite = Math.max(ap.levInBlack + 0.001, wv / 255);
+            L._lutCache = null;
+            inBlackNum.value = bv; inWhiteNum.value = wv;
+            inSlider.setValue("black", ap.levInBlack);
+            inSlider.setValue("white", ap.levInWhite);
+            redraw();
+        });
+
+        const resetBtn = document.createElement("button"); resetBtn.type = "button"; resetBtn.className = "adj-button";
+        resetBtn.textContent = "Reset";
+        resetBtn.addEventListener("click", e => {
+            e.stopPropagation();
+            Object.assign(ap, ad); L._lutCache = null;
+            renderLayerPanel(); redraw();
+        });
+
+        btnRow.appendChild(refreshBtn); btnRow.appendChild(autoBtn); btnRow.appendChild(resetBtn);
+        wrap.appendChild(btnRow);
+        return wrap;
+    }
+
+    return wrap;
+}
+
+// ========================================================================
 // LAYER PANEL
 // ========================================================================
 function renderLayerPanel() {
@@ -2188,64 +2700,21 @@ function renderLayerPanel() {
 
         // Active layer gets interactive controls
         if (isActive && L.type === "adjustment") {
-            // Show adjustment editor
             const meta = document.createElement("div");
             meta.className = "layer-meta";
             meta.textContent = "⚙ Adjustment";
             info.appendChild(nameEl); info.appendChild(meta);
-
-            // Build the editor panel — append after row is added to panel
             try {
-                const editorRow = document.createElement("div");
-                editorRow.style.cssText = "padding:6px 8px;background:var(--bg-raised,#111827);border:1px solid var(--border,#374151);border-radius:4px;margin:2px 0 4px 0;";
-                const ap = L.adjustParams;
-
-                function adjSlider(label, key, min, max, step, val) {
-                    const r = document.createElement("div");
-                    r.style.cssText = "display:flex;align-items:center;gap:4px;margin:3px 0;";
-                    const lbl = document.createElement("span");
-                    lbl.textContent = label; lbl.style.cssText = "font-size:10px;color:#9ca3af;min-width:65px;";
-                    const inp = document.createElement("input");
-                    inp.type = "range"; inp.min = min; inp.max = max; inp.step = step; inp.value = val;
-                    inp.style.cssText = "flex:1;height:4px;accent-color:var(--accent);";
-                    const num = document.createElement("span");
-                    num.textContent = parseFloat(val).toFixed(2); num.style.cssText = "font-size:10px;color:#e5e7eb;min-width:32px;text-align:right;font-family:var(--mono);";
-                    inp.addEventListener("click", e => e.stopPropagation());
-                    inp.addEventListener("input", () => {
-                        ap[key] = parseFloat(inp.value);
-                        num.textContent = parseFloat(inp.value).toFixed(2);
-                        _redraw();
-                    });
-                    r.appendChild(lbl); r.appendChild(inp); r.appendChild(num);
-                    return r;
-                }
-
-                if (L.adjustType === "brightness") {
-                    editorRow.appendChild(adjSlider("Brightness", "brightness", -1, 1, 0.01, ap.brightness || 0));
-                    editorRow.appendChild(adjSlider("Contrast", "contrast", -1, 1, 0.01, ap.contrast || 0));
-                } else if (L.adjustType === "hue") {
-                    editorRow.appendChild(adjSlider("Hue", "hue", -180, 180, 1, ap.hue || 0));
-                    editorRow.appendChild(adjSlider("Saturation", "saturation", -1, 1, 0.01, ap.saturation || 0));
-                    editorRow.appendChild(adjSlider("Lightness", "lightness", -1, 1, 0.01, ap.lightness || 0));
-                } else if (L.adjustType === "levels") {
-                    editorRow.appendChild(adjSlider("In Black", "levInBlack", 0, 1, 0.01, ap.levInBlack || 0));
-                    editorRow.appendChild(adjSlider("In White", "levInWhite", 0, 1, 0.01, ap.levInWhite || 1));
-                    editorRow.appendChild(adjSlider("Gamma", "levGamma", 0.1, 3, 0.01, ap.levGamma || 1));
-                    editorRow.appendChild(adjSlider("Out Black", "levOutBlack", 0, 1, 0.01, ap.levOutBlack || 0));
-                    editorRow.appendChild(adjSlider("Out White", "levOutWhite", 0, 1, 0.01, ap.levOutWhite || 1));
-                }
-
-                row._editorRow = editorRow;
+                row._editorRow = _buildAdjEditor(L, _redraw);
             } catch (e) {
                 console.error("[StudioUI] Adjust editor build error:", e);
             }
         } else if (isActive && L.type !== "adjustment") {
             const controls = document.createElement("div");
-            controls.className = "layer-meta";
-            controls.style.cssText = "display:flex;gap:4px;align-items:center;flex-wrap:wrap;";
+            controls.className = "layer-meta layer-controls";
 
             const blendSel = document.createElement("select");
-            blendSel.style.cssText = "font-size:9px;background:#1a1a2e;color:#ccc;border:1px solid #374151;border-radius:3px;padding:1px 2px;max-width:80px;";
+            blendSel.className = "layer-blend-select";
             for (const [val, label] of C.ALL_BLEND_MODES) {
                 const opt = document.createElement("option");
                 opt.value = val; opt.textContent = label;
@@ -2258,14 +2727,17 @@ function renderLayerPanel() {
             const opSlider = document.createElement("input");
             opSlider.type = "range"; opSlider.min = "0"; opSlider.max = "100";
             opSlider.value = Math.round(L.opacity * 100);
-            opSlider.style.cssText = "width:50px;height:3px;accent-color:var(--accent);";
+            opSlider.className = "layer-opacity-slider";
             opSlider.addEventListener("click", e => e.stopPropagation());
-            opSlider.addEventListener("input", () => { L.opacity = +opSlider.value / 100; _redraw(); });
+            opSlider.addEventListener("input", () => {
+                L.opacity = +opSlider.value / 100;
+                opLabel.textContent = Math.round(opSlider.value) + "%";
+                _redraw();
+            });
 
             const opLabel = document.createElement("span");
-            opLabel.style.cssText = "font-size:9px;color:#9ca3af;min-width:24px;";
+            opLabel.className = "layer-opacity-label";
             opLabel.textContent = Math.round(L.opacity * 100) + "%";
-            opSlider.addEventListener("input", () => { opLabel.textContent = Math.round(opSlider.value) + "%"; });
 
             controls.appendChild(blendSel); controls.appendChild(opSlider); controls.appendChild(opLabel);
             info.appendChild(nameEl); info.appendChild(controls);
@@ -3411,11 +3883,6 @@ function bindToolbar() {
 
     // Adjustment layer buttons
     try {
-        const adjDefaults = {
-            brightness: { brightness: 0, contrast: 0 },
-            hue: { hue: 0, saturation: 0, lightness: 0 },
-            levels: { levInBlack: 0, levInWhite: 1, levGamma: 1, levOutBlack: 0, levOutWhite: 1 },
-        };
         const adjNames = { brightness: "Brightness/Contrast", hue: "Hue/Saturation", levels: "Levels" };
 
         ["Brightness", "Hue", "Levels"].forEach(type => {
@@ -3424,19 +3891,7 @@ function bindToolbar() {
             const el = document.getElementById(id);
             el?.addEventListener("click", () => {
                 C.saveStructuralUndo("Add " + (adjNames[typeKey] || typeKey));
-                const L = {
-                    id: S.nextLayerId++,
-                    name: adjNames[typeKey] || typeKey,
-                    type: "adjustment",
-                    adjustType: typeKey,
-                    adjustParams: { ...adjDefaults[typeKey] },
-                    visible: true,
-                    opacity: 1,
-                    blendMode: "source-over",
-                    locked: false,
-                    canvas: null,
-                    ctx: null,
-                };
+                const L = C.makeAdjustLayer(adjNames[typeKey] || typeKey, typeKey);
                 const insertIdx = S.activeLayerIdx + 1;
                 S.layers.splice(insertIdx, 0, L);
                 S.activeLayerIdx = insertIdx;
