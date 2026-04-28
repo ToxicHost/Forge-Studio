@@ -2064,6 +2064,26 @@
     padding: 0 18px 0 6px !important;
 }
 
+/* Per-row "Bake VAE" checkbox + dropdown group */
+.ws-row-vae-cell {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex: 1 1 220px;
+    min-width: 180px;
+}
+
+.ws-row-vae-cell .ws-checkbox-label {
+    flex-shrink: 0;
+    font-size: 10px;
+    gap: 4px;
+}
+
+.ws-row-vae-cell .ws-row-vae {
+    flex: 1 1 0;
+    min-width: 0;
+}
+
 /* Block-weights toggle group on line 2 */
 .ws-row-blocks-toggle {
     display: inline-flex;

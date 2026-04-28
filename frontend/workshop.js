@@ -212,7 +212,10 @@ function _newRow(initial) {
         method: "weighted_sum", alpha: 0.5,
         density: 0.2, dropRate: 0.9, cosineShift: 0.0, eta: 0.1,
         useBlockWeights: false, blockWeights: null,
-        vae: null,                                   // per-row VAE bake
+        // Per-row VAE bake — explicit opt-in. The global VAE (below the
+        // board) handles the chain's final output by default; a row only
+        // emits its own vae_bake step when bakeVae is on AND vae is set.
+        bakeVae: false, vae: null,
         // Transient UI: line 2 (advanced) opt-in for methods that have
         // nothing else on line 2 (e.g. weighted_sum). Not persisted.
         expanded: false,
@@ -495,7 +498,10 @@ function _buildRecipeChain() {
 
         let rowFinalStep = mergeStepNum;
 
-        if (row.vae) {     // per-row override
+        // Per-row VAE bake — explicit opt-in. Both the checkbox AND a
+        // picked filename must be set; otherwise we skip silently and
+        // let the global VAE (if any) handle the chain's final output.
+        if (row.bakeVae && row.vae) {
             stepNum++;
             steps.push({
                 step: stepNum, type: "vae_bake",
@@ -558,7 +564,7 @@ function _canTestMerge() {
     if (info.needsC && (!_isConcreteModel(r.tertiary) || r.tertiary === r.primary || r.tertiary === r.secondary)) return false;
     if (WS.recipeLoras.filter(l => l.filename).length > 0) return false;
     if (WS.recipeVae) return false;
-    if (WS.rows.some(row => row.vae)) return false;
+    if (WS.rows.some(row => row.bakeVae && row.vae)) return false;
     if (WS.merging || WS.testMerging) return false;
     return true;
 }
@@ -570,7 +576,7 @@ function _getTestMergeTooltip() {
     const info = METHOD_INFO[r.method] || {};
     if (info.needsC && !_isConcreteModel(r.tertiary)) return "Add Difference needs Tertiary (Model C) for test merge";
     if (WS.recipeLoras.filter(l => l.filename).length > 0) return "Test merge unavailable with LoRAs — save to disk instead";
-    if (WS.recipeVae || WS.rows.some(row => row.vae)) return "Test merge unavailable with VAE bake — save to disk instead";
+    if (WS.recipeVae || WS.rows.some(row => row.bakeVae && row.vae)) return "Test merge unavailable with VAE bake — save to disk instead";
     return "Hot-swap UNet weights — no disk write, instant iteration";
 }
 
@@ -1209,14 +1215,14 @@ function _rowHtml(rowIdx) {
     // Line 2 visible if anything inside it has content:
     //   - method has params (density / drop_rate / eta / cosine_shift)
     //   - block weights enabled
-    //   - VAE selected for this row
+    //   - row.bakeVae toggled on
     //   - user clicked the ⚙ to manually expand
     //   (Tertiary lives on line 1 so it never forces line 2.)
     const expanded = !!row.expanded;
     const showTertiary = !!info.needsC;
     const showParams = info.params.length > 0;
     const showBlockToggle = !!info.blockWeights && (expanded || row.useBlockWeights);
-    const showVaeOnLine2 = !!row.vae;
+    const showVaeOnLine2 = !!row.bakeVae;
     const line2Visible = showParams || showBlockToggle || showVaeOnLine2 || expanded;
     // ⚙ is always visible — every row can opt into VAE / blocks / expand
     const expandBtnVisible = true;
@@ -1268,12 +1274,19 @@ function _rowHtml(rowIdx) {
             + '<button class="ws-small-btn ws-row-diff" data-row="' + rowIdx + '" disabled title="Compute cosine similarity">Diff</button>'
             + '</div>';
     }
-    // Per-row VAE bake (override). Default leaves the global VAE in
-    // charge — picking a filename here adds a vae_bake step right after
-    // this row's merge, on top of (and before) any global VAE at the end.
-    html += '<select class="param-select ws-row-vae" data-row="' + rowIdx + '" title="Per-row VAE override — leave on “Use global” unless you need a different VAE on this row’s output">'
-        + '<option value="">— Use global —</option>'
-        + '</select>';
+    // Per-row VAE bake (off by default — global VAE handles the final
+    // output). Checkbox toggles whether this row emits its own vae_bake
+    // step right after its merge; the dropdown is only revealed once
+    // the checkbox is on so an unconfigured row is unambiguous.
+    html += '<div class="ws-row-vae-cell">'
+        + '<label class="ws-checkbox-label ws-row-blocks-label" title="Bake a VAE into this row’s output (extra chain step)">'
+        + '<input type="checkbox" class="ws-row-bake-vae" data-row="' + rowIdx + '"' + (row.bakeVae ? ' checked' : '') + '>'
+        + '<span>Bake VAE</span>'
+        + '</label>'
+        + '<select class="param-select ws-row-vae" data-row="' + rowIdx + '"' + (row.bakeVae ? '' : ' style="display:none;"') + '>'
+        + '<option value="">— Pick VAE —</option>'
+        + '</select>'
+        + '</div>';
     html += '</div>';
 
     // ── Line 3: block sliders (only when row.useBlockWeights) ──
@@ -1461,11 +1474,19 @@ function _bindRowEvents(rowIdx) {
         });
     }
 
+    const bakeVaeChk = rowEl.querySelector(".ws-row-bake-vae");
     const vaeSel = rowEl.querySelector(".ws-row-vae");
+    if (bakeVaeChk) {
+        bakeVaeChk.addEventListener("change", () => {
+            row.bakeVae = bakeVaeChk.checked;
+            if (vaeSel) vaeSel.style.display = row.bakeVae ? "" : "none";
+            _applyRowMethodVisibility(rowIdx);
+            _updateActionButtons();
+        });
+    }
     if (vaeSel) {
         vaeSel.addEventListener("change", () => {
             row.vae = vaeSel.value || null;
-            _applyRowMethodVisibility(rowIdx);  // line 2 may need to stay open
             _updateActionButtons();
         });
     }
@@ -1548,12 +1569,12 @@ function _applyRowMethodVisibility(rowIdx) {
     if (expandBtn) {
         expandBtn.style.visibility = "";
         expandBtn.classList.toggle("ws-row-expanded",
-            !!r.expanded || !!r.useBlockWeights || !!r.vae);
+            !!r.expanded || !!r.useBlockWeights || !!r.bakeVae);
     }
 
-    // Line 2 visibility — params, blocks toggle, VAE selected, or
+    // Line 2 visibility — params, blocks toggle, bake-VAE on, or
     // user-expanded. Tertiary is on line 1.
-    const line2Visible = info.params.length > 0 || showBlockToggle || !!r.vae || !!r.expanded;
+    const line2Visible = info.params.length > 0 || showBlockToggle || !!r.bakeVae || !!r.expanded;
     const line2 = rowEl.querySelector(".ws-row-line2");
     if (line2) line2.style.display = line2Visible ? "" : "none";
 
@@ -1811,7 +1832,7 @@ function _validateRows() {
 
 function _updateActionButtons() {
     const hasLoras = WS.recipeLoras.some(l => l.filename);
-    const hasVae = !!WS.recipeVae || WS.rows.some(r => r.vae);
+    const hasVae = !!WS.recipeVae || WS.rows.some(r => r.bakeVae && r.vae);
     const validationError = _validateRows();
     const hasRows = WS.rows.length > 0 && WS.rows.some(r => r.primary && r.secondary);
     const hasOperation = hasRows || hasLoras || hasVae;
