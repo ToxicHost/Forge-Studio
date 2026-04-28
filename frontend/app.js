@@ -2951,10 +2951,16 @@ function bindUI() {
       .catch(e => console.warn("[Studio] Server defaults save failed:", e));
   }
 
+  // Cached copy of the most recently resolved defaults (server or session).
+  // Used by _studioReapplyDefaults so new Canvas tabs can pick up the
+  // user's saved defaults without a network round-trip on every tab.
+  let _resolvedDefaults = null;
+
   function loadDefaults() {
     return API.generate({ action: "load_defaults" }).then(resp => {
       const data = resp?.settings;
       if (data && Object.keys(data).length > 0 && !data.defaults_saved && !data.defaults_deleted) {
+        _resolvedDefaults = data;
         _applyDefaults(data);
         console.log("[Studio] Loaded defaults from server:", Object.keys(data).length, "params");
         return true;
@@ -3066,6 +3072,7 @@ function bindUI() {
       if (!raw) return false;
       const data = JSON.parse(raw);
       if (data && Object.keys(data).length > 0) {
+        _resolvedDefaults = data;
         _applyDefaults(data);
         console.log("[Studio] Restored session:", Object.keys(data).length, "params");
         return true;
@@ -3075,6 +3082,16 @@ function bindUI() {
     }
     return false;
   }
+
+  // Re-apply the most recently resolved defaults to the current DOM.
+  // No network — used by studio-docs.js when opening a new Canvas tab so
+  // the user's defaults apply to fresh documents (Lars-reported bug).
+  // Returns true if defaults were applied, false if nothing cached yet.
+  window._studioReapplyDefaults = function () {
+    if (!_resolvedDefaults || !Object.keys(_resolvedDefaults).length) return false;
+    _applyDefaults(_resolvedDefaults);
+    return true;
+  };
 
   // Auto-save session on page unload
   window.addEventListener("beforeunload", _saveSession);

@@ -1829,3 +1829,327 @@
 .ws-recipe-section > .ws-model-select {
     width: 100%;
 }
+
+/* ═══════════════════════════════════════════
+   MERGE BOARD (v0.8.0)
+   ═══════════════════════════════════════════ */
+
+.ws-board-header {
+    width: 100%;
+    max-width: 680px;
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    padding: 0 0 8px;
+}
+
+.ws-board-title {
+    font-size: 11px;
+    font-weight: 600;
+    color: var(--text-2);
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+}
+
+.ws-board {
+    width: 100%;
+    max-width: 680px;
+    display: flex;
+    flex-direction: column;
+    gap: 4px;
+}
+
+/* Compact horizontal-strip row */
+.ws-row {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    overflow: hidden;
+    cursor: pointer;
+    transition: border-color 0.12s, box-shadow 0.12s;
+}
+
+.ws-row:hover { border-color: var(--border-hover, var(--border)); }
+
+.ws-row-active {
+    border-color: var(--accent);
+    box-shadow: 0 0 0 1px var(--accent);
+}
+
+.ws-row-line {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    padding: 6px 8px;
+    min-height: 32px;
+}
+
+.ws-row-line + .ws-row-line {
+    border-top: 1px solid var(--border-subtle);
+}
+
+/* Row number — fixed-width pill, doesn't shrink */
+.ws-row-num {
+    flex-shrink: 0;
+    width: 22px;
+    height: 22px;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--pink);
+    background: var(--bg-raised);
+    border-radius: var(--radius-sm);
+    font-family: var(--mono);
+}
+
+/* Line-1 model dropdowns share remaining width equally; the Tertiary
+   slot just goes to display:none when not needed, so flex naturally
+   redistributes width between Primary and Secondary alone. */
+.ws-row .ws-row-cell-grow {
+    flex: 1 1 0;
+    min-width: 0;
+    height: 26px;
+    font-size: 11px !important;
+    padding: 2px 22px 2px 6px !important;
+}
+
+.ws-row .ws-row-cell-method {
+    flex: 0 0 auto;
+    width: 100px;
+    height: 26px;
+    font-size: 10px !important;
+    padding: 2px 18px 2px 6px !important;
+}
+
+/* Alpha cell — compact slider + numeric value */
+.ws-row-alpha-cell {
+    flex: 0 0 auto;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    width: 116px;
+}
+
+.ws-row-alpha-cell .ws-row-alpha-slider {
+    flex: 1;
+    height: 3px;
+    accent-color: var(--accent);
+    cursor: pointer;
+    min-width: 0;
+}
+
+.ws-row .ws-row-alpha-val {
+    width: 42px !important;
+    height: 22px;
+    flex-shrink: 0;
+    font-size: 10px !important;
+    text-align: right;
+    padding: 0 4px !important;
+    -moz-appearance: textfield;
+    background: var(--bg-input, var(--bg-raised));
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-1);
+    font-family: var(--mono);
+}
+.ws-row .ws-row-alpha-val::-webkit-inner-spin-button,
+.ws-row .ws-row-alpha-val::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+/* Expand & delete buttons match dropdown height */
+.ws-row-expand,
+.ws-row-delete {
+    width: 22px;
+    height: 22px;
+    flex-shrink: 0;
+    background: var(--bg-raised);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-3);
+    font-size: 11px;
+    line-height: 1;
+    cursor: pointer;
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    transition: all 0.12s;
+    padding: 0;
+}
+
+.ws-row-expand:hover { color: var(--accent); border-color: var(--accent); }
+.ws-row-expanded { color: var(--accent); border-color: var(--accent); }
+
+.ws-row-delete:hover:not(:disabled) {
+    color: var(--red);
+    border-color: var(--red);
+}
+
+.ws-row-delete:disabled,
+.ws-row-delete-blocked {
+    opacity: 0.35;
+    cursor: not-allowed;
+}
+
+/* ── Line 2 — tertiary + params + block-weights toggle ── */
+.ws-row-line2 {
+    background: var(--bg-raised);
+    flex-wrap: wrap;
+}
+
+.ws-row-line2 .ws-row-tertiary {
+    flex: 1 1 200px;
+    min-width: 160px;
+    height: 26px;
+    font-size: 11px !important;
+    padding: 2px 22px 2px 6px !important;
+}
+
+/* Param cell on line 2 — short label + slider + value */
+.ws-row-param-cell {
+    flex: 1 1 140px;
+    min-width: 130px;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    height: 24px;
+}
+
+.ws-row-param-label {
+    font-size: 9px;
+    color: var(--text-3);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    width: 36px;
+    flex-shrink: 0;
+}
+
+.ws-row-param-cell .ws-row-param-slider {
+    flex: 1;
+    height: 3px;
+    accent-color: var(--accent);
+    cursor: pointer;
+    min-width: 0;
+}
+
+.ws-row .ws-row-param-val {
+    width: 42px !important;
+    height: 22px;
+    flex-shrink: 0;
+    font-size: 10px !important;
+    text-align: right;
+    padding: 0 4px !important;
+    -moz-appearance: textfield;
+    background: var(--bg-input, var(--bg-raised));
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-1);
+    font-family: var(--mono);
+}
+.ws-row .ws-row-param-val::-webkit-inner-spin-button,
+.ws-row .ws-row-param-val::-webkit-outer-spin-button {
+    -webkit-appearance: none;
+    margin: 0;
+}
+
+/* Per-row VAE select on line 2 */
+.ws-row .ws-row-vae {
+    flex: 1 1 200px;
+    min-width: 160px;
+    height: 22px;
+    font-size: 10px !important;
+    padding: 0 18px 0 6px !important;
+}
+
+/* Per-row "Bake VAE" checkbox + dropdown group */
+.ws-row-vae-cell {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    flex: 1 1 220px;
+    min-width: 180px;
+}
+
+.ws-row-vae-cell .ws-checkbox-label {
+    flex-shrink: 0;
+    font-size: 10px;
+    gap: 4px;
+}
+
+.ws-row-vae-cell .ws-row-vae {
+    flex: 1 1 0;
+    min-width: 0;
+}
+
+/* Block-weights toggle group on line 2 */
+.ws-row-blocks-toggle {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    flex-shrink: 0;
+}
+
+.ws-row-blocks-label {
+    font-size: 10px;
+    gap: 4px;
+}
+
+.ws-row-blocks-toggle .ws-row-preset {
+    width: 100px;
+    height: 22px;
+    font-size: 10px !important;
+    padding: 0 18px 0 6px !important;
+}
+
+.ws-row-blocks-toggle .ws-small-btn {
+    height: 22px;
+    padding: 0 8px;
+    font-size: 9px;
+}
+
+/* ── Line 3 — block-weight sliders ── */
+.ws-row-line3 {
+    padding: 8px 14px 12px;
+    background: var(--bg-raised);
+}
+
+.ws-row .ws-block-sliders {
+    padding: 0;
+    min-height: 80px;
+    max-height: 50vh;
+}
+
+/* Add Row button */
+.ws-row-add-btn {
+    width: 100%;
+    max-width: 680px;
+    height: 30px;
+    margin-top: 6px;
+    background: none;
+    border: 1px dashed var(--border);
+    border-radius: var(--radius);
+    color: var(--text-3);
+    font-family: var(--font);
+    font-size: 10px;
+    font-weight: 500;
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+    cursor: pointer;
+    transition: all 0.12s;
+}
+
+.ws-row-add-btn:hover {
+    color: var(--accent);
+    border-color: var(--accent);
+}
+
+/* Inline LoRA "+ Add LoRA" button stays compact in section header */
+.ws-bake-add-btn-inline {
+    width: auto;
+    padding: 0 12px;
+    height: 26px;
+    margin-top: 0;
+}

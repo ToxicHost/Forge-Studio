@@ -335,6 +335,17 @@ function newDoc(name) {
   // Switch to new
   _activeIdx = newIdx;
   _loadDoc(newIdx);
+
+  // Apply user defaults to the new document. _createBlankDoc deliberately
+  // clears prompt / negPrompt / seed, and inherits other settings from
+  // the current doc; defaults override that with the user's saved
+  // workflow. Synchronous: reads from the cached defaults populated at
+  // app init by _studioLoadDefaults. _applyDefaults handles canvas
+  // resizing + viewport sync internally.
+  if (typeof window._studioReapplyDefaults === "function") {
+    window._studioReapplyDefaults();
+  }
+
   window.StudioCore.zoomFit();
   _refreshUI();
   _renderStrip();
