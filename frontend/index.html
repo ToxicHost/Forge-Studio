@@ -744,16 +744,18 @@
             <span class="section-arrow">&#x25BC;</span>
             <span class="section-label">Layers</span>
             <div class="section-actions" id="layerActions">
-              <button title="Add layer" id="layerAdd">+</button>
-              <button title="Add Brightness/Contrast" id="layerAddBrightness" style="font-size:9px;">B/C</button>
-              <button title="Add Hue/Saturation" id="layerAddHue" style="font-size:9px;">H/S</button>
-              <button title="Add Levels" id="layerAddLevels" style="font-size:9px;">Lvl</button>
-              <button title="Duplicate" id="layerDupe" style="font-size:10px;">&#x2398;</button>
-              <button title="Move up" id="layerUp" style="font-size:11px;">&#x25B2;</button>
-              <button title="Move down" id="layerDown" style="font-size:11px;">&#x25BC;</button>
-              <button title="Merge down" id="layerMerge" style="font-size:10px;">&#x21E9;</button>
-              <button title="Delete" id="layerDel" style="font-size:11px;">&#x1f5d1;</button>
-              <button title="Export Canvas / PSD" id="layerSave" style="font-size:9px;">Export</button>
+              <button class="layer-add-btn" title="Add layer" id="layerAdd"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg></button>
+              <button class="layer-add-btn" title="Add Brightness/Contrast" id="layerAddBrightness"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="9"/><path fill="currentColor" stroke="none" d="M12 3a9 9 0 0 1 0 18z"/></svg></button>
+              <button class="layer-add-btn" title="Add Hue/Saturation" id="layerAddHue"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><path d="M12 2.5c-3.5 4.5-7 7.5-7 11.5a7 7 0 0 0 14 0c0-4-3.5-7-7-11.5z"/></svg></button>
+              <button class="layer-add-btn" title="Add Levels" id="layerAddLevels"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="5" y1="20" x2="5" y2="14"/><line x1="10" y1="20" x2="10" y2="9"/><line x1="15" y1="20" x2="15" y2="5"/><line x1="20" y1="20" x2="20" y2="11"/></svg></button>
+              <span class="action-sep" aria-hidden="true"></span>
+              <button title="Duplicate" id="layerDupe"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><rect x="8" y="8" width="13" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></svg></button>
+              <button title="Move up" id="layerUp"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg></button>
+              <button title="Move down" id="layerDown"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12l7 7 7-7"/></svg></button>
+              <button title="Merge down" id="layerMerge"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><line x1="4" y1="20" x2="20" y2="20"/></svg></button>
+              <button title="Delete" id="layerDel"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg></button>
+              <span class="action-sep" aria-hidden="true"></span>
+              <button title="Export Canvas / PSD" id="layerSave"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></button>
             </div>
           </div>
           <div id="layersList" class="section-body">

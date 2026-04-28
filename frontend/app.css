@@ -1051,6 +1051,23 @@ body {
   flex-shrink: 0;
 }
 .section-actions button:hover { color: var(--text-1); border-color: var(--border); background: var(--bg-input); }
+.section-actions .action-sep {
+  width: 1px;
+  align-self: stretch;
+  margin: 3px 4px;
+  background: var(--border);
+  flex-shrink: 0;
+}
+.section-actions button.layer-add-btn {
+  color: var(--accent-bright);
+  background: var(--accent-dim);
+  border-color: var(--accent-dim);
+}
+.section-actions button.layer-add-btn:hover {
+  color: var(--accent-bright);
+  background: var(--accent-mid);
+  border-color: var(--accent);
+}
 
 
 /* ═══════════════════════════════════════════
