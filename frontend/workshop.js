@@ -174,14 +174,14 @@ const WS = {
     // changes. Each row stores its own per-block weights independently.
     blockList: [], presets: {}, arch: null,
 
-    // Global recipe extras (applied after the board)
+    // Global recipe extras (applied after the board). VAE is per-row now.
     recipeLoras: [],     // [{filename, strength}]
-    recipeVae: null,
     outputName: "", saveFp16: true, saveIntermediates: false,
 
     // Run state
     merging: false, progress: 0, status: "idle", error: null, result: null,
     elapsed: 0, keysDone: 0, keysTotal: 0,
+    chainStep: 0, chainTotal: 0,   // chain-scoped meta from backend
     memoryMergeActive: false, testMerging: false,
 
     // Inspector (driven by activeRow)
@@ -211,6 +211,7 @@ function _newRow(initial) {
         method: "weighted_sum", alpha: 0.5,
         density: 0.2, dropRate: 0.9, cosineShift: 0.0, eta: 0.1,
         useBlockWeights: false, blockWeights: null,
+        vae: null,                                   // per-row VAE bake
         // Transient UI: line 2 (advanced) opt-in for methods that have
         // nothing else on line 2 (e.g. weighted_sum). Not persisted.
         expanded: false,
@@ -259,16 +260,19 @@ function _rowIndexById(id) {
 }
 
 // Maps a stored row-input value to the API-ready string for a chain step.
-// Concrete filename returned as-is. __ref:<rowId>__ → __O<positional>__
-// where positional is the 1-based index of the referenced row in WS.rows
-// (which equals the chain step number for that row).
-function _resolveRowInput(value) {
+// Concrete filename returned as-is. __ref:<rowId>__ → __O<step>__ using
+// the supplied rowOutputStep map ({ rowId → step number of that row's
+// last contributed step, e.g. its post-VAE step if a VAE was attached }).
+function _resolveRowInput(value, rowOutputStep) {
     if (value === null || value === undefined || value === "") return null;
     if (!_isRefValue(value)) return value;
     const rowId = _refRowId(value);
-    const idx = _rowIndexById(rowId);
-    if (idx < 0) return null;
-    return "__O" + (idx + 1) + "__";
+    if (rowOutputStep && rowId in rowOutputStep) {
+        return "__O" + rowOutputStep[rowId] + "__";
+    }
+    // Forward / unknown ref (shouldn't happen — UI only offers earlier
+    // rows and the deletion guard prevents dangling refs).
+    return null;
 }
 
 function _isConcreteModel(v) { return !!v && !_isRefValue(v); }
@@ -294,7 +298,6 @@ async function loadModels() {
     try {
         WS.models = await fetchJSON(API + "/models");
         _renderRows();
-        _populateVaeSelect();
     } catch (e) {
         console.error(TAG, "Failed to load models:", e);
         if (window.showToast) window.showToast("Failed to load model list", "error");
@@ -306,7 +309,11 @@ async function loadLoras() {
 }
 
 async function loadVaes() {
-    try { WS.vaes = await fetchJSON(API + "/vaes"); _populateVaeSelect(); } catch (e) { console.error(TAG, "Failed to load VAEs:", e); }
+    try {
+        WS.vaes = await fetchJSON(API + "/vaes");
+        // Per-row VAE: refresh every row's dropdown.
+        for (let i = 0; i < WS.rows.length; i++) _populateRowVae(i);
+    } catch (e) { console.error(TAG, "Failed to load VAEs:", e); }
 }
 
 async function refreshAssets() {
@@ -443,12 +450,15 @@ async function loadModelStockForRow(rowIdx) {
 
 function _buildRecipeChain() {
     /**
-     * Each row in WS.rows becomes a chain step (1-based step number == row
-     * index + 1). Stable row-id refs are mapped to positional __ON__ here.
-     * LoRA bake / VAE bake steps are appended, taking the last row's output
-     * as their checkpoint. Final step receives the user-supplied output_name.
+     * Each row in WS.rows becomes a merge chain step. If the row has a
+     * VAE attached, an extra vae_bake step is appended after that row's
+     * merge, taking its output as the checkpoint. Refs from later rows
+     * resolve to a row's *final* step (post-VAE if VAE'd), so a row that
+     * references "Output of Row 1" automatically pulls Row 1's VAE-baked
+     * result. LoRA bake stays global (applied to the chain's final step).
      */
     const steps = [];
+    const rowOutputStep = {};   // rowId → last step number contributed by that row
     let stepNum = 0;
 
     for (let i = 0; i < WS.rows.length; i++) {
@@ -456,21 +466,39 @@ function _buildRecipeChain() {
         if (!row.primary || !row.secondary) continue;
 
         stepNum++;
+        const mergeStepNum = stepNum;
         const params = {
-            model_a: _resolveRowInput(row.primary),
-            model_b: _resolveRowInput(row.secondary),
+            model_a: _resolveRowInput(row.primary, rowOutputStep),
+            model_b: _resolveRowInput(row.secondary, rowOutputStep),
             method: row.method,
             alpha: row.alpha,
             block_weights: row.useBlockWeights ? row.blockWeights : null,
             save_fp16: WS.saveFp16,
         };
         const info = METHOD_INFO[row.method] || {};
-        if (info.needsC && row.tertiary) params.model_c = _resolveRowInput(row.tertiary);
+        if (info.needsC && row.tertiary) params.model_c = _resolveRowInput(row.tertiary, rowOutputStep);
         if (info.params.includes("density")) params.density = row.density;
         if (info.params.includes("drop_rate")) params.drop_rate = row.dropRate;
         if (info.params.includes("cosine_shift")) params.cosine_shift = row.cosineShift;
         if (info.params.includes("eta")) params.eta = row.eta;
-        steps.push({ step: stepNum, type: "merge", params });
+        steps.push({ step: mergeStepNum, type: "merge", params });
+
+        let rowFinalStep = mergeStepNum;
+
+        if (row.vae) {
+            stepNum++;
+            steps.push({
+                step: stepNum, type: "vae_bake",
+                params: {
+                    checkpoint: "__O" + mergeStepNum + "__",
+                    vae: row.vae,
+                    save_fp16: WS.saveFp16,
+                },
+            });
+            rowFinalStep = stepNum;
+        }
+
+        rowOutputStep[row.id] = rowFinalStep;
     }
 
     const activeLoras = WS.recipeLoras.filter(l => l.filename);
@@ -487,19 +515,6 @@ function _buildRecipeChain() {
         });
     }
 
-    if (WS.recipeVae) {
-        stepNum++;
-        const checkpoint = stepNum === 1 ? null : "__O" + (stepNum - 1) + "__";
-        steps.push({
-            step: stepNum, type: "vae_bake",
-            params: {
-                checkpoint: checkpoint,
-                vae: WS.recipeVae,
-                save_fp16: WS.saveFp16,
-            },
-        });
-    }
-
     if (steps.length && WS.outputName) {
         steps[steps.length - 1].params.output_name = WS.outputName;
     }
@@ -509,7 +524,8 @@ function _buildRecipeChain() {
 
 function _canTestMerge() {
     // Test merge: only with exactly one row, two concrete-file models,
-    // a satisfied tertiary slot if the method needs one, and no LoRAs/VAE.
+    // a satisfied tertiary slot if the method needs one, and no LoRAs
+    // or VAEs anywhere.
     if (WS.rows.length !== 1) return false;
     const r = WS.rows[0];
     if (!_isConcreteModel(r.primary) || !_isConcreteModel(r.secondary)) return false;
@@ -517,7 +533,7 @@ function _canTestMerge() {
     const info = METHOD_INFO[r.method] || {};
     if (info.needsC && (!_isConcreteModel(r.tertiary) || r.tertiary === r.primary || r.tertiary === r.secondary)) return false;
     if (WS.recipeLoras.filter(l => l.filename).length > 0) return false;
-    if (WS.recipeVae) return false;
+    if (WS.rows.some(row => row.vae)) return false;
     if (WS.merging || WS.testMerging) return false;
     return true;
 }
@@ -529,7 +545,7 @@ function _getTestMergeTooltip() {
     const info = METHOD_INFO[r.method] || {};
     if (info.needsC && !_isConcreteModel(r.tertiary)) return "Add Difference needs Tertiary (Model C) for test merge";
     if (WS.recipeLoras.filter(l => l.filename).length > 0) return "Test merge unavailable with LoRAs — save to disk instead";
-    if (WS.recipeVae) return "Test merge unavailable with VAE bake — save to disk instead";
+    if (WS.rows.some(row => row.vae)) return "Test merge unavailable with VAE bake — save to disk instead";
     return "Hot-swap UNet weights — no disk write, instant iteration";
 }
 
@@ -959,7 +975,16 @@ function _bindJournalEvents() {
 
 function _handleWsMessage(data) {
     if (data.type !== "workshop_progress") return;
-    WS.progress = data.progress || 0; WS.status = data.status || "idle"; WS.error = data.error || null;
+    const rawProgress = data.progress || 0;
+    WS.chainStep = data.chain_step || 0;
+    WS.chainTotal = data.chain_total || 0;
+    // Map per-step progress to monotonic chain-wide progress so the bar
+    // doesn't rewind every time a step transitions and the merge func
+    // overwrites _merge_state["progress"] with its own per-key 0→1.
+    WS.progress = (WS.chainTotal > 1 && WS.chainStep > 0)
+        ? ((WS.chainStep - 1) + rawProgress) / WS.chainTotal
+        : rawProgress;
+    WS.status = data.status || "idle"; WS.error = data.error || null;
     WS.elapsed = data.elapsed || 0; WS.keysDone = data.keys_done || 0; WS.keysTotal = data.keys_total || 0;
     if (data.status === "complete" || data.status === "error" || data.status === "cancelled") {
         WS.merging = false; _setMergeButtonState(false);
@@ -995,8 +1020,6 @@ function _hookWebSocket() {
 // ========================================================================
 
 function _buildUI(container) {
-    const vaeOpts = '<option value="">— None —</option>';
-
     container.innerHTML = '<div class="ws-layout"><div class="ws-center">'
     + '<div class="ws-header"><span class="ws-title">Workshop</span><span class="ws-subtitle">v' + VERSION + '</span></div>'
     + '<div class="ws-tabs"><button class="ws-tab ws-tab-active" data-tab="recipe">Recipe</button><button class="ws-tab" data-tab="history">History</button></div>'
@@ -1017,17 +1040,13 @@ function _buildUI(container) {
     // Add Row button
     + '<button id="wsRowAdd" class="ws-row-add-btn">+ Add Row</button>'
 
-    // ── LoRAs ──
+    // ── LoRAs (global — applied to the final output) ──
     + '<div class="ws-recipe-section">'
     + '<div class="ws-recipe-section-header"><span class="ws-recipe-section-label">LoRAs</span><button id="wsLoraAdd" class="ws-bake-add-btn ws-bake-add-btn-inline">+ Add LoRA</button></div>'
     + '<div id="wsLoraList" class="ws-lora-list"></div>'
     + '</div>'
 
-    // ── VAE ──
-    + '<div class="ws-recipe-section">'
-    + '<div class="ws-recipe-section-header"><span class="ws-recipe-section-label">VAE</span></div>'
-    + '<select id="wsRecipeVae" class="param-select ws-model-select">' + vaeOpts + '</select>'
-    + '</div>'
+    // (VAE is per-row now — see the row's line 2.)
 
     // ── Output ──
     + '<div class="ws-output-section"><div class="ws-param"><label>Output Filename</label><input type="text" id="wsOutputName" class="param-val ws-output-input" placeholder="auto-generated if empty" style="text-align:left;"></div><div class="ws-output-opts"><label class="ws-checkbox-label"><input type="checkbox" id="wsFp16" checked><span>Save as fp16</span></label><label class="ws-checkbox-label" title="Keep each row’s output as its own .safetensors file (useful for multi-row boards)"><input type="checkbox" id="wsSaveIntermediates"><span>Keep intermediates</span></label></div></div>'
@@ -1082,7 +1101,6 @@ function _buildUI(container) {
         memoryStatus: container.querySelector("#wsMemoryStatus"), memoryInfo: container.querySelector("#wsMemoryInfo"),
         loraList: container.querySelector("#wsLoraList"),
         loraAdd: container.querySelector("#wsLoraAdd"),
-        recipeVae: container.querySelector("#wsRecipeVae"),
         refreshAssets: container.querySelector("#wsRefreshAssets"),
         tabRecipe: container.querySelector("#wsTabRecipe"),
         tabHistory: container.querySelector("#wsTabHistory"),
@@ -1138,6 +1156,7 @@ function _renderRows() {
     for (let i = 0; i < WS.rows.length; i++) {
         _bindRowEvents(i);
         _populatePresetSelectForRow(i);
+        _populateRowVae(i);
         _buildBlockSlidersForRow(i);
         _applyRowMethodVisibility(i);
     }
@@ -1158,15 +1177,18 @@ function _rowHtml(rowIdx) {
 
     // Line 2 visible if anything inside it has content:
     //   - method has params (density / drop_rate / eta / cosine_shift)
-    //   - block weights enabled, OR user manually expanded the row
+    //   - block weights enabled
+    //   - VAE selected for this row
+    //   - user clicked the ⚙ to manually expand
     //   (Tertiary lives on line 1 so it never forces line 2.)
     const expanded = !!row.expanded;
     const showTertiary = !!info.needsC;
     const showParams = info.params.length > 0;
     const showBlockToggle = !!info.blockWeights && (expanded || row.useBlockWeights);
-    const line2Visible = showParams || showBlockToggle;
-    // Expand button only useful when its sole purpose is opting into blocks
-    const expandBtnVisible = !!info.blockWeights && !showParams;
+    const showVaeOnLine2 = !!row.vae;
+    const line2Visible = showParams || showBlockToggle || showVaeOnLine2 || expanded;
+    // ⚙ is always visible — every row can opt into VAE / blocks / expand
+    const expandBtnVisible = true;
 
     let html = '<div class="ws-row' + (isActive ? ' ws-row-active' : '') + '" data-row="' + rowIdx + '">';
 
@@ -1215,6 +1237,10 @@ function _rowHtml(rowIdx) {
             + '<button class="ws-small-btn ws-row-diff" data-row="' + rowIdx + '" disabled title="Compute cosine similarity">Diff</button>'
             + '</div>';
     }
+    // Per-row VAE bake — appended after the merge step that produced this row
+    html += '<select class="param-select ws-row-vae" data-row="' + rowIdx + '" title="Bake a VAE into this row’s output (adds a vae_bake step to the chain)">'
+        + '<option value="">— No VAE —</option>'
+        + '</select>';
     html += '</div>';
 
     // ── Line 3: block sliders (only when row.useBlockWeights) ──
@@ -1235,13 +1261,6 @@ function _paramCellHtml(rowIdx, paramKey, value, visible, shortLabel) {
         + '</div>';
 }
 
-function _populateVaeSelect() {
-    if (!_els.recipeVae) return;
-    const opts = '<option value="">— None —</option>' + WS.vaes.map(v => '<option value="' + _esc(v.filename) + '">' + _esc(v.filename) + ' (' + v.size_mb + ' MB)</option>').join("");
-    _els.recipeVae.innerHTML = opts;
-    if (WS.recipeVae) _els.recipeVae.value = WS.recipeVae;
-}
-
 function _populatePresetSelectForRow(rowIdx) {
     const sel = _els.rowList?.querySelector('.ws-row-preset[data-row="' + rowIdx + '"]');
     if (!sel) return;
@@ -1249,6 +1268,18 @@ function _populatePresetSelectForRow(rowIdx) {
     for (const name of Object.keys(WS.presets)) html += '<option value="' + _esc(name) + '">' + _esc(name) + '</option>';
     sel.innerHTML = html;
     sel.disabled = !WS.rows[rowIdx]?.useBlockWeights;
+}
+
+function _populateRowVae(rowIdx) {
+    const sel = _els.rowList?.querySelector('.ws-row-vae[data-row="' + rowIdx + '"]');
+    if (!sel) return;
+    const r = WS.rows[rowIdx];
+    let html = '<option value="">— No VAE —</option>';
+    for (const v of WS.vaes) {
+        const selected = r && r.vae === v.filename ? ' selected' : '';
+        html += '<option value="' + _esc(v.filename) + '"' + selected + '>' + _esc(v.filename) + ' (' + v.size_mb + ' MB)</option>';
+    }
+    sel.innerHTML = html;
 }
 
 // ========================================================================
@@ -1386,6 +1417,15 @@ function _bindRowEvents(rowIdx) {
         });
     }
 
+    const vaeSel = rowEl.querySelector(".ws-row-vae");
+    if (vaeSel) {
+        vaeSel.addEventListener("change", () => {
+            row.vae = vaeSel.value || null;
+            _applyRowMethodVisibility(rowIdx);  // line 2 may need to stay open
+            _updateActionButtons();
+        });
+    }
+
     const autoBtn = rowEl.querySelector(".ws-row-auto");
     if (autoBtn) autoBtn.addEventListener("click", () => loadModelStockForRow(rowIdx));
 
@@ -1458,16 +1498,18 @@ function _applyRowMethodVisibility(rowIdx) {
     const showBlockToggle = !!info.blockWeights && (!!r.expanded || !!r.useBlockWeights);
     if (blocksToggleRow) blocksToggleRow.style.display = showBlockToggle ? "" : "none";
 
-    // Expand button — meaningful when blocks are the only line-2 content
+    // Expand button — always visible since every row can opt into VAE
+    // (and blocks, when supported). Highlighted when line 2 is forced open.
     const expandBtn = rowEl.querySelector(".ws-row-expand");
-    const expandBtnVisible = !!info.blockWeights && info.params.length === 0;
     if (expandBtn) {
-        expandBtn.style.visibility = expandBtnVisible ? "" : "hidden";
-        expandBtn.classList.toggle("ws-row-expanded", !!r.expanded || !!r.useBlockWeights);
+        expandBtn.style.visibility = "";
+        expandBtn.classList.toggle("ws-row-expanded",
+            !!r.expanded || !!r.useBlockWeights || !!r.vae);
     }
 
-    // Line 2 visibility — params or block toggle. Tertiary is on line 1.
-    const line2Visible = info.params.length > 0 || showBlockToggle;
+    // Line 2 visibility — params, blocks toggle, VAE selected, or
+    // user-expanded. Tertiary is on line 1.
+    const line2Visible = info.params.length > 0 || showBlockToggle || !!r.vae || !!r.expanded;
     const line2 = rowEl.querySelector(".ws-row-line2");
     if (line2) line2.style.display = line2Visible ? "" : "none";
 
@@ -1554,7 +1596,6 @@ function _bindGlobalEvents() {
     });
 
     _els.loraAdd.addEventListener("click", _addRecipeLora);
-    _els.recipeVae.addEventListener("change", () => { WS.recipeVae = _els.recipeVae.value || null; _updateActionButtons(); });
 
     if (_els.refreshAssets) _els.refreshAssets.addEventListener("click", refreshAssets);
 
@@ -1722,7 +1763,7 @@ function _validateRows() {
 
 function _updateActionButtons() {
     const hasLoras = WS.recipeLoras.some(l => l.filename);
-    const hasVae = !!WS.recipeVae;
+    const hasVae = WS.rows.some(r => r.vae);
     const validationError = _validateRows();
     const hasRows = WS.rows.length > 0 && WS.rows.some(r => r.primary && r.secondary);
     const hasOperation = hasRows || hasLoras || hasVae;
@@ -1754,7 +1795,10 @@ function _setMergeButtonState(merging) {
 
 function _renderProgress() {
     const pct = Math.round(WS.progress * 100);
-    _els.progressFill.style.width = pct + "%"; _els.progressText.textContent = pct + "%";
+    _els.progressFill.style.width = pct + "%";
+    _els.progressText.textContent = (WS.chainTotal > 1 && WS.chainStep > 0)
+        ? "Step " + WS.chainStep + "/" + WS.chainTotal + " — " + pct + "%"
+        : pct + "%";
     _els.progressKeys.textContent = WS.keysTotal ? WS.keysDone + " / " + WS.keysTotal + " keys" : "";
     _els.progressTime.textContent = WS.elapsed ? WS.elapsed + "s" : "";
     _els.progressSection.style.display = "";

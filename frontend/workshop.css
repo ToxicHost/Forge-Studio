@@ -2055,6 +2055,15 @@
     margin: 0;
 }
 
+/* Per-row VAE select on line 2 */
+.ws-row .ws-row-vae {
+    flex: 1 1 200px;
+    min-width: 160px;
+    height: 22px;
+    font-size: 10px !important;
+    padding: 0 18px 0 6px !important;
+}
+
 /* Block-weights toggle group on line 2 */
 .ws-row-blocks-toggle {
     display: inline-flex;

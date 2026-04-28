@@ -1130,6 +1130,10 @@ _merge_state = {
     "keys_done": 0, "keys_total": 0,
     "status": "idle", "error": None, "result": None,
     "started": None, "elapsed": 0,
+    # Chain-scoped meta. 0/0 means "not running a chain"; the merge-board
+    # frontend uses these to show "Step N/M" and to compute monotonic
+    # overall progress across step transitions.
+    "chain_step": 0, "chain_total": 0,
 }
 _cancel_event = Event()
 
@@ -1180,6 +1184,8 @@ def _broadcast_workshop_progress():
         "status": _merge_state["status"],
         "error": _merge_state["error"],
         "elapsed": _merge_state["elapsed"],
+        "chain_step": _merge_state.get("chain_step", 0),
+        "chain_total": _merge_state.get("chain_total", 0),
     }
     loop = asyncio.new_event_loop()
     try: loop.run_until_complete(_broadcast_progress(data))
@@ -1354,6 +1360,7 @@ def merge_models(
         "keys_done": 0, "keys_total": 0, "status": "running",
         "error": None, "result": None,
         "started": datetime.now(timezone.utc).isoformat(), "elapsed": 0,
+        "chain_step": 0, "chain_total": 0,
     })
 
     try:
@@ -2568,6 +2575,7 @@ def bake_lora(
         "keys_done": 0, "keys_total": 0, "status": "running",
         "error": None, "result": None,
         "started": datetime.now(timezone.utc).isoformat(), "elapsed": 0,
+        "chain_step": 0, "chain_total": 0,
     })
 
     try:
@@ -2795,6 +2803,7 @@ def bake_vae(
         "keys_done": 0, "keys_total": 0, "status": "running",
         "error": None, "result": None,
         "started": datetime.now(timezone.utc).isoformat(), "elapsed": 0,
+        "chain_step": 0, "chain_total": 0,
     })
 
     try:
@@ -2946,6 +2955,7 @@ def run_chain(steps: list, save_intermediates: bool = False):
         "keys_done": 0, "keys_total": total_steps,
         "status": "running", "error": None, "result": None,
         "started": datetime.now(timezone.utc).isoformat(), "elapsed": 0,
+        "chain_step": 0, "chain_total": total_steps,
     })
 
     try:
@@ -2966,6 +2976,7 @@ def run_chain(steps: list, save_intermediates: bool = False):
                 "keys_done": idx,
                 "progress": idx / total_steps,
                 "elapsed": round(time.time() - start, 1),
+                "chain_step": step_num, "chain_total": total_steps,
             })
             _broadcast_workshop_progress()
 
