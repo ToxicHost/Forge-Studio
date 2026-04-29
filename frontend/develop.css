@@ -27,11 +27,20 @@
 .develop-panel.visible { display: flex; }
 
 /* When Develop is active, hide the generation right panel so the two
-   sidebars don't stack, and use a default cursor on the canvas to hint
-   that brush tools are inert in this module. The actual blocking of
-   tool actions is done by a check in canvas-ui's pointerdown handler. */
-body.develop-active #panelRight { display: none !important; }
-body.develop-active #canvasArea canvas { cursor: default; }
+   sidebars don't stack. The brush tools are gated off by a check in
+   canvas-ui's pointerdown handler — here we just give the canvas a
+   high-contrast white-fill + black-stroke arrow cursor so it stays
+   visible against the bg-void color (which is near-black on dark
+   themes and was making the system default cursor effectively
+   invisible). */
+body.develop-active #panelRight,
+body.develop-active #toolstrip,
+body.develop-active #ctxBarWrap,
+body.develop-active #inpaintBar,
+body.develop-active #hsvPopup { display: none !important; }
+body.develop-active #canvasArea canvas {
+    cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='22' height='22' viewBox='0 0 22 22'%3E%3Cpath d='M3 2 L3 17 L7 13 L10 18 L12 17 L9 12 L15 12 Z' fill='%23ffffff' stroke='%23000000' stroke-width='1.5' stroke-linejoin='round'/%3E%3C/svg%3E") 3 2, default;
+}
 
 .develop-panel-header {
   display: flex;
