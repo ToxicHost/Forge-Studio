@@ -3055,8 +3055,12 @@ def run_chain(steps: list, save_intermediates: bool = False):
         _broadcast_workshop_progress()
         print(f"{TAG} ✓ Chain complete: {len(results)}/{total_steps} steps in {elapsed}s")
 
-        # Auto-journal the chain
-        _journal_add_chain(results, elapsed)
+        # Auto-journal the chain — single combined entry when
+        # intermediates are discarded, per-step entries otherwise.
+        _journal_add_chain(
+            results, elapsed, save_intermediates,
+            os.path.basename(final_output) if final_output else None,
+        )
 
     except Exception as e:
         _merge_state.update({
@@ -3262,22 +3266,58 @@ def _journal_add_entry(entry: dict):
     print(f"{TAG} Journal: added entry '{entry.get('name', entry.get('id', '?'))}'")
 
 
-def _journal_add_chain(results: list, elapsed: float):
-    """Auto-add journal entries for a completed chain."""
+def _journal_add_chain(results: list, elapsed: float, save_intermediates: bool,
+                       final_filename: Optional[str] = None):
+    """Auto-add journal entries for a completed chain.
+
+    When intermediates are kept on disk, every step gets its own journal
+    entry — each one points at a real saved file. When intermediates are
+    discarded, only the final output exists, so write a single combined
+    entry that catalogues the whole recipe; the journal then mirrors the
+    files actually present on disk instead of pointing at phantom
+    intermediates that were auto-deleted.
+    """
+    if save_intermediates:
+        for r in results:
+            entry = {
+                "id": f"chain_{int(time.time())}_{r['step']}",
+                "name": r.get("filename", ""),
+                "type": r.get("type", "unknown"),
+                "recipe": r.get("recipe", {}),
+                "date": datetime.now(timezone.utc).isoformat(),
+                "elapsed": elapsed,
+                "rating": 0,
+                "notes": "",
+                "image": None,
+            }
+            _journal_add_entry(entry)
+        return
+
+    if not results:
+        return
+
+    last = results[-1]
+    name = final_filename or last.get("filename", "")
+    steps_summary = []
     for r in results:
-        entry = {
-            "id": f"chain_{int(time.time())}_{r['step']}",
-            "name": r.get("filename", ""),
-            "type": r.get("type", "unknown"),
-            "recipe": r.get("recipe", {}),
-            "date": datetime.now(timezone.utc).isoformat(),
-            "elapsed": elapsed,
-            "rating": 0,
-            "tags": ["chain"],
-            "notes": "",
-            "image": None,
-        }
-        _journal_add_entry(entry)
+        recipe = dict(r.get("recipe", {}))
+        recipe["step"] = r.get("step")
+        recipe["type"] = r.get("type")
+        recipe["filename"] = r.get("filename", "")
+        steps_summary.append(recipe)
+
+    entry = {
+        "id": f"chain_{int(time.time())}",
+        "name": name,
+        "type": "chain",
+        "recipe": {"type": "chain", "steps": steps_summary, "final": last.get("recipe", {})},
+        "date": datetime.now(timezone.utc).isoformat(),
+        "elapsed": elapsed,
+        "rating": 0,
+        "notes": "",
+        "image": None,
+    }
+    _journal_add_entry(entry)
 
 
 def _journal_add_from_merge_state():
@@ -3294,7 +3334,6 @@ def _journal_add_from_merge_state():
         "date": datetime.now(timezone.utc).isoformat(),
         "elapsed": result.get("elapsed", 0),
         "rating": 0,
-        "tags": [],
         "notes": "",
         "image": None,
     }
@@ -4168,8 +4207,8 @@ def setup_workshop_routes(app: FastAPI):
     # ------------------------------------------------------------------
 
     @app.get("/studio/workshop/journal")
-    async def workshop_journal(search: str = "", tag: str = "", limit: int = 50):
-        """Get journal entries with optional search/filter."""
+    async def workshop_journal(search: str = "", limit: int = 50):
+        """Get journal entries with optional search filter."""
         entries = _load_journal()
 
         if search:
@@ -4179,28 +4218,22 @@ def setup_workshop_routes(app: FastAPI):
                        search_lower in e.get("notes", "").lower() or
                        search_lower in json.dumps(e.get("recipe", {})).lower()]
 
-        if tag:
-            entries = [e for e in entries if tag in e.get("tags", [])]
-
         return entries[:limit]
 
     class JournalUpdate(BaseModel):
         id: str
         rating: Optional[int] = None
-        tags: Optional[List[str]] = None
         notes: Optional[str] = None
         name: Optional[str] = None
 
     @app.post("/studio/workshop/journal/update")
     async def workshop_journal_update(req: JournalUpdate):
-        """Update a journal entry (rating, tags, notes)."""
+        """Update a journal entry (rating, notes, name)."""
         entries = _load_journal()
         for entry in entries:
             if entry["id"] == req.id:
                 if req.rating is not None:
                     entry["rating"] = max(0, min(5, req.rating))
-                if req.tags is not None:
-                    entry["tags"] = req.tags
                 if req.notes is not None:
                     entry["notes"] = req.notes
                 if req.name is not None:
@@ -4220,7 +4253,6 @@ def setup_workshop_routes(app: FastAPI):
             "date": datetime.now(timezone.utc).isoformat(),
             "elapsed": 0,
             "rating": 0,
-            "tags": req.get("tags", []),
             "notes": req.get("notes", ""),
             "image": None,
         }
@@ -4757,7 +4789,6 @@ def setup_workshop_routes(app: FastAPI):
                     "date": datetime.now(timezone.utc).isoformat(),
                     "elapsed": result["elapsed"],
                     "rating": 0,
-                    "tags": ["concept_erasure"],
                     "notes": f"Erased: {', '.join(concepts)}",
                     "image": None,
                 })

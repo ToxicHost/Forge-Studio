@@ -1448,30 +1448,116 @@
 
 .ws-journal-list {
     width: 100%;
-    max-width: 680px;
+    max-width: 1200px;
+    padding-bottom: 40px;
+    position: relative;
+}
+
+/* ── History tab — card grid (mirrors gallery card style) ── */
+.ws-history-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fill, minmax(220px, 1fr));
+    gap: 8px;
+}
+
+.ws-history-card {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    cursor: pointer;
+    transition: border-color 0.12s, transform 0.12s, box-shadow 0.12s;
+    position: relative;
+    overflow: hidden;
+}
+
+.ws-history-card:hover {
+    border-color: var(--accent);
+    transform: translateY(-1px);
+    box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
+}
+
+.ws-history-card-thumb {
+    min-height: 100px;
+    padding: 10px 12px;
     display: flex;
     flex-direction: column;
     gap: 4px;
-    padding-bottom: 40px;
 }
 
-.ws-journal-entry {
-    background: var(--bg-surface);
-    border: 1px solid var(--border-subtle);
-    border-radius: var(--radius);
-    transition: border-color 0.12s;
-}
-
-.ws-journal-entry:hover { border-color: var(--border); }
-.ws-je-expanded { border-color: var(--accent); }
-
-.ws-journal-entry-header {
+.ws-history-card-top {
     display: flex;
     align-items: center;
-    gap: 8px;
-    padding: 10px 14px;
-    cursor: pointer;
-    user-select: none;
+    justify-content: space-between;
+    gap: 6px;
+    margin-bottom: 4px;
+}
+
+.ws-history-card-stars {
+    display: inline-flex;
+    gap: 1px;
+}
+
+.ws-history-card-stars .ws-journal-star {
+    font-size: 11px;
+}
+
+.ws-history-card-recipe {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--text-1);
+    line-height: 1.4;
+    overflow: hidden;
+}
+
+.ws-history-card-recipe-line {
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.ws-history-card-arrow {
+    font-family: var(--mono);
+    color: var(--text-3);
+    font-size: 11px;
+    text-align: center;
+    line-height: 1;
+}
+
+.ws-history-card-method {
+    font-size: 10px;
+    color: var(--text-3);
+    margin-top: 2px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.ws-history-card-note-preview {
+    white-space: normal;
+    line-height: 1.4;
+    color: var(--text-2);
+}
+
+.ws-history-card-info {
+    padding: 6px 10px;
+    border-top: 1px solid var(--border-subtle);
+    background: var(--bg-raised);
+}
+
+.ws-history-card-filename {
+    font-size: 11px;
+    font-weight: 500;
+    color: var(--text-1);
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
+.ws-history-card-date {
+    font-size: 10px;
+    color: var(--text-4);
+    font-family: var(--mono);
+    margin-top: 2px;
 }
 
 .ws-journal-type-badge {
@@ -1482,28 +1568,14 @@
     text-transform: uppercase;
     letter-spacing: 0.4px;
     flex-shrink: 0;
+    display: inline-block;
 }
 
 .ws-jt-merge { background: var(--accent); color: #fff; }
+.ws-jt-chain { background: var(--accent); color: #fff; }
 .ws-jt-lora_bake { background: var(--green); color: #fff; }
 .ws-jt-vae_bake { background: var(--amber); color: #000; }
 .ws-jt-unknown { background: var(--bg-raised); color: var(--text-3); }
-
-.ws-journal-name {
-    flex: 1;
-    font-size: 11px;
-    font-weight: 500;
-    color: var(--text-1);
-    white-space: nowrap;
-    overflow: hidden;
-    text-overflow: ellipsis;
-}
-
-.ws-journal-stars-row {
-    display: flex;
-    gap: 1px;
-    flex-shrink: 0;
-}
 
 .ws-journal-star {
     font-size: 12px;
@@ -1514,25 +1586,103 @@
 
 .ws-journal-star:hover, .ws-star-filled { color: var(--amber); }
 
-.ws-journal-date {
-    font-size: 9px;
-    color: var(--text-4);
-    font-family: var(--mono);
-    flex-shrink: 0;
+/* ── Detail overlay ── */
+.ws-history-detail {
+    position: fixed;
+    inset: 0;
+    z-index: 200;
+    background: rgba(0, 0, 0, 0.78);
+    display: flex;
+    align-items: center;
+    justify-content: center;
+    padding: 24px;
 }
 
-.ws-je-chevron {
+.ws-history-detail-panel {
+    background: var(--bg-surface);
+    border: 1px solid var(--border);
+    border-radius: var(--radius);
+    width: 92%;
+    max-width: 640px;
+    max-height: 84vh;
+    display: flex;
+    flex-direction: column;
+    box-shadow: 0 12px 40px rgba(0, 0, 0, 0.5);
+}
+
+.ws-history-detail-header {
+    display: flex;
+    align-items: center;
+    gap: 8px;
+    padding: 12px 14px;
+    border-bottom: 1px solid var(--border-subtle);
+}
+
+.ws-history-detail-name {
+    flex: 1;
+}
+
+.ws-history-detail-close {
+    background: none;
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-3);
+    width: 26px;
+    height: 26px;
+    font-size: 16px;
+    line-height: 1;
+    cursor: pointer;
+    transition: all 0.12s;
+}
+
+.ws-history-detail-close:hover {
+    color: var(--red);
+    border-color: var(--red);
+}
+
+.ws-history-detail-body {
+    padding: 0 14px 14px;
+    overflow-y: auto;
+}
+
+.ws-history-detail-meta {
+    display: flex;
+    align-items: center;
+    gap: 12px;
+    flex-wrap: wrap;
     font-size: 10px;
     color: var(--text-4);
-    flex-shrink: 0;
+    font-family: var(--mono);
 }
 
-/* Expanded body */
-.ws-je-body {
-    padding: 0 14px 14px;
-    border-top: 1px solid var(--border-subtle);
+.ws-history-detail-stars {
+    display: inline-flex;
+    gap: 1px;
 }
 
+.ws-je-step {
+    background: var(--bg-raised);
+    border-radius: var(--radius-sm);
+    padding: 8px 10px;
+    margin-top: 6px;
+    border-left: 2px solid var(--accent);
+}
+
+.ws-je-step-header {
+    font-size: 10px;
+    font-weight: 600;
+    color: var(--text-2);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    margin-bottom: 4px;
+}
+
+.ws-je-step .ws-je-recipe {
+    background: transparent;
+    padding: 0;
+}
+
+/* Section / form rules reused inside the overlay */
 .ws-je-section {
     margin-top: 12px;
 }
@@ -1562,39 +1712,6 @@
 .ws-je-recipe-row span:first-child { color: var(--text-3); }
 .ws-je-recipe-row span:last-child { color: var(--text-1); font-family: var(--mono); }
 
-/* Tags */
-.ws-je-tags {
-    display: flex;
-    flex-wrap: wrap;
-    gap: 4px;
-    align-items: center;
-}
-
-.ws-je-body .ws-journal-tag {
-    cursor: pointer;
-    transition: all 0.12s;
-}
-
-.ws-je-body .ws-journal-tag:hover {
-    border-color: var(--red);
-    color: var(--red);
-    text-decoration: line-through;
-}
-
-.ws-je-tag-input {
-    border: none;
-    background: none;
-    color: var(--text-3);
-    font-family: var(--font);
-    font-size: 10px;
-    outline: none;
-    padding: 2px 4px;
-    width: 72px;
-}
-
-.ws-je-tag-input::placeholder { color: var(--text-4); }
-
-/* Notes */
 .ws-je-notes {
     width: 100%;
     background: var(--bg-raised);
@@ -1611,7 +1728,6 @@
 
 .ws-je-notes:focus { border-color: var(--accent); }
 
-/* Image */
 .ws-je-image-area {
     min-height: 48px;
 }
@@ -1655,7 +1771,6 @@
     font-family: var(--font);
 }
 
-/* Actions */
 .ws-je-actions {
     display: flex;
     justify-content: flex-end;
@@ -1678,15 +1793,6 @@
 }
 
 .ws-je-delete:hover { color: var(--red); border-color: var(--red); }
-
-.ws-journal-tag {
-    font-size: 9px;
-    padding: 1px 5px;
-    background: var(--bg-raised);
-    border: 1px solid var(--border-subtle);
-    border-radius: 3px;
-    color: var(--text-3);
-}
 
 
 /* ═══════════════════════════════════════════
