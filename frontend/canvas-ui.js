@@ -2706,6 +2706,10 @@ function renderLayerPanel() {
             info.appendChild(nameEl); info.appendChild(meta);
             try {
                 row._editorRow = _buildAdjEditor(L, _redraw);
+                // Tag the editor row so it visually continues the
+                // selected layer's accent left-border + bg tint instead
+                // of ending the selection block at the row boundary.
+                if (row._editorRow) row._editorRow.classList.add("layer-editor-active");
             } catch (e) {
                 console.error("[StudioUI] Adjust editor build error:", e);
             }
@@ -3804,6 +3808,36 @@ function bindToolbar() {
     document.getElementById("tfWarpBtn")?.addEventListener("click", () => {
         if (!S.transform.active) return;
         _toggleWarp();
+    });
+
+    // Flip / rotate the active layer. These act on the layer pixels
+    // immediately — independent of any active transform marquee. The
+    // existing inside-transform Flip H/V keys (single H/V) operate on
+    // the marquee's preview matrix; these buttons commit pixel-level
+    // changes with their own undo step.
+    function _layerOp(fn) {
+        return () => {
+            fn();
+            renderLayerPanel();
+            _redraw();
+        };
+    }
+    document.getElementById("tfFlipHBtn")?.addEventListener("click", _layerOp(() => C.flipLayerHorizontal()));
+    document.getElementById("tfFlipVBtn")?.addEventListener("click", _layerOp(() => C.flipLayerVertical()));
+    document.getElementById("tfRot90CWBtn")?.addEventListener("click", _layerOp(() => C.rotateLayer90CW()));
+    document.getElementById("tfRot90CCWBtn")?.addEventListener("click", _layerOp(() => C.rotateLayer90CCW()));
+    document.getElementById("tfRot180Btn")?.addEventListener("click", _layerOp(() => C.rotateLayer180()));
+    document.getElementById("tfRotArbBtn")?.addEventListener("click", () => {
+        const ans = prompt("Rotate by how many degrees? (positive = clockwise)", "15");
+        if (ans === null) return;
+        const deg = parseFloat(ans);
+        if (!Number.isFinite(deg)) {
+            if (window.showToast) showToast("Invalid angle", "warning");
+            return;
+        }
+        C.rotateLayerArbitrary(deg);
+        renderLayerPanel();
+        _redraw();
     });
 
     // Warp density buttons (3/4/5)

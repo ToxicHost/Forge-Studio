@@ -1144,6 +1144,29 @@ body {
   margin: 2px 0 4px 0;
   display: flex; flex-direction: column; gap: 6px;
 }
+
+/* When the adjustment editor sits below an active (selected) layer
+   row, continue the accent left border + tinted background so the
+   selection block reads as one unit instead of two stacked elements.
+   Drop side/top borders, keep a subtle bottom separator matching the
+   row divider. */
+.layer-editor-active.adj-editor {
+  margin: 0;
+  border-top: none;
+  border-right: none;
+  border-bottom: 1px solid var(--border-subtle);
+  border-left: 3px solid var(--accent);
+  border-radius: 0;
+  background: var(--accent-dim);
+  padding-left: 9px;
+}
+
+/* Hide the layer-item's own bottom border when the next sibling is
+   the active editor row, so the two elements visually fuse without a
+   seam between them. */
+.layer-item.selected:has(+ .layer-editor-active) {
+  border-bottom-color: transparent;
+}
 .adj-row {
   display: flex; align-items: center; gap: 6px;
   min-height: 18px;
