@@ -363,7 +363,7 @@ const StudioModules = {
 // ========================================================================
 
 // Canonical tab order — applied inside register() after each new tab is added
-const TAB_ORDER = ["studio", "gallery", "workshop", "video", "lexicon", "codex"];
+const TAB_ORDER = ["studio", "develop", "gallery", "workshop", "video", "lexicon", "codex"];
 
 function _reorderTabs() {
     const bar = _getTabBar();

@@ -161,6 +161,11 @@ function _saveDoc(idx) {
   // Undo/redo — swap wholesale (entries contain self-contained ImageData)
   doc.undoStack = S.undoStack;
   doc.redoStack = S.redoStack;
+
+  // Develop (global non-destructive post-processing) — see develop.js
+  if (S.developParams) {
+    doc.developParams = JSON.parse(JSON.stringify(S.developParams));
+  }
 }
 
 function _loadDoc(idx) {
@@ -253,8 +258,30 @@ function _loadDoc(idx) {
   S.undoStack = doc.undoStack || [];
   S.redoStack = doc.redoStack || [];
 
+  // Develop (global non-destructive post-processing). Older docs predate
+  // this field — fall back to identity defaults so they composite unchanged.
+  if (doc.developParams) {
+    S.developParams = JSON.parse(JSON.stringify(doc.developParams));
+  } else if (window.StudioDevelop && window.StudioDevelop.defaultParams) {
+    S.developParams = window.StudioDevelop.defaultParams();
+  } else {
+    S.developParams = { _version: 1, enabled: false };
+  }
+  // Caches are document-scoped — invalidate on tab switch
+  S._developLutCache = null;
+  S._developBlurCache = null;
+  S._developGrainCache = null;
+  S._developBeforeBuf = null;
+  // Composite cache too — different doc = different layers + dims
+  if (window.StudioCore && window.StudioCore.markCompositeDirty) window.StudioCore.markCompositeDirty();
+
   // Generation panel
   _loadGenPanel(doc.genPanel);
+
+  // Sync Develop panel UI if the module is open
+  if (window.StudioDevelop && window.StudioDevelop.syncPanel) {
+    try { window.StudioDevelop.syncPanel(); } catch (e) {}
+  }
 }
 
 // ========================================================================
@@ -314,6 +341,9 @@ function _createBlankDoc(name) {
     editingMask: false, _userMaskMode: false, _canvasDirty: false,
     zoom: { scale: 1, ox: 0, oy: 0 },
     undoStack: [], redoStack: [],
+    developParams: (window.StudioDevelop && window.StudioDevelop.defaultParams)
+      ? window.StudioDevelop.defaultParams()
+      : { _version: 1, enabled: false },
     genPanel: (function () {
       var gen = _saveGenPanel();
       // Clear content-specific fields — keep settings (sampler, steps, CFG, etc.)

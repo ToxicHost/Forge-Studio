@@ -767,6 +767,9 @@ function bindCanvas() {
         if (_ctxMenuJustClosed) { _ctxMenuJustClosed = false; return; }
         if (S.zoom.panning || _spaceHeld) return;
         if (S.studioMode === "img2img") return;
+        // Block tool actions while the Develop module is active. Wheel zoom
+        // and spacebar pan still work because they don't go through pointerdown.
+        if (window.StudioModules && window.StudioModules.activeId === "develop") return;
         const p = pos(e);
 
         // Ctrl-click eyedropper — pick color without switching tools
@@ -2098,6 +2101,31 @@ function savePSD() {
             blendMode: C._blendToPS[L.blendMode] || "normal"
         });
     }
+
+    // If Develop is active, prepend a flattened "(Develop)" composite layer
+    // at the top so the PSD opens looking like the in-app preview. Original
+    // layers remain editable below; users can hide/delete this layer in PS.
+    const dp = S.developParams;
+    if (dp && dp.enabled && C._applyDevelop && window.StudioDevelop) {
+        const devCanvas = document.createElement("canvas");
+        devCanvas.width = S.W; devCanvas.height = S.H;
+        const dx = devCanvas.getContext("2d");
+        dx.fillStyle = "#ffffff"; dx.fillRect(0, 0, S.W, S.H);
+        for (const L of S.layers) {
+            if (!L.visible) continue;
+            if (L.type === "adjustment") { C._applyAdjustment(dx, S.W, S.H, L); continue; }
+            dx.globalCompositeOperation = L.blendMode || "source-over";
+            dx.globalAlpha = L.opacity;
+            dx.drawImage(L.canvas, 0, 0);
+        }
+        dx.globalCompositeOperation = "source-over"; dx.globalAlpha = 1;
+        C._applyDevelop(dx, S.W, S.H, dp);
+        children.push({
+            name: "(Develop)", canvas: devCanvas,
+            hidden: false, opacity: 1, blendMode: "normal"
+        });
+    }
+
     const psd = { width: S.W, height: S.H, children: children };
     const buf = window.agPsd.writePsd(psd);
     const blob = new Blob([buf], { type: "application/octet-stream" });
@@ -2813,7 +2841,13 @@ function renderLayerPanel() {
             meta.textContent = "⚙ Adjustment";
             info.appendChild(nameEl); info.appendChild(meta);
             try {
-                row._editorRow = _buildAdjEditor(L, _redraw);
+                // Wrap the redraw callback so every adjustment-editor handler
+                // invalidates the composite cache (otherwise sliders would no-op
+                // after the first change because the cache would still be valid).
+                row._editorRow = _buildAdjEditor(L, () => {
+                    if (C.markCompositeDirty) C.markCompositeDirty();
+                    _redraw();
+                });
                 // Tag the editor row so it visually continues the
                 // selected layer's accent left-border + bg tint instead
                 // of ending the selection block at the row boundary.
@@ -2834,7 +2868,7 @@ function renderLayerPanel() {
                 blendSel.appendChild(opt);
             }
             blendSel.addEventListener("click", e => e.stopPropagation());
-            blendSel.addEventListener("change", () => { L.blendMode = blendSel.value; _redraw(); });
+            blendSel.addEventListener("change", () => { L.blendMode = blendSel.value; if (C.markCompositeDirty) C.markCompositeDirty(); _redraw(); });
 
             const opSlider = document.createElement("input");
             opSlider.type = "range"; opSlider.min = "0"; opSlider.max = "100";
@@ -2844,6 +2878,7 @@ function renderLayerPanel() {
             opSlider.addEventListener("input", () => {
                 L.opacity = +opSlider.value / 100;
                 opLabel.textContent = Math.round(opSlider.value) + "%";
+                if (C.markCompositeDirty) C.markCompositeDirty();
                 _redraw();
             });
 
@@ -2872,7 +2907,9 @@ function renderLayerPanel() {
             ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>'
             : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" opacity="0.3"><line x1="1" y1="1" x2="23" y2="23"/></svg>';
         vis.addEventListener("click", e => {
-            e.stopPropagation(); L.visible = !L.visible; renderLayerPanel(); _redraw();
+            e.stopPropagation(); L.visible = !L.visible;
+            if (C.markCompositeDirty) C.markCompositeDirty();
+            renderLayerPanel(); _redraw();
         });
 
         row.appendChild(thumb); row.appendChild(info); row.appendChild(vis);

@@ -2840,6 +2840,70 @@ def setup_studio_routes(app: FastAPI):
             return JSONResponse({"error": str(e)}, status_code=500)
 
     # ------------------------------------------------------------------
+    # Develop presets — JSON files under presets/develop/<name>.json
+    # Used by the Develop module (frontend/develop.js) for save/restore of
+    # user post-processing presets.
+    # ------------------------------------------------------------------
+
+    class DevelopPresetSaveRequest(BaseModel):
+        name: str
+        params: dict
+
+    def _develop_presets_dir() -> Path:
+        _here = Path(__file__).parent
+        _ext_root = _here if (_here / "frontend").is_dir() else _here.parent
+        d = _ext_root / "presets" / "develop"
+        d.mkdir(parents=True, exist_ok=True)
+        return d
+
+    _DEV_NAME_RE = re.compile(r"^[A-Za-z0-9 _-]{1,64}$")
+
+    @app.get("/studio/develop/presets")
+    async def develop_presets_list():
+        try:
+            base = _develop_presets_dir()
+            out = []
+            for f in sorted(base.glob("*.json")):
+                try:
+                    data = json.loads(f.read_text(encoding="utf-8"))
+                    if not isinstance(data, dict):
+                        continue
+                    out.append({"name": f.stem, "params": data})
+                except Exception:
+                    continue
+            return {"presets": out}
+        except Exception as e:
+            return JSONResponse({"presets": [], "error": str(e)}, status_code=500)
+
+    @app.post("/studio/develop/presets")
+    async def develop_preset_save(req: DevelopPresetSaveRequest):
+        try:
+            name = (req.name or "").strip()
+            if not _DEV_NAME_RE.match(name):
+                return JSONResponse(
+                    {"ok": False, "error": "Invalid name (1-64 chars: letters, digits, space, _ -)"},
+                    status_code=400,
+                )
+            params = req.params or {}
+            if not isinstance(params, dict) or "_version" not in params:
+                return JSONResponse(
+                    {"ok": False, "error": "Missing _version in params"},
+                    status_code=400,
+                )
+            base = _develop_presets_dir()
+            target = (base / (name + ".json")).resolve()
+            base_resolved = base.resolve()
+            # Path traversal guard
+            try:
+                target.relative_to(base_resolved)
+            except ValueError:
+                return JSONResponse({"ok": False, "error": "Invalid path"}, status_code=400)
+            target.write_text(json.dumps(params, indent=2), encoding="utf-8")
+            return {"ok": True, "name": name}
+        except Exception as e:
+            return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+    # ------------------------------------------------------------------
     # Image saving
     # ------------------------------------------------------------------
 
