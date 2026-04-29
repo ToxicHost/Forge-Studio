@@ -1,0 +1,150 @@
+/* Searchable select widget — wraps native <select>s with a styled
+   trigger + filterable floating panel. The native select stays in
+   the DOM as the source of truth (visually hidden via .ssel-native-hidden). */
+
+.ssel-native-hidden {
+  /* Position-absolute + 0×0 keeps it form-submittable and accessible
+     to assistive tech without taking layout space. */
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+.ssel-trigger {
+  display: inline-flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  cursor: pointer;
+  font-family: inherit;
+  text-align: left;
+  /* Inherit the native select's classes (.param-select, .ws-model-select,
+     etc.) for size/colors. The reset below is just to neutralize the
+     <button> defaults — the inherited classes set the rest. */
+  appearance: none;
+  -webkit-appearance: none;
+  font-size: inherit;
+}
+
+.ssel-trigger-label {
+  flex: 1 1 0;
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ssel-trigger-chevron {
+  flex-shrink: 0;
+  font-size: 9px;
+  color: var(--text-4, #666);
+  margin-left: 2px;
+  transition: transform 0.15s;
+}
+
+.ssel-trigger-open .ssel-trigger-chevron {
+  transform: rotate(180deg);
+}
+
+.ssel-trigger-open {
+  border-color: var(--accent, #7b8fff) !important;
+}
+
+.ssel-panel {
+  position: fixed;
+  z-index: 400;
+  min-width: 240px;
+  max-width: 480px;
+  background: var(--bg-surface, #1a1a1a);
+  border: 1px solid var(--border, #333);
+  border-radius: var(--radius, 6px);
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.45);
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+
+.ssel-search-row {
+  padding: 6px;
+  border-bottom: 1px solid var(--border-subtle, #222);
+  background: var(--bg-raised, #1f1f1f);
+}
+
+.ssel-search {
+  width: 100%;
+  background: var(--bg-input, var(--bg-surface));
+  border: 1px solid var(--border-subtle, #222);
+  border-radius: var(--radius-sm, 3px);
+  color: var(--text-1, #eee);
+  font-family: var(--font, sans-serif);
+  font-size: 11px;
+  padding: 5px 8px;
+  outline: none;
+}
+
+.ssel-search:focus {
+  border-color: var(--accent, #7b8fff);
+}
+
+.ssel-list {
+  max-height: 320px;
+  overflow-y: auto;
+  padding: 4px 0;
+}
+
+.ssel-optgroup-header {
+  padding: 6px 10px 2px;
+  font-size: 9px;
+  font-weight: 600;
+  color: var(--text-4, #777);
+  text-transform: uppercase;
+  letter-spacing: 0.6px;
+  user-select: none;
+}
+
+.ssel-option {
+  padding: 5px 10px;
+  font-size: 11px;
+  color: var(--text-2, #ccc);
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  user-select: none;
+  transition: background 0.06s;
+}
+
+.ssel-option:hover,
+.ssel-option.kb-focus {
+  background: var(--bg-raised, #2a2a2a);
+  color: var(--text-1, #eee);
+}
+
+.ssel-option.selected {
+  color: var(--accent-bright, var(--accent, #7b8fff));
+  font-weight: 500;
+}
+
+.ssel-option.selected.kb-focus {
+  background: var(--accent-dim, rgba(123, 143, 255, 0.13));
+}
+
+.ssel-option.disabled {
+  color: var(--text-4, #777);
+  cursor: not-allowed;
+  font-style: italic;
+}
+
+.ssel-empty {
+  padding: 10px;
+  text-align: center;
+  font-size: 11px;
+  color: var(--text-4, #777);
+  font-style: italic;
+}

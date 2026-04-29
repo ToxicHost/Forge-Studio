@@ -1013,11 +1013,17 @@ body {
 .collapse-arrow { transition: transform 0.2s; color: var(--text-4); }
 .collapse-arrow.open { transform: rotate(180deg); }
 
+/* max-height is driven by JS (scrollHeight on each toggle) so the
+   easing curve matches the actual content height instead of running
+   over an arbitrary 2000px range. After the open transition completes
+   JS sets max-height to none so dynamic content (nested collapses,
+   added rows, etc.) isn't clipped. */
 .collapse-body {
   max-height: 0; overflow: hidden;
-  transition: max-height 0.25s ease; padding: 0 12px;
+  transition: max-height 0.22s ease;
+  padding: 0 12px;
 }
-.collapse-body.open { max-height: 2000px; padding: 0 12px 10px; }
+.collapse-body.open { padding: 0 12px 10px; }
 
 
 /* ═══════════════════════════════════════════

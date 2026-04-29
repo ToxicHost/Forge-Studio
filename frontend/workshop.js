@@ -773,6 +773,9 @@ function _bindLoraEvents() {
         const idx = parseInt(sel.dataset.idx);
         if (WS.recipeLoras[idx]?.filename) sel.value = WS.recipeLoras[idx].filename;
         sel.addEventListener("change", () => { WS.recipeLoras[idx].filename = sel.value || null; _updateActionButtons(); });
+        if (window.StudioSearchableSelect) {
+            window.StudioSearchableSelect.attach(sel, { placeholder: "— Select LoRA —", searchPlaceholder: "Filter LoRAs…" });
+        }
     });
     _els.loraList.querySelectorAll(".ws-rl-strength").forEach(slider => {
         const idx = parseInt(slider.dataset.idx);
@@ -1554,6 +1557,9 @@ function _populateGlobalVaeSelect() {
         html += '<option value="' + _esc(v.filename) + '"' + sel + '>' + _esc(v.filename) + ' (' + v.size_mb + ' MB)</option>';
     }
     _els.recipeVae.innerHTML = html;
+    if (WS.vaes.length >= 10 && window.StudioSearchableSelect) {
+        window.StudioSearchableSelect.attach(_els.recipeVae, { placeholder: "— None —", searchPlaceholder: "Filter VAEs…" });
+    }
 }
 
 function _populateRowVae(rowIdx) {
@@ -1567,6 +1573,9 @@ function _populateRowVae(rowIdx) {
         html += '<option value="' + _esc(v.filename) + '"' + selected + '>' + _esc(v.filename) + ' (' + v.size_mb + ' MB)</option>';
     }
     sel.innerHTML = html;
+    if (WS.vaes.length >= 10 && window.StudioSearchableSelect) {
+        window.StudioSearchableSelect.attach(sel, { placeholder: "— Use global —", searchPlaceholder: "Filter VAEs…" });
+    }
 }
 
 // ========================================================================
@@ -1635,6 +1644,17 @@ function _bindRowEvents(rowIdx) {
         sel.addEventListener("focus", () => _highlightRefSource(_refTargetIdxFromValue(sel.value)));
         sel.addEventListener("blur", () => _highlightRefSource(null));
     });
+
+    // Wrap the model selects in the searchable-select widget. attach()
+    // is idempotent — re-renders of the row safely re-attach to the
+    // same handle. The wrapper dispatches focus/blur on the native
+    // select on panel open/close, so the ref-source highlight wiring
+    // above keeps working untouched.
+    if (window.StudioSearchableSelect) {
+        if (primarySel) window.StudioSearchableSelect.attach(primarySel, { placeholder: "— Primary —", searchPlaceholder: "Filter models…" });
+        if (secSel) window.StudioSearchableSelect.attach(secSel, { placeholder: "— Secondary —", searchPlaceholder: "Filter models…" });
+        if (terSel) window.StudioSearchableSelect.attach(terSel, { placeholder: "— Tertiary —", searchPlaceholder: "Filter models…" });
+    }
 
     // Method
     const methodSel = rowEl.querySelector(".ws-row-method");

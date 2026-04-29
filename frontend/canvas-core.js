@@ -3151,10 +3151,11 @@ function _rotateLayer180() {
     L.ctx.putImageData(dst, 0, 0);
 }
 
-// 90° rotation — lossless. Layer canvas stays at S.W × S.H, so for
-// non-square documents the rotated content is center-cropped (when
-// the rotated bbox is wider than the canvas) and center-padded on the
-// opposite axis (when narrower). Square documents are exact.
+// 90° rotation — lossless when the document is square. On non-square
+// documents the rotated bounding box (h × w) doesn't fit the canvas
+// (w × h), so we scale-to-fit and letterbox: keeps every pixel of the
+// original content visible at the cost of resampling. Layer canvases
+// stay at S.W × S.H per the document-size invariant.
 function _rotateLayer90Common(direction) {
     const L = activeLayer();
     if (!L || L.type === "adjustment") return;
@@ -3191,20 +3192,32 @@ function _rotateLayer90Common(direction) {
             }
         }
     }
-    // Compose back into a document-sized canvas with center alignment.
-    L.ctx.clearRect(0, 0, w, h);
     const tmp = _createCanvas(rotW, rotH);
     tmp.getContext("2d").putImageData(rot, 0, 0);
-    const dx = Math.round((w - rotW) / 2);
-    const dy = Math.round((h - rotH) / 2);
-    L.ctx.drawImage(tmp, dx, dy);
+    L.ctx.clearRect(0, 0, w, h);
+    // Square doc → exact fit, no scaling. Non-square → scale-to-fit
+    // so the rotated bbox lands fully inside the canvas, letterboxed
+    // along the shorter axis. Lossless guarantee preserved for the
+    // square case.
+    if (w === h) {
+        L.ctx.drawImage(tmp, 0, 0);
+    } else {
+        const scale = Math.min(w / rotW, h / rotH);
+        const drawW = rotW * scale;
+        const drawH = rotH * scale;
+        const dx = (w - drawW) / 2;
+        const dy = (h - drawH) / 2;
+        L.ctx.imageSmoothingEnabled = true;
+        L.ctx.imageSmoothingQuality = "high";
+        L.ctx.drawImage(tmp, dx, dy, drawW, drawH);
+    }
 }
 
 function _rotateLayer90CW() { _rotateLayer90Common(1); }
 function _rotateLayer90CCW() { _rotateLayer90Common(-1); }
 
-// Arbitrary rotation — bilinear via canvas. Content stays document-
-// sized; rotated content is clipped to S.W × S.H around the center.
+// Arbitrary rotation — bilinear via canvas. Rotated bounding box is
+// scale-to-fit so all content remains visible regardless of angle.
 function _rotateLayerArbitrary(degrees) {
     const L = activeLayer();
     if (!L || L.type === "adjustment") return;
@@ -3212,8 +3225,17 @@ function _rotateLayerArbitrary(degrees) {
     if (!Number.isFinite(deg) || deg === 0) return;
     saveUndo(`Rotate ${deg}°`);
     const w = S.W, h = S.H;
+    // Bounding box of the rotated rectangle. cos/sin in absolute value
+    // because rotation direction doesn't change the bbox dimensions.
+    const rad = deg * Math.PI / 180;
+    const c = Math.abs(Math.cos(rad));
+    const s = Math.abs(Math.sin(rad));
+    const bboxW = w * c + h * s;
+    const bboxH = w * s + h * c;
+    // Scale-to-fit: keep entire rotated content inside w × h.
+    const scale = Math.min(w / bboxW, h / bboxH);
     // Snapshot current content into a tmp canvas, then redraw rotated
-    // around the document center back into the layer.
+    // and scaled around the document center back into the layer.
     const snap = _createCanvas(w, h);
     snap.getContext("2d").drawImage(L.canvas, 0, 0);
     L.ctx.save();
@@ -3221,7 +3243,8 @@ function _rotateLayerArbitrary(degrees) {
     L.ctx.imageSmoothingQuality = "high";
     L.ctx.clearRect(0, 0, w, h);
     L.ctx.translate(w / 2, h / 2);
-    L.ctx.rotate(deg * Math.PI / 180);
+    L.ctx.rotate(rad);
+    L.ctx.scale(scale, scale);
     L.ctx.drawImage(snap, -w / 2, -h / 2);
     L.ctx.restore();
 }
