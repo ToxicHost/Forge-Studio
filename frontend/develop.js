@@ -1416,12 +1416,17 @@ if (window.StudioModules) {
             // Re-show the canvas page that module-system just hid.
             var studio = document.getElementById("app-studio");
             if (studio) studio.classList.add("active");
+            // Body class drives panel-right hide and any future develop-only
+            // styling. The pointerdown gate in canvas-ui reads
+            // StudioModules.activeId directly so it doesn't depend on this.
+            document.body.classList.add("develop-active");
             _showPanel();
             syncPanel();
             // Histogram refresh on tab open
             try { _renderHistogram(); } catch (e) {}
         },
         deactivate: function () {
+            document.body.classList.remove("develop-active");
             _hidePanel();
             // Tear down before/after split overlay if open
             if (_splitLine) _splitLine.classList.remove("visible");

@@ -26,6 +26,13 @@
 
 .develop-panel.visible { display: flex; }
 
+/* When Develop is active, hide the generation right panel so the two
+   sidebars don't stack, and use a default cursor on the canvas to hint
+   that brush tools are inert in this module. The actual blocking of
+   tool actions is done by a check in canvas-ui's pointerdown handler. */
+body.develop-active #panelRight { display: none !important; }
+body.develop-active #canvasArea canvas { cursor: default; }
+
 .develop-panel-header {
   display: flex;
   align-items: center;

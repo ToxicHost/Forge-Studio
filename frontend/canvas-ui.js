@@ -767,6 +767,9 @@ function bindCanvas() {
         if (_ctxMenuJustClosed) { _ctxMenuJustClosed = false; return; }
         if (S.zoom.panning || _spaceHeld) return;
         if (S.studioMode === "img2img") return;
+        // Block tool actions while the Develop module is active. Wheel zoom
+        // and spacebar pan still work because they don't go through pointerdown.
+        if (window.StudioModules && window.StudioModules.activeId === "develop") return;
         const p = pos(e);
 
         // Ctrl-click eyedropper — pick color without switching tools
