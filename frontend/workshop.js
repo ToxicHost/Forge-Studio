@@ -29,15 +29,15 @@ const VERSION = "0.8.0";
 const METHOD_INFO = {
     weighted_sum: {
         label: "Weighted Sum", needsC: false, params: [], blockWeights: true,
-        showAlpha: true, alphaLabel: "Weight (A ← → B)",
-        alphaHint: "0 = 100% Model A. 1 = 100% Model B. 0.5 = equal blend.",
+        showAlpha: true, alphaLabel: "Weight (B ← → A)", abAlpha: true,
+        alphaHint: "0 = 100% Model B. 1 = 100% Model A. 0.5 = equal blend.",
         formula: "A × (1 − α) + B × α",
         desc: "The simplest merge — blends every weight between A and B by the alpha value. Good starting point for any merge. If results look washed out, try SLERP instead.",
     },
     slerp: {
         label: "SLERP", needsC: false, params: [], blockWeights: true,
-        showAlpha: true, alphaLabel: "Weight (A ← → B)",
-        alphaHint: "0 = 100% Model A, 1 = 100% Model B.",
+        showAlpha: true, alphaLabel: "Weight (B ← → A)", abAlpha: true,
+        alphaHint: "0 = 100% Model B. 1 = 100% Model A.",
         formula: "slerp(A, B, α)",
         desc: "Spherical interpolation — preserves the magnitude of weight vectors instead of averaging them. Usually produces sharper, more vibrant results than Weighted Sum at the same alpha. Best for blending two models of similar quality.",
     },
@@ -98,8 +98,8 @@ const METHOD_INFO = {
     },
     svd_blend: {
         label: "SVD: Spectral Blend", needsC: false, params: [], blockWeights: true,
-        showAlpha: true, alphaLabel: "Weight (A ← → B)",
-        alphaHint: "0 = pure A, 1 = pure B. Interpolates in spectral space.",
+        showAlpha: true, alphaLabel: "Weight (B ← → A)", abAlpha: true,
+        alphaHint: "0 = pure B, 1 = pure A. Interpolates in spectral space.",
         formula: "procrustes_slerp(SVD(A), SVD(B), α)",
         desc: "Aligns both models’ spectral decompositions via Procrustes rotation, then interpolates structure and magnitude together in spectral space. Smoother than Weighted Sum because it respects the geometric relationship between feature directions rather than averaging raw weights.",
     },
@@ -132,6 +132,25 @@ const PARAM_DEFS = {
     cosine_shift: { label: "Cosine Shift", min: -1, max: 1, step: 0.05, default: 0.0 },
     eta: { label: "Eta (η)", min: 0, max: 0.5, step: 0.01, default: 0.1 },
 };
+
+// ────────────────────────────────────────────────────────────────────────
+// Slider direction convention.
+//
+// For methods flagged abAlpha (weighted_sum, slerp, svd_blend) we display
+// the slider with B on the left, A on the right — matches what feels
+// natural for block-merging in this codebase. Internally row.alpha and
+// row.blockWeights still store the OLD convention (0 = A, 1 = B) so the
+// backend math, recipes JSON, presets, and auto-alpha tools stay
+// untouched and existing data keeps working. Only the UI bind layer
+// flips. For non-abAlpha methods (strength / lambda / blend strength)
+// the slider is unflipped — those aren't A↔B mixes.
+function _abAlpha(method) { var info = METHOD_INFO[method] || {}; return !!info.abAlpha; }
+function _alphaForDisplay(stored, method) {
+    return _abAlpha(method) ? (1 - stored) : stored;
+}
+function _alphaFromDisplay(displayed, method) {
+    return _abAlpha(method) ? (1 - displayed) : displayed;
+}
 
 const BLOCK_TOOLTIPS = {
     "Text Encoder": "Controls how text prompts are interpreted. Merging this changes what words mean to the model.",
@@ -1471,9 +1490,10 @@ function _rowHtml(rowIdx) {
         + _methodOptions(row.method)
         + '</select>';
     // Alpha cell — slider + value, hidden for methods without alpha (cosine_adaptive)
+    var displayedAlpha = _alphaForDisplay(row.alpha, row.method);
     html += '<div class="ws-row-alpha-cell" data-row="' + rowIdx + '"' + (info.showAlpha ? '' : ' style="visibility:hidden;"') + '>'
-        + '<input type="range" min="0" max="1" step="0.01" value="' + row.alpha + '" class="ws-slider ws-row-alpha-slider" data-row="' + rowIdx + '" title="' + _esc(info.alphaLabel || "Weight") + '">'
-        + '<input type="number" min="0" max="1" step="0.01" value="' + row.alpha.toFixed(2) + '" class="param-val ws-row-alpha-val" data-row="' + rowIdx + '">'
+        + '<input type="range" min="0" max="1" step="0.01" value="' + displayedAlpha + '" class="ws-slider ws-row-alpha-slider" data-row="' + rowIdx + '" title="' + _esc(info.alphaLabel || "Weight") + '">'
+        + '<input type="number" min="0" max="1" step="0.01" value="' + displayedAlpha.toFixed(2) + '" class="param-val ws-row-alpha-val" data-row="' + rowIdx + '">'
         + '</div>';
     // Expand button (⚙) — only shown when there is something hidden behind it
     html += '<button class="ws-row-expand' + (expanded || row.useBlockWeights ? ' ws-row-expanded' : '') + '" data-row="' + rowIdx + '" title="Per-block weights / advanced"' + (expandBtnVisible ? '' : ' style="visibility:hidden;"') + '>⚙</button>';
@@ -1663,17 +1683,21 @@ function _bindRowEvents(rowIdx) {
         _onRowMethodChanged(rowIdx);
     });
 
-    // Alpha
+    // Alpha — slider/number display in NEW convention (B-left / A-right for
+    // abAlpha methods); row.alpha stays in OLD convention internally. See
+    // _alphaForDisplay / _alphaFromDisplay above.
     const alphaSlider = rowEl.querySelector(".ws-row-alpha-slider");
     const alphaVal = rowEl.querySelector(".ws-row-alpha-val");
     alphaSlider.addEventListener("input", () => {
-        row.alpha = parseFloat(alphaSlider.value);
-        alphaVal.value = row.alpha.toFixed(2);
+        const displayed = parseFloat(alphaSlider.value);
+        row.alpha = _alphaFromDisplay(displayed, row.method);
+        alphaVal.value = displayed.toFixed(2);
     });
     alphaVal.addEventListener("change", () => {
         let v = parseFloat(alphaVal.value); if (isNaN(v)) v = 0.5;
         v = Math.max(0, Math.min(1, v));
-        row.alpha = v; alphaSlider.value = v; alphaVal.value = v.toFixed(2);
+        row.alpha = _alphaFromDisplay(v, row.method);
+        alphaSlider.value = v; alphaVal.value = v.toFixed(2);
     });
 
     // Method-specific param sliders
@@ -1810,6 +1834,17 @@ function _applyRowMethodVisibility(rowIdx) {
     if (alphaCell) alphaCell.style.visibility = info.showAlpha ? "" : "hidden";
     const alphaSlider = rowEl.querySelector(".ws-row-alpha-slider");
     if (alphaSlider) alphaSlider.title = info.alphaLabel || "Weight";
+    // The abAlpha flag may differ between methods, so re-display the slider
+    // and number input from r.alpha — same stored value, possibly flipped
+    // display direction.
+    const alphaValEl = rowEl.querySelector(".ws-row-alpha-val");
+    if (alphaSlider && alphaValEl) {
+        const disp = _alphaForDisplay(r.alpha, r.method);
+        alphaSlider.value = disp;
+        alphaValEl.value = disp.toFixed(2);
+    }
+    // Block sliders also need a repaint if open — they read r.method too.
+    if (r.useBlockWeights) _buildBlockSlidersForRow(rowIdx);
 
     // Tertiary (lives on line 1)
     const tertiary = rowEl.querySelector(".ws-row-tertiary");
@@ -2033,32 +2068,37 @@ function _buildBlockSlidersForRow(rowIdx) {
             html += '<div class="ws-block-group-label ws-has-tip"' + (tip ? ' data-tip="' + _esc(tip) + '"' : '') + '>' + _esc(group.label) + (tip ? ' <span class="ws-tooltip-icon">?</span>' : '') + '</div>';
         }
         for (const block of group.blocks) {
-            const val = r.blockWeights?.[block] ?? r.alpha;
+            const stored = r.blockWeights?.[block] ?? r.alpha;
+            // Display value (NEW convention for abAlpha methods); the
+            // heat fill matches the displayed value so visuals line up
+            // with what the user sees on the slider.
+            const disp = _alphaForDisplay(stored, r.method);
             const tip = _getBlockTooltip(block);
-            const color = _heatColor(val);
-            const widthPct = (val * 100).toFixed(1);
+            const color = _heatColor(disp);
+            const widthPct = (disp * 100).toFixed(1);
             html += '<div class="ws-block-row ws-block-heat" data-block="' + block + '">'
                 + '<span class="ws-block-name ws-has-tip"' + (tip ? ' data-tip="' + _esc(tip) + '"' : '') + '>' + block + (tip ? ' <span class="ws-tooltip-icon">?</span>' : '') + '</span>'
                 + '<div class="ws-block-heat-track" data-block="' + block + '">'
                 + '<div class="ws-block-heat-fill" data-block="' + block + '" style="width:' + widthPct + '%;background:' + color + ';"></div>'
-                + '<input type="range" min="0" max="1" step="0.01" value="' + val + '" class="ws-block-slider" data-row="' + rowIdx + '" data-block="' + block + '">'
+                + '<input type="range" min="0" max="1" step="0.01" value="' + disp + '" class="ws-block-slider" data-row="' + rowIdx + '" data-block="' + block + '">'
                 + '</div>'
-                + '<span class="ws-block-val" data-row="' + rowIdx + '" data-block="' + block + '">' + val.toFixed(2) + '</span></div>';
+                + '<span class="ws-block-val" data-row="' + rowIdx + '" data-block="' + block + '">' + disp.toFixed(2) + '</span></div>';
         }
     }
     container.innerHTML = html;
     container.querySelectorAll(".ws-block-slider").forEach(slider => {
         slider.addEventListener("input", (e) => {
             const block = e.target.dataset.block;
-            const val = parseFloat(e.target.value);
+            const disp = parseFloat(e.target.value);
             if (!r.blockWeights) r.blockWeights = {};
-            r.blockWeights[block] = val;
+            // Store in OLD convention (method-aware), display unchanged.
+            r.blockWeights[block] = _alphaFromDisplay(disp, r.method);
             const valSpan = container.querySelector('.ws-block-val[data-block="' + block + '"]');
-            if (valSpan) valSpan.textContent = val.toFixed(2);
+            if (valSpan) valSpan.textContent = disp.toFixed(2);
             const fill = container.querySelector('.ws-block-heat-fill[data-block="' + block + '"]');
             if (fill) {
-                fill.style.width = (val * 100).toFixed(1) + "%";
-                fill.style.background = _heatColor(val);
+                fill.style.width = (disp * 100).toFixed(1) + "%";
+                fill.style.background = _heatColor(disp);
             }
         });
     });
