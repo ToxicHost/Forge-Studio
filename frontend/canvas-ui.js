@@ -1701,6 +1701,113 @@ function _rebuildWarpGrid() {
     _redraw();
 }
 
+// Smart layer rotation. Hybrid path:
+//   - If the rotated content fits inside the canvas, apply the
+//     rotation in place (no scaling, no overflow). Lossless for
+//     90°/180°.
+//   - If the rotated content's bbox exceeds the canvas, instead of
+//     destructively scaling the result down, we set up a Transform
+//     operation with the pre-rotated content and a bounds rect that
+//     extends past the canvas. The user can pan/scale via the
+//     existing Transform handles, then commit (Enter / switch tool /
+//     click outside).
+//
+// Behaviour is identical regardless of entry point (Transform tool's
+// options bar, the layer-row context menu, or a keyboard shortcut).
+function smartRotate(angleRad) {
+    const L = C.activeLayer();
+    if (!L || L.type === "adjustment") return;
+    const bounds = C.getLayerContentBounds(L);
+    if (!bounds) {
+        if (window.showToast) showToast("Nothing to rotate on this layer", "info");
+        return;
+    }
+
+    const w = S.W, h = S.H;
+    const bw = bounds.w, bh = bounds.h;
+    const cosA = Math.abs(Math.cos(angleRad));
+    const sinA = Math.abs(Math.sin(angleRad));
+    const newW = bw * cosA + bh * sinA;
+    const newH = bw * sinA + bh * cosA;
+    const fits = (newW <= w + 0.5) && (newH <= h + 0.5);
+
+    if (fits) {
+        // In-place rotation via canvas-core. Snap 90°/180° to the
+        // dedicated lossless paths; arbitrary angles use the bilinear
+        // path. The angleRad is already aligned at the cardinal cases.
+        const eps = 1e-4;
+        if (Math.abs(angleRad - Math.PI / 2) < eps) C.rotateLayer90CW();
+        else if (Math.abs(angleRad + Math.PI / 2) < eps) C.rotateLayer90CCW();
+        else if (Math.abs(angleRad - Math.PI) < eps || Math.abs(angleRad + Math.PI) < eps) C.rotateLayer180();
+        else C.rotateLayerArbitrary(angleRad * 180 / Math.PI);
+        renderLayerPanel();
+        _redraw();
+        return;
+    }
+
+    // Overflowing rotation — engage Transform mode. If a transform
+    // is already active we commit it first so the rotation lands on
+    // a clean state.
+    if (S.transform.active) { _commitTransform(); }
+
+    // Snapshot the content bbox, pre-rotate into a canvas sized to
+    // the rotated bbox (so the floating content survives at full
+    // resolution), and place it centered on the document. The
+    // Transform tool takes over for positioning / scaling / final
+    // commit.
+    C.saveStructuralUndo("Rotate Layer (free)");
+
+    // Snapshot the source content
+    const snap = document.createElement("canvas");
+    snap.width = bw; snap.height = bh;
+    snap.getContext("2d").drawImage(L.canvas, bounds.x, bounds.y, bw, bh, 0, 0, bw, bh);
+
+    // Bake the rotation into a canvas of post-rotation dimensions
+    const tcW = Math.ceil(newW), tcH = Math.ceil(newH);
+    const tc = document.createElement("canvas");
+    tc.width = tcW; tc.height = tcH;
+    const tctx = tc.getContext("2d");
+    tctx.imageSmoothingEnabled = true;
+    tctx.imageSmoothingQuality = "high";
+    tctx.translate(tcW / 2, tcH / 2);
+    tctx.rotate(angleRad);
+    tctx.drawImage(snap, -bw / 2, -bh / 2);
+
+    // Capture the original layer pixels so Escape restores cleanly,
+    // then clear the source bbox in the layer (the floating content
+    // takes over the visual representation until commit).
+    const originalData = L.ctx.getImageData(0, 0, S.W, S.H);
+    L.ctx.clearRect(bounds.x, bounds.y, bw, bh);
+
+    // Center the rotated content on the original bbox center.
+    const cx = bounds.x + bw / 2;
+    const cy = bounds.y + bh / 2;
+    const newBounds = { x: cx - tcW / 2, y: cy - tcH / 2, w: tcW, h: tcH };
+
+    S.transform = {
+        active: true,
+        bounds: { ...newBounds }, origBounds: { ...newBounds },
+        originalData: originalData,
+        layerIdx: S.activeLayerIdx,
+        canvas: tc, ctx: tctx,
+        dragMode: null, dragStart: null, origDragBounds: null,
+        rotation: 0, flipH: false, flipV: false, aspectLock: false,
+        skewX: 0, skewY: 0, skewMode: false,
+        perspective: false, grid: null, dragGridPt: null,
+        warp: false, warpGrid: null, warpOrigGrid: null,
+        warpMode: "rigid", warpDensity: 3,
+    };
+    C.selectionClear(); stopMarchingAnts();
+
+    // Switch to the Transform tool so handle drag / numeric inputs
+    // are wired up. setTool will auto-commit any prior transform —
+    // we just set ours after, so the order is fine.
+    if (S.tool !== "transform") setTool("transform");
+    if (window.showToast) showToast("Rotated past canvas — drag to position, Enter to commit", "info");
+    renderLayerPanel();
+    _redraw();
+}
+
 function _commitTransform() {
     if (!S.transform.active) return;
     const L = S.layers[S.transform.layerIdx];
@@ -3169,16 +3276,15 @@ function _showLayerCtxMenu(x, y) {
         { label: "Flip Horizontal", shortcut: "Ctrl+Shift+H", action: apply(() => C.flipLayerHorizontal()), disabled: isAdjust },
         { label: "Flip Vertical",   shortcut: "Ctrl+Shift+V", action: apply(() => C.flipLayerVertical()),   disabled: isAdjust },
         { type: "sep" },
-        { label: "Rotate 90° CW",  action: apply(() => C.rotateLayer90CW()),  disabled: isAdjust },
-        { label: "Rotate 90° CCW", action: apply(() => C.rotateLayer90CCW()), disabled: isAdjust },
-        { label: "Rotate 180°",    action: apply(() => C.rotateLayer180()),   disabled: isAdjust },
+        { label: "Rotate 90° CW",  action: () => smartRotate(Math.PI / 2),  disabled: isAdjust },
+        { label: "Rotate 90° CCW", action: () => smartRotate(-Math.PI / 2), disabled: isAdjust },
+        { label: "Rotate 180°",    action: () => smartRotate(Math.PI),      disabled: isAdjust },
         { label: "Rotate Arbitrary…", action: () => {
             const ans = prompt("Rotate by how many degrees? (positive = clockwise)", "15");
             if (ans === null) return;
             const deg = parseFloat(ans);
             if (!Number.isFinite(deg)) { if (window.showToast) window.showToast("Invalid angle", "warning"); return; }
-            C.rotateLayerArbitrary(deg);
-            renderLayerPanel(); _redraw();
+            smartRotate(deg * Math.PI / 180);
         }, disabled: isAdjust },
     ];
 
@@ -3817,11 +3923,13 @@ function bindToolbar() {
         _toggleWarp();
     });
 
-    // Flip / rotate the active layer. These act on the layer pixels
-    // immediately — independent of any active transform marquee. The
-    // existing inside-transform Flip H/V keys (single H/V) operate on
-    // the marquee's preview matrix; these buttons commit pixel-level
-    // changes with their own undo step.
+    // Flip / rotate the active layer. Flip H/V acts on the layer
+    // pixels in place (dimensions don't change so there's no overflow
+    // case). Rotation goes through smartRotate, which decides between
+    // an in-place rotation (when the rotated content still fits in
+    // the canvas) and a Transform-tool engagement (when it doesn't —
+    // the rotated content extends past the canvas and the user can
+    // pan/scale to position it before committing).
     function _layerOp(fn) {
         return () => {
             fn();
@@ -3831,9 +3939,9 @@ function bindToolbar() {
     }
     document.getElementById("tfFlipHBtn")?.addEventListener("click", _layerOp(() => C.flipLayerHorizontal()));
     document.getElementById("tfFlipVBtn")?.addEventListener("click", _layerOp(() => C.flipLayerVertical()));
-    document.getElementById("tfRot90CWBtn")?.addEventListener("click", _layerOp(() => C.rotateLayer90CW()));
-    document.getElementById("tfRot90CCWBtn")?.addEventListener("click", _layerOp(() => C.rotateLayer90CCW()));
-    document.getElementById("tfRot180Btn")?.addEventListener("click", _layerOp(() => C.rotateLayer180()));
+    document.getElementById("tfRot90CWBtn")?.addEventListener("click", () => smartRotate(Math.PI / 2));
+    document.getElementById("tfRot90CCWBtn")?.addEventListener("click", () => smartRotate(-Math.PI / 2));
+    document.getElementById("tfRot180Btn")?.addEventListener("click", () => smartRotate(Math.PI));
     document.getElementById("tfRotArbBtn")?.addEventListener("click", () => {
         const ans = prompt("Rotate by how many degrees? (positive = clockwise)", "15");
         if (ans === null) return;
@@ -3842,9 +3950,7 @@ function bindToolbar() {
             if (window.showToast) showToast("Invalid angle", "warning");
             return;
         }
-        C.rotateLayerArbitrary(deg);
-        renderLayerPanel();
-        _redraw();
+        smartRotate(deg * Math.PI / 180);
     });
 
     // Warp density buttons (3/4/5)
