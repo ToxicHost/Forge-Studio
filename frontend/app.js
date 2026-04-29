@@ -3193,7 +3193,7 @@ function bindUI() {
 
   // Re-apply the most recently resolved defaults to the current DOM.
   // No network — used by studio-docs.js when opening a new Canvas tab so
-  // the user's defaults apply to fresh documents (Lars-reported bug).
+  // the user's defaults apply to fresh documents.
   // Returns true if defaults were applied, false if nothing cached yet.
   window._studioReapplyDefaults = function () {
     if (!_resolvedDefaults || !Object.keys(_resolvedDefaults).length) return false;
