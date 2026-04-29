@@ -642,6 +642,26 @@ function _redraw() {
     c.setTransform(_z.scale, 0, 0, _z.scale, _z.ox, _z.oy);
     c.globalAlpha = 1;
     c.globalCompositeOperation = "source-over";
+
+    // After-redraw hooks. Modules (Develop's before/after split overlay,
+    // future overlays) can register a callback here to run after every
+    // local redraw — replacing window.StudioUI.redraw doesn't catch the
+    // direct internal calls in this file.
+    if (_afterRedrawCbs.length) {
+        for (let i = 0; i < _afterRedrawCbs.length; i++) {
+            try { _afterRedrawCbs[i](); } catch (e) { console.error("[StudioUI] afterRedraw cb:", e); }
+        }
+    }
+}
+
+const _afterRedrawCbs = [];
+function _onAfterRedraw(fn) {
+    if (typeof fn !== "function") return;
+    if (_afterRedrawCbs.indexOf(fn) === -1) _afterRedrawCbs.push(fn);
+}
+function _offAfterRedraw(fn) {
+    const i = _afterRedrawCbs.indexOf(fn);
+    if (i !== -1) _afterRedrawCbs.splice(i, 1);
 }
 
 // Override core's composite to add overlays
@@ -4376,6 +4396,8 @@ if (document.getElementById("studio-canvas")) {
 // Expose for app.js integration
 window.StudioUI = {
     redraw: _redraw,
+    onAfterRedraw: _onAfterRedraw,
+    offAfterRedraw: _offAfterRedraw,
     setTool,
     renderLayerPanel,
     renderHistoryPanel,
