@@ -807,7 +807,6 @@ async function _addManualJournalEntry() {
         date: new Date().toISOString(),
         elapsed: 0,
         rating: 0,
-        tags: [],
         notes: "",
         image: null,
     };
@@ -822,6 +821,63 @@ async function _addManualJournalEntry() {
     } catch (e) { console.error(TAG, "Add entry failed:", e); }
 }
 
+// Pretty type label for cards / overlay header.
+const _TYPE_LABEL = {
+    merge: "Merge", chain: "Chain",
+    lora_bake: "LoRA Bake", vae_bake: "VAE Bake",
+    note: "Note",
+};
+
+// Build the at-a-glance recipe summary shown on the card thumb.
+function _cardRecipeSummary(e) {
+    const recipe = e.recipe || {};
+    if (e.type === "chain" || recipe.type === "chain") {
+        const steps = recipe.steps || [];
+        const methods = steps.map(s => s.method).filter(Boolean);
+        const head = methods.slice(0, 3).join(" → ");
+        const tail = methods.length > 3 ? " (+" + (methods.length - 3) + " more)" : "";
+        return '<div class="ws-history-card-recipe">'
+            + '<div class="ws-history-card-recipe-line"><strong>' + steps.length + ' steps</strong></div>'
+            + (methods.length ? '<div class="ws-history-card-method">' + _esc(head + tail) + '</div>' : '')
+            + '</div>';
+    }
+    if (e.type === "merge" || recipe.method) {
+        const a = recipe.model_a || "—";
+        const b = recipe.model_b || "—";
+        const method = recipe.method ? _esc(recipe.method) : "";
+        const alpha = recipe.alpha !== undefined ? Number(recipe.alpha).toFixed(2) : null;
+        return '<div class="ws-history-card-recipe">'
+            + '<div class="ws-history-card-recipe-line">' + _esc(a) + '</div>'
+            + '<div class="ws-history-card-arrow">↓</div>'
+            + '<div class="ws-history-card-recipe-line">' + _esc(b) + '</div>'
+            + (method ? '<div class="ws-history-card-method">' + method + (alpha ? " @ " + alpha : "") + '</div>' : '')
+            + '</div>';
+    }
+    if (e.type === "lora_bake") {
+        const ckpt = recipe.checkpoint || "—";
+        const n = (recipe.loras || []).length;
+        return '<div class="ws-history-card-recipe">'
+            + '<div class="ws-history-card-recipe-line">' + _esc(ckpt) + '</div>'
+            + '<div class="ws-history-card-method">+ ' + n + ' LoRA' + (n === 1 ? "" : "s") + '</div>'
+            + '</div>';
+    }
+    if (e.type === "vae_bake") {
+        const ckpt = recipe.checkpoint || "—";
+        const v = recipe.vae || "—";
+        return '<div class="ws-history-card-recipe">'
+            + '<div class="ws-history-card-recipe-line">' + _esc(ckpt) + '</div>'
+            + '<div class="ws-history-card-method">+ VAE: ' + _esc(v) + '</div>'
+            + '</div>';
+    }
+    if (e.type === "note") {
+        const preview = (e.notes || "").slice(0, 80);
+        return '<div class="ws-history-card-recipe"><div class="ws-history-card-method ws-history-card-note-preview">'
+            + (preview ? _esc(preview) + (e.notes.length > 80 ? "…" : "") : "<em>No notes yet</em>")
+            + '</div></div>';
+    }
+    return '<div class="ws-history-card-recipe"></div>';
+}
+
 function _renderJournal() {
     let entries = WS.journalEntries;
     const search = WS.journalSearch.toLowerCase();
@@ -831,8 +887,7 @@ function _renderJournal() {
         entries = entries.filter(e =>
             (e.name || "").toLowerCase().includes(search) ||
             (e.notes || "").toLowerCase().includes(search) ||
-            (e.tags || []).some(t => t.includes(search)) ||
-            (e.type || "").includes(search) ||
+            (e.type || "").toLowerCase().includes(search) ||
             JSON.stringify(e.recipe || {}).toLowerCase().includes(search)
         );
     }
@@ -844,16 +899,16 @@ function _renderJournal() {
         _els.journalList.innerHTML = '<div class="ws-info-placeholder" style="padding:32px 0;">'
             + (WS.journalEntries.length ? 'No matches for current filter' : 'No history yet — completed merges and bakes will appear here automatically')
             + '</div>';
+        _renderHistoryDetail();
         return;
     }
 
-    let html = '';
-    for (const e of entries.slice(0, 100)) {
-        const isExpanded = WS.journalExpanded === e.id;
-        const typeBadge = e.type === "merge" ? "Merge" : e.type === "lora_bake" ? "LoRA Bake" : e.type === "vae_bake" ? "VAE Bake" : e.type === "note" ? "Note" : e.type || "?";
+    let html = '<div class="ws-history-grid">';
+    for (const e of entries.slice(0, 200)) {
+        const typeKey = e.type || "unknown";
+        const typeLabel = _TYPE_LABEL[typeKey] || typeKey;
         const date = e.date ? new Date(e.date).toLocaleDateString() : "";
         const elapsed = e.elapsed ? e.elapsed + "s" : "";
-        const tags = (e.tags || []).map(t => '<span class="ws-journal-tag">' + _esc(t) + '</span>').join("");
 
         let starsHtml = '';
         for (let s = 1; s <= 5; s++) {
@@ -861,70 +916,151 @@ function _renderJournal() {
             starsHtml += '<span class="ws-journal-star' + (filled ? ' ws-star-filled' : '') + '" data-id="' + _esc(e.id) + '" data-rating="' + s + '">★</span>';
         }
 
-        html += '<div class="ws-journal-entry' + (isExpanded ? ' ws-je-expanded' : '') + '" data-id="' + _esc(e.id) + '">';
-        html += '<div class="ws-journal-entry-header ws-je-toggle" data-id="' + _esc(e.id) + '">'
-            + '<span class="ws-journal-type-badge ws-jt-' + (e.type || "unknown") + '">' + typeBadge + '</span>'
-            + '<span class="ws-journal-name">' + _esc(e.name || "Untitled") + '</span>'
-            + '<span class="ws-journal-stars-row">' + starsHtml + '</span>'
-            + '<span class="ws-journal-date">' + date + '</span>'
-            + '<span class="ws-je-chevron">' + (isExpanded ? '▴' : '▾') + '</span>'
+        html += '<div class="ws-history-card" data-id="' + _esc(e.id) + '">'
+            + '<div class="ws-history-card-thumb">'
+            + '<div class="ws-history-card-top">'
+            + '<span class="ws-journal-type-badge ws-jt-' + _esc(typeKey) + '">' + _esc(typeLabel) + '</span>'
+            + '<span class="ws-history-card-stars">' + starsHtml + '</span>'
+            + '</div>'
+            + _cardRecipeSummary(e)
+            + '</div>'
+            + '<div class="ws-history-card-info">'
+            + '<div class="ws-history-card-filename" title="' + _esc(e.name || "") + '">' + _esc(e.name || "Untitled") + '</div>'
+            + '<div class="ws-history-card-date">' + _esc(date) + (elapsed ? ' · ' + _esc(elapsed) : '') + '</div>'
+            + '</div>'
             + '</div>';
-
-        if (isExpanded) {
-            const recipe = e.recipe || {};
-            html += '<div class="ws-je-body">';
-            html += '<div class="ws-je-section"><div class="ws-je-section-label">Name</div>'
-                + '<input type="text" class="ws-je-name-input" data-id="' + _esc(e.id) + '" value="' + _esc(e.name || '') + '" placeholder="Entry name">'
-                + '</div>';
-            if (Object.keys(recipe).length > 0) {
-                html += '<div class="ws-je-section"><div class="ws-je-section-label">Recipe</div><div class="ws-je-recipe">';
-                if (recipe.method) html += '<div class="ws-je-recipe-row"><span>Method</span><span>' + _esc(recipe.method) + '</span></div>';
-                if (recipe.alpha !== undefined) html += '<div class="ws-je-recipe-row"><span>Alpha</span><span>' + recipe.alpha + '</span></div>';
-                if (recipe.model_a) html += '<div class="ws-je-recipe-row"><span>Model A</span><span>' + _esc(recipe.model_a) + '</span></div>';
-                if (recipe.model_b) html += '<div class="ws-je-recipe-row"><span>Model B</span><span>' + _esc(recipe.model_b) + '</span></div>';
-                if (recipe.checkpoint) html += '<div class="ws-je-recipe-row"><span>Checkpoint</span><span>' + _esc(recipe.checkpoint) + '</span></div>';
-                if (recipe.loras) { for (const l of recipe.loras) { html += '<div class="ws-je-recipe-row"><span>LoRA</span><span>' + _esc(l.filename) + ' @ ' + l.strength + '</span></div>'; } }
-                if (recipe.vae) html += '<div class="ws-je-recipe-row"><span>VAE</span><span>' + _esc(recipe.vae) + '</span></div>';
-                if (recipe.fp16 !== undefined) html += '<div class="ws-je-recipe-row"><span>fp16</span><span>' + (recipe.fp16 ? "Yes" : "No") + '</span></div>';
-                if (elapsed) html += '<div class="ws-je-recipe-row"><span>Time</span><span>' + elapsed + '</span></div>';
-                html += '</div></div>';
-            }
-            html += '<div class="ws-je-section"><div class="ws-je-section-label">Tags</div>'
-                + '<div class="ws-je-tags">' + tags
-                + '<input type="text" class="ws-je-tag-input" data-id="' + _esc(e.id) + '" placeholder="+ add tag" size="8">'
-                + '</div></div>';
-            html += '<div class="ws-je-section"><div class="ws-je-section-label">Notes</div>'
-                + '<textarea class="ws-je-notes" data-id="' + _esc(e.id) + '" rows="3" placeholder="Add notes, observations, tested prompts...">' + _esc(e.notes || '') + '</textarea>'
-                + '</div>';
-            html += '<div class="ws-je-section"><div class="ws-je-section-label">Sample Image</div>'
-                + '<div class="ws-je-image-area" data-id="' + _esc(e.id) + '">';
-            if (e.image) {
-                html += '<img src="' + API + '/journal/image/' + _esc(e.image) + '" class="ws-je-image">';
-                html += '<button class="ws-je-image-remove" data-id="' + _esc(e.id) + '">Remove</button>';
-            } else {
-                html += '<div class="ws-je-image-drop" data-id="' + _esc(e.id) + '">Drop image here or <label class="ws-je-image-browse">browse<input type="file" accept="image/*" class="ws-je-image-input" data-id="' + _esc(e.id) + '" style="display:none;"></label></div>';
-            }
-            html += '</div></div>';
-            html += '<div class="ws-je-actions">'
-                + '<button class="ws-je-action-btn ws-je-delete" data-id="' + _esc(e.id) + '">Delete</button>'
-                + '</div>';
-            html += '</div>';
-        }
-        html += '</div>';
     }
+    html += '</div>';
+
     _els.journalList.innerHTML = html;
+    _renderHistoryDetail();
     _bindJournalEvents();
 }
 
+function _recipeRowsHtml(recipe, elapsed) {
+    let html = '';
+    if (recipe.method) html += '<div class="ws-je-recipe-row"><span>Method</span><span>' + _esc(recipe.method) + '</span></div>';
+    if (recipe.alpha !== undefined) html += '<div class="ws-je-recipe-row"><span>Alpha</span><span>' + recipe.alpha + '</span></div>';
+    if (recipe.model_a) html += '<div class="ws-je-recipe-row"><span>Model A</span><span>' + _esc(recipe.model_a) + '</span></div>';
+    if (recipe.model_b) html += '<div class="ws-je-recipe-row"><span>Model B</span><span>' + _esc(recipe.model_b) + '</span></div>';
+    if (recipe.model_c) html += '<div class="ws-je-recipe-row"><span>Model C</span><span>' + _esc(recipe.model_c) + '</span></div>';
+    if (recipe.checkpoint) html += '<div class="ws-je-recipe-row"><span>Checkpoint</span><span>' + _esc(recipe.checkpoint) + '</span></div>';
+    if (recipe.loras) { for (const l of recipe.loras) { html += '<div class="ws-je-recipe-row"><span>LoRA</span><span>' + _esc(l.filename) + ' @ ' + l.strength + '</span></div>'; } }
+    if (recipe.vae) html += '<div class="ws-je-recipe-row"><span>VAE</span><span>' + _esc(recipe.vae) + '</span></div>';
+    if (recipe.fp16 !== undefined) html += '<div class="ws-je-recipe-row"><span>fp16</span><span>' + (recipe.fp16 ? "Yes" : "No") + '</span></div>';
+    if (elapsed) html += '<div class="ws-je-recipe-row"><span>Time</span><span>' + elapsed + '</span></div>';
+    return html;
+}
+
+// Render the detail overlay for the currently expanded entry, or
+// remove it if nothing is expanded. Mounted as a sibling of
+// journalList so the overlay can sit fixed over the whole viewport.
+function _renderHistoryDetail() {
+    const host = _els.journalList?.parentElement;
+    if (!host) return;
+    let overlay = host.querySelector(".ws-history-detail");
+    const id = WS.journalExpanded;
+    if (!id) {
+        if (overlay) overlay.remove();
+        return;
+    }
+    const e = WS.journalEntries.find(en => en.id === id);
+    if (!e) {
+        if (overlay) overlay.remove();
+        WS.journalExpanded = null;
+        return;
+    }
+    if (!overlay) {
+        overlay = document.createElement("div");
+        overlay.className = "ws-history-detail";
+        host.appendChild(overlay);
+    }
+
+    const typeKey = e.type || "unknown";
+    const typeLabel = _TYPE_LABEL[typeKey] || typeKey;
+    const elapsed = e.elapsed ? e.elapsed + "s" : "";
+
+    let recipeHtml = '';
+    const recipe = e.recipe || {};
+    if (e.type === "chain" || recipe.type === "chain") {
+        const steps = recipe.steps || [];
+        recipeHtml += '<div class="ws-je-section"><div class="ws-je-section-label">Chain (' + steps.length + ' step' + (steps.length === 1 ? '' : 's') + ')</div>';
+        for (let i = 0; i < steps.length; i++) {
+            const s = steps[i];
+            const sLabel = _TYPE_LABEL[s.type] || s.type || "step";
+            recipeHtml += '<div class="ws-je-step">'
+                + '<div class="ws-je-step-header">Step ' + (s.step || (i + 1)) + ' · ' + _esc(sLabel) + '</div>'
+                + '<div class="ws-je-recipe">' + _recipeRowsHtml(s, null) + '</div>'
+                + '</div>';
+        }
+        recipeHtml += '</div>';
+    } else if (Object.keys(recipe).length > 0) {
+        recipeHtml = '<div class="ws-je-section"><div class="ws-je-section-label">Recipe</div>'
+            + '<div class="ws-je-recipe">' + _recipeRowsHtml(recipe, elapsed) + '</div></div>';
+    }
+
+    let starsHtml = '';
+    for (let s = 1; s <= 5; s++) {
+        const filled = s <= (e.rating || 0);
+        starsHtml += '<span class="ws-journal-star ws-history-detail-star' + (filled ? ' ws-star-filled' : '') + '" data-id="' + _esc(e.id) + '" data-rating="' + s + '">★</span>';
+    }
+
+    let imageHtml = '';
+    if (e.image) {
+        imageHtml = '<img src="' + API + '/journal/image/' + _esc(e.image) + '" class="ws-je-image">'
+            + '<button class="ws-je-image-remove" data-id="' + _esc(e.id) + '">Remove</button>';
+    } else {
+        imageHtml = '<div class="ws-je-image-drop" data-id="' + _esc(e.id) + '">Drop image here or <label class="ws-je-image-browse">browse<input type="file" accept="image/*" class="ws-je-image-input" data-id="' + _esc(e.id) + '" style="display:none;"></label></div>';
+    }
+
+    overlay.innerHTML = '<div class="ws-history-detail-panel" data-id="' + _esc(e.id) + '">'
+        + '<div class="ws-history-detail-header">'
+        + '<span class="ws-journal-type-badge ws-jt-' + _esc(typeKey) + '">' + _esc(typeLabel) + '</span>'
+        + '<input type="text" class="ws-je-name-input ws-history-detail-name" data-id="' + _esc(e.id) + '" value="' + _esc(e.name || '') + '" placeholder="Entry name">'
+        + '<button class="ws-history-detail-close" title="Close">×</button>'
+        + '</div>'
+        + '<div class="ws-history-detail-body">'
+        + '<div class="ws-je-section ws-history-detail-meta">'
+        + '<span class="ws-history-detail-stars">' + starsHtml + '</span>'
+        + (e.date ? '<span class="ws-history-detail-date">' + _esc(new Date(e.date).toLocaleString()) + '</span>' : '')
+        + (elapsed ? '<span class="ws-history-detail-elapsed">' + _esc(elapsed) + '</span>' : '')
+        + '</div>'
+        + recipeHtml
+        + '<div class="ws-je-section"><div class="ws-je-section-label">Notes</div>'
+        + '<textarea class="ws-je-notes" data-id="' + _esc(e.id) + '" rows="4" placeholder="Add notes, observations, tested prompts...">' + _esc(e.notes || '') + '</textarea>'
+        + '</div>'
+        + '<div class="ws-je-section"><div class="ws-je-section-label">Sample Image</div>'
+        + '<div class="ws-je-image-area" data-id="' + _esc(e.id) + '">' + imageHtml + '</div>'
+        + '</div>'
+        + '<div class="ws-je-actions">'
+        + '<button class="ws-je-action-btn ws-je-delete" data-id="' + _esc(e.id) + '">Delete</button>'
+        + '</div>'
+        + '</div>'
+        + '</div>';
+
+    _bindHistoryDetailEvents();
+}
+
+function _closeHistoryDetail() {
+    if (WS.journalExpanded === null) return;
+    WS.journalExpanded = null;
+    _renderHistoryDetail();
+}
+
 function _bindJournalEvents() {
-    _els.journalList.querySelectorAll(".ws-je-toggle").forEach(el => {
-        el.addEventListener("click", (ev) => {
+    const host = _els.journalList?.parentElement;
+
+    // Card click → open detail overlay (ignore clicks on stars)
+    _els.journalList.querySelectorAll(".ws-history-card").forEach(card => {
+        card.addEventListener("click", (ev) => {
             if (ev.target.classList.contains("ws-journal-star")) return;
-            const id = el.dataset.id;
-            WS.journalExpanded = WS.journalExpanded === id ? null : id;
-            _renderJournal();
+            const id = card.dataset.id;
+            WS.journalExpanded = id;
+            _renderHistoryDetail();
         });
     });
+
+    // Star clicks on cards (set rating without opening overlay)
     _els.journalList.querySelectorAll(".ws-journal-star").forEach(el => {
         el.addEventListener("click", async (ev) => {
             ev.stopPropagation();
@@ -940,67 +1076,82 @@ function _bindJournalEvents() {
             } catch (e) { console.error(TAG, "Rating update failed:", e); }
         });
     });
-    _els.journalList.querySelectorAll(".ws-je-tag-input").forEach(input => {
-        input.addEventListener("keydown", async (ev) => {
-            if (ev.key !== "Enter") return;
-            const id = input.dataset.id;
-            const tag = input.value.trim().toLowerCase();
-            if (!tag) return;
+
+}
+
+// Bind events inside the detail overlay (re-bound on every render
+// because the overlay innerHTML is replaced).
+function _bindHistoryDetailEvents() {
+    const host = _els.journalList?.parentElement;
+    if (!host) return;
+    const overlay = host.querySelector(".ws-history-detail");
+    if (!overlay) return;
+
+    // Backdrop click closes (panel itself stops propagation)
+    overlay.addEventListener("click", (ev) => {
+        if (ev.target === overlay) _closeHistoryDetail();
+    });
+    const panel = overlay.querySelector(".ws-history-detail-panel");
+    if (panel) panel.addEventListener("click", (ev) => ev.stopPropagation());
+
+    const closeBtn = overlay.querySelector(".ws-history-detail-close");
+    if (closeBtn) closeBtn.addEventListener("click", _closeHistoryDetail);
+
+    // Star clicks inside the overlay
+    overlay.querySelectorAll(".ws-journal-star").forEach(el => {
+        el.addEventListener("click", async (ev) => {
+            ev.stopPropagation();
+            const id = el.dataset.id;
+            const rating = parseInt(el.dataset.rating);
             const entry = WS.journalEntries.find(e => e.id === id);
             if (!entry) return;
-            const tags = [...(entry.tags || [])];
-            if (!tags.includes(tag)) tags.push(tag);
+            const newRating = entry.rating === rating ? rating - 1 : rating;
             try {
-                await fetchJSON(API + "/journal/update", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, tags }) });
-                entry.tags = tags;
+                await fetchJSON(API + "/journal/update", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, rating: newRating }) });
+                entry.rating = newRating;
                 _renderJournal();
-            } catch (e) { console.error(TAG, "Tag add failed:", e); }
+            } catch (e) { console.error(TAG, "Rating update failed:", e); }
         });
     });
-    _els.journalList.querySelectorAll(".ws-journal-tag").forEach(el => {
-        el.addEventListener("click", async () => {
-            const entry_el = el.closest(".ws-journal-entry");
-            const id = entry_el?.dataset.id;
-            const tag = el.textContent.trim();
-            const entry = WS.journalEntries.find(e => e.id === id);
-            if (!entry) return;
-            const tags = (entry.tags || []).filter(t => t !== tag);
-            try {
-                await fetchJSON(API + "/journal/update", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, tags }) });
-                entry.tags = tags;
-                _renderJournal();
-            } catch (e) { console.error(TAG, "Tag remove failed:", e); }
-        });
-    });
-    _els.journalList.querySelectorAll(".ws-je-notes").forEach(textarea => {
-        textarea.addEventListener("blur", async () => {
-            const id = textarea.dataset.id;
-            const notes = textarea.value;
-            const entry = WS.journalEntries.find(e => e.id === id);
-            if (!entry || entry.notes === notes) return;
-            try {
-                await fetchJSON(API + "/journal/update", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, notes }) });
-                entry.notes = notes;
-            } catch (e) { console.error(TAG, "Notes save failed:", e); }
-        });
-    });
-    _els.journalList.querySelectorAll(".ws-je-name-input").forEach(input => {
-        input.addEventListener("blur", async () => {
-            const id = input.dataset.id;
-            const name = input.value.trim();
+
+    // Name input save on blur
+    const nameInput = overlay.querySelector(".ws-je-name-input");
+    if (nameInput) {
+        nameInput.addEventListener("blur", async () => {
+            const id = nameInput.dataset.id;
+            const name = nameInput.value.trim();
             const entry = WS.journalEntries.find(e => e.id === id);
             if (!entry || entry.name === name) return;
             try {
                 await fetchJSON(API + "/journal/update", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, name }) });
                 entry.name = name;
+                _renderJournal();
             } catch (e) { console.error(TAG, "Name save failed:", e); }
         });
-    });
-    _els.journalList.querySelectorAll(".ws-je-image-input").forEach(input => {
-        input.addEventListener("change", (ev) => {
+    }
+
+    // Notes save on blur
+    const notes = overlay.querySelector(".ws-je-notes");
+    if (notes) {
+        notes.addEventListener("blur", async () => {
+            const id = notes.dataset.id;
+            const value = notes.value;
+            const entry = WS.journalEntries.find(e => e.id === id);
+            if (!entry || entry.notes === value) return;
+            try {
+                await fetchJSON(API + "/journal/update", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, notes: value }) });
+                entry.notes = value;
+            } catch (e) { console.error(TAG, "Notes save failed:", e); }
+        });
+    }
+
+    // Image: file input
+    const imageInput = overlay.querySelector(".ws-je-image-input");
+    if (imageInput) {
+        imageInput.addEventListener("change", (ev) => {
             const file = ev.target.files[0];
             if (!file || !file.type.startsWith("image/")) return;
-            const id = input.dataset.id;
+            const id = imageInput.dataset.id;
             const reader = new FileReader();
             reader.onload = async (e) => {
                 try {
@@ -1010,8 +1161,11 @@ function _bindJournalEvents() {
             };
             reader.readAsDataURL(file);
         });
-    });
-    _els.journalList.querySelectorAll(".ws-je-image-drop").forEach(drop => {
+    }
+
+    // Image: drag/drop
+    const drop = overlay.querySelector(".ws-je-image-drop");
+    if (drop) {
         drop.addEventListener("dragover", (e) => { e.preventDefault(); drop.classList.add("ws-je-drag-over"); });
         drop.addEventListener("dragleave", () => drop.classList.remove("ws-je-drag-over"));
         drop.addEventListener("drop", (ev) => {
@@ -1029,20 +1183,26 @@ function _bindJournalEvents() {
             };
             reader.readAsDataURL(file);
         });
-    });
-    _els.journalList.querySelectorAll(".ws-je-image-remove").forEach(btn => {
-        btn.addEventListener("click", async () => {
-            const id = btn.dataset.id;
+    }
+
+    // Image: remove
+    const removeBtn = overlay.querySelector(".ws-je-image-remove");
+    if (removeBtn) {
+        removeBtn.addEventListener("click", async () => {
+            const id = removeBtn.dataset.id;
             try {
                 await fetchJSON(API + "/journal/image", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id, image: null }) });
                 await _loadJournal();
             } catch (e) { console.error(TAG, "Image remove failed:", e); }
         });
-    });
-    _els.journalList.querySelectorAll(".ws-je-delete").forEach(btn => {
-        btn.addEventListener("click", async () => {
+    }
+
+    // Delete entry
+    const deleteBtn = overlay.querySelector(".ws-je-delete");
+    if (deleteBtn) {
+        deleteBtn.addEventListener("click", async () => {
             if (!confirm("Delete this entry?")) return;
-            const id = btn.dataset.id;
+            const id = deleteBtn.dataset.id;
             try {
                 await fetchJSON(API + "/journal/delete", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify({ id }) });
                 WS.journalEntries = WS.journalEntries.filter(e => e.id !== id);
@@ -1050,7 +1210,7 @@ function _bindJournalEvents() {
                 _renderJournal();
             } catch (e) { console.error(TAG, "Delete failed:", e); }
         });
-    });
+    }
 }
 
 // ========================================================================
@@ -1156,12 +1316,13 @@ function _buildUI(container) {
     + '<div id="wsTabHistory" class="ws-tab-content" style="display:none;">'
     + '<div class="ws-journal-toolbar">'
     + '<div class="ws-journal-toolbar-top">'
-    + '<input type="text" id="wsJournalSearch" class="param-val ws-journal-search-input" placeholder="Search merges, LoRAs, tags...">'
+    + '<input type="text" id="wsJournalSearch" class="param-val ws-journal-search-input" placeholder="Search merges, notes, recipes...">'
     + '<button id="wsJournalAddEntry" class="ws-journal-add-btn">+ New Entry</button>'
     + '</div>'
     + '<div class="ws-journal-filters">'
     + '<button class="ws-journal-filter-btn ws-jf-active" data-filter="all">All</button>'
     + '<button class="ws-journal-filter-btn" data-filter="merge">Merges</button>'
+    + '<button class="ws-journal-filter-btn" data-filter="chain">Chain</button>'
     + '<button class="ws-journal-filter-btn" data-filter="lora_bake">LoRA</button>'
     + '<button class="ws-journal-filter-btn" data-filter="vae_bake">VAE</button>'
     + '</div></div>'
@@ -1809,6 +1970,10 @@ function _bindGlobalEvents() {
             WS.journalFilter = btn.dataset.filter;
             _renderJournal();
         });
+    });
+
+    document.addEventListener("keydown", (ev) => {
+        if (ev.key === "Escape" && WS.journalExpanded) _closeHistoryDetail();
     });
 
     _loadJournal();
