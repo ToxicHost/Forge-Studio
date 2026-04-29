@@ -2677,9 +2677,10 @@ function renderLayerPanel() {
         info.className = "layer-info";
         const nameEl = document.createElement("div");
         nameEl.className = "layer-name"; nameEl.textContent = L.name;
-        // Prevent single-click on name from triggering row rebuild (which kills dblclick)
-        nameEl.addEventListener("click", e => e.stopPropagation());
-        // Double-click to rename
+        // Double-click to rename. Single click bubbles up to the row
+        // selection handler — that handler skips re-rendering when the
+        // layer is already active, which preserves dblclick-to-rename
+        // on the active layer's name.
         nameEl.addEventListener("dblclick", e => {
             e.stopPropagation();
             nameEl.contentEditable = "true"; nameEl.focus();
@@ -2769,8 +2770,14 @@ function renderLayerPanel() {
 
         row.appendChild(thumb); row.appendChild(info); row.appendChild(vis);
         row.addEventListener("click", () => {
+            const wasActive = !S.editingMask && !S.regionMode && S.activeLayerIdx === layerIdx;
             S.editingMask = false; S.regionMode = false; S.activeLayerIdx = layerIdx;
-            renderLayerPanel(); _redraw();
+            // Skip re-render when this row was already active so a
+            // double-click on the layer name can land on the same DOM
+            // node (re-rendering would destroy the element between
+            // clicks and kill the rename gesture).
+            if (!wasActive) renderLayerPanel();
+            _redraw();
         });
         // Right-click → activate this layer first, then open the
         // flip/rotate context menu. Activate-on-contextmenu matches

@@ -883,6 +883,11 @@ async function populateDropdowns() {
         `<option value="${m.title}">${m.title}</option>`
       ).join("");
       restoreSelection(modelSelect, prev);
+      // attach is idempotent — second call returns existing handle.
+      window.StudioSearchableSelect?.attach(modelSelect, {
+        placeholder: "— Select model —",
+        searchPlaceholder: "Filter models…",
+      });
     }
 
     // Sampler dropdown
@@ -893,6 +898,10 @@ async function populateDropdowns() {
         `<option value="${s.name}" ${s.name === "DPM++ 2M SDE" ? "selected" : ""}>${s.name}</option>`
       ).join("");
       restoreSelection(samplerSelect, prev);
+      window.StudioSearchableSelect?.attach(samplerSelect, {
+        placeholder: "— Select sampler —",
+        searchPlaceholder: "Filter samplers…",
+      });
     }
 
     // Scheduler dropdown
@@ -1047,12 +1056,20 @@ async function populateDropdowns() {
           modelSel.innerHTML = cnModels.map(m =>
             `<option value="${m.name}">${m.name}</option>`
           ).join("");
+          window.StudioSearchableSelect?.attach(modelSel, {
+            placeholder: "— Select ControlNet model —",
+            searchPlaceholder: "Filter models…",
+          });
         }
         const procSel = document.getElementById(`paramCN${n}Module`);
         if (procSel) {
           procSel.innerHTML = cnProcs.map(p =>
             `<option value="${p.name}">${p.name}</option>`
           ).join("");
+          window.StudioSearchableSelect?.attach(procSel, {
+            placeholder: "— Select preprocessor —",
+            searchPlaceholder: "Filter preprocessors…",
+          });
         }
       });
     }).catch(() => {});
@@ -1821,7 +1838,54 @@ function bindUI() {
     document.getElementById("page-" + e.target.dataset.panel)?.classList.add("active");
   });
 
-  // Collapsible sections (Hires Fix, ADetailer, ControlNet)
+  // Collapsible sections (Hires Fix, ADetailer, ControlNet, etc).
+  // max-height is driven by scrollHeight per toggle so easing matches
+  // actual content height. A flag on the element tracks an in-flight
+  // transition listener so rapid re-clicks don't stack listeners or
+  // leave max-height in a stale state.
+  function _toggleCollapseBody(body) {
+    if (!body) return;
+    const expand = !body.classList.contains("open");
+    // Remove any pending listener from a previous in-flight toggle.
+    if (body._collapseEndHandler) {
+      body.removeEventListener("transitionend", body._collapseEndHandler);
+      body._collapseEndHandler = null;
+    }
+    if (expand) {
+      // If we were in the "fully open" state (max-height: none), drop
+      // back to a numeric height so the next change can transition.
+      if (body.style.maxHeight === "none" || body.style.maxHeight === "") {
+        body.style.maxHeight = "0px";
+        body.offsetHeight; // reflow
+      }
+      body.style.maxHeight = body.scrollHeight + "px";
+      body.classList.add("open");
+      const onEnd = (e) => {
+        if (e.propertyName !== "max-height") return;
+        // Only release to "none" if we're still open (race-safe).
+        if (body.classList.contains("open")) body.style.maxHeight = "none";
+        body.removeEventListener("transitionend", onEnd);
+        body._collapseEndHandler = null;
+      };
+      body._collapseEndHandler = onEnd;
+      body.addEventListener("transitionend", onEnd);
+    } else {
+      // Anchor the current scrollHeight as an explicit pixel value so
+      // the next assignment to 0 transitions instead of snapping.
+      body.style.maxHeight = body.scrollHeight + "px";
+      body.offsetHeight; // reflow
+      body.style.maxHeight = "0px";
+      body.classList.remove("open");
+    }
+  }
+
+  // Sections that ship with the .open class need an inline max-height
+  // on first paint, otherwise the base rule (max-height: 0) hides
+  // their content immediately. Run once at init.
+  document.querySelectorAll(".collapse-body.open").forEach(el => {
+    el.style.maxHeight = "none";
+  });
+
   document.querySelectorAll(".collapse-header").forEach(header => {
     header.addEventListener("click", e => {
       const check = header.querySelector(".collapse-check");
@@ -1834,7 +1898,7 @@ function bindUI() {
       }
       const body = header.nextElementSibling;
       const arrow = header.querySelector(".collapse-arrow");
-      if (body) body.classList.toggle("open");
+      _toggleCollapseBody(body);
       if (arrow) arrow.classList.toggle("open");
     });
   });

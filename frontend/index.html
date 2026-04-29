@@ -7,6 +7,7 @@
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎨</text></svg>">
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <link rel="stylesheet" href="/studio/static/app.css">
+<link rel="stylesheet" href="/studio/static/searchable-select.css">
 <link rel="stylesheet" href="/studio/static/education.css">
 <link rel="stylesheet" href="/studio/static/studio-tour.css">
 <link rel="stylesheet" href="/studio/static/studio-docs.css">
@@ -989,7 +990,7 @@
 // Auto cache-bust: load scripts in order with timestamp
 (async () => {
   const scripts = [
-    "ag-psd.js", "png-metadata.js", "canvas-core.js",
+    "ag-psd.js", "png-metadata.js", "searchable-select.js", "canvas-core.js",
     "canvas-ui.js", "app.js", "module-system.js", "studio-tour.js", "studio-docs.js", "tag-complete.js",
     "lora-browser.js", "wildcard-browser.js"
   ];
