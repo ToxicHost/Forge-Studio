@@ -399,13 +399,15 @@ function _applyDevelopFull(ctx, w, h, p) {
         _applyHighlightsShadows(rLin, gLin, bLin, blurCache, w, h, hlAmt, shAmt);
     }
 
-    // ---- Phase C: whites/blacks → contrast → clamp → re-encode ----
-    // blackPoint = blacks/200 (range -0.5..0.5 in linear)
-    // whitePoint = 1 + whites/200
-    // Contrast uses the Krita-style sigmoid (matches the brightness/contrast
-    // adjustment layer at canvas-core.js#2552): slope = tan((c+1)*π/4) with
-    // c ∈ [-1, 1]. Gentle near 0, ramps up sharply near ±1. The old linear
-    // 1+contrast/100 was way too aggressive at moderate values.
+    // ---- Phase C: whites/blacks (linear) → re-encode → contrast (perceptual) ----
+    // Whites/blacks are endpoint remaps that are mathematically natural in
+    // linear space. Contrast is moved to a post-encode pass in sRGB U8 space
+    // pivoting at U8 128 (= sRGB 0.5 = perceptual middle gray) — pivoting at
+    // linear 0.5 (which is sRGB ~0.74) was crushing midtone-shadows because
+    // most pixels in a typical photo sit *below* linear 0.5 and got pushed
+    // toward 0 by the sigmoid.
+    //   Krita-style sigmoid: slope = tan((c+1)*π/4), c ∈ [-1, 1].
+    //   Gentle near 0 (slope 1.5 at +25), ramps sharply near ±1.
     var blackPoint = (p.blacks  || 0) / 200;
     var whitePoint = 1 + (p.whites || 0) / 200;
     var range = whitePoint - blackPoint;
@@ -424,15 +426,24 @@ function _applyDevelopFull(ctx, w, h, p) {
             g = (g - blackPoint) * invRange;
             b = (b - blackPoint) * invRange;
         }
-        if (doContrast) {
-            r = (r - 0.5) * contrastSlope + 0.5;
-            g = (g - 0.5) * contrastSlope + 0.5;
-            b = (b - 0.5) * contrastSlope + 0.5;
-        }
         // clamp + re-encode via 4096-entry LUT (no Math.pow in the hot loop)
         d[m]     = _lin2u8(r);
         d[m + 1] = _lin2u8(g);
         d[m + 2] = _lin2u8(b);
+    }
+
+    // Contrast in sRGB U8, via a 256-entry LUT built once per call.
+    if (doContrast) {
+        var cLut = new Uint8Array(256);
+        for (var v = 0; v < 256; v++) {
+            var t = (v - 128) * contrastSlope + 128;
+            cLut[v] = t < 0 ? 0 : (t > 255 ? 255 : (t + 0.5) | 0);
+        }
+        for (var pq = 0, end = n * 4; pq < end; pq += 4) {
+            d[pq]     = cLut[d[pq]];
+            d[pq + 1] = cLut[d[pq + 1]];
+            d[pq + 2] = cLut[d[pq + 2]];
+        }
     }
 
     // ---- Phase D: vibrance, then saturation ----
