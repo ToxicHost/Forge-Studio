@@ -1058,15 +1058,27 @@ body {
   background: var(--border);
   flex-shrink: 0;
 }
-.section-actions button.layer-add-btn {
-  color: var(--accent-bright);
-  background: var(--accent-dim);
-  border-color: var(--accent-dim);
+
+/* Accent treatment for the Reset Canvas button — the destructive
+   action earns the loud color, while neutral buttons stay neutral. */
+.canvas-reset-accent {
+  color: var(--accent-bright) !important;
+  background: var(--accent-dim) !important;
+  border-color: var(--accent-dim) !important;
 }
-.section-actions button.layer-add-btn:hover {
-  color: var(--accent-bright);
-  background: var(--accent-mid);
-  border-color: var(--accent);
+.canvas-reset-accent:hover {
+  color: var(--accent-bright) !important;
+  background: var(--accent-mid) !important;
+  border-color: var(--accent) !important;
+}
+
+/* Tighten the Load Image / Reset Canvas row so it sits cleanly below
+   the Interrupt/Skip pair and above any of the lower sections. */
+.canvas-load-reset-row {
+  margin-top: 6px;
+  display: flex;
+  gap: 6px;
+  align-items: center;
 }
 
 
@@ -1076,12 +1088,19 @@ body {
 
 .layer-item {
   display: flex; align-items: center; gap: 8px;
-  padding: 6px 12px; cursor: pointer;
-  transition: all 0.1s;
+  /* Transparent left border keeps the row width identical between
+     selected/unselected so toggling selection doesn't shift content. */
+  border-left: 3px solid transparent;
+  padding: 8px 12px 8px 9px; cursor: pointer;
+  transition: background 0.1s, border-color 0.1s;
   border-bottom: 1px solid var(--border-subtle);
 }
 .layer-item:hover { background: var(--bg-raised); }
-.layer-item.selected { background: var(--accent-dim); }
+.layer-item.selected {
+  background: var(--accent-dim);
+  border-left-color: var(--accent);
+}
+.layer-item.selected .layer-name { font-weight: 600; }
 
 .layer-thumb {
   width: 32px; height: 32px; border-radius: 4px;
@@ -1552,18 +1571,47 @@ body {
 }
 .output-actions button:hover { color: var(--text-2); border-color: var(--border); }
 
-/* Gallery save format buttons */
-.output-save-formats {
-  display: flex; gap: 3px; margin-top: 4px;
+/* Output gallery save — icon-only square button + floating popover. */
+.output-actions .output-save-icon {
+  flex: 0 0 auto;
+  width: 28px;
+  padding: 0;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
 }
-.output-save-formats button {
-  flex: 1; height: 22px;
-  background: var(--bg-raised); color: var(--text-3);
-  border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);
-  font-family: var(--font); font-size: 9px; cursor: pointer;
-  transition: all 0.12s;
+.output-actions .output-save-icon svg { display: block; }
+
+.output-save-menu {
+  position: fixed;
+  z-index: 300;
+  min-width: 160px;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: var(--radius);
+  padding: 4px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.5);
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
 }
-.output-save-formats button:hover { color: var(--text-1); border-color: var(--border); }
+.output-save-menu-item {
+  width: 100%;
+  text-align: left;
+  background: transparent;
+  border: none;
+  border-radius: var(--radius-sm);
+  color: var(--text-2);
+  font-family: var(--font);
+  font-size: 11px;
+  padding: 6px 10px;
+  cursor: pointer;
+  transition: background 0.1s;
+}
+.output-save-menu-item:hover {
+  background: var(--accent-dim);
+  color: var(--text-1);
+}
 
 /* Collapsible section body for Layers/History (UX-011) */
 .section-header { cursor: pointer; }

@@ -1501,6 +1501,25 @@
     font-size: 11px;
 }
 
+/* Sample image thumbnail — shown in place of the recipe text when the
+   entry has a saved sample image. Cards without an image keep the
+   text-based recipe summary. */
+.ws-history-card-image {
+    display: block;
+    width: 100%;
+    max-height: 220px;
+    object-fit: cover;
+    border-radius: var(--radius-sm);
+    margin-top: 2px;
+    background: var(--bg-raised);
+}
+
+/* Tighten thumb padding when an image fills the body — keeps the
+   header (badge + stars) flush with the image edges. */
+.ws-history-card-has-image .ws-history-card-thumb {
+    padding: 8px 8px 8px 8px;
+}
+
 .ws-history-card-recipe {
     font-family: var(--mono);
     font-size: 11px;
