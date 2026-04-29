@@ -1418,13 +1418,21 @@ if (window.StudioModules) {
             // Re-show the canvas page that module-system just hid.
             var studio = document.getElementById("app-studio");
             if (studio) studio.classList.add("active");
-            // Body class drives panel-right hide and any future develop-only
-            // styling. The pointerdown gate in canvas-ui reads
+            // Body class drives panel-right + tool-UI hide and any future
+            // develop-only styling. The pointerdown gate in canvas-ui reads
             // StudioModules.activeId directly so it doesn't depend on this.
             document.body.classList.add("develop-active");
             _showPanel();
             syncPanel();
-            // Histogram refresh on tab open
+            // CSS just freed the 42-px toolstrip column + the right panel —
+            // resync the canvas element to the new viewport so it actually
+            // fills the available width, then refit zoom and redraw.
+            var UI = window.StudioUI;
+            if (UI && UI.syncCanvasToViewport) UI.syncCanvasToViewport();
+            var C = window.StudioCore;
+            if (C && C.zoomFit) C.zoomFit();
+            if (C && C.markCompositeDirty) C.markCompositeDirty();
+            if (UI && UI.redraw) UI.redraw();
             try { _renderHistogram(); } catch (e) {}
         },
         deactivate: function () {
@@ -1436,6 +1444,14 @@ if (window.StudioModules) {
             if (_splitLabelR) _splitLabelR.classList.remove("visible");
             var S = _S();
             if (S) S._developBeforeBuf = null;
+            // Resize the canvas back now that toolstrip + panel-right are
+            // visible again.
+            var UI = window.StudioUI;
+            if (UI && UI.syncCanvasToViewport) UI.syncCanvasToViewport();
+            var C = window.StudioCore;
+            if (C && C.zoomFit) C.zoomFit();
+            if (C && C.markCompositeDirty) C.markCompositeDirty();
+            if (UI && UI.redraw) UI.redraw();
         }
     });
 } else {
