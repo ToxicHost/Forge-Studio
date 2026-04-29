@@ -2236,6 +2236,7 @@
 
 /* ── Line 3 — block-weight sliders ── */
 .ws-row-line3 {
+    display: block;
     padding: 8px 14px 12px;
     background: var(--bg-raised);
 }
