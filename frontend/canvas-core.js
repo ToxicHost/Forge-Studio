@@ -3152,32 +3152,27 @@ function _rotateLayer180() {
 }
 
 // 90° rotation — operates on the layer's actual content bounding box
-// (non-transparent region) instead of the full S.W × S.H canvas. This
-// avoids compounding shrinkage on successive rotations: prior letter-
-// box margins aren't part of the rotated source, so each rotation is
-// effectively a clean swap of the content's own dimensions.
-//
-// The rotated content is centered on the canvas. Lossless when it
-// fits; scale-to-fit only when the rotated content actually exceeds
-// the canvas (which only happens for fully-filled non-square layers
-// on the very first rotation).
+// (non-transparent region) instead of the full S.W × S.H canvas, so
+// successive rotations don't compound over letterbox margins from a
+// previous rotation. Content is placed centered on the canvas; any
+// portion exceeding canvas bounds is clipped at draw time. Callers
+// that want overflow preserved should engage the Transform tool via
+// canvas-ui's _smartRotate helper before invoking this directly.
 function _rotateLayer90Common(direction) {
     const L = activeLayer();
     if (!L || L.type === "adjustment") return;
     saveUndo(direction > 0 ? "Rotate 90° CW" : "Rotate 90° CCW");
     const w = S.W, h = S.H;
     const bounds = getLayerContentBounds(L);
-    if (!bounds) return;   // empty layer — nothing to rotate
+    if (!bounds) return;
     const bx = bounds.x, by = bounds.y, bw = bounds.w, bh = bounds.h;
 
-    // Pull just the content bbox into an ImageData buffer.
     const src = L.ctx.getImageData(bx, by, bw, bh);
     const sd = src.data;
     const rotW = bh, rotH = bw;
     const rot = new ImageData(rotW, rotH);
     const rd = rot.data;
     if (direction > 0) {
-        // CW: dst[y, x] = src[bh - 1 - x, y]
         for (let y = 0; y < rotH; y++) {
             for (let x = 0; x < rotW; x++) {
                 const sx = y;
@@ -3189,7 +3184,6 @@ function _rotateLayer90Common(direction) {
             }
         }
     } else {
-        // CCW: dst[y, x] = src[x, bw - 1 - y]
         for (let y = 0; y < rotH; y++) {
             for (let x = 0; x < rotW; x++) {
                 const sx = bw - 1 - y;
@@ -3205,31 +3199,22 @@ function _rotateLayer90Common(direction) {
     tmp.getContext("2d").putImageData(rot, 0, 0);
 
     L.ctx.clearRect(0, 0, w, h);
-    if (rotW <= w && rotH <= h) {
-        // Fits — center, no scaling. Lossless.
-        const dx = Math.round((w - rotW) / 2);
-        const dy = Math.round((h - rotH) / 2);
-        L.ctx.drawImage(tmp, dx, dy);
-    } else {
-        // Doesn't fit — scale-to-fit. Only happens when the rotated
-        // content bbox is larger than the canvas in at least one axis.
-        const scale = Math.min(w / rotW, h / rotH);
-        const drawW = rotW * scale;
-        const drawH = rotH * scale;
-        const dx = (w - drawW) / 2;
-        const dy = (h - drawH) / 2;
-        L.ctx.imageSmoothingEnabled = true;
-        L.ctx.imageSmoothingQuality = "high";
-        L.ctx.drawImage(tmp, dx, dy, drawW, drawH);
-    }
+    // Center the rotated content. May overflow canvas; the drawImage
+    // call will clip naturally. Callers expecting to preserve overflow
+    // should detect the overflow before calling and route to a
+    // Transform-tool flow instead.
+    const dx = Math.round((w - rotW) / 2);
+    const dy = Math.round((h - rotH) / 2);
+    L.ctx.drawImage(tmp, dx, dy);
 }
 
 function _rotateLayer90CW() { _rotateLayer90Common(1); }
 function _rotateLayer90CCW() { _rotateLayer90Common(-1); }
 
 // Arbitrary rotation — bilinear via canvas. Operates on the content
-// bbox (same reasoning as the 90° path: avoid compounding shrinkage
-// from prior letterbox margins).
+// bbox; content is rotated around the document center at 1× scale.
+// Overflow is clipped at canvas bounds; engage Transform mode for
+// non-destructive positioning (see canvas-ui's _smartRotate).
 function _rotateLayerArbitrary(degrees) {
     const L = activeLayer();
     if (!L || L.type === "adjustment") return;
@@ -3241,31 +3226,16 @@ function _rotateLayerArbitrary(degrees) {
     if (!bounds) return;
     const bx = bounds.x, by = bounds.y, bw = bounds.w, bh = bounds.h;
 
-    // Snapshot just the content bbox.
     const snap = _createCanvas(bw, bh);
     snap.getContext("2d").drawImage(L.canvas, bx, by, bw, bh, 0, 0, bw, bh);
 
-    // Rotated bbox of the content rectangle.
     const rad = deg * Math.PI / 180;
-    const c = Math.abs(Math.cos(rad));
-    const s = Math.abs(Math.sin(rad));
-    const bboxW = bw * c + bh * s;
-    const bboxH = bw * s + bh * c;
-
-    // Scale-to-fit only when the rotated content actually exceeds
-    // the canvas; otherwise rotate at scale 1.
-    let scale = 1;
-    if (bboxW > w || bboxH > h) {
-        scale = Math.min(w / bboxW, h / bboxH);
-    }
-
     L.ctx.save();
     L.ctx.imageSmoothingEnabled = true;
     L.ctx.imageSmoothingQuality = "high";
     L.ctx.clearRect(0, 0, w, h);
     L.ctx.translate(w / 2, h / 2);
     L.ctx.rotate(rad);
-    L.ctx.scale(scale, scale);
     L.ctx.drawImage(snap, -bw / 2, -bh / 2);
     L.ctx.restore();
 }
