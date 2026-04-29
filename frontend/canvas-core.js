@@ -204,6 +204,17 @@ const S = {
 let _compositeCache = null;
 let _compBuffer = null, _compCtx = null;
 
+// Developed-buffer cache. Stores the post-layer-composite + post-develop
+// pixel buffer keyed on _compositeVersion. Cursor mousemoves don't bump
+// the version, so they hit this cache and skip the entire layer loop +
+// develop pipeline — that's what kept the cursor responsive when develop
+// was non-identity. Bumped by markCompositeDirty() from any path that
+// mutates layers, develop params, regions, masks, or canvas dims.
+let _compBufCache = null;
+let _compBufCacheVer = -1;
+let _compositeVersion = 0;
+function markCompositeDirty() { _compositeVersion++; }
+
 // Stroke angle tracking (for follow-stroke rotation)
 let _sa = 0, _saSmooth = 0;
 
@@ -1502,6 +1513,7 @@ function _inferActionLabel() {
 
 function saveUndo(label) {
     S._canvasDirty = true;
+    markCompositeDirty();
     if (S.regionMode && activeRegion()) {
         const r = activeRegion();
         S.undoStack.push({
@@ -1525,6 +1537,7 @@ function saveUndo(label) {
 
 function saveStructuralUndo(label) {
     S._canvasDirty = true;
+    markCompositeDirty();
     const snapshot = {
         type: "structural",
         label: label || "Layer change",
@@ -1617,6 +1630,7 @@ function _captureStructural() {
 function undo() {
     if (!S.undoStack.length) return;
     if (S.transform.active) { S.transform.active = false; S.transform.canvas = null; S.transform.flipH = false; S.transform.flipV = false; }
+    markCompositeDirty();
     const e = S.undoStack.pop();
     if (e.type === "structural") {
         S.redoStack.push(_captureStructural());
@@ -1638,6 +1652,7 @@ function undo() {
 
 function redo() {
     if (!S.redoStack.length) return;
+    markCompositeDirty();
     const e = S.redoStack.pop();
     if (e.type === "structural") {
         S.undoStack.push(_captureStructural());
@@ -2803,41 +2818,72 @@ function _composite2D(c, w, h, z, eraserActive, AL, strokeDrawCanvas, showMask) 
         _compCtx = _compBuffer.getContext("2d");
     }
     const x = _compCtx;
-    x.clearRect(0, 0, w, h);
-    x.filter = "none"; x.globalAlpha = 1; x.globalCompositeOperation = "source-over";
     const strokeInStack = strokeDrawCanvas && S.tool === "brush" && !S.editingMask;
 
-    for (let i = 0; i < S.layers.length; i++) {
-        const L = S.layers[i];
-        if (!L.visible) continue;
-        if (L.type === "adjustment") { _applyAdjustment(x, w, h, L); continue; }
-        x.globalCompositeOperation = L.blendMode || "source-over";
-        x.globalAlpha = L.opacity;
-        if (eraserActive && L === AL && !S.editingMask) {
-            x.drawImage(S.stroke.canvas, 0, 0);
-        } else {
-            x.drawImage(L.canvas, 0, 0);
-            if (strokeInStack && L === AL) {
-                x.save();
-                x.globalAlpha = S.brushOpacity * L.opacity;
-                x.globalCompositeOperation = "source-over";
-                x.drawImage(strokeDrawCanvas, 0, 0);
-                x.restore();
+    // Cache fast-path: when there's no wet stroke and the version counter
+    // hasn't changed since we last built _compBuffer, the layer loop +
+    // develop pipeline produce identical pixels. Cursor moves never bump
+    // the version, so this elides the full pipeline on every mousemove.
+    const canUseCache = !strokeDrawCanvas
+        && _compBufCache
+        && _compBufCacheVer === _compositeVersion
+        && _compBufCache.width === w
+        && _compBufCache.height === h;
+
+    if (canUseCache) {
+        x.globalAlpha = 1; x.globalCompositeOperation = "source-over";
+        x.clearRect(0, 0, w, h);
+        x.drawImage(_compBufCache, 0, 0);
+    } else {
+        x.clearRect(0, 0, w, h);
+        x.filter = "none"; x.globalAlpha = 1; x.globalCompositeOperation = "source-over";
+
+        for (let i = 0; i < S.layers.length; i++) {
+            const L = S.layers[i];
+            if (!L.visible) continue;
+            if (L.type === "adjustment") { _applyAdjustment(x, w, h, L); continue; }
+            x.globalCompositeOperation = L.blendMode || "source-over";
+            x.globalAlpha = L.opacity;
+            if (eraserActive && L === AL && !S.editingMask) {
+                x.drawImage(S.stroke.canvas, 0, 0);
+            } else {
+                x.drawImage(L.canvas, 0, 0);
+                if (strokeInStack && L === AL) {
+                    x.save();
+                    x.globalAlpha = S.brushOpacity * L.opacity;
+                    x.globalCompositeOperation = "source-over";
+                    x.drawImage(strokeDrawCanvas, 0, 0);
+                    x.restore();
+                    x.globalCompositeOperation = "source-over";
+                    x.globalAlpha = 1;
+                }
+            }
+            // Render AI preview after the reference layer (bottom-most layer)
+            // so user paint layers appear on top of the preview
+            if (i === 0 && S.livePreview.active && S.livePreview.canvas) {
                 x.globalCompositeOperation = "source-over";
                 x.globalAlpha = 1;
+                x.drawImage(S.livePreview.canvas, 0, 0);
             }
         }
-        // Render AI preview after the reference layer (bottom-most layer)
-        // so user paint layers appear on top of the preview
-        if (i === 0 && S.livePreview.active && S.livePreview.canvas) {
-            x.globalCompositeOperation = "source-over";
-            x.globalAlpha = 1;
-            x.drawImage(S.livePreview.canvas, 0, 0);
+        // Develop: global, always-last, applied to the document-resolution buffer.
+        // Runs before UI overlays so HUD elements aren't tinted.
+        _applyDevelop(x, w, h, S.developParams);
+
+        // Snapshot the developed result for cursor-move re-use. Only when
+        // there's no wet stroke (otherwise the snapshot would bake in the
+        // in-progress brush dab and stall the rest of the stroke).
+        if (!strokeDrawCanvas) {
+            if (!_compBufCache || _compBufCache.width !== w || _compBufCache.height !== h) {
+                _compBufCache = _createCanvas(w, h);
+            }
+            const cacheCtx = _compBufCache.getContext("2d");
+            cacheCtx.globalCompositeOperation = "source-over"; cacheCtx.globalAlpha = 1;
+            cacheCtx.clearRect(0, 0, w, h);
+            cacheCtx.drawImage(_compBuffer, 0, 0);
+            _compBufCacheVer = _compositeVersion;
         }
     }
-    // Develop: global, always-last, applied to the document-resolution buffer.
-    // Runs before UI overlays so HUD elements aren't tinted.
-    _applyDevelop(x, w, h, S.developParams);
 
     c.globalAlpha = 1; c.globalCompositeOperation = "source-over";
     c.drawImage(_compBuffer, 0, 0);
@@ -3316,6 +3362,7 @@ function setLivePreview(imageB64) {
         S.livePreview.ctx.clearRect(0, 0, S.W, S.H);
         S.livePreview.ctx.drawImage(img, 0, 0, S.W, S.H);
         S.livePreview.active = true;
+        markCompositeDirty();
         composite();
     };
     img.src = imageB64;
@@ -3329,6 +3376,7 @@ function clearLivePreview() {
         S.livePreview.ctx.clearRect(0, 0, S.W, S.H);
     }
     S.livePreview.active = false;
+    markCompositeDirty();
     composite();
 }
 
@@ -3344,6 +3392,7 @@ function applyLivePreview() {
     const idx = Math.max(0, S.activeLayerIdx);
     S.layers.splice(idx, 0, L);
     S.activeLayerIdx = idx;
+    markCompositeDirty();
     // Trigger UI update if callback exists
     if (S.onUndoRedo) S.onUndoRedo();
     composite();
@@ -3355,6 +3404,7 @@ function applyLivePreview() {
 function resizeCanvas(nw, nh) {
     if (nw === S.W && nh === S.H) return;
     selectionClear();
+    markCompositeDirty();
     const savedLayers = S.layers.map(L => L.canvas ? L.ctx.getImageData(0, 0, S.W, S.H) : null);
     const savedMask = S.mask.ctx.getImageData(0, 0, S.W, S.H);
     // Save region canvases before dimension change
@@ -3622,7 +3672,12 @@ window.StudioCore = {
     _compositeLayersBelow,
 
     // Develop pipeline hook (algorithm in develop.js)
-    _applyDevelop
+    _applyDevelop,
+
+    // Composite cache invalidation — call from any code path that mutates
+    // layers, develop params, regions, masks, or canvas dims. Cursor moves
+    // do NOT bump this, so they hit the cache and skip the pipeline.
+    markCompositeDirty
 };
 
 console.log("[StudioCore] Module loaded — Phase 1 clean engine");

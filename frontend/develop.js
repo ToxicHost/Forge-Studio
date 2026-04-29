@@ -813,12 +813,18 @@ function _redrawNow(withHistogram) {
     if (_splitActive) _renderSplitOverlay();
 }
 
+function _bumpCompositeCache() {
+    var C = window.StudioCore;
+    if (C && C.markCompositeDirty) C.markCompositeDirty();
+}
+
 function _scheduleProxyRedraw() {
     if (_proxyRafId) return;
     _proxyRafId = requestAnimationFrame(function () {
         _proxyRafId = 0;
         var S = _S();
         if (S && S.developParams) S.developParams._dragging = true;
+        _bumpCompositeCache();
         _redrawNow(false);
     });
 }
@@ -829,6 +835,7 @@ function _scheduleFullRedraw() {
         _fullRafId = 0;
         var S = _S();
         if (S && S.developParams) S.developParams._dragging = false;
+        _bumpCompositeCache();
         _redrawNow(true);
     });
 }

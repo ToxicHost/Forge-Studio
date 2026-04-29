@@ -2838,7 +2838,13 @@ function renderLayerPanel() {
             meta.textContent = "⚙ Adjustment";
             info.appendChild(nameEl); info.appendChild(meta);
             try {
-                row._editorRow = _buildAdjEditor(L, _redraw);
+                // Wrap the redraw callback so every adjustment-editor handler
+                // invalidates the composite cache (otherwise sliders would no-op
+                // after the first change because the cache would still be valid).
+                row._editorRow = _buildAdjEditor(L, () => {
+                    if (C.markCompositeDirty) C.markCompositeDirty();
+                    _redraw();
+                });
                 // Tag the editor row so it visually continues the
                 // selected layer's accent left-border + bg tint instead
                 // of ending the selection block at the row boundary.
@@ -2859,7 +2865,7 @@ function renderLayerPanel() {
                 blendSel.appendChild(opt);
             }
             blendSel.addEventListener("click", e => e.stopPropagation());
-            blendSel.addEventListener("change", () => { L.blendMode = blendSel.value; _redraw(); });
+            blendSel.addEventListener("change", () => { L.blendMode = blendSel.value; if (C.markCompositeDirty) C.markCompositeDirty(); _redraw(); });
 
             const opSlider = document.createElement("input");
             opSlider.type = "range"; opSlider.min = "0"; opSlider.max = "100";
@@ -2869,6 +2875,7 @@ function renderLayerPanel() {
             opSlider.addEventListener("input", () => {
                 L.opacity = +opSlider.value / 100;
                 opLabel.textContent = Math.round(opSlider.value) + "%";
+                if (C.markCompositeDirty) C.markCompositeDirty();
                 _redraw();
             });
 
@@ -2897,7 +2904,9 @@ function renderLayerPanel() {
             ? '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg>'
             : '<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" opacity="0.3"><line x1="1" y1="1" x2="23" y2="23"/></svg>';
         vis.addEventListener("click", e => {
-            e.stopPropagation(); L.visible = !L.visible; renderLayerPanel(); _redraw();
+            e.stopPropagation(); L.visible = !L.visible;
+            if (C.markCompositeDirty) C.markCompositeDirty();
+            renderLayerPanel(); _redraw();
         });
 
         row.appendChild(thumb); row.appendChild(info); row.appendChild(vis);

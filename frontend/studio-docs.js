@@ -272,6 +272,8 @@ function _loadDoc(idx) {
   S._developBlurCache = null;
   S._developGrainCache = null;
   S._developBeforeBuf = null;
+  // Composite cache too — different doc = different layers + dims
+  if (window.StudioCore && window.StudioCore.markCompositeDirty) window.StudioCore.markCompositeDirty();
 
   // Generation panel
   _loadGenPanel(doc.genPanel);
