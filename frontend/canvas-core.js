@@ -2824,7 +2824,20 @@ function _composite2D(c, w, h, z, eraserActive, AL, strokeDrawCanvas, showMask) 
     // hasn't changed since we last built _compBuffer, the layer loop +
     // develop pipeline produce identical pixels. Cursor moves never bump
     // the version, so this elides the full pipeline on every mousemove.
+    //
+    // Hard-skip while S.drawing is true. Two reasons:
+    //   (1) The brush dirty-rect path calls _composite2D with stroke=null
+    //       intentionally (to capture pre-stroke display). Without this
+    //       guard, that call would save the cache at the post-saveUndo
+    //       version with PRE-stroke pixels, then commitStroke at pointerup
+    //       wouldn't bump the version → next composite hits the stale
+    //       cache and the just-drawn line doesn't appear until the next
+    //       saveUndo (i.e., the start of the next stroke).
+    //   (2) Smudge / blur / dodge / clone / liquify mutate L.canvas per
+    //       dab without per-dab version bumps, so caching mid-stroke
+    //       would freeze the display on the first dab.
     const canUseCache = !strokeDrawCanvas
+        && !S.drawing
         && _compBufCache
         && _compBufCacheVer === _compositeVersion
         && _compBufCache.width === w
@@ -2870,10 +2883,10 @@ function _composite2D(c, w, h, z, eraserActive, AL, strokeDrawCanvas, showMask) 
         // Runs before UI overlays so HUD elements aren't tinted.
         _applyDevelop(x, w, h, S.developParams);
 
-        // Snapshot the developed result for cursor-move re-use. Only when
-        // there's no wet stroke (otherwise the snapshot would bake in the
-        // in-progress brush dab and stall the rest of the stroke).
-        if (!strokeDrawCanvas) {
+        // Snapshot the developed result for cursor-move re-use. Skip while
+        // a stroke is in progress — see the canUseCache comment above for
+        // why this matters even when strokeDrawCanvas itself is null.
+        if (!strokeDrawCanvas && !S.drawing) {
             if (!_compBufCache || _compBufCache.width !== w || _compBufCache.height !== h) {
                 _compBufCache = _createCanvas(w, h);
             }
