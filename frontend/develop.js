@@ -1359,14 +1359,20 @@ function _renderSplitOverlay() {
     ctx.drawImage(beforeBuf, 0, 0);
     ctx.restore();
 
-    // Position the split line + labels in viewport coordinates
+    // Position the split line + labels in viewport coordinates. Both labels
+    // hug the split line: AFTER sits 8px to its right, BEFORE sits 8px to
+    // its left (right-edge anchored). The previous approach pinned BEFORE
+    // to the canvas element's left edge, which lands far off in the void
+    // area when the document is zoomed-to-fit and centered.
     _ensureSplitElements();
     var rect = S.canvas.getBoundingClientRect();
     var lineX = rect.left + splitX;
     _splitLine.style.left = (lineX - 1) + "px";
     _splitLine.style.top = rect.top + "px";
     _splitLine.style.height = rect.height + "px";
-    _splitLabelL.style.left = (rect.left + 6) + "px";
+    _splitLabelL.style.left = "auto";
+    _splitLabelL.style.right = Math.max(0, (window.innerWidth - lineX + 8)) + "px";
+    _splitLabelR.style.right = "auto";
     _splitLabelR.style.left = (lineX + 8) + "px";
     _splitLine.classList.add("visible");
     _splitLabelL.classList.add("visible");
