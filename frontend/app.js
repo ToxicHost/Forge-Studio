@@ -3267,14 +3267,6 @@ function bindUI() {
 
   // Context bar — now handled by ctx-scrub system in canvas-ui.js
 
-  // Layer selection
-  document.getElementById("layersList")?.addEventListener("click", e => {
-    const item = e.target.closest(".layer-item");
-    if (!item) return;
-    document.querySelectorAll(".layer-item").forEach(l => l.classList.remove("selected"));
-    item.classList.add("selected");
-  });
-
   // Keyboard shortcuts
   document.addEventListener("keydown", e => {
     // Ctrl+Enter or Shift+Enter = Generate
