@@ -184,13 +184,17 @@ function _loadDoc(idx) {
   // Layers
   S.layers = doc.layers.map(function (saved) {
     if (saved.type === "adjustment") {
+      var migrated = (C._migrateAdjustParams
+        ? C._migrateAdjustParams(saved.adjustType, saved.adjustParams)
+        : JSON.parse(JSON.stringify(saved.adjustParams || {})));
       return {
         id: saved.id, name: saved.name, type: saved.type,
         adjustType: saved.adjustType,
-        adjustParams: JSON.parse(JSON.stringify(saved.adjustParams || {})),
+        adjustParams: migrated,
         visible: saved.visible, opacity: saved.opacity,
         blendMode: saved.blendMode, locked: saved.locked,
-        canvas: null, ctx: null
+        canvas: null, ctx: null,
+        _lutCache: null
       };
     }
     var c = C.createLayerCanvas();

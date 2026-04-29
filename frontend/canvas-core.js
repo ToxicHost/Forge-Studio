@@ -246,11 +246,35 @@ const REGION_COLORS = [
 // ========================================================================
 // ADJUSTMENT LAYER DEFAULTS
 // ========================================================================
+// New v2 param shapes — see _migrateAdjustParams below for v1 → v2 conversion.
+// brightness/contrast/saturation/lightness are integer percent (-100..100).
+// levels black/white are 0..1 floats (UI shows 0..255), gamma is 0.1..9.99.
 const _adjustDefaults = {
-    "brightness": { brightness: 0, contrast: 0 },
-    "hue":        { hue: 0, saturation: 0, lightness: 0 },
-    "levels":     { levInBlack: 0, levInWhite: 1, levGamma: 1, levOutBlack: 0, levOutWhite: 1 }
+    "brightness": { _version: 2, brightness: 0, contrast: 0 },
+    "hue":        { _version: 2, hue: 0, saturation: 0, lightness: 0, model: "HSL", colorize: false },
+    "levels":     { _version: 2, levInBlack: 0, levInWhite: 1, levGamma: 1, levOutBlack: 0, levOutWhite: 1 }
 };
+
+// Idempotent migration from legacy adjustParam shapes to v2.
+// Legacy: brightness/contrast/saturation/lightness stored as -1..1 floats; HSL had no
+// `model` or `colorize` fields. v2 stamps `_version: 2` and rescales the affected fields.
+function _migrateAdjustParams(adjustType, params) {
+    const def = _adjustDefaults[adjustType];
+    if (!def) return params || {};
+    const p = Object.assign({}, def, params || {});
+    if (p._version === 2) return p;
+    if (adjustType === "brightness") {
+        p.brightness = Math.round((p.brightness || 0) * 100);
+        p.contrast   = Math.round((p.contrast   || 0) * 100);
+    } else if (adjustType === "hue") {
+        p.saturation = Math.round((p.saturation || 0) * 100);
+        p.lightness  = Math.round((p.lightness  || 0) * 100);
+        if (typeof p.model    !== "string")  p.model    = "HSL";
+        if (typeof p.colorize !== "boolean") p.colorize = false;
+    }
+    p._version = 2;
+    return p;
+}
 
 // ========================================================================
 // DEFAULT BRUSH PRESETS
@@ -341,9 +365,10 @@ function makeAdjustLayer(name, adjustType, params) {
     return {
         id: S.nextLayerId++, name: name, type: "adjustment",
         adjustType: adjustType,
-        adjustParams: params || { ..._adjustDefaults[adjustType] },
+        adjustParams: _migrateAdjustParams(adjustType, params),
         visible: true, opacity: 1, blendMode: "source-over", locked: false,
-        canvas: null, ctx: null
+        canvas: null, ctx: null,
+        _lutCache: null
     };
 }
 
@@ -1547,6 +1572,7 @@ function _restoreStructural(entry) {
             const L = makeAdjustLayer(ld.name, ld.adjustType, JSON.parse(JSON.stringify(ld.adjustParams || {})));
             L.id = ld.id; L.visible = ld.visible; L.opacity = ld.opacity;
             L.blendMode = ld.blendMode; L.locked = ld.locked;
+            L._lutCache = null;
             S.layers.push(L);
         } else {
             const c = createLayerCanvas(); const ctx = c.getContext("2d");
@@ -2486,20 +2512,57 @@ function regionEraseMove(x1, y1, x2, y2) {
 // ========================================================================
 // ADJUSTMENT LAYER RENDERING
 // ========================================================================
-function _applyLevelsToCtx(ctx, w, h, ap) {
-    const iBlk = ap.levInBlack || 0, iWht = ap.levInWhite !== undefined ? ap.levInWhite : 1;
-    const gamma = ap.levGamma !== undefined ? ap.levGamma : 1;
-    const oBlk = ap.levOutBlack || 0, oWht = ap.levOutWhite !== undefined ? ap.levOutWhite : 1;
-    const iRange = Math.max(0.001, iWht - iBlk);
-    const oRange = oWht - oBlk;
-    const invGamma = 1 / Math.max(0.01, gamma);
+// Per-pixel transforms — replace the legacy ctx.filter pipeline. Algorithm
+// references follow Krita's filter implementations (KisFilter, GPL-3.0,
+// compatible with this project's license). The functions mutate `ctx` in
+// place and are opacity-agnostic; _applyAdjustment handles `L.opacity` by
+// snapshot-and-lerp around the dispatch.
+
+const _LUT_IDENTITY_BC = new Uint8Array(256);
+for (let i = 0; i < 256; i++) _LUT_IDENTITY_BC[i] = i;
+
+function _isBrightnessIdentity(ap) {
+    return (ap.brightness | 0) === 0 && (ap.contrast | 0) === 0;
+}
+function _isHSLIdentity(ap) {
+    if (ap.colorize) return false;
+    return (ap.hue | 0) === 0 && (ap.saturation | 0) === 0 && (ap.lightness | 0) === 0;
+}
+function _isLevelsIdentity(ap) {
+    return (ap.levInBlack || 0) === 0
+        && (ap.levInWhite !== undefined ? ap.levInWhite : 1) === 1
+        && (ap.levGamma !== undefined ? ap.levGamma : 1) === 1
+        && (ap.levOutBlack || 0) === 0
+        && (ap.levOutWhite !== undefined ? ap.levOutWhite : 1) === 1;
+}
+
+function _getCachedLut(L, type, sig, build) {
+    const cache = L._lutCache;
+    if (cache && cache.type === type && cache.sig === sig) return cache.lut;
+    const lut = build();
+    L._lutCache = { type, sig, lut };
+    return lut;
+}
+
+// Brightness offset + Krita-style sigmoid contrast centered at 0.5.
+// contrast slope = tan((c+1) * π/4): c=0 → 1 (identity), c=1 → ∞ (binarize), c=-1 → 0 (flat).
+function _buildBrightnessContrastLut(ap) {
+    const b = (ap.brightness || 0) / 100;
+    const c = Math.max(-1, Math.min(1, (ap.contrast || 0) / 100));
+    const slope = Math.tan((c + 1) * Math.PI / 4);
     const lut = new Uint8Array(256);
     for (let v = 0; v < 256; v++) {
-        let t = (v / 255 - iBlk) / iRange;
-        t = Math.max(0, Math.min(1, t));
-        t = Math.pow(t, invGamma);
-        lut[v] = Math.round((oBlk + t * oRange) * 255);
+        let t = v / 255;
+        t = (t - 0.5) * slope + 0.5 + b;
+        if (t < 0) t = 0; else if (t > 1) t = 1;
+        lut[v] = (t * 255 + 0.5) | 0;
     }
+    return lut;
+}
+
+function _applyBrightnessContrastToCtx(ctx, w, h, ap, L) {
+    const sig = (ap.brightness | 0) + ":" + (ap.contrast | 0);
+    const lut = _getCachedLut(L, "brightness", sig, () => _buildBrightnessContrastLut(ap));
     const imgData = ctx.getImageData(0, 0, w, h);
     const d = imgData.data;
     for (let p = 0, len = d.length; p < len; p += 4) {
@@ -2508,73 +2571,137 @@ function _applyLevelsToCtx(ctx, w, h, ap) {
     ctx.putImageData(imgData, 0, 0);
 }
 
-function _applyCSSFilterToCtx(ctx, w, h, filterStr, opacity) {
-    const snap = new ImageData(ctx.getImageData(0, 0, w, h).data, w, h);
-    const tmp = _createCanvas(w, h);
-    tmp.getContext("2d").putImageData(snap, 0, 0);
-    ctx.clearRect(0, 0, w, h);
-    ctx.filter = filterStr;
-    ctx.globalAlpha = opacity;
-    ctx.globalCompositeOperation = "source-over";
-    ctx.drawImage(tmp, 0, 0);
-    ctx.filter = "none";
-    ctx.globalAlpha = 1;
-}
+// HSL/HSV adjustment. Relative shifts use Krita's "linear toward edge" rule
+// for saturation/lightness so extremes don't clip prematurely. `colorize`
+// replaces hue and saturation with absolute targets.
+function _applyHSLToCtx(ctx, w, h, ap) {
+    const hShift   = ap.hue || 0;
+    const sShift   = (ap.saturation || 0) / 100;
+    const lShift   = (ap.lightness  || 0) / 100;
+    const useHSV   = ap.model === "HSV";
+    const colorize = !!ap.colorize;
+    const cHue = ((ap.hue || 0) % 360 + 360) % 360;
+    const cSat = useHSV ? Math.max(0, Math.min(1, (ap.saturation || 0) / 100))
+                        : Math.max(0, Math.min(1, ((ap.saturation || 0) + 100) / 200));
 
-function _applyHSLToCtx(ctx, w, h, ap, opacity) {
-    const hShift = ap.hue || 0;           // degrees, -180..180
-    const satShift = ap.saturation || 0;  // -1..1
-    const litShift = ap.lightness || 0;   // -1..1
     const imgData = ctx.getImageData(0, 0, w, h);
     const d = imgData.data;
     for (let p = 0, len = d.length; p < len; p += 4) {
-        const a = d[p + 3];
-        if (a === 0) continue;
-        let r = d[p] / 255, g = d[p + 1] / 255, b = d[p + 2] / 255;
-        // RGB -> HSL
-        const max = Math.max(r, g, b), min = Math.min(r, g, b);
+        if (d[p + 3] === 0) continue;
+        const r = d[p] / 255, g = d[p + 1] / 255, b = d[p + 2] / 255;
+        const max = r > g ? (r > b ? r : b) : (g > b ? g : b);
+        const min = r < g ? (r < b ? r : b) : (g < b ? g : b);
         const delta = max - min;
-        let h2 = 0, s = 0, l = (max + min) / 2;
+
+        let H = 0;
         if (delta > 0) {
-            s = delta / (1 - Math.abs(2 * l - 1));
-            if (max === r)      h2 = ((g - b) / delta + 6) % 6;
-            else if (max === g) h2 = (b - r) / delta + 2;
-            else                h2 = (r - g) / delta + 4;
-            h2 = h2 / 6 * 360;
+            if (max === r)      H = ((g - b) / delta) % 6;
+            else if (max === g) H = (b - r) / delta + 2;
+            else                H = (r - g) / delta + 4;
+            H *= 60; if (H < 0) H += 360;
         }
-        // Apply shifts
-        h2 = (h2 + hShift + 360) % 360;
-        s = satShift >= 0 ? s + (1 - s) * satShift : s + s * satShift;
-        l = Math.max(0, Math.min(1, l + litShift));
-        // HSL -> RGB
-        const c2 = (1 - Math.abs(2 * l - 1)) * s;
-        const x2 = c2 * (1 - Math.abs((h2 / 60) % 2 - 1));
-        const m = l - c2 / 2;
-        const seg = Math.floor(h2 / 60);
+
+        let S, axis;
+        if (useHSV) {
+            axis = max;                                   // V
+            S = max === 0 ? 0 : delta / max;
+        } else {
+            axis = (max + min) * 0.5;                      // L
+            S = delta === 0 ? 0 : delta / (1 - Math.abs(2 * axis - 1));
+        }
+
+        if (colorize) {
+            H = cHue;
+            S = cSat;
+            axis = Math.max(0, Math.min(1, axis + lShift));
+        } else {
+            H = (H + hShift) % 360; if (H < 0) H += 360;
+            S = sShift >= 0 ? S + (1 - S) * sShift : S + S * sShift;
+            if (S < 0) S = 0; else if (S > 1) S = 1;
+            axis = lShift >= 0 ? axis + (1 - axis) * lShift : axis + axis * lShift;
+            if (axis < 0) axis = 0; else if (axis > 1) axis = 1;
+        }
+
+        let C, m;
+        if (useHSV) { C = axis * S; m = axis - C; }
+        else        { C = (1 - Math.abs(2 * axis - 1)) * S; m = axis - C * 0.5; }
+        const X = C * (1 - Math.abs((H / 60) % 2 - 1));
         let r2, g2, b2;
-        if      (seg === 0) { r2 = c2; g2 = x2; b2 = 0; }
-        else if (seg === 1) { r2 = x2; g2 = c2; b2 = 0; }
-        else if (seg === 2) { r2 = 0;  g2 = c2; b2 = x2; }
-        else if (seg === 3) { r2 = 0;  g2 = x2; b2 = c2; }
-        else if (seg === 4) { r2 = x2; g2 = 0;  b2 = c2; }
-        else                { r2 = c2; g2 = 0;  b2 = x2; }
-        d[p]     = Math.round((r2 + m) * 255);
-        d[p + 1] = Math.round((g2 + m) * 255);
-        d[p + 2] = Math.round((b2 + m) * 255);
-        if (opacity < 1) d[p + 3] = Math.round(a * opacity);
+        const seg = (H / 60) | 0;
+        if      (seg === 0) { r2 = C; g2 = X; b2 = 0; }
+        else if (seg === 1) { r2 = X; g2 = C; b2 = 0; }
+        else if (seg === 2) { r2 = 0; g2 = C; b2 = X; }
+        else if (seg === 3) { r2 = 0; g2 = X; b2 = C; }
+        else if (seg === 4) { r2 = X; g2 = 0; b2 = C; }
+        else                { r2 = C; g2 = 0; b2 = X; }
+        d[p]     = ((r2 + m) * 255 + 0.5) | 0;
+        d[p + 1] = ((g2 + m) * 255 + 0.5) | 0;
+        d[p + 2] = ((b2 + m) * 255 + 0.5) | 0;
+    }
+    ctx.putImageData(imgData, 0, 0);
+}
+
+// Levels: input black/white normalize → gamma → output black/white remap.
+function _buildLevelsLut(ap) {
+    const iBlk = ap.levInBlack || 0;
+    const iWht = ap.levInWhite !== undefined ? ap.levInWhite : 1;
+    const gamma = ap.levGamma !== undefined ? ap.levGamma : 1;
+    const oBlk = ap.levOutBlack || 0;
+    const oWht = ap.levOutWhite !== undefined ? ap.levOutWhite : 1;
+    const iRange = Math.max(0.001, iWht - iBlk);
+    const oRange = oWht - oBlk;
+    const invGamma = 1 / Math.max(0.01, gamma);
+    const lut = new Uint8Array(256);
+    for (let v = 0; v < 256; v++) {
+        let t = (v / 255 - iBlk) / iRange;
+        if (t < 0) t = 0; else if (t > 1) t = 1;
+        t = Math.pow(t, invGamma);
+        let o = oBlk + t * oRange;
+        if (o < 0) o = 0; else if (o > 1) o = 1;
+        lut[v] = (o * 255 + 0.5) | 0;
+    }
+    return lut;
+}
+
+function _applyLevelsToCtx(ctx, w, h, ap, L) {
+    const sig = (ap.levInBlack || 0) + "|" + (ap.levInWhite || 1) + "|"
+              + (ap.levGamma || 1) + "|" + (ap.levOutBlack || 0) + "|" + (ap.levOutWhite || 1);
+    const lut = _getCachedLut(L, "levels", sig, () => _buildLevelsLut(ap));
+    const imgData = ctx.getImageData(0, 0, w, h);
+    const d = imgData.data;
+    for (let p = 0, len = d.length; p < len; p += 4) {
+        d[p] = lut[d[p]]; d[p + 1] = lut[d[p + 1]]; d[p + 2] = lut[d[p + 2]];
     }
     ctx.putImageData(imgData, 0, 0);
 }
 
 function _applyAdjustment(ctx, w, h, L) {
     const ap = L.adjustParams || {};
-    if (L.adjustType === "brightness") {
-        _applyCSSFilterToCtx(ctx, w, h,
-            `brightness(${1 + (ap.brightness || 0)}) contrast(${1 + (ap.contrast || 0)})`, L.opacity);
-    } else if (L.adjustType === "hue") {
-        _applyHSLToCtx(ctx, w, h, ap, L.opacity != null ? L.opacity : 1);
-    } else if (L.adjustType === "levels") {
-        _applyLevelsToCtx(ctx, w, h, ap);
+    let identity = false;
+    if      (L.adjustType === "brightness") identity = _isBrightnessIdentity(ap);
+    else if (L.adjustType === "hue")        identity = _isHSLIdentity(ap);
+    else if (L.adjustType === "levels")     identity = _isLevelsIdentity(ap);
+    else return;
+    if (identity) return;
+
+    const opacity = L.opacity != null ? L.opacity : 1;
+    let snap = null;
+    if (opacity < 1) snap = ctx.getImageData(0, 0, w, h);
+
+    if      (L.adjustType === "brightness") _applyBrightnessContrastToCtx(ctx, w, h, ap, L);
+    else if (L.adjustType === "hue")        _applyHSLToCtx(ctx, w, h, ap);
+    else if (L.adjustType === "levels")     _applyLevelsToCtx(ctx, w, h, ap, L);
+
+    if (snap) {
+        const out = ctx.getImageData(0, 0, w, h);
+        const od = out.data, sd = snap.data;
+        const a = opacity, ia = 1 - opacity;
+        for (let p = 0, len = od.length; p < len; p += 4) {
+            od[p]     = (od[p]     * a + sd[p]     * ia + 0.5) | 0;
+            od[p + 1] = (od[p + 1] * a + sd[p + 1] * ia + 0.5) | 0;
+            od[p + 2] = (od[p + 2] * a + sd[p + 2] * ia + 0.5) | 0;
+        }
+        ctx.putImageData(out, 0, 0);
     }
 }
 
@@ -2633,6 +2760,26 @@ function symGuides(c) {
         }
     }
     c.restore();
+}
+
+// Composite all layers below `idx` (exclusive) into a fresh canvas. Used by the
+// adjustment-layer UI to source pixels for the histogram. Adjustment layers
+// below `idx` are honored so the histogram reflects what the layer would see.
+function _compositeLayersBelow(idx) {
+    const c = _createCanvas(S.W, S.H);
+    const x = c.getContext("2d");
+    x.filter = "none"; x.globalAlpha = 1; x.globalCompositeOperation = "source-over";
+    const stop = Math.min(idx, S.layers.length);
+    for (let i = 0; i < stop; i++) {
+        const L = S.layers[i];
+        if (!L.visible) continue;
+        if (L.type === "adjustment") { _applyAdjustment(x, S.W, S.H, L); continue; }
+        x.globalCompositeOperation = L.blendMode || "source-over";
+        x.globalAlpha = L.opacity;
+        x.drawImage(L.canvas, 0, 0);
+    }
+    x.globalCompositeOperation = "source-over"; x.globalAlpha = 1;
+    return c;
 }
 
 function _composite2D(c, w, h, z, eraserActive, AL, strokeDrawCanvas, showMask) {
@@ -3278,8 +3425,10 @@ window.StudioCore = {
     // Temp canvas utility (for UI overlays that need scratch space)
     getTempCanvas,
 
-    // Adjustment rendering (for histogram computation in UI)
-    _applyAdjustment
+    // Adjustment rendering + helpers (for editor UI in canvas-ui.js)
+    _applyAdjustment,
+    _migrateAdjustParams,
+    _compositeLayersBelow
 };
 
 console.log("[StudioCore] Module loaded — Phase 1 clean engine");
