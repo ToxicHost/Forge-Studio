@@ -119,6 +119,7 @@ body.develop-active #canvasArea canvas {
    ═══════════════════════════════════════════ */
 
 .develop-histogram-wrap {
+  position: relative;
   padding: 8px 12px;
   border-bottom: 1px solid var(--border);
 }
@@ -130,22 +131,40 @@ body.develop-active #canvasArea canvas {
   border: 1px solid var(--border);
   border-radius: 3px;
 }
-.develop-histogram-controls {
-  display: flex;
-  gap: 4px;
-  margin-top: 6px;
-  font-size: 10px;
+
+/* Clipping indicators — corner triangles that light up colored when any
+   channel clips at black (left) or white (right). Inactive: dim and grey.
+   Active: filled with the additive mix of clipped channels (R+G=yellow,
+   R+G+B=white, etc.). Per the maintainer's request — Moritz wanted a
+   visible warning when a slider was pushing pixels into clipping. */
+.develop-hist-clip {
+  position: absolute;
+  top: 11px;
+  width: 0; height: 0;
+  border-style: solid;
+  background: transparent;
+  padding: 0;
+  cursor: help;
+  opacity: 0.3;
+  transition: opacity 0.12s ease;
+  z-index: 2;
 }
-.develop-histogram-controls button {
-  font-size: 10px;
-  padding: 2px 6px;
-  background: var(--bg-surface);
+.develop-hist-clip-l {
+  left: 13px;
+  border-width: 8px 0 0 8px;
+  border-color: transparent transparent transparent currentColor;
   color: var(--text-3);
-  border: 1px solid var(--border);
-  border-radius: 3px;
-  cursor: pointer;
 }
-.develop-histogram-controls button.active { color: var(--accent); border-color: var(--accent); }
+.develop-hist-clip-r {
+  right: 13px;
+  border-width: 0 8px 8px 0;
+  border-color: transparent currentColor transparent transparent;
+  color: var(--text-3);
+}
+.develop-hist-clip.clipping {
+  opacity: 1;
+  filter: drop-shadow(0 0 3px currentColor);
+}
 
 /* ═══════════════════════════════════════════
    COLLAPSIBLE SECTIONS
@@ -273,6 +292,46 @@ body.develop-active #canvasArea canvas {
 .develop-row.modified .develop-row-label {
   color: var(--text-1);
   font-weight: 500;
+}
+
+/* Per-row eyedropper button (WB on Temperature, white-point on Whites,
+   black-point on Blacks). Sits to the right of the numeric input. .armed
+   shows the selection state while waiting for a canvas click. */
+.develop-eyedrop {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  background: var(--bg-raised);
+  color: var(--text-3);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.develop-eyedrop:hover { color: var(--accent); border-color: var(--accent); }
+.develop-eyedrop.armed {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-dim, rgba(124,58,237,0.18));
+}
+
+/* Gradient slider tracks for Temperature (blue→yellow) and Tint
+   (green→magenta) — visual cue matching Lightroom / Camera Raw, so the
+   slider direction is obvious without reading the label. */
+.develop-row[data-track="temperature"] input[type="range"]::-webkit-slider-runnable-track {
+  background: linear-gradient(to right, #4a90e2 0%, #7ea8c4 35%, #b3a585 60%, #ffd060 100%);
+}
+.develop-row[data-track="temperature"] input[type="range"]::-moz-range-track {
+  background: linear-gradient(to right, #4a90e2 0%, #7ea8c4 35%, #b3a585 60%, #ffd060 100%);
+}
+.develop-row[data-track="tint"] input[type="range"]::-webkit-slider-runnable-track {
+  background: linear-gradient(to right, #50c878 0%, #888 50%, #c850a0 100%);
+}
+.develop-row[data-track="tint"] input[type="range"]::-moz-range-track {
+  background: linear-gradient(to right, #50c878 0%, #888 50%, #c850a0 100%);
 }
 
 /* ═══════════════════════════════════════════

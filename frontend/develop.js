@@ -87,15 +87,19 @@ var SECTIONS = [
     {
         id: "basic", label: "Basic", open: true,
         rows: [
-            { key: "temperature", label: "Temperature", min: -100, max: 100, step: 1,   def: 0 },
-            { key: "tint",        label: "Tint",        min: -100, max: 100, step: 1,   def: 0 },
+            { key: "temperature", label: "Temperature", min: -100, max: 100, step: 1, def: 0,
+              track: "temperature",
+              eyedropper: "wb", eyedropperTitle: "White balance — pick a neutral pixel (sets Temperature + Tint)" },
+            { key: "tint",        label: "Tint",        min: -100, max: 100, step: 1, def: 0, track: "tint" },
             { divider: true },
-            { key: "exposure",    label: "Exposure",    min: -100, max: 100, step: 1,   def: 0 },
-            { key: "contrast",    label: "Contrast",    min: -100, max: 100, step: 1,   def: 0 },
-            { key: "highlights",  label: "Highlights",  min: -100, max: 100, step: 1,   def: 0 },
-            { key: "shadows",     label: "Shadows",     min: -100, max: 100, step: 1,   def: 0 },
-            { key: "whites",      label: "Whites",      min: -100, max: 100, step: 1,   def: 0 },
-            { key: "blacks",      label: "Blacks",      min: -100, max: 100, step: 1,   def: 0 },
+            { key: "exposure",    label: "Exposure",    min: -100, max: 100, step: 1, def: 0 },
+            { key: "contrast",    label: "Contrast",    min: -100, max: 100, step: 1, def: 0 },
+            { key: "highlights",  label: "Highlights",  min: -100, max: 100, step: 1, def: 0 },
+            { key: "shadows",     label: "Shadows",     min: -100, max: 100, step: 1, def: 0 },
+            { key: "whites",      label: "Whites",      min: -100, max: 100, step: 1, def: 0,
+              eyedropper: "whites", eyedropperTitle: "White point — pick the brightest pixel that should be pure white" },
+            { key: "blacks",      label: "Blacks",      min: -100, max: 100, step: 1, def: 0,
+              eyedropper: "blacks", eyedropperTitle: "Black point — pick the darkest pixel that should be pure black" },
         ]
     },
     {
@@ -790,8 +794,8 @@ function _hidePanel() { if (_panel) _panel.classList.remove("visible"); }
 // Element registry — populated during _buildPanel, used by syncPanel
 var _rowEls = {};            // key → { row, range, num, def, step }
 var _histCanvas = null;
-var _histChannelMode = "lum"; // lum | rgb
-var _histScale = "log";       // log | linear
+var _histClipL = null;       // shadow clip indicator
+var _histClipR = null;       // highlight clip indicator
 var _enableToggleEl = null;
 var _beforeAfterBtn = null;
 var _splitActive = false;
@@ -888,37 +892,30 @@ function _buildPanel() {
     var body = document.createElement("div");
     body.className = "develop-panel-body";
 
-    // Histogram
+    // Histogram — RGB only, log scale, with clipping-warning triangles.
+    // Toggles for L / linear were removed at the maintainer's request; only
+    // the RGB+log view turned out to be useful in practice.
     var histWrap = document.createElement("div");
     histWrap.className = "develop-histogram-wrap";
+
+    // Two clipping triangles (shadow on the left, highlight on the right)
+    // sit absolutely on top of the histogram corners and light up colored
+    // when channels clip. Hidden by default, .clipping when active.
+    _histClipL = document.createElement("button");
+    _histClipL.type = "button";
+    _histClipL.className = "develop-hist-clip develop-hist-clip-l";
+    _histClipL.title = "Shadow clipping — channels at 0";
+    _histClipR = document.createElement("button");
+    _histClipR.type = "button";
+    _histClipR.className = "develop-hist-clip develop-hist-clip-r";
+    _histClipR.title = "Highlight clipping — channels at 255";
+    histWrap.appendChild(_histClipL);
+    histWrap.appendChild(_histClipR);
+
     _histCanvas = document.createElement("canvas");
     _histCanvas.className = "develop-histogram-canvas";
     _histCanvas.width = 296; _histCanvas.height = 60;
     histWrap.appendChild(_histCanvas);
-
-    var histCtrl = document.createElement("div");
-    histCtrl.className = "develop-histogram-controls";
-    function makeHistBtn(mode, label, group) {
-        var b = document.createElement("button");
-        b.textContent = label;
-        if ((group === "ch" && mode === _histChannelMode) ||
-            (group === "sc" && mode === _histScale)) b.classList.add("active");
-        b.addEventListener("click", function () {
-            if (group === "ch") _histChannelMode = mode;
-            else _histScale = mode;
-            histCtrl.querySelectorAll("button[data-grp='" + group + "']").forEach(function (x) { x.classList.remove("active"); });
-            b.classList.add("active");
-            _renderHistogram();
-        });
-        b.dataset.grp = group;
-        return b;
-    }
-    histCtrl.appendChild(makeHistBtn("lum", "L", "ch"));
-    histCtrl.appendChild(makeHistBtn("rgb", "RGB", "ch"));
-    var spacer = document.createElement("span"); spacer.style.flex = "1"; histCtrl.appendChild(spacer);
-    histCtrl.appendChild(makeHistBtn("log", "log", "sc"));
-    histCtrl.appendChild(makeHistBtn("linear", "lin", "sc"));
-    histWrap.appendChild(histCtrl);
     body.appendChild(histWrap);
 
     // Sections
@@ -962,6 +959,7 @@ function _buildSliderRow(field) {
     var row = document.createElement("div");
     row.className = "develop-row";
     row.dataset.key = field.key;
+    if (field.track) row.dataset.track = field.track;
 
     var lbl = document.createElement("span");
     lbl.className = "develop-row-label";
@@ -980,6 +978,23 @@ function _buildSliderRow(field) {
     num.min = field.min; num.max = field.max; num.step = field.step;
     num.value = field.def;
     row.appendChild(num);
+
+    if (field.eyedropper) {
+        var pickBtn = document.createElement("button");
+        pickBtn.type = "button";
+        pickBtn.className = "develop-eyedrop";
+        pickBtn.title = field.eyedropperTitle || "Pick from image";
+        pickBtn.dataset.mode = field.eyedropper;
+        pickBtn.innerHTML =
+            '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"' +
+            ' stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+            '<path d="M3 21v-3l9-9 3 3-9 9H3z"/><circle cx="19" cy="5" r="3"/></svg>';
+        pickBtn.addEventListener("click", function (e) {
+            e.preventDefault(); e.stopPropagation();
+            _enterPickMode(field.eyedropper, pickBtn);
+        });
+        row.appendChild(pickBtn);
+    }
 
     function commit(v, isDrag) {
         v = Number(v);
@@ -1044,10 +1059,10 @@ function _renderHistogram() {
     var S = _S(); if (!S || !S.canvas) return;
     var hctx = _histCanvas.getContext("2d");
     var W = _histCanvas.width, H = _histCanvas.height;
-    hctx.fillStyle = "rgba(0,0,0,0.0)";
     hctx.clearRect(0, 0, W, H);
 
-    // Sample the visible canvas at coarse stride so this stays cheap even on big docs.
+    // Sample the displayed canvas at coarse stride so this stays cheap even
+    // on big docs. The displayed canvas already includes Develop output.
     var src = S.canvas;
     var sw = src.width, sh = src.height;
     if (!sw || !sh) return;
@@ -1057,44 +1072,76 @@ function _renderHistogram() {
     var sample;
     try { sample = sctx.getImageData(0, 0, sw, sh); } catch (e) { return; }
     var sd = sample.data;
-    var binsR = new Uint32Array(256), binsG = new Uint32Array(256), binsB = new Uint32Array(256), binsL = new Uint32Array(256);
+    var binsR = new Uint32Array(256), binsG = new Uint32Array(256), binsB = new Uint32Array(256);
+    var sampleCount = 0;
     for (var y = 0; y < sh; y += stride) {
         var off = y * sw * 4;
         for (var x = 0; x < sw; x += stride) {
             var p = off + x * 4;
-            var r = sd[p], g = sd[p + 1], b = sd[p + 2];
-            binsR[r]++; binsG[g]++; binsB[b]++;
-            var lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) | 0;
-            if (lum > 255) lum = 255;
-            binsL[lum]++;
+            binsR[sd[p]]++; binsG[sd[p + 1]]++; binsB[sd[p + 2]]++;
+            sampleCount++;
         }
     }
-    function maxOf(a) { var m = 0; for (var i = 0; i < a.length; i++) if (a[i] > m) m = a[i]; return m; }
-    var transform = (_histScale === "log")
-        ? function (v, max) { return max <= 0 ? 0 : Math.log(1 + v) / Math.log(1 + max); }
-        : function (v, max) { return max <= 0 ? 0 : v / max; };
 
+    // RGB log-scale histogram, additive blend. Only the RGB+log view turned
+    // out to be useful in practice — toggles for L / linear were removed.
+    function maxOf(a) { var m = 0; for (var i = 0; i < a.length; i++) if (a[i] > m) m = a[i]; return m; }
     function drawBins(bins, color) {
         var mx = maxOf(bins);
         if (mx === 0) return;
+        var denom = Math.log(1 + mx);
         hctx.fillStyle = color;
         for (var i = 0; i < 256; i++) {
-            var t = transform(bins[i], mx);
+            var t = Math.log(1 + bins[i]) / denom;
             var bh = t * H;
             var bx = (i / 256) * W;
             var bw = W / 256;
             hctx.fillRect(bx, H - bh, bw + 0.5, bh);
         }
     }
-    if (_histChannelMode === "rgb") {
-        hctx.globalCompositeOperation = "screen";
-        drawBins(binsR, "rgba(220, 60, 60, 0.7)");
-        drawBins(binsG, "rgba( 60,200, 80, 0.7)");
-        drawBins(binsB, "rgba( 90,140,255, 0.7)");
-        hctx.globalCompositeOperation = "source-over";
-    } else {
-        drawBins(binsL, "rgba(220, 220, 220, 0.85)");
+    hctx.globalCompositeOperation = "screen";
+    drawBins(binsR, "rgba(220, 60, 60, 0.75)");
+    drawBins(binsG, "rgba( 60,200, 80, 0.75)");
+    drawBins(binsB, "rgba( 90,140,255, 0.75)");
+    hctx.globalCompositeOperation = "source-over";
+
+    // Clipping detection: a channel is "clipping" if more than CLIP_FRAC of
+    // sampled pixels land in bin 0 (shadow) or bin 255 (highlight). The two
+    // corner triangles light up colored to indicate which channels clip.
+    // Stray pixels (single-digit counts) don't trip the warning.
+    if (_histClipL && _histClipR) {
+        var CLIP_FRAC = 0.001;
+        var threshold = Math.max(2, sampleCount * CLIP_FRAC);
+        var lo = {
+            r: binsR[0] > threshold,
+            g: binsG[0] > threshold,
+            b: binsB[0] > threshold
+        };
+        var hi = {
+            r: binsR[255] > threshold,
+            g: binsG[255] > threshold,
+            b: binsB[255] > threshold
+        };
+        _setClipIndicator(_histClipL, lo);
+        _setClipIndicator(_histClipR, hi);
     }
+}
+
+// Color the clipping triangle: white if R+G+B all clip, else the additive
+// mix (R+G=yellow, R+B=magenta, G+B=cyan, single channel = that color).
+// Returns to dim/inactive state when no channel clips.
+function _setClipIndicator(el, ch) {
+    var any = ch.r || ch.g || ch.b;
+    el.classList.toggle("clipping", !!any);
+    if (!any) { el.style.color = ""; el.title = el.dataset.titleBase || el.title; return; }
+    var r = ch.r ? 255 : 0, g = ch.g ? 255 : 0, b = ch.b ? 255 : 0;
+    el.style.color = "rgb(" + r + "," + g + "," + b + ")";
+    var labels = [];
+    if (ch.r) labels.push("R");
+    if (ch.g) labels.push("G");
+    if (ch.b) labels.push("B");
+    el.title = (el.classList.contains("develop-hist-clip-l") ? "Shadow clipping" : "Highlight clipping")
+             + " — " + labels.join(", ");
 }
 
 // ========================================================================
@@ -1126,6 +1173,173 @@ function _undoReset() {
     syncPanel();
     _scheduleFullRedraw();
     return true;
+}
+
+// ========================================================================
+// EYEDROPPERS — pick a pixel from the canvas to set WB / black / white.
+//
+// All pickers read the PRE-DEVELOP composite (so already-applied develop
+// settings don't double-count). We reuse _buildBeforeBuffer() from the
+// before/after split feature for that.
+//
+// The canvas-ui pointerdown handler bails out when StudioModules.activeId
+// is "develop" (so brush tools stay inert). To capture the pick click we
+// install a capture-phase listener on the document that runs BEFORE any
+// other handler — only active while a pick is armed.
+// ========================================================================
+var _pickMode = null;          // null | "wb" | "whites" | "blacks"
+var _pickArmedBtn = null;      // currently-active button element
+var _pickPrevCursor = "";      // saved cursor while picking
+
+function _enterPickMode(mode, btn) {
+    if (_pickMode === mode) { _exitPickMode(); return; }    // toggle off
+    _exitPickMode();                                        // cancel any prior
+    _pickMode = mode;
+    _pickArmedBtn = btn || null;
+    if (_pickArmedBtn) _pickArmedBtn.classList.add("armed");
+    _pickPrevCursor = document.body.style.cursor || "";
+    document.body.style.cursor = "crosshair";
+    document.addEventListener("pointerdown", _onPickClick, true);   // capture
+    document.addEventListener("keydown", _onPickKey, true);
+}
+
+function _exitPickMode() {
+    if (_pickMode === null) return;
+    document.removeEventListener("pointerdown", _onPickClick, true);
+    document.removeEventListener("keydown", _onPickKey, true);
+    if (_pickArmedBtn) _pickArmedBtn.classList.remove("armed");
+    _pickArmedBtn = null;
+    _pickMode = null;
+    document.body.style.cursor = _pickPrevCursor;
+}
+
+function _onPickKey(e) {
+    if (e.key === "Escape") { _exitPickMode(); e.preventDefault(); }
+}
+
+function _onPickClick(e) {
+    if (_pickMode === null) return;
+    var S = _S(); if (!S || !S.canvas) return;
+    // Only handle clicks on the canvas itself.
+    if (e.target !== S.canvas) {
+        // Clicking elsewhere (panel, toolbar, etc.) cancels the pick.
+        _exitPickMode();
+        return;
+    }
+    e.preventDefault();
+    e.stopImmediatePropagation();
+
+    var rect = S.canvas.getBoundingClientRect();
+    var z = S.zoom;
+    var docX = Math.floor((e.clientX - rect.left - z.ox) / z.scale);
+    var docY = Math.floor((e.clientY - rect.top  - z.oy) / z.scale);
+    if (docX < 0 || docY < 0 || docX >= S.W || docY >= S.H) {
+        _exitPickMode(); return;
+    }
+
+    // Sample a 5x5 region around the click and average — reduces noise / single-pixel artifacts.
+    var px = _samplePreDevelopRegion(docX, docY, 2);
+    if (!px) { _exitPickMode(); return; }
+
+    var mode = _pickMode;
+    if      (mode === "wb")     _applyWBPick(px);
+    else if (mode === "blacks") _applyBlackPick(px);
+    else if (mode === "whites") _applyWhitePick(px);
+
+    _exitPickMode();
+}
+
+function _samplePreDevelopRegion(cx, cy, radius) {
+    var S = _S(); if (!S) return null;
+    var buf = _buildBeforeBuffer();
+    if (!buf) return null;
+    var x0 = Math.max(0, cx - radius);
+    var y0 = Math.max(0, cy - radius);
+    var x1 = Math.min(S.W - 1, cx + radius);
+    var y1 = Math.min(S.H - 1, cy + radius);
+    var w = x1 - x0 + 1, h = y1 - y0 + 1;
+    if (w <= 0 || h <= 0) return null;
+    var img;
+    try { img = buf.getContext("2d").getImageData(x0, y0, w, h); }
+    catch (e) { return null; }
+    var d = img.data, n = w * h;
+    var rs = 0, gs = 0, bs = 0;
+    for (var i = 0; i < n; i++) {
+        var p = i * 4;
+        rs += d[p]; gs += d[p + 1]; bs += d[p + 2];
+    }
+    return {
+        r:  (rs / n) / 255,
+        g:  (gs / n) / 255,
+        b:  (bs / n) / 255,
+        rL: _SRGB_TO_LIN[Math.round((rs / n))],
+        gL: _SRGB_TO_LIN[Math.round((gs / n))],
+        bL: _SRGB_TO_LIN[Math.round((bs / n))]
+    };
+}
+
+// White-balance pick: compute Temperature + Tint to neutralize the picked
+// pixel. Pipeline math (linear): R *= 1 + temp/200; B *= 1 - temp/200;
+// G *= 1 + tint/200. We solve for temp and tint such that the post-WB
+// triple is equal:
+//   t    = 200 * (b - r) / (r + b)
+//   target = 2*r*b / (r + b)        (harmonic mean)
+//   tint = 200 * (target - g) / g
+// All math in linear space. Clamps to slider range.
+function _applyWBPick(px) {
+    var S = _S(); if (!S || !S.developParams) return;
+    var r = px.rL, g = px.gL, b = px.bL;
+    if (r + b < 1e-6 || g < 1e-6) return;     // near-black pixel — meaningless
+    var temp = 200 * (b - r) / (r + b);
+    var target = 2 * r * b / (r + b);
+    var tint = 200 * (target - g) / g;
+    if (temp < -100) temp = -100; else if (temp > 100) temp = 100;
+    if (tint < -100) tint = -100; else if (tint > 100) tint = 100;
+    var p = S.developParams;
+    p.temperature = Math.round(temp);
+    p.tint = Math.round(tint);
+    p.enabled = true;
+    syncPanel();
+    _bumpCompositeCache();
+    _scheduleFullRedraw();
+}
+
+// Black-point pick: set the Blacks slider so the picked pixel's luminance
+// becomes the new lower bound (will render as 0 / pure black).
+//   blackPoint (linear) = blacks/200
+//   blacks = 200 * Y_lin
+// Use Rec.709 luminance for "perceived darkness".
+function _applyBlackPick(px) {
+    var S = _S(); if (!S || !S.developParams) return;
+    var Y = 0.2126 * px.rL + 0.7152 * px.gL + 0.0722 * px.bL;
+    if (Y < 0) Y = 0; else if (Y > 1) Y = 1;
+    var blacks = 200 * Y;
+    if (blacks > 100) blacks = 100;
+    S.developParams.blacks = Math.round(blacks);
+    S.developParams.enabled = true;
+    syncPanel();
+    _bumpCompositeCache();
+    _scheduleFullRedraw();
+}
+
+// White-point pick: set the Whites slider so the picked pixel's brightest
+// channel becomes the new upper bound (renders as pure white).
+//   whitePoint (linear) = 1 + whites/200
+//   whites = 200 * (V_lin - 1)
+// Use the max channel — most appropriate for the "white point" concept.
+function _applyWhitePick(px) {
+    var S = _S(); if (!S || !S.developParams) return;
+    var V = px.rL > px.gL ? (px.rL > px.bL ? px.rL : px.bL) : (px.gL > px.bL ? px.gL : px.bL);
+    if (V < 0) V = 0;
+    if (V < 0.05) return;                     // refuse near-black
+    var whites = 200 * (V - 1);
+    if (whites < -100) whites = -100;
+    if (whites > 100)  whites = 100;
+    S.developParams.whites = Math.round(whites);
+    S.developParams.enabled = true;
+    syncPanel();
+    _bumpCompositeCache();
+    _scheduleFullRedraw();
 }
 
 // ANCHOR_EXTRAS — chunk 5 inserts presets + before/after here
