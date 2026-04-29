@@ -1,0 +1,340 @@
+/**
+ * Forge Studio — Develop module
+ * Sidebar panel, slider rows, histogram, before/after split overlay.
+ * All sizing/colors come from app.css custom properties so themes apply.
+ */
+
+/* ═══════════════════════════════════════════
+   PANEL CONTAINER
+   ═══════════════════════════════════════════ */
+
+.develop-panel {
+  position: fixed;
+  top: 38px;            /* matches .titlebar height */
+  right: 0;
+  bottom: 0;
+  width: 320px;
+  z-index: 50;
+  background: var(--bg-surface);
+  border-left: 1px solid var(--border);
+  display: none;
+  flex-direction: column;
+  font-family: var(--font);
+  color: var(--text-1);
+  user-select: none;
+}
+
+.develop-panel.visible { display: flex; }
+
+.develop-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  background: var(--bg-surface);
+}
+
+.develop-panel-title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--text-1);
+  text-transform: uppercase;
+  flex: 1;
+}
+
+.develop-panel-body {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 6px 0;
+}
+
+/* ═══════════════════════════════════════════
+   HEADER CONTROLS
+   ═══════════════════════════════════════════ */
+
+.develop-toggle {
+  position: relative;
+  width: 32px;
+  height: 16px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-raised);
+  cursor: pointer;
+  flex-shrink: 0;
+  padding: 0;
+}
+.develop-toggle::after {
+  content: "";
+  position: absolute;
+  top: 1px; left: 1px;
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  background: var(--text-3);
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+.develop-toggle.on {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.develop-toggle.on::after {
+  transform: translateX(16px);
+  background: var(--bg-surface);
+}
+
+.develop-header-btn {
+  font-size: 10px;
+  padding: 3px 8px;
+  background: var(--bg-raised);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  cursor: pointer;
+  font-family: var(--font);
+}
+.develop-header-btn:hover { color: var(--accent); border-color: var(--accent); }
+.develop-header-btn.active { color: var(--accent); border-color: var(--accent); background: var(--accent-dim, rgba(124,58,237,0.18)); }
+
+/* ═══════════════════════════════════════════
+   HISTOGRAM
+   ═══════════════════════════════════════════ */
+
+.develop-histogram-wrap {
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.develop-histogram-canvas {
+  display: block;
+  width: 100%;
+  height: 60px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+}
+.develop-histogram-controls {
+  display: flex;
+  gap: 4px;
+  margin-top: 6px;
+  font-size: 10px;
+}
+.develop-histogram-controls button {
+  font-size: 10px;
+  padding: 2px 6px;
+  background: var(--bg-surface);
+  color: var(--text-3);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  cursor: pointer;
+}
+.develop-histogram-controls button.active { color: var(--accent); border-color: var(--accent); }
+
+/* ═══════════════════════════════════════════
+   COLLAPSIBLE SECTIONS
+   ═══════════════════════════════════════════ */
+
+.develop-section {
+  border-bottom: 1px solid var(--border);
+}
+.develop-section-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background: var(--bg-surface);
+}
+.develop-section-header:hover { color: var(--text-1); }
+.develop-section-arrow {
+  display: inline-block;
+  font-size: 9px;
+  color: var(--text-3);
+  width: 8px;
+  transition: transform 0.15s ease;
+}
+.develop-section.collapsed .develop-section-arrow { transform: rotate(-90deg); }
+.develop-section.collapsed .develop-section-body { display: none; }
+
+.develop-section-body {
+  padding: 4px 12px 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.develop-section-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px -12px;
+  opacity: 0.5;
+}
+
+/* ═══════════════════════════════════════════
+   SLIDER ROW
+   ═══════════════════════════════════════════ */
+
+.develop-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+}
+.develop-row-label {
+  font-size: 10px;
+  color: var(--text-3);
+  width: 80px;
+  flex-shrink: 0;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.develop-row-label:hover { color: var(--accent); }
+.develop-row input[type="range"] {
+  flex: 1;
+  min-width: 60px;
+  height: 14px;
+  margin: 0;
+  background: transparent;
+  -webkit-appearance: none;
+  appearance: none;
+  cursor: pointer;
+}
+.develop-row input[type="range"]::-webkit-slider-runnable-track {
+  height: 3px;
+  background: var(--border);
+  border-radius: 1px;
+}
+.develop-row input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  background: var(--accent);
+  margin-top: -4.5px;
+  cursor: pointer;
+  border: 1px solid var(--bg-surface);
+}
+.develop-row input[type="range"]::-moz-range-track {
+  height: 3px;
+  background: var(--border);
+  border-radius: 1px;
+  border: none;
+}
+.develop-row input[type="range"]::-moz-range-thumb {
+  width: 11px; height: 11px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+  border: 1px solid var(--bg-surface);
+}
+.develop-row input[type="number"] {
+  width: 44px;
+  height: 18px;
+  font-size: 10px;
+  font-family: var(--mono);
+  color: var(--text-1);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 4px;
+  text-align: right;
+  flex-shrink: 0;
+}
+.develop-row input[type="number"]::-webkit-inner-spin-button,
+.develop-row input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* Highlight rows whose value differs from identity */
+.develop-row.modified .develop-row-label {
+  color: var(--text-1);
+  font-weight: 500;
+}
+
+/* ═══════════════════════════════════════════
+   PRESETS
+   ═══════════════════════════════════════════ */
+
+.develop-presets-row {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.develop-presets-select {
+  flex: 1;
+  font-size: 11px;
+  font-family: var(--font);
+  background: var(--bg-raised);
+  color: var(--text-1);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 3px 6px;
+  height: 22px;
+}
+.develop-preset-save {
+  font-size: 10px;
+  padding: 3px 8px;
+  background: var(--bg-raised);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  cursor: pointer;
+}
+.develop-preset-save:hover { color: var(--accent); border-color: var(--accent); }
+
+/* ═══════════════════════════════════════════
+   BEFORE/AFTER SPLIT OVERLAY
+   ═══════════════════════════════════════════ */
+
+.develop-split-line {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--accent, #fff);
+  cursor: ew-resize;
+  z-index: 49;
+  display: none;
+  pointer-events: auto;
+  opacity: 0.85;
+}
+.develop-split-line.visible { display: block; }
+.develop-split-line::before,
+.develop-split-line::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent, #fff);
+  transform: translate(-50%, -50%);
+  border: 2px solid var(--bg-surface);
+}
+.develop-split-line::before { top: 50%; }
+.develop-split-line::after { display: none; }
+
+.develop-split-label {
+  position: fixed;
+  top: 48px;
+  z-index: 49;
+  font-size: 10px;
+  font-family: var(--mono);
+  color: var(--text-1);
+  background: rgba(0,0,0,0.5);
+  padding: 2px 6px;
+  border-radius: 3px;
+  display: none;
+  pointer-events: none;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.develop-split-label.visible { display: block; }

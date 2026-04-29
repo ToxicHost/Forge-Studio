@@ -2675,6 +2675,21 @@ function _applyLevelsToCtx(ctx, w, h, ap, L) {
     ctx.putImageData(imgData, 0, 0);
 }
 
+// ========================================================================
+// DEVELOP — global non-destructive post-processing pass.
+// The pipeline lives in develop.js (window.StudioDevelop). The compositor
+// invokes this hook on the document-resolution buffer, *after* the layer
+// stack composite, *before* UI overlays (grid, regions, marching ants).
+// ctx is at S.W × S.H pixel coords (no zoom transform applied here).
+// ========================================================================
+function _applyDevelop(ctx, w, h, params) {
+    if (!params || !params.enabled) return;
+    const SD = window.StudioDevelop;
+    if (!SD || typeof SD.applyToContext !== "function") return;
+    try { SD.applyToContext(ctx, w, h, params); }
+    catch (e) { console.error("[Develop] pipeline error:", e); }
+}
+
 function _applyAdjustment(ctx, w, h, L) {
     const ap = L.adjustParams || {};
     let identity = false;
@@ -2820,6 +2835,10 @@ function _composite2D(c, w, h, z, eraserActive, AL, strokeDrawCanvas, showMask) 
             x.drawImage(S.livePreview.canvas, 0, 0);
         }
     }
+    // Develop: global, always-last, applied to the document-resolution buffer.
+    // Runs before UI overlays so HUD elements aren't tinted.
+    _applyDevelop(x, w, h, S.developParams);
+
     c.globalAlpha = 1; c.globalCompositeOperation = "source-over";
     c.drawImage(_compBuffer, 0, 0);
 
@@ -3000,6 +3019,7 @@ function exportCanvas() {
         x.drawImage(L.canvas, 0, 0);
     }
     x.filter = "none"; x.globalAlpha = 1; x.globalCompositeOperation = "source-over";
+    _applyDevelop(x, S.W, S.H, S.developParams);
     // JPEG q=0.95 is visually lossless and ~10x smaller than PNG.
     // The image is only used as an img2img init — it gets denoised anyway.
     return c.toDataURL("image/jpeg", 0.95);
@@ -3077,6 +3097,7 @@ function exportFlattened(mime) {
         x.globalAlpha = L.opacity;
         x.drawImage(L.canvas, 0, 0);
     }
+    _applyDevelop(x, S.W, S.H, S.developParams);
     return c.toDataURL(mime || "image/png");
 }
 
@@ -3263,6 +3284,8 @@ function compositeForLive(targetW, targetH) {
         x.globalAlpha = L.opacity;
         x.drawImage(L.canvas, 0, 0);
     }
+    // Apply develop so img2img / inpaint sees the developed image
+    _applyDevelop(x, S.W, S.H, S.developParams);
 
     // Downscale to generation resolution
     if (targetW !== S.W || targetH !== S.H) {
@@ -3596,7 +3619,10 @@ window.StudioCore = {
     // Adjustment rendering + helpers (for editor UI in canvas-ui.js)
     _applyAdjustment,
     _migrateAdjustParams,
-    _compositeLayersBelow
+    _compositeLayersBelow,
+
+    // Develop pipeline hook (algorithm in develop.js)
+    _applyDevelop
 };
 
 console.log("[StudioCore] Module loaded — Phase 1 clean engine");

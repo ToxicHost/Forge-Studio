@@ -2098,6 +2098,31 @@ function savePSD() {
             blendMode: C._blendToPS[L.blendMode] || "normal"
         });
     }
+
+    // If Develop is active, prepend a flattened "(Develop)" composite layer
+    // at the top so the PSD opens looking like the in-app preview. Original
+    // layers remain editable below; users can hide/delete this layer in PS.
+    const dp = S.developParams;
+    if (dp && dp.enabled && C._applyDevelop && window.StudioDevelop) {
+        const devCanvas = document.createElement("canvas");
+        devCanvas.width = S.W; devCanvas.height = S.H;
+        const dx = devCanvas.getContext("2d");
+        dx.fillStyle = "#ffffff"; dx.fillRect(0, 0, S.W, S.H);
+        for (const L of S.layers) {
+            if (!L.visible) continue;
+            if (L.type === "adjustment") { C._applyAdjustment(dx, S.W, S.H, L); continue; }
+            dx.globalCompositeOperation = L.blendMode || "source-over";
+            dx.globalAlpha = L.opacity;
+            dx.drawImage(L.canvas, 0, 0);
+        }
+        dx.globalCompositeOperation = "source-over"; dx.globalAlpha = 1;
+        C._applyDevelop(dx, S.W, S.H, dp);
+        children.push({
+            name: "(Develop)", canvas: devCanvas,
+            hidden: false, opacity: 1, blendMode: "normal"
+        });
+    }
+
     const psd = { width: S.W, height: S.H, children: children };
     const buf = window.agPsd.writePsd(psd);
     const blob = new Blob([buf], { type: "application/octet-stream" });
