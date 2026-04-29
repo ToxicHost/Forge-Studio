@@ -178,14 +178,31 @@ function _linearToSrgb01(v) {
 }
 
 // Linear-Float → sRGB-U8 LUT. Spans input range 0..2 in 4096 steps so
-// exposure-boosted floats above 1.0 still map cleanly without a Math.pow
-// per pixel. This collapses ~6 Math.pow calls per pixel in Phase C into
-// 6 array lookups → typically a 5–10× speedup on tone slider drags.
+// exposure-boosted floats above 1.0 map through a soft filmic shoulder
+// instead of hard-clipping to 255. Without this, an exposure boost that
+// pushes any pixel past linear 1.0 immediately blows it to pure white;
+// the shoulder lets HDR-ish values asymptote toward sRGB 1.0 smoothly.
+//
+// Curve: identity below 0.85 linear, then a Reinhard-style asymptote
+// shoulder + (1 - shoulder) * t / (t + tightness)  with t = (v - shoulder).
+// At v=2 the output sits at ~0.99 in linear, encoded to ~253 sRGB.
+//
+// Collapses ~6 Math.pow calls per pixel in Phase C into 6 array lookups.
 var _LIN_TO_SRGB_U8 = (function () {
     var lut = new Uint8Array(4097);
+    var shoulder = 0.85;
+    var tightness = 0.6;
     for (var i = 0; i <= 4096; i++) {
         var v = i / 2048; // 0..2
-        lut[i] = (_linearToSrgb01(v < 0 ? 0 : (v > 1 ? 1 : v)) * 255 + 0.5) | 0;
+        if (v < 0) v = 0;
+        var lin;
+        if (v <= shoulder) {
+            lin = v;
+        } else {
+            var t = v - shoulder;
+            lin = shoulder + (1 - shoulder) * t / (t + tightness);
+        }
+        lut[i] = (_linearToSrgb01(lin) * 255 + 0.5) | 0;
     }
     return lut;
 })();
@@ -229,7 +246,8 @@ function applyToContext(ctx, w, h, params) {
 //   R *= 1 + temp/200       (warm = +R)
 //   B *= 1 - temp/200       (warm = -B)
 //   G *= 1 + tint/200       (green-magenta axis)
-// Exposure: v *= 2^(exposure * 5/100)   ⇒ ±5 stops at the slider extremes.
+// Exposure: v *= 2^(exposure * 3/100)   ⇒ ±3 stops at the slider extremes.
+// (Was ±5 stops — too easy to crush highlights at moderate slider values.)
 // ========================================================================
 function _buildLutA(p) {
     var temp = p.temperature || 0;
@@ -237,7 +255,7 @@ function _buildLutA(p) {
     var rGain = 1 + temp / 200;
     var bGain = 1 - temp / 200;
     var gGain = 1 + tint / 200;
-    var expGain = Math.pow(2, (p.exposure || 0) * 5 / 100);
+    var expGain = Math.pow(2, (p.exposure || 0) * 3 / 100);
     var rScale = rGain * expGain;
     var gScale = gGain * expGain;
     var bScale = bGain * expGain;
@@ -339,10 +357,12 @@ function _applyHighlightsShadows(rLin, gLin, bLin, blurCache, w, h, hlAmt, shAmt
             }
             if (hl !== 0) {
                 var hm = _smoothstep(0.5, 1.0, Yp);
-                // Slider sign: positive slider → boost highlights, negative
-                // → pull them toward the target (recovery). Matches the
-                // Lightroom UX expectation.
-                var hd = -hl * hm;
+                // Direct lerp toward target (no negation):
+                //   positive Highlights → recovery (darken brights toward 0.4)
+                //   negative Highlights → boost (push brights away from target)
+                // Matches the "positive = recovery, positive shadows = open"
+                // convention used elsewhere in this pipeline.
+                var hd = hl * hm;
                 rLin[i] += (hlTarget - rLin[i]) * hd;
                 gLin[i] += (hlTarget - gLin[i]) * hd;
                 bLin[i] += (hlTarget - bLin[i]) * hd;
@@ -382,13 +402,18 @@ function _applyDevelopFull(ctx, w, h, p) {
     // ---- Phase C: whites/blacks → contrast → clamp → re-encode ----
     // blackPoint = blacks/200 (range -0.5..0.5 in linear)
     // whitePoint = 1 + whites/200
-    // contrast pivots at 0.5 (linear); slope = 1 + contrast/100
+    // Contrast uses the Krita-style sigmoid (matches the brightness/contrast
+    // adjustment layer at canvas-core.js#2552): slope = tan((c+1)*π/4) with
+    // c ∈ [-1, 1]. Gentle near 0, ramps up sharply near ±1. The old linear
+    // 1+contrast/100 was way too aggressive at moderate values.
     var blackPoint = (p.blacks  || 0) / 200;
     var whitePoint = 1 + (p.whites || 0) / 200;
     var range = whitePoint - blackPoint;
     if (Math.abs(range) < 1e-4) range = 1e-4;
     var invRange = 1 / range;
-    var contrastSlope = 1 + (p.contrast || 0) / 100;
+    var cNorm = (p.contrast || 0) / 100;
+    if (cNorm < -1) cNorm = -1; else if (cNorm > 1) cNorm = 1;
+    var contrastSlope = Math.tan((cNorm + 1) * Math.PI / 4);
     var doRemap = blackPoint !== 0 || whitePoint !== 1;
     var doContrast = (p.contrast | 0) !== 0;
 
@@ -703,8 +728,10 @@ function _getGrainTile(size, w, h) {
     var state = seed | 1;
     for (var i = 0; i < noise.length; i++) {
         state = _xs32(state);
-        // Map to -64..+63 (signed) — actual scaling happens in apply.
-        noise[i] = ((state & 0x7F) - 64);
+        // Symmetric -128..+127 (was -64..+63 — biased and wasted half the
+        // Int8 range). amp scaling below is divided by 128 to compensate so
+        // peak grain amplitude stays visually equivalent.
+        noise[i] = ((state & 0xFF) - 128);
     }
     var cache = { sig: sig, w: tw, h: th, noise: noise };
     if (S) S._developGrainCache = cache;
@@ -717,7 +744,7 @@ function _applyGrain(d, w, h, amount, size) {
     var tw = tile.w, th = tile.h;
     // step >= 1 — larger size produces blockier grain by repeating samples.
     var step = Math.max(1, Math.round(size / 12));
-    var amp = amount * 0.6 * 255 / 64;  // peak amplitude in U8 units
+    var amp = amount * 0.6 * 255 / 128;  // peak amplitude in U8 units (noise range now ±128)
     for (var y = 0; y < h; y++) {
         var ty = ((y / step) | 0) % th;
         if (ty < 0) ty += th;
