@@ -1259,21 +1259,23 @@ function _savePreset() {
 // when layers change but NOT when develop params change — so dragging
 // sliders updates the right half only, exactly what we want.
 //
-// We hook by wrapping StudioUI.redraw: after every redraw we re-overlay
-// the left half from the cache. The wrap is installed once on first toggle
-// and sits idle (passes through) when _splitActive is false.
+// Hooked into StudioUI.onAfterRedraw — fires at the end of every local
+// _redraw() in canvas-ui.js, including cursor moves, brush hover, panning.
+// Wrapping window.StudioUI.redraw doesn't work because canvas-ui's internal
+// calls go through the local _redraw reference, not through the property.
 // ========================================================================
-var _origRedraw = null;
+var _afterRedrawHookInstalled = false;
+
+function _afterRedrawHook() {
+    if (_splitActive) _renderSplitOverlay();
+}
 
 function _installRedrawHook() {
-    if (_origRedraw) return;
+    if (_afterRedrawHookInstalled) return;
     var UI = window.StudioUI;
-    if (!UI || !UI.redraw) return;
-    _origRedraw = UI.redraw;
-    UI.redraw = function () {
-        _origRedraw.apply(UI, arguments);
-        if (_splitActive) _renderSplitOverlay();
-    };
+    if (!UI || typeof UI.onAfterRedraw !== "function") return;
+    UI.onAfterRedraw(_afterRedrawHook);
+    _afterRedrawHookInstalled = true;
 }
 
 function _buildBeforeBuffer() {
