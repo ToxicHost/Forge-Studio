@@ -322,18 +322,26 @@ function _applyHighlightsShadows(rLin, gLin, bLin, blurCache, w, h, hlAmt, shAmt
         var rowF = y * w;
         for (var x = 0; x < w; x++) {
             var i = rowF + x;
-            var Y = lumBlur[ly + (x >> 2)];
-            if (Y > 1) Y = 1;
+            var Yl = lumBlur[ly + (x >> 2)];
+            // Build masks against perceptual (sRGB-encoded) luminance, NOT
+            // linear. A pixel at sRGB 0.7 sits at linear ~0.45, so a linear
+            // smoothstep(0.5, 1.0, Y) returns ~0 for almost everything and
+            // the highlights slider feels dead. Gamma-encode the blurred
+            // luminance for the threshold only — the lift/pull math below
+            // still runs in linear for HDR correctness.
+            var Yp = _lin2u8(Yl) / 255;
             if (sh !== 0) {
-                var sm = 1 - _smoothstep(0, 0.5, Y);
+                var sm = 1 - _smoothstep(0, 0.5, Yp);
                 var sd = sh * sm;
                 rLin[i] += (shTarget - rLin[i]) * sd;
                 gLin[i] += (shTarget - gLin[i]) * sd;
                 bLin[i] += (shTarget - bLin[i]) * sd;
             }
             if (hl !== 0) {
-                var hm = _smoothstep(0.5, 1.0, Y);
-                // Slider sign: positive slider → reduce highlights (recovery).
+                var hm = _smoothstep(0.5, 1.0, Yp);
+                // Slider sign: positive slider → boost highlights, negative
+                // → pull them toward the target (recovery). Matches the
+                // Lightroom UX expectation.
                 var hd = -hl * hm;
                 rLin[i] += (hlTarget - rLin[i]) * hd;
                 gLin[i] += (hlTarget - gLin[i]) * hd;
