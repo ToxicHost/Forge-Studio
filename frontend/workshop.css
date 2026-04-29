@@ -483,6 +483,78 @@
     flex-shrink: 0;
 }
 
+/* Heatmap-style block slider — colored fill behind a transparent native
+   range input. Drag adjusts both width and color. */
+.ws-block-row.ws-block-heat {
+    height: 22px;
+}
+
+.ws-block-heat-track {
+    position: relative;
+    flex: 1;
+    height: 18px;
+    background: var(--bg-input);
+    border: 1px solid var(--border-subtle);
+    border-radius: 3px;
+    overflow: hidden;
+}
+
+.ws-block-heat-fill {
+    position: absolute;
+    inset: 0 auto 0 0;
+    width: 50%;
+    background: var(--accent);
+    transition: background 0.05s linear;
+    pointer-events: none;
+}
+
+.ws-block-heat-track .ws-block-slider {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    margin: 0;
+    padding: 0;
+    background: transparent;
+    appearance: none;
+    -webkit-appearance: none;
+    cursor: ew-resize;
+}
+
+.ws-block-heat-track .ws-block-slider::-webkit-slider-runnable-track {
+    background: transparent;
+    height: 100%;
+    border: none;
+}
+
+.ws-block-heat-track .ws-block-slider::-moz-range-track {
+    background: transparent;
+    height: 100%;
+    border: none;
+}
+
+.ws-block-heat-track .ws-block-slider::-webkit-slider-thumb {
+    -webkit-appearance: none;
+    width: 10px;
+    height: 18px;
+    border-radius: 2px;
+    background: #fff;
+    border: 1px solid #111;
+    box-shadow: 0 0 0 1px rgba(255,255,255,0.4);
+    cursor: ew-resize;
+    margin-top: 0;
+}
+
+.ws-block-heat-track .ws-block-slider::-moz-range-thumb {
+    width: 10px;
+    height: 18px;
+    border-radius: 2px;
+    background: #fff;
+    border: 1px solid #111;
+    box-shadow: 0 0 0 1px rgba(255,255,255,0.4);
+    cursor: ew-resize;
+}
+
 /* Tooltip icon (?) indicator */
 .ws-tooltip-icon {
     display: inline-block;
@@ -667,32 +739,6 @@
 .ws-test-merge-btn {
     flex: 1;
     height: 38px;
-    background: var(--accent);
-    color: #fff;
-    border: none;
-    border-radius: var(--radius);
-    font-family: var(--font);
-    font-size: 12px;
-    font-weight: 600;
-    letter-spacing: 0.5px;
-    text-transform: uppercase;
-    cursor: pointer;
-    transition: all 0.12s;
-}
-
-.ws-test-merge-btn:hover:not(:disabled) {
-    filter: brightness(1.1);
-}
-
-.ws-test-merge-btn:disabled {
-    opacity: 0.35;
-    cursor: not-allowed;
-    filter: none;
-}
-
-.ws-merge-btn {
-    flex: 1;
-    height: 38px;
     background: var(--bg-raised);
     color: var(--text-2);
     border: 1px solid var(--border);
@@ -706,14 +752,40 @@
     transition: all 0.12s;
 }
 
-.ws-merge-btn:hover:not(:disabled) {
+.ws-test-merge-btn:hover:not(:disabled) {
     color: var(--text-1);
     border-color: var(--border-hover);
+}
+
+.ws-test-merge-btn:disabled {
+    opacity: 0.35;
+    cursor: not-allowed;
+}
+
+.ws-merge-btn {
+    flex: 1;
+    height: 38px;
+    background: var(--accent);
+    color: #fff;
+    border: none;
+    border-radius: var(--radius);
+    font-family: var(--font);
+    font-size: 12px;
+    font-weight: 600;
+    letter-spacing: 0.5px;
+    text-transform: uppercase;
+    cursor: pointer;
+    transition: all 0.12s;
+}
+
+.ws-merge-btn:hover:not(:disabled) {
+    filter: brightness(1.1);
 }
 
 .ws-merge-btn:disabled {
     opacity: 0.35;
     cursor: not-allowed;
+    filter: none;
 }
 
 
@@ -1684,6 +1756,20 @@
     margin-top: 6px;
 }
 
+.ws-method-formula {
+    font-family: var(--mono);
+    font-size: 11px;
+    color: var(--accent);
+    background: var(--bg-input);
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    padding: 4px 8px;
+    margin-top: 6px;
+    white-space: nowrap;
+    overflow: hidden;
+    text-overflow: ellipsis;
+}
+
 .ws-pipeline-default-note {
     font-size: 10px;
     color: var(--text-3);
@@ -1874,6 +1960,12 @@
 .ws-row-active {
     border-color: var(--accent);
     box-shadow: 0 0 0 1px var(--accent);
+}
+
+/* Subtle accent border when this row is referenced by another row's
+   currently-open or currently-selected source dropdown. */
+.ws-row-ref-source {
+    box-shadow: inset 0 0 0 2px var(--accent);
 }
 
 .ws-row-line {
@@ -2082,6 +2174,38 @@
 .ws-row-vae-cell .ws-row-vae {
     flex: 1 1 0;
     min-width: 0;
+}
+
+/* Per-row output name cell on line 2 — only shown when "Keep
+   intermediates" is on and this row is not the final merge row. */
+.ws-row-out-name-cell {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    flex: 1 1 200px;
+    min-width: 160px;
+}
+
+.ws-row-out-name-label {
+    font-size: 9px;
+    color: var(--text-3);
+    text-transform: uppercase;
+    letter-spacing: 0.4px;
+    flex-shrink: 0;
+}
+
+.ws-row .ws-row-out-name {
+    flex: 1 1 0;
+    min-width: 0;
+    height: 22px;
+    font-size: 10px !important;
+    text-align: left !important;
+    padding: 0 6px !important;
+    background: var(--bg-input, var(--bg-raised));
+    border: 1px solid var(--border-subtle);
+    border-radius: var(--radius-sm);
+    color: var(--text-1);
+    font-family: var(--mono);
 }
 
 /* Block-weights toggle group on line 2 */
