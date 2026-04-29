@@ -2242,45 +2242,89 @@ function bindUI() {
       }
     });
   }
-  // Gallery save — toggle format buttons, then save selected output at native resolution
-  const saveFmts = document.getElementById("outputSaveFormats");
-  document.getElementById("outputSave")?.addEventListener("click", () => {
-    if (saveFmts) saveFmts.style.display = saveFmts.style.display === "none" ? "flex" : "none";
-  });
-
-  saveFmts?.querySelectorAll("button[data-fmt]").forEach(btn => {
-    btn.addEventListener("click", async () => {
-      const fmt = btn.dataset.fmt;
-      // Use data URL version for server-side save (always available)
-      const imgSrc = (State.outputImagesB64 || State.outputImages)[State.selectedOutputIdx];
-      if (!imgSrc) return;
-
-      // Get metadata for embedding (PNG tEXt, JPEG/WebP EXIF UserComment)
-      const infotext = State.embedMetadata
-        ? (State.outputInfotexts[State.selectedOutputIdx] || "")
-        : "";
-
-      try {
-        const origName = State.outputFilenames[State.selectedOutputIdx] || null;
-        const result = await API.saveImage({
-          image_b64: imgSrc,
-          format: fmt,
-          quality: 95,
-          metadata: infotext || null,
-          subfolder: "downloads",
-          filename: origName,
-        });
-        if (result.ok) {
-          showToast(`Saved ${result.filename}`, "success");
-        } else {
-          showToast(result.error || "Save failed", "error");
-        }
-      } catch (e) {
-        console.error("[Studio] Save failed:", e);
-        showToast("Save failed: " + e.message, "error");
+  // Gallery save — anchor a floating popover off the icon button so we
+  // can offer "Save to Gallery" (drops in the watched outputs root) in
+  // addition to the format-specific download targets.
+  async function _saveSelectedOutput(fmt, toGallery) {
+    const imgSrc = (State.outputImagesB64 || State.outputImages)[State.selectedOutputIdx];
+    if (!imgSrc) return;
+    const infotext = State.embedMetadata
+      ? (State.outputInfotexts[State.selectedOutputIdx] || "")
+      : "";
+    try {
+      const origName = State.outputFilenames[State.selectedOutputIdx] || null;
+      const result = await API.saveImage({
+        image_b64: imgSrc,
+        format: fmt,
+        quality: 95,
+        metadata: infotext || null,
+        // toGallery=true drops the file in output/studio/ (the
+        // gallery-watched root). Anything else lands in
+        // output/studio/downloads/ to keep manual downloads grouped.
+        subfolder: toGallery ? "" : "downloads",
+        filename: origName,
+      });
+      if (result.ok) {
+        showToast(toGallery
+          ? `Saved to Gallery → ${result.filename}`
+          : `Saved ${result.filename}`, "success");
+      } else {
+        showToast(result.error || "Save failed", "error");
       }
-      if (saveFmts) saveFmts.style.display = "none";
-    });
+    } catch (e) {
+      console.error("[Studio] Save failed:", e);
+      showToast("Save failed: " + e.message, "error");
+    }
+  }
+
+  function _showOutputSaveMenu(anchor) {
+    const existing = document.getElementById("outputSaveMenu");
+    if (existing) { existing.remove(); return; }
+
+    const items = [
+      { label: "Save as PNG",  fn: () => _saveSelectedOutput("png",  false) },
+      { label: "Save as JPEG", fn: () => _saveSelectedOutput("jpeg", false) },
+      { label: "Save as WebP", fn: () => _saveSelectedOutput("webp", false) },
+      { label: "Save to Gallery", fn: () => _saveSelectedOutput("png", true) },
+    ];
+
+    const menu = document.createElement("div");
+    menu.id = "outputSaveMenu";
+    menu.className = "output-save-menu";
+    for (const it of items) {
+      const row = document.createElement("button");
+      row.type = "button";
+      row.className = "output-save-menu-item";
+      row.textContent = it.label;
+      row.addEventListener("click", () => { menu.remove(); it.fn(); });
+      menu.appendChild(row);
+    }
+    document.body.appendChild(menu);
+
+    // Anchor below the icon, right-aligned so the popover doesn't
+    // shoot off-screen on a narrow sidebar.
+    const r = anchor.getBoundingClientRect();
+    const w = menu.offsetWidth;
+    const left = Math.max(8, Math.min(r.right - w, window.innerWidth - w - 8));
+    const top = r.bottom + 4;
+    menu.style.left = left + "px";
+    menu.style.top = top + "px";
+
+    const dismiss = (ev) => {
+      if (ev.type === "keydown" && ev.key !== "Escape") return;
+      if (ev.type === "click" && (menu.contains(ev.target) || anchor.contains(ev.target))) return;
+      menu.remove();
+      document.removeEventListener("click", dismiss, true);
+      document.removeEventListener("keydown", dismiss, true);
+    };
+    setTimeout(() => {
+      document.addEventListener("click", dismiss, true);
+      document.addEventListener("keydown", dismiss, true);
+    }, 0);
+  }
+
+  document.getElementById("outputSave")?.addEventListener("click", (e) => {
+    _showOutputSaveMenu(e.currentTarget);
   });
 
   // Seed buttons

@@ -2768,6 +2768,16 @@ function renderLayerPanel() {
             S.editingMask = false; S.regionMode = false; S.activeLayerIdx = layerIdx;
             renderLayerPanel(); _redraw();
         });
+        // Right-click → activate this layer first, then open the
+        // flip/rotate context menu. Activate-on-contextmenu matches
+        // the OS file-manager pattern users expect.
+        row.addEventListener("contextmenu", e => {
+            e.preventDefault();
+            e.stopPropagation();
+            S.editingMask = false; S.regionMode = false; S.activeLayerIdx = layerIdx;
+            renderLayerPanel();
+            _showLayerCtxMenu(e.clientX, e.clientY);
+        });
         panel.appendChild(row);
         if (row._editorRow) panel.appendChild(row._editorRow);
     }
@@ -3133,6 +3143,60 @@ function _showCtxMenu(x, y) {
     menu.style.display = "block";
 }
 
+// Right-click menu shown when the user contextmenus a layer row in
+// the panel. Targets the active layer; the row's click handler also
+// activates the layer first when called via the row binding below.
+function _showLayerCtxMenu(x, y) {
+    const C = window.StudioCore, S = C.state;
+    const L = C.activeLayer();
+    const isAdjust = L && L.type === "adjustment";
+    const menu = _createCtxMenu();
+
+    const apply = (fn) => () => { fn(); renderLayerPanel(); _redraw(); };
+
+    const items = [
+        { label: "Flip Horizontal", shortcut: "Ctrl+Shift+H", action: apply(() => C.flipLayerHorizontal()), disabled: isAdjust },
+        { label: "Flip Vertical",   shortcut: "Ctrl+Shift+V", action: apply(() => C.flipLayerVertical()),   disabled: isAdjust },
+        { type: "sep" },
+        { label: "Rotate 90° CW",  action: apply(() => C.rotateLayer90CW()),  disabled: isAdjust },
+        { label: "Rotate 90° CCW", action: apply(() => C.rotateLayer90CCW()), disabled: isAdjust },
+        { label: "Rotate 180°",    action: apply(() => C.rotateLayer180()),   disabled: isAdjust },
+        { label: "Rotate Arbitrary…", action: () => {
+            const ans = prompt("Rotate by how many degrees? (positive = clockwise)", "15");
+            if (ans === null) return;
+            const deg = parseFloat(ans);
+            if (!Number.isFinite(deg)) { if (window.showToast) window.showToast("Invalid angle", "warning"); return; }
+            C.rotateLayerArbitrary(deg);
+            renderLayerPanel(); _redraw();
+        }, disabled: isAdjust },
+    ];
+
+    menu.innerHTML = items.map(item => {
+        if (item.type === "sep") return `<div style="height:1px;background:var(--border-subtle,#222);margin:3px 0;"></div>`;
+        const dim = item.disabled ? "opacity:0.4;cursor:not-allowed;" : "cursor:pointer;";
+        return `<div class="ctx-menu-item" style="padding:5px 12px;display:flex;justify-content:space-between;align-items:center;gap:16px;${dim}">
+            <span>${item.label}</span>
+            ${item.shortcut ? `<span style="color:var(--text-4,#666);font-size:10px;font-family:var(--mono,monospace);">${item.shortcut}</span>` : ""}
+        </div>`;
+    }).join("");
+
+    const menuItems = menu.querySelectorAll(".ctx-menu-item");
+    let actionIdx = 0;
+    for (const item of items) {
+        if (item.type === "sep") continue;
+        const el = menuItems[actionIdx++];
+        if (!el) continue;
+        if (item.disabled) continue;
+        el.addEventListener("click", () => { _hideCtxMenu(); item.action(); });
+        el.addEventListener("mouseenter", () => el.style.background = "var(--accent-dim, #333)");
+        el.addEventListener("mouseleave", () => el.style.background = "transparent");
+    }
+
+    menu.style.left = Math.min(x, window.innerWidth - 220) + "px";
+    menu.style.top = Math.min(y, window.innerHeight - 240) + "px";
+    menu.style.display = "block";
+}
+
 async function _ctxSaveCanvas(fmt) {
     const C = window.StudioCore;
     const mimeMap = { png: "image/png", jpeg: "image/jpeg", webp: "image/webp" };
@@ -3196,6 +3260,15 @@ function bindKeys() {
 
         // Ctrl combos
         if (e.ctrlKey || e.metaKey) {
+            // Ctrl+Shift+V → Flip active layer vertically. Has to come
+            // before the Ctrl+V (paste) case below, which returns
+            // unconditionally regardless of shift.
+            if (e.shiftKey && e.key.toLowerCase() === "v" && !S.transform.active) {
+                e.preventDefault();
+                C.flipLayerVertical();
+                renderLayerPanel(); _redraw();
+                return;
+            }
             switch (e.key.toLowerCase()) {
                 case "z": e.preventDefault(); e.shiftKey ? C.redo() : C.undo(); renderLayerPanel(); renderHistoryPanel(); _redraw(); return;
                 case "a": e.preventDefault(); C.selectionAll(); startMarchingAnts(); _redraw(); return;
@@ -3223,6 +3296,14 @@ function bindKeys() {
                         e.preventDefault();
                         // Ctrl+Shift+N — New layer
                         _addLayer();
+                    }
+                    return;
+                case "h":
+                    if (e.shiftKey && !S.transform.active) {
+                        e.preventDefault();
+                        // Ctrl+Shift+H — Flip active layer horizontally
+                        C.flipLayerHorizontal();
+                        renderLayerPanel(); _redraw();
                     }
                     return;
             }

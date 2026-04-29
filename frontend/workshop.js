@@ -916,13 +916,20 @@ function _renderJournal() {
             starsHtml += '<span class="ws-journal-star' + (filled ? ' ws-star-filled' : '') + '" data-id="' + _esc(e.id) + '" data-rating="' + s + '">★</span>';
         }
 
-        html += '<div class="ws-history-card" data-id="' + _esc(e.id) + '">'
+        // When the entry carries an attached sample image, show the
+        // image as the thumbnail body. Otherwise fall back to the
+        // text-based recipe summary.
+        const thumbBody = e.image
+            ? '<img src="' + API + '/journal/image/' + _esc(e.image) + '" loading="lazy" class="ws-history-card-image" alt="">'
+            : _cardRecipeSummary(e);
+
+        html += '<div class="ws-history-card' + (e.image ? ' ws-history-card-has-image' : '') + '" data-id="' + _esc(e.id) + '">'
             + '<div class="ws-history-card-thumb">'
             + '<div class="ws-history-card-top">'
             + '<span class="ws-journal-type-badge ws-jt-' + _esc(typeKey) + '">' + _esc(typeLabel) + '</span>'
             + '<span class="ws-history-card-stars">' + starsHtml + '</span>'
             + '</div>'
-            + _cardRecipeSummary(e)
+            + thumbBody
             + '</div>'
             + '<div class="ws-history-card-info">'
             + '<div class="ws-history-card-filename" title="' + _esc(e.name || "") + '">' + _esc(e.name || "Untitled") + '</div>'

@@ -3081,6 +3081,152 @@ function exportFlattened(mime) {
 }
 
 // ========================================================================
+// LAYER FLIP / ROTATE — Photoshop-style transforms on the active layer
+//
+// All ops act on activeLayer().canvas in place. The layer canvas size
+// is bound to the document (S.W × S.H), so 90°/270° rotations on a
+// non-square doc center-crop / center-pad to keep the layer document-
+// sized — matches Photoshop's "Layer → Rotate 90° CW" behavior.
+//
+// 90 / 180 paths use ImageData row/col swaps so they're lossless.
+// Arbitrary rotation uses a temp canvas + drawImage for smoothing.
+// Each op pushes one undo step before mutating.
+// ========================================================================
+
+function _flipLayerHorizontal() {
+    const L = activeLayer();
+    if (!L || L.type === "adjustment") return;
+    saveUndo("Flip Horizontal");
+    const w = S.W, h = S.H;
+    const src = L.ctx.getImageData(0, 0, w, h);
+    const sd = src.data;
+    const dst = new ImageData(w, h);
+    const dd = dst.data;
+    for (let y = 0; y < h; y++) {
+        const rowStart = y * w * 4;
+        for (let x = 0; x < w; x++) {
+            const si = rowStart + x * 4;
+            const di = rowStart + (w - 1 - x) * 4;
+            dd[di] = sd[si]; dd[di + 1] = sd[si + 1];
+            dd[di + 2] = sd[si + 2]; dd[di + 3] = sd[si + 3];
+        }
+    }
+    L.ctx.putImageData(dst, 0, 0);
+}
+
+function _flipLayerVertical() {
+    const L = activeLayer();
+    if (!L || L.type === "adjustment") return;
+    saveUndo("Flip Vertical");
+    const w = S.W, h = S.H;
+    const src = L.ctx.getImageData(0, 0, w, h);
+    const sd = src.data;
+    const dst = new ImageData(w, h);
+    const dd = dst.data;
+    const rowBytes = w * 4;
+    for (let y = 0; y < h; y++) {
+        const srcStart = y * rowBytes;
+        const dstStart = (h - 1 - y) * rowBytes;
+        for (let i = 0; i < rowBytes; i++) dd[dstStart + i] = sd[srcStart + i];
+    }
+    L.ctx.putImageData(dst, 0, 0);
+}
+
+function _rotateLayer180() {
+    const L = activeLayer();
+    if (!L || L.type === "adjustment") return;
+    saveUndo("Rotate 180°");
+    const w = S.W, h = S.H;
+    const src = L.ctx.getImageData(0, 0, w, h);
+    const sd = src.data;
+    const dst = new ImageData(w, h);
+    const dd = dst.data;
+    const total = w * h;
+    for (let i = 0; i < total; i++) {
+        const si = i * 4;
+        const di = (total - 1 - i) * 4;
+        dd[di] = sd[si]; dd[di + 1] = sd[si + 1];
+        dd[di + 2] = sd[si + 2]; dd[di + 3] = sd[si + 3];
+    }
+    L.ctx.putImageData(dst, 0, 0);
+}
+
+// 90° rotation — lossless. Layer canvas stays at S.W × S.H, so for
+// non-square documents the rotated content is center-cropped (when
+// the rotated bbox is wider than the canvas) and center-padded on the
+// opposite axis (when narrower). Square documents are exact.
+function _rotateLayer90Common(direction) {
+    const L = activeLayer();
+    if (!L || L.type === "adjustment") return;
+    saveUndo(direction > 0 ? "Rotate 90° CW" : "Rotate 90° CCW");
+    const w = S.W, h = S.H;
+    const src = L.ctx.getImageData(0, 0, w, h);
+    const sd = src.data;
+    // Rotated dimensions (intermediate buffer is h × w pixels).
+    const rotW = h, rotH = w;
+    const rot = new ImageData(rotW, rotH);
+    const rd = rot.data;
+    if (direction > 0) {
+        // CW: dst[y, x] = src[h - 1 - x, y]    where dst is rotW × rotH
+        for (let y = 0; y < rotH; y++) {
+            for (let x = 0; x < rotW; x++) {
+                const sx = y;
+                const sy = h - 1 - x;
+                const si = (sy * w + sx) * 4;
+                const di = (y * rotW + x) * 4;
+                rd[di] = sd[si]; rd[di + 1] = sd[si + 1];
+                rd[di + 2] = sd[si + 2]; rd[di + 3] = sd[si + 3];
+            }
+        }
+    } else {
+        // CCW: dst[y, x] = src[x, w - 1 - y]
+        for (let y = 0; y < rotH; y++) {
+            for (let x = 0; x < rotW; x++) {
+                const sx = w - 1 - y;
+                const sy = x;
+                const si = (sy * w + sx) * 4;
+                const di = (y * rotW + x) * 4;
+                rd[di] = sd[si]; rd[di + 1] = sd[si + 1];
+                rd[di + 2] = sd[si + 2]; rd[di + 3] = sd[si + 3];
+            }
+        }
+    }
+    // Compose back into a document-sized canvas with center alignment.
+    L.ctx.clearRect(0, 0, w, h);
+    const tmp = _createCanvas(rotW, rotH);
+    tmp.getContext("2d").putImageData(rot, 0, 0);
+    const dx = Math.round((w - rotW) / 2);
+    const dy = Math.round((h - rotH) / 2);
+    L.ctx.drawImage(tmp, dx, dy);
+}
+
+function _rotateLayer90CW() { _rotateLayer90Common(1); }
+function _rotateLayer90CCW() { _rotateLayer90Common(-1); }
+
+// Arbitrary rotation — bilinear via canvas. Content stays document-
+// sized; rotated content is clipped to S.W × S.H around the center.
+function _rotateLayerArbitrary(degrees) {
+    const L = activeLayer();
+    if (!L || L.type === "adjustment") return;
+    const deg = Number(degrees);
+    if (!Number.isFinite(deg) || deg === 0) return;
+    saveUndo(`Rotate ${deg}°`);
+    const w = S.W, h = S.H;
+    // Snapshot current content into a tmp canvas, then redraw rotated
+    // around the document center back into the layer.
+    const snap = _createCanvas(w, h);
+    snap.getContext("2d").drawImage(L.canvas, 0, 0);
+    L.ctx.save();
+    L.ctx.imageSmoothingEnabled = true;
+    L.ctx.imageSmoothingQuality = "high";
+    L.ctx.clearRect(0, 0, w, h);
+    L.ctx.translate(w / 2, h / 2);
+    L.ctx.rotate(deg * Math.PI / 180);
+    L.ctx.drawImage(snap, -w / 2, -h / 2);
+    L.ctx.restore();
+}
+
+// ========================================================================
 // LIVE PAINTING — canvas hooks
 // ========================================================================
 
@@ -3299,6 +3445,14 @@ window.StudioCore = {
     exportFlattened,
     serializeRegions,
     isCanvasBlank,
+
+    // Layer flip / rotate
+    flipLayerHorizontal: _flipLayerHorizontal,
+    flipLayerVertical: _flipLayerVertical,
+    rotateLayer90CW: _rotateLayer90CW,
+    rotateLayer90CCW: _rotateLayer90CCW,
+    rotateLayer180: _rotateLayer180,
+    rotateLayerArbitrary: _rotateLayerArbitrary,
 
     // Resize
     resizeCanvas,

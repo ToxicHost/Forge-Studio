@@ -313,6 +313,13 @@
               <button id="skipBtn">Skip</button>
             </div>
 
+            <div class="ar-row canvas-load-reset-row">
+              <button class="ar-btn" id="loadImageBtn" title="Load image to canvas">&#x1f4c2; Load Image</button>
+              <input type="file" id="loadImageInput" accept="image/*" style="display:none;">
+              <span style="flex:1;"></span>
+              <button class="ar-btn ar-clear canvas-reset-accent" id="clearCanvas" title="Clear canvas">Reset Canvas</button>
+            </div>
+
             <!-- Live Painting Panel — visible when Live is active -->
             <div class="live-panel" id="livePanel" style="display:none;">
               <div class="live-panel-row">
@@ -335,12 +342,7 @@
             <div class="output-info" id="outputInfo"></div>
             <div class="output-actions">
               <button id="outputToCanvas">Result → Canvas</button>
-              <button id="outputSave">Save ▾</button>
-            </div>
-            <div class="output-save-formats" id="outputSaveFormats" style="display:none;">
-              <button data-fmt="png">Save as PNG</button>
-              <button data-fmt="jpeg">Save as JPEG</button>
-              <button data-fmt="webp">Save as WebP</button>
+              <button id="outputSave" class="output-save-icon" title="Save…" aria-label="Save…"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></button>
             </div>
           </div>
 
@@ -482,12 +484,6 @@
             </div>
             <input type="hidden" id="arBasePoolData" value="[512,640,768,896,1024]">
             <input type="hidden" id="arRatioPoolData" value='["1:1","5:4","4:3","3:2","16:9","2:1","2.39:1"]'>
-            <div class="ar-row">
-              <button class="ar-btn" id="loadImageBtn" title="Load image to canvas">&#x1f4c2; Load Image</button>
-              <input type="file" id="loadImageInput" accept="image/*" style="display:none;">
-              <span style="flex:1;"></span>
-              <button class="ar-btn ar-clear" id="clearCanvas" title="Clear canvas">Reset Canvas</button>
-            </div>
             </div>
           </div>
 
@@ -744,10 +740,10 @@
             <span class="section-arrow">&#x25BC;</span>
             <span class="section-label">Layers</span>
             <div class="section-actions" id="layerActions">
-              <button class="layer-add-btn" title="Add layer" id="layerAdd"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg></button>
-              <button class="layer-add-btn" title="Add Brightness/Contrast" id="layerAddBrightness"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="9"/><path fill="currentColor" stroke="none" d="M12 3a9 9 0 0 1 0 18z"/></svg></button>
-              <button class="layer-add-btn" title="Add Hue/Saturation" id="layerAddHue"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><path d="M12 2.5c-3.5 4.5-7 7.5-7 11.5a7 7 0 0 0 14 0c0-4-3.5-7-7-11.5z"/></svg></button>
-              <button class="layer-add-btn" title="Add Levels" id="layerAddLevels"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="5" y1="20" x2="5" y2="14"/><line x1="10" y1="20" x2="10" y2="9"/><line x1="15" y1="20" x2="15" y2="5"/><line x1="20" y1="20" x2="20" y2="11"/></svg></button>
+              <button title="Add layer" id="layerAdd"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg></button>
+              <button title="Add Brightness/Contrast" id="layerAddBrightness"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="9"/><path fill="currentColor" stroke="none" d="M12 3a9 9 0 0 1 0 18z"/></svg></button>
+              <button title="Add Hue/Saturation" id="layerAddHue"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><path d="M12 2.5c-3.5 4.5-7 7.5-7 11.5a7 7 0 0 0 14 0c0-4-3.5-7-7-11.5z"/></svg></button>
+              <button title="Add Levels" id="layerAddLevels"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="5" y1="20" x2="5" y2="14"/><line x1="10" y1="20" x2="10" y2="9"/><line x1="15" y1="20" x2="15" y2="5"/><line x1="20" y1="20" x2="20" y2="11"/></svg></button>
               <span class="action-sep" aria-hidden="true"></span>
               <button title="Duplicate" id="layerDupe"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><rect x="8" y="8" width="13" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></svg></button>
               <button title="Move up" id="layerUp"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg></button>
