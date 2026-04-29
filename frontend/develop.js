@@ -139,7 +139,7 @@ function _migrateParams(p) {
 // (Hoisted by the JS engine since they're function declarations below.)
 var SECTIONS = [
     {
-        id: "basic", label: "Basic", open: true,
+        id: "basic", label: "Color", open: true,
         rows: [
             { key: "temperature", label: "Temperature", min: -100, max: 100, step: 1, def: 0,
               track: "temperature",
@@ -154,6 +154,9 @@ var SECTIONS = [
               eyedropper: "whites", eyedropperTitle: "White point — pick the brightest pixel that should be pure white" },
             { key: "blacks",      label: "Blacks",      min: -100, max: 100, step: 1, def: 0,
               eyedropper: "blacks", eyedropperTitle: "Black point — pick the darkest pixel that should be pure black" },
+            { divider: true },
+            { key: "vibrance",   label: "Vibrance",   min: -100, max: 100, step: 1, def: 0 },
+            { key: "saturation", label: "Saturation", min: -100, max: 100, step: 1, def: 0 },
         ]
     },
     {
@@ -163,8 +166,6 @@ var SECTIONS = [
             { key: "clarity",    label: "Clarity",    min: -100, max: 100, step: 1, def: 0 },
             // V2: Dehaze inserted between Clarity and Vibrance per spec
             { key: "dehaze",     label: "Dehaze",     min: -100, max: 100, step: 1, def: 0, heavyOp: true },
-            { key: "vibrance",   label: "Vibrance",   min: -100, max: 100, step: 1, def: 0 },
-            { key: "saturation", label: "Saturation", min: -100, max: 100, step: 1, def: 0 },
         ]
     },
     {
@@ -350,7 +351,8 @@ function applyToContext(ctx, w, h, params) {
 // WB math (matches spec):
 //   R *= 1 + temp/200       (warm = +R)
 //   B *= 1 - temp/200       (warm = -B)
-//   G *= 1 + tint/200       (green-magenta axis)
+//   G *= 1 - tint/200       (positive tint = magenta, negative = green —
+//                            matches the slider's green→magenta gradient)
 // Exposure: v *= 2^(exposure * 3/100)   ⇒ ±3 stops at the slider extremes.
 // (Was ±5 stops — too easy to crush highlights at moderate slider values.)
 // ========================================================================
@@ -359,7 +361,7 @@ function _buildLutA(p) {
     var tint = p.tint || 0;
     var rGain = 1 + temp / 200;
     var bGain = 1 - temp / 200;
-    var gGain = 1 + tint / 200;
+    var gGain = 1 - tint / 200;
     var expGain = Math.pow(2, (p.exposure || 0) * 3 / 100);
     var rScale = rGain * expGain;
     var gScale = gGain * expGain;
@@ -462,12 +464,11 @@ function _applyHighlightsShadows(rLin, gLin, bLin, blurCache, w, h, hlAmt, shAmt
             }
             if (hl !== 0) {
                 var hm = _smoothstep(0.5, 1.0, Yp);
-                // Direct lerp toward target (no negation):
-                //   positive Highlights → recovery (darken brights toward 0.4)
-                //   negative Highlights → boost (push brights away from target)
-                // Matches the "positive = recovery, positive shadows = open"
-                // convention used elsewhere in this pipeline.
-                var hd = hl * hm;
+                // Lightroom convention: +Highlights brightens (boosts) bright
+                // pixels, -Highlights recovers them toward hlTarget (0.4).
+                // Negate so positive slider pushes AWAY from the recovery
+                // target, matching +Shadows = lift.
+                var hd = -hl * hm;
                 rLin[i] += (hlTarget - rLin[i]) * hd;
                 gLin[i] += (hlTarget - gLin[i]) * hd;
                 bLin[i] += (hlTarget - bLin[i]) * hd;
@@ -513,8 +514,11 @@ function _applyDevelopFull(ctx, w, h, p) {
     // toward 0 by the sigmoid.
     //   Krita-style sigmoid: slope = tan((c+1)*π/4), c ∈ [-1, 1].
     //   Gentle near 0 (slope 1.5 at +25), ramps sharply near ±1.
-    var blackPoint = (p.blacks  || 0) / 200;
-    var whitePoint = 1 + (p.whites || 0) / 200;
+    // Lightroom convention: +Whites lifts whites (brighter), +Blacks lifts
+    // blacks (brighter). Pulling the white point IN (below 1.0) and pushing
+    // the black point BELOW 0 expands the linear range upward, brightening.
+    var blackPoint = -((p.blacks  || 0) / 200);
+    var whitePoint = 1 - (p.whites || 0) / 200;
     var range = whitePoint - blackPoint;
     if (Math.abs(range) < 1e-4) range = 1e-4;
     var invRange = 1 / range;
@@ -628,6 +632,10 @@ function _applyDevelopProxy(ctx, w, h, p) {
 // behavior is consistent with the per-layer Hue/Sat adjustment.
 // ========================================================================
 function _applyVibrance(d, n, amount) {
+    // Positive amount saturates: push non-max channels AWAY from max so the
+    // gap (= perceived saturation) widens. Negative amount desaturates by
+    // pulling them toward max. Already-saturated pixels are protected by
+    // the (1 - sat) weight.
     for (var p = 0, end = n * 4; p < end; p += 4) {
         var R = d[p], G = d[p + 1], B = d[p + 2];
         var max = R > G ? (R > B ? R : B) : (G > B ? G : B);
@@ -638,9 +646,9 @@ function _applyVibrance(d, n, amount) {
         var dR = (max - R) * weight * amount;
         var dG = (max - G) * weight * amount;
         var dB = (max - B) * weight * amount;
-        d[p]     = _clampU8(R + dR);
-        d[p + 1] = _clampU8(G + dG);
-        d[p + 2] = _clampU8(B + dB);
+        d[p]     = _clampU8(R - dR);
+        d[p + 1] = _clampU8(G - dG);
+        d[p + 2] = _clampU8(B - dB);
     }
 }
 
@@ -1791,6 +1799,9 @@ var _tcParamRows = {};   // {tcShadows: {range, num}, ...}
 var _tcDragging = false;
 var _tcHitIdx = null;
 var _tcDownAt = null;     // {cx, cy, x, y}
+// Currently-selected interior point index (for Delete/Backspace removal).
+// Endpoints (0 and last) are never selectable. null = nothing selected.
+var _tcSelectedIdx = null;
 
 function _tcCurrentChannel() {
     var S = _S(); return (S && S.developParams && S.developParams.tcChannel) || "rgb";
@@ -1810,6 +1821,15 @@ function _tcSetActivePoints(pts) {
     else if (ch === "g") p.tcPointsG = pts;
     else if (ch === "b") p.tcPointsB = pts;
     else p.tcPoints = pts;
+    // Curve-canvas mutations bypass _commitParam, so flip the enabled flag
+    // here. Without this the pipeline early-outs at _isIdentity and the
+    // edit appears to do nothing — most visibly for the RGB channel,
+    // because the per-channel R/G/B tab-click already enables via
+    // _commitParam("tcChannel", …) as a side effect.
+    if (!p.enabled) {
+        p.enabled = true;
+        if (_enableToggleEl) _enableToggleEl.classList.add("on");
+    }
 }
 
 function _buildToneCurveSection(body) {
@@ -1825,6 +1845,7 @@ function _buildToneCurveSection(body) {
     body.appendChild(modeRow);
     function applyMode(mode) {
         _commitParam("toneCurveMode", mode, false);
+        _tcSelectedIdx = null;
         _tcSyncModeUI(mode);
     }
     btnPara.addEventListener("click", function () { applyMode("parametric"); });
@@ -1872,6 +1893,7 @@ function _buildToneCurveSection(body) {
         b.className = "develop-tc-channel-btn develop-tc-channel-" + c;
         b.addEventListener("click", function () {
             _commitParam("tcChannel", c, false);
+            _tcSelectedIdx = null;
             _tcSyncChannelUI(c);
             _tcRedrawCurve();
         });
@@ -1927,12 +1949,20 @@ function _tcHitTest(cx, cy) {
 
 function _tcAttachCurveHandlers() {
     var c = _tcCurveCanvas;
+    // Make the curve canvas keyboard-focusable so it can receive
+    // keydown for Delete/Backspace point removal.
+    if (!c.hasAttribute("tabindex")) c.tabIndex = 0;
+    c.style.outline = "none";
     c.addEventListener("pointerdown", function (e) {
         var rect = c.getBoundingClientRect();
         var cx = e.clientX - rect.left, cy = e.clientY - rect.top;
         _tcHitIdx = _tcHitTest(cx, cy);
         _tcDownAt = { cx: cx, cy: cy };
         _tcDragging = false;
+        // Selection: clicking a point selects it (interior only). Clicking
+        // empty area clears selection. Confirmed on pointerup (so a drag
+        // doesn't double-trigger selection logic).
+        c.focus({ preventScroll: true });
         c.setPointerCapture(e.pointerId);
     });
     c.addEventListener("pointermove", function (e) {
@@ -1962,7 +1992,7 @@ function _tcAttachCurveHandlers() {
     c.addEventListener("pointerup", function (e) {
         try { c.releasePointerCapture(e.pointerId); } catch (_) {}
         if (!_tcDragging && _tcHitIdx === null && _tcDownAt) {
-            // Click on empty area → add new point
+            // Click on empty area → add new point + clear selection
             var pt = _tcCanvasToCurve(_tcDownAt.cx, _tcDownAt.cy);
             var pts = _tcActivePoints().slice();
             // Insert keeping x-sorted, dodge the endpoints
@@ -1973,11 +2003,21 @@ function _tcAttachCurveHandlers() {
                 if (pts[i][0] >= pt.x) { insertAt = i; break; }
             }
             // Refuse if too close to an existing x
-            if (Math.abs(pts[insertAt][0] - pt.x) < 2) { _tcResetDrag(); return; }
+            if (Math.abs(pts[insertAt][0] - pt.x) < 2) { _tcSelectedIdx = null; _tcRedrawCurve(); _tcResetDrag(); return; }
             pts.splice(insertAt, 0, [pt.x, pt.y]);
             _tcSetActivePoints(pts);
+            _tcSelectedIdx = null;
             _tcRedrawCurve();
             _scheduleFullRedraw();
+        } else if (!_tcDragging && _tcHitIdx !== null) {
+            // Click (no drag) on existing point → select if interior, else clear
+            var ptsSel = _tcActivePoints();
+            if (_tcHitIdx > 0 && _tcHitIdx < ptsSel.length - 1) {
+                _tcSelectedIdx = _tcHitIdx;
+            } else {
+                _tcSelectedIdx = null;
+            }
+            _tcRedrawCurve();
         } else if (_tcDragging) {
             _scheduleFullRedraw();
         }
@@ -1991,8 +2031,24 @@ function _tcAttachCurveHandlers() {
         if (idx === 0 || idx === pts.length - 1) return;     // endpoints are fixed
         var newPts = pts.slice(); newPts.splice(idx, 1);
         _tcSetActivePoints(newPts);
+        if (_tcSelectedIdx === idx) _tcSelectedIdx = null;
+        else if (_tcSelectedIdx !== null && _tcSelectedIdx > idx) _tcSelectedIdx -= 1;
         _tcRedrawCurve();
         _scheduleFullRedraw();
+    });
+    c.addEventListener("keydown", function (e) {
+        if (e.key !== "Delete" && e.key !== "Backspace") return;
+        if (_tcSelectedIdx === null) return;
+        var pts = _tcActivePoints();
+        if (_tcSelectedIdx <= 0 || _tcSelectedIdx >= pts.length - 1) {
+            _tcSelectedIdx = null; _tcRedrawCurve(); return;
+        }
+        var newPts = pts.slice(); newPts.splice(_tcSelectedIdx, 1);
+        _tcSetActivePoints(newPts);
+        _tcSelectedIdx = null;
+        _tcRedrawCurve();
+        _scheduleFullRedraw();
+        e.preventDefault();
     });
 }
 function _tcResetDrag() { _tcDragging = false; _tcHitIdx = null; _tcDownAt = null; }
@@ -2039,14 +2095,19 @@ function _tcRedrawCurve() {
         else ctx.lineTo(pos.cx, pos.cy);
     }
     ctx.stroke();
-    // Control points
+    // Control points — selected interior point gets a larger filled accent
+    // dot with an outer ring; everything else is a plain white dot.
     var pts = _tcActivePoints();
-    ctx.fillStyle = "#fff";
-    ctx.strokeStyle = "rgba(0,0,0,0.6)";
-    ctx.lineWidth = 1;
+    var accentCol = (getComputedStyle(document.documentElement).getPropertyValue("--accent") || "#7c3aed").trim();
     for (var k = 0; k < pts.length; k++) {
         var pp = _tcCurveToCanvas(pts[k][0], pts[k][1]);
-        ctx.beginPath(); ctx.arc(pp.cx, pp.cy, 3.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+        var isSel = (k === _tcSelectedIdx) && k > 0 && k < pts.length - 1;
+        ctx.beginPath();
+        ctx.arc(pp.cx, pp.cy, isSel ? 5 : 3.5, 0, Math.PI * 2);
+        ctx.fillStyle = isSel ? accentCol : "#fff";
+        ctx.strokeStyle = isSel ? "#fff" : "rgba(0,0,0,0.6)";
+        ctx.lineWidth = isSel ? 1.5 : 1;
+        ctx.fill(); ctx.stroke();
     }
 }
 
@@ -2062,12 +2123,26 @@ function _tcAttachSplitStripHandlers() {
         var s1 = (p.tcSplit1 || 25) / 100 * rect.width;
         var s2 = (p.tcSplit2 || 50) / 100 * rect.width;
         var s3 = (p.tcSplit3 || 75) / 100 * rect.width;
+        // Always grab the nearest marker — clicking anywhere on the strip
+        // jumps that marker to the click position. (Previously gated on a
+        // 12px proximity check, which made the strip feel dead.)
         var nearest = "tcSplit1", best = Math.abs(x - s1);
         if (Math.abs(x - s2) < best) { nearest = "tcSplit2"; best = Math.abs(x - s2); }
         if (Math.abs(x - s3) < best) { nearest = "tcSplit3"; best = Math.abs(x - s3); }
-        if (best > 12) return;
         _tcSplitDrag = nearest;
         c.setPointerCapture(e.pointerId);
+        // Fire the move logic on the initial click so the marker snaps to
+        // the cursor immediately, not only after the first move.
+        var pct = Math.round((x / rect.width) * 100);
+        if (pct < 1) pct = 1; else if (pct > 99) pct = 99;
+        if (nearest === "tcSplit1" && pct >= (p.tcSplit2 || 50)) pct = (p.tcSplit2 || 50) - 1;
+        if (nearest === "tcSplit2") {
+            if (pct <= (p.tcSplit1 || 25)) pct = (p.tcSplit1 || 25) + 1;
+            if (pct >= (p.tcSplit3 || 75)) pct = (p.tcSplit3 || 75) - 1;
+        }
+        if (nearest === "tcSplit3" && pct <= (p.tcSplit2 || 50)) pct = (p.tcSplit2 || 50) + 1;
+        _commitParam(nearest, pct, true);
+        _tcRedrawSplitStrip();
     });
     c.addEventListener("pointermove", function (e) {
         if (!_tcSplitDrag) return;
