@@ -43,18 +43,20 @@ if (!document.querySelector('link[href*="develop.css"]')) {
 }
 
 // ========================================================================
-// DEFAULT PARAMS — matches the spec's S.developParams shape exactly
+// DEFAULT PARAMS — V2 shape. Existing V1 docs are migrated on load (see
+// _migrateParams). All V2 fields default to identity so the pipeline is
+// pixel-identical to V1 with the new code present but no V2 sliders moved.
 // ========================================================================
 function defaultParams() {
     return {
-        _version: 1,
+        _version: 2,
         enabled: false,
 
-        // White Balance
+        // === V1: White Balance ===
         temperature: 0,
         tint: 0,
 
-        // Tone
+        // === V1: Tone ===
         exposure: 0,
         contrast: 0,
         highlights: 0,
@@ -62,40 +64,96 @@ function defaultParams() {
         whites: 0,
         blacks: 0,
 
-        // Presence
+        // === V1: Presence ===
         texture: 0,
         clarity: 0,
         vibrance: 0,
         saturation: 0,
 
-        // Detail
+        // === V1: Detail ===
         sharpenAmount: 0,
         sharpenRadius: 1.0,
 
-        // Effects
+        // === V1: Effects ===
         vignetteAmount: 0,
         grainAmount: 0,
         grainSize: 25,
+
+        // === V2: Tone Curve ===
+        toneCurveMode: "parametric",   // "parametric" | "point"
+        tcHighlights: 0,               // -100..100
+        tcLights: 0,                   // -100..100
+        tcDarks: 0,                    // -100..100
+        tcShadows: 0,                  // -100..100
+        tcSplit1: 25, tcSplit2: 50, tcSplit3: 75,
+        tcPoints:  [[0, 0], [255, 255]],
+        tcPointsR: [[0, 0], [255, 255]],
+        tcPointsG: [[0, 0], [255, 255]],
+        tcPointsB: [[0, 0], [255, 255]],
+        tcChannel: "rgb",              // "rgb" | "r" | "g" | "b"
+
+        // === V2: HSL / Color Mixer === (8 bands: R, O, Y, G, A, B, P, M)
+        hslHue: [0, 0, 0, 0, 0, 0, 0, 0],   // -30..30 per band
+        hslSat: [0, 0, 0, 0, 0, 0, 0, 0],   // -100..100 per band
+        hslLum: [0, 0, 0, 0, 0, 0, 0, 0],   // -100..100 per band
+        hslMode: "hue",                      // UI tab only
+
+        // === V2: Color Grading (3-way + Global) ===
+        cgShadowH:    0, cgShadowS:    0, cgShadowL:    0,
+        cgMidtoneH:   0, cgMidtoneS:   0, cgMidtoneL:   0,
+        cgHighlightH: 0, cgHighlightS: 0, cgHighlightL: 0,
+        cgGlobalH:    0, cgGlobalS:    0, cgGlobalL:    0,
+        cgBlending: 50,                // 0..100
+        cgBalance: 0,                  // -100..100
+
+        // === V2: Dehaze ===
+        dehaze: 0,                     // -100..100
+
+        // === V2: Noise Reduction ===
+        nrLuminance: 0,                // 0..100
+        nrColor: 0,                    // 0..100
     };
+}
+
+// One-shot V1 → V2 migration. Idempotent: re-running on a v2 doc is a no-op.
+//
+// NOTE for future versions: this fills MISSING fields with current defaults
+// but does NOT transform existing field shapes. If V3+ changes the shape of
+// an existing field (e.g. tcPoints format), add field-specific logic here
+// gated on the source _version BEFORE bumping _version.
+function _migrateParams(p) {
+    if (!p) return;
+    if ((p._version | 0) >= 2) return;
+    var defaults = defaultParams();
+    Object.keys(defaults).forEach(function (k) {
+        if (!(k in p)) p[k] = defaults[k];
+    });
+    p._version = 2;
 }
 
 // ========================================================================
 // SLIDER DEFINITIONS — drives the UI section layout
 // Each row: { key, label, min, max, step, def }
 // ========================================================================
+// Forward-declare V2 custom builders so SECTIONS can reference them.
+// (Hoisted by the JS engine since they're function declarations below.)
 var SECTIONS = [
     {
         id: "basic", label: "Basic", open: true,
         rows: [
-            { key: "temperature", label: "Temperature", min: -100, max: 100, step: 1,   def: 0 },
-            { key: "tint",        label: "Tint",        min: -100, max: 100, step: 1,   def: 0 },
+            { key: "temperature", label: "Temperature", min: -100, max: 100, step: 1, def: 0,
+              track: "temperature",
+              eyedropper: "wb", eyedropperTitle: "White balance — pick a neutral pixel (sets Temperature + Tint)" },
+            { key: "tint",        label: "Tint",        min: -100, max: 100, step: 1, def: 0, track: "tint" },
             { divider: true },
-            { key: "exposure",    label: "Exposure",    min: -100, max: 100, step: 1,   def: 0 },
-            { key: "contrast",    label: "Contrast",    min: -100, max: 100, step: 1,   def: 0 },
-            { key: "highlights",  label: "Highlights",  min: -100, max: 100, step: 1,   def: 0 },
-            { key: "shadows",     label: "Shadows",     min: -100, max: 100, step: 1,   def: 0 },
-            { key: "whites",      label: "Whites",      min: -100, max: 100, step: 1,   def: 0 },
-            { key: "blacks",      label: "Blacks",      min: -100, max: 100, step: 1,   def: 0 },
+            { key: "exposure",    label: "Exposure",    min: -100, max: 100, step: 1, def: 0 },
+            { key: "contrast",    label: "Contrast",    min: -100, max: 100, step: 1, def: 0 },
+            { key: "highlights",  label: "Highlights",  min: -100, max: 100, step: 1, def: 0 },
+            { key: "shadows",     label: "Shadows",     min: -100, max: 100, step: 1, def: 0 },
+            { key: "whites",      label: "Whites",      min: -100, max: 100, step: 1, def: 0,
+              eyedropper: "whites", eyedropperTitle: "White point — pick the brightest pixel that should be pure white" },
+            { key: "blacks",      label: "Blacks",      min: -100, max: 100, step: 1, def: 0,
+              eyedropper: "blacks", eyedropperTitle: "Black point — pick the darkest pixel that should be pure black" },
         ]
     },
     {
@@ -103,6 +161,8 @@ var SECTIONS = [
         rows: [
             { key: "texture",    label: "Texture",    min: -100, max: 100, step: 1, def: 0 },
             { key: "clarity",    label: "Clarity",    min: -100, max: 100, step: 1, def: 0 },
+            // V2: Dehaze inserted between Clarity and Vibrance per spec
+            { key: "dehaze",     label: "Dehaze",     min: -100, max: 100, step: 1, def: 0, heavyOp: true },
             { key: "vibrance",   label: "Vibrance",   min: -100, max: 100, step: 1, def: 0 },
             { key: "saturation", label: "Saturation", min: -100, max: 100, step: 1, def: 0 },
         ]
@@ -112,6 +172,9 @@ var SECTIONS = [
         rows: [
             { key: "sharpenAmount", label: "Sharpen Amt", min: 0,   max: 150, step: 1,   def: 0   },
             { key: "sharpenRadius", label: "Sharpen Rad", min: 0.5, max: 3.0, step: 0.1, def: 1.0 },
+            // V2: Noise Reduction
+            { key: "nrLuminance",   label: "NR Luma",    min: 0,   max: 100, step: 1, def: 0, heavyOp: true },
+            { key: "nrColor",       label: "NR Color",   min: 0,   max: 100, step: 1, def: 0, heavyOp: true },
         ]
     },
     {
@@ -124,30 +187,68 @@ var SECTIONS = [
     },
 ];
 
+// V2: insert custom-widget sections at the correct positions:
+//   basic → toneCurve → presence(+dehaze) → hsl → colorGrading → detail(+nr) → effects
+SECTIONS.splice(1, 0, { id: "toneCurve",    label: "Tone Curve",    open: false, customBuild: _buildToneCurveSection });
+SECTIONS.splice(3, 0, { id: "hsl",          label: "HSL / Color",   open: false, customBuild: _buildHSLSection });
+SECTIONS.splice(4, 0, { id: "colorGrading", label: "Color Grading", open: false, customBuild: _buildColorGradingSection });
+
 // ========================================================================
 // IDENTITY CHECK — early-out before any getImageData
 // All sliders that contribute when their amount is non-zero are listed.
 // sharpenRadius / grainSize have non-zero defaults but contribute nothing
 // when sharpenAmount / grainAmount are zero, so they're not checked.
+// V2 additions: tone curve params, HSL bands, color-grading, dehaze, NR.
+// tcSplit{1,2,3} are non-zero defaults but only matter when tcShadows /
+// tcDarks / tcLights / tcHighlights are non-zero. cgBlending defaults to
+// 50; only matters when a CG slider is non-zero.
 // ========================================================================
+function _arrayAllZero(a) {
+    if (!a || !a.length) return true;
+    for (var i = 0; i < a.length; i++) { if ((a[i] | 0) !== 0) return false; }
+    return true;
+}
+function _pointsAreIdentity(pts) {
+    return !pts
+        || pts.length !== 2
+        || pts[0][0] !== 0   || pts[0][1] !== 0
+        || pts[1][0] !== 255 || pts[1][1] !== 255;
+}
 function _isIdentity(p) {
     if (!p) return true;
     if (!p.enabled) return true;
-    return ((p.temperature | 0) === 0)
-        && ((p.tint | 0) === 0)
-        && ((p.exposure | 0) === 0)
-        && ((p.contrast | 0) === 0)
-        && ((p.highlights | 0) === 0)
-        && ((p.shadows | 0) === 0)
-        && ((p.whites | 0) === 0)
-        && ((p.blacks | 0) === 0)
-        && ((p.texture | 0) === 0)
-        && ((p.clarity | 0) === 0)
-        && ((p.vibrance | 0) === 0)
-        && ((p.saturation | 0) === 0)
-        && ((p.sharpenAmount | 0) === 0)
-        && ((p.vignetteAmount | 0) === 0)
-        && ((p.grainAmount | 0) === 0);
+    // V1
+    if (((p.temperature | 0) !== 0) || ((p.tint | 0) !== 0)) return false;
+    if (((p.exposure | 0) !== 0) || ((p.contrast | 0) !== 0)) return false;
+    if (((p.highlights | 0) !== 0) || ((p.shadows | 0) !== 0)) return false;
+    if (((p.whites | 0) !== 0) || ((p.blacks | 0) !== 0)) return false;
+    if (((p.texture | 0) !== 0) || ((p.clarity | 0) !== 0)) return false;
+    if (((p.vibrance | 0) !== 0) || ((p.saturation | 0) !== 0)) return false;
+    if ((p.sharpenAmount | 0) !== 0) return false;
+    if ((p.vignetteAmount | 0) !== 0 || (p.grainAmount | 0) !== 0) return false;
+    // V2 — short-circuit for v1 docs (gate at version)
+    if ((p._version | 0) < 2) return true;
+    // Tone curve
+    if ((p.tcShadows | 0) !== 0 || (p.tcDarks | 0) !== 0
+     || (p.tcLights | 0) !== 0 || (p.tcHighlights | 0) !== 0) return false;
+    if (p.toneCurveMode === "point") {
+        // Identity only when ALL relevant point sets are flat.
+        if (!_pointsAreIdentity(p.tcPoints)) return false;
+        if (!_pointsAreIdentity(p.tcPointsR)) return false;
+        if (!_pointsAreIdentity(p.tcPointsG)) return false;
+        if (!_pointsAreIdentity(p.tcPointsB)) return false;
+    }
+    // HSL — any non-zero entry across hue/sat/lum
+    if (!_arrayAllZero(p.hslHue) || !_arrayAllZero(p.hslSat) || !_arrayAllZero(p.hslLum)) return false;
+    // Color grading — any region's saturation or luminance non-zero
+    if ((p.cgShadowS | 0) !== 0 || (p.cgShadowL | 0) !== 0) return false;
+    if ((p.cgMidtoneS | 0) !== 0 || (p.cgMidtoneL | 0) !== 0) return false;
+    if ((p.cgHighlightS | 0) !== 0 || (p.cgHighlightL | 0) !== 0) return false;
+    if ((p.cgGlobalS | 0) !== 0 || (p.cgGlobalL | 0) !== 0) return false;
+    // Dehaze + NR
+    if ((p.dehaze | 0) !== 0) return false;
+    if ((p.nrLuminance | 0) !== 0 || (p.nrColor | 0) !== 0) return false;
+    return true;
 }
 
 // ========================================================================
@@ -225,6 +326,10 @@ function _S() { return window.StudioCore && window.StudioCore.state; }
 // ========================================================================
 
 function applyToContext(ctx, w, h, params) {
+    // V1 → V2 migration runs once per loaded doc — idempotent, no-op on v2.
+    // Centralised here so any path that reaches the pipeline is migrated:
+    // doc tab switch, undo/redo restore, freshly-constructed state, etc.
+    _migrateParams(params);
     if (_isIdentity(params)) return;
     if (typeof _applyDevelopFull !== "function") return; // skeleton-only mode
     if (params._dragging) {
@@ -446,16 +551,30 @@ function _applyDevelopFull(ctx, w, h, p) {
         }
     }
 
+    // ---- V2: Tone Curve (parametric or point), gated on _version >= 2 ----
+    _applyToneCurve(d, n, p);
+
     // ---- Phase D: vibrance, then saturation ----
     var vibAmt = (p.vibrance || 0) / 100;
     if (vibAmt !== 0) _applyVibrance(d, n, vibAmt);
     var satAmt = (p.saturation || 0) / 100;
     if (satAmt !== 0) _applySaturation(d, n, satAmt);
 
-    // ---- Phase E: spatial USM (texture / clarity / sharpening) ----
+    // ---- V2: HSL / Color Mixer ----
+    _applyHSL(d, n, p);
+
+    // ---- V2: Color Grading (3-way + Global) ----
+    _applyColorGrading(d, n, p);
+
+    // ---- Phase E: spatial USM (texture / clarity) → V2 dehaze → sharpen ----
     if ((p.texture | 0) !== 0)        _unsharpMaskLuma(d, w, h, 8,  (p.texture || 0) / 100, false);
     if ((p.clarity | 0) !== 0)        _unsharpMaskLuma(d, w, h, 40, (p.clarity || 0) / 200, true);
+    // V2: Dehaze sits between Clarity and Sharpening per spec
+    _applyDehaze(d, n, w, h, p);
     if ((p.sharpenAmount | 0) !== 0)  _unsharpMaskLuma(d, w, h, p.sharpenRadius || 1.0, (p.sharpenAmount || 0) / 100, false);
+
+    // ---- V2: Noise Reduction (luminance bilateral + color Cb/Cr blur) ----
+    _applyNoiseReduction(d, n, w, h, p);
 
     // ---- Phase F: vignette + grain ----
     if ((p.vignetteAmount | 0) !== 0) _applyVignette(d, w, h, (p.vignetteAmount || 0) / 100);
@@ -525,40 +644,687 @@ function _applyVibrance(d, n, amount) {
     }
 }
 
+// HSL conversion helpers — extracted from V1's inlined _applySaturation so
+// V2's HSL section, color grading, and any future per-pixel HSL pass share
+// one source of truth. Operates on normalized 0..1 RGB inputs.
+//
+// _rgb2hsl(r, g, b) → { h: 0..360, s: 0..1, l: 0..1 }
+// _hsl2rgb(h, s, l) → { r: 0..1, g: 0..1, b: 0..1 }
+function _rgb2hsl(r, g, b) {
+    var max = r > g ? (r > b ? r : b) : (g > b ? g : b);
+    var min = r < g ? (r < b ? r : b) : (g < b ? g : b);
+    var L = (max + min) * 0.5;
+    var delta = max - min;
+    if (delta === 0) return { h: 0, s: 0, l: L };
+    var denom = 1 - Math.abs(2 * L - 1);
+    var S = denom <= 0 ? 0 : delta / denom;
+    var H;
+    if (max === r)      H = ((g - b) / delta) % 6;
+    else if (max === g) H = (b - r) / delta + 2;
+    else                H = (r - g) / delta + 4;
+    H *= 60; if (H < 0) H += 360;
+    return { h: H, s: S, l: L };
+}
+function _hsl2rgb(H, S, L) {
+    var C = (1 - Math.abs(2 * L - 1)) * S;
+    var X = C * (1 - Math.abs((H / 60) % 2 - 1));
+    var off = L - C * 0.5;
+    var r, g, b;
+    var seg = (H / 60) | 0;
+    if      (seg === 0) { r = C; g = X; b = 0; }
+    else if (seg === 1) { r = X; g = C; b = 0; }
+    else if (seg === 2) { r = 0; g = C; b = X; }
+    else if (seg === 3) { r = 0; g = X; b = C; }
+    else if (seg === 4) { r = X; g = 0; b = C; }
+    else                { r = C; g = 0; b = X; }
+    return { r: r + off, g: g + off, b: b + off };
+}
+
 function _applySaturation(d, n, amount) {
     var scale = 1 + amount;
     if (scale < 0) scale = 0;
     for (var p = 0, end = n * 4; p < end; p += 4) {
         var r = d[p] / 255, g = d[p + 1] / 255, b = d[p + 2] / 255;
-        var max = r > g ? (r > b ? r : b) : (g > b ? g : b);
-        var min = r < g ? (r < b ? r : b) : (g < b ? g : b);
-        var L = (max + min) * 0.5;
-        var delta = max - min;
-        if (delta === 0) continue; // gray pixel — saturation has no effect
-        var H, S;
-        var denom = 1 - Math.abs(2 * L - 1);
-        S = denom <= 0 ? 0 : delta / denom;
-        if (max === r)      H = ((g - b) / delta) % 6;
-        else if (max === g) H = (b - r) / delta + 2;
-        else                H = (r - g) / delta + 4;
-        H *= 60; if (H < 0) H += 360;
-        S *= scale;
+        var hsl = _rgb2hsl(r, g, b);
+        if (hsl.s === 0) continue;            // gray pixel — saturation has no effect
+        var S = hsl.s * scale;
         if (S > 1) S = 1; else if (S < 0) S = 0;
-        var C = (1 - Math.abs(2 * L - 1)) * S;
-        var X = C * (1 - Math.abs((H / 60) % 2 - 1));
-        var off = L - C * 0.5;
-        var rr, gg, bb;
-        var seg = (H / 60) | 0;
-        if      (seg === 0) { rr = C; gg = X; bb = 0; }
-        else if (seg === 1) { rr = X; gg = C; bb = 0; }
-        else if (seg === 2) { rr = 0; gg = C; bb = X; }
-        else if (seg === 3) { rr = 0; gg = X; bb = C; }
-        else if (seg === 4) { rr = X; gg = 0; bb = C; }
-        else                { rr = C; gg = 0; bb = X; }
-        d[p]     = _clampU8((rr + off) * 255);
-        d[p + 1] = _clampU8((gg + off) * 255);
-        d[p + 2] = _clampU8((bb + off) * 255);
+        var rgb = _hsl2rgb(hsl.h, S, hsl.l);
+        d[p]     = _clampU8(rgb.r * 255);
+        d[p + 1] = _clampU8(rgb.g * 255);
+        d[p + 2] = _clampU8(rgb.b * 255);
     }
+}
+
+// ========================================================================
+// V2 — TONE CURVE
+//
+// Two modes: parametric (4 region sliders + 3 split boundaries) and point
+// (Fritsch-Carlson monotone cubic through user-placed control points,
+// optionally per-channel). Both modes evaluate to a 256-entry U8 LUT
+// applied per-pixel. Caches keyed on stringified params.
+// ========================================================================
+
+// Parametric LUT: each of {Shadows, Darks, Lights, Highlights} produces a
+// raised-cosine bump centered in its tonal region. Bumps sum, scaled by
+// slider amount. A slider at +100 shifts pixels in its region by ±64 U8
+// units at the bump peak, falling off smoothly to the adjacent splits.
+function _buildParametricCurveLut(p) {
+    var lut = new Uint8Array(256);
+    var s1 = (p.tcSplit1 || 25) * 2.55;     // 0..255
+    var s2 = (p.tcSplit2 || 50) * 2.55;
+    var s3 = (p.tcSplit3 || 75) * 2.55;
+    if (s1 < 1) s1 = 1; if (s1 > 254) s1 = 254;
+    if (s2 < s1 + 1) s2 = s1 + 1; if (s2 > 254) s2 = 254;
+    if (s3 < s2 + 1) s3 = s2 + 1; if (s3 > 254) s3 = 254;
+
+    // Region centers (midpoints between splits / endpoints)
+    var cShadow    = s1 * 0.5;
+    var cDark      = (s1 + s2) * 0.5;
+    var cLight     = (s2 + s3) * 0.5;
+    var cHighlight = (s3 + 255) * 0.5;
+    // Half-widths reach to the adjacent boundary so the bump tapers to 0 there
+    var hShadow    = s1;
+    var hDark      = Math.max(s2 - s1, s1) * 0.5 + Math.max(s2 - s1, s1) * 0.5;
+    var hLight     = Math.max(s3 - s2, s2 - s1) * 0.5 + Math.max(s3 - s2, s2 - s1) * 0.5;
+    var hHighlight = (255 - s3);
+    // Use the wider of the adjacent gaps for the "interior" bumps so they
+    // taper smoothly from one boundary to the other.
+    hDark      = Math.max(s1, (s2 - s1));
+    hLight     = Math.max((s3 - s2), (255 - s3));
+
+    var aSh = (p.tcShadows    || 0) / 100;
+    var aDk = (p.tcDarks      || 0) / 100;
+    var aLt = (p.tcLights     || 0) / 100;
+    var aHl = (p.tcHighlights || 0) / 100;
+    var bumpScale = 64;   // peak ±64 U8 units at slider extremes
+
+    function bump(t, center, halfWidth) {
+        if (halfWidth <= 0) return 0;
+        var x = (t - center) / halfWidth;
+        if (x < -1) x = -1; else if (x > 1) x = 1;
+        return 0.5 * (1 + Math.cos(Math.PI * x));
+    }
+
+    for (var t = 0; t < 256; t++) {
+        var off = aSh * bump(t, cShadow,    hShadow)
+                + aDk * bump(t, cDark,      hDark)
+                + aLt * bump(t, cLight,     hLight)
+                + aHl * bump(t, cHighlight, hHighlight);
+        var v = t + off * bumpScale;
+        lut[t] = v < 0 ? 0 : (v > 255 ? 255 : (v + 0.5) | 0);
+    }
+    return lut;
+}
+
+// Fritsch-Carlson monotone cubic interpolation. Point set must contain
+// at least the two endpoints (0,0) and (255,255). Sorts on x. Returns a
+// 256-entry U8 LUT.
+function _buildPointCurveLut(points) {
+    if (!points || points.length < 2) {
+        // identity
+        var idLut = new Uint8Array(256);
+        for (var i = 0; i < 256; i++) idLut[i] = i;
+        return idLut;
+    }
+    // Copy + sort on x; deduplicate same-x entries (keep the last)
+    var pts = points.slice().sort(function (a, b) { return a[0] - b[0]; });
+    var clean = [pts[0]];
+    for (var k = 1; k < pts.length; k++) {
+        if (pts[k][0] === clean[clean.length - 1][0]) clean[clean.length - 1] = pts[k];
+        else clean.push(pts[k]);
+    }
+    pts = clean;
+    var n = pts.length;
+    var x = new Float32Array(n), y = new Float32Array(n);
+    for (var i2 = 0; i2 < n; i2++) { x[i2] = pts[i2][0]; y[i2] = pts[i2][1]; }
+    // Slopes between adjacent points
+    var d = new Float32Array(n - 1);
+    for (var i3 = 0; i3 < n - 1; i3++) {
+        var h = x[i3 + 1] - x[i3];
+        d[i3] = h === 0 ? 0 : (y[i3 + 1] - y[i3]) / h;
+    }
+    // Tangents — average of adjacent slopes (one-sided at endpoints)
+    var m = new Float32Array(n);
+    m[0] = d[0];
+    m[n - 1] = d[n - 2];
+    for (var i4 = 1; i4 < n - 1; i4++) m[i4] = (d[i4 - 1] + d[i4]) * 0.5;
+    // Enforce monotonicity (Fritsch-Carlson)
+    for (var i5 = 0; i5 < n - 1; i5++) {
+        if (d[i5] === 0) {
+            m[i5] = 0; m[i5 + 1] = 0;
+        } else {
+            var alpha = m[i5] / d[i5];
+            var beta  = m[i5 + 1] / d[i5];
+            var s = alpha * alpha + beta * beta;
+            if (s > 9) {
+                var tau = 3 / Math.sqrt(s);
+                m[i5]     = tau * alpha * d[i5];
+                m[i5 + 1] = tau * beta  * d[i5];
+            }
+        }
+    }
+    // Evaluate to 256-entry LUT
+    var lut = new Uint8Array(256);
+    var seg = 0;
+    for (var t = 0; t < 256; t++) {
+        // Advance segment so x[seg] <= t < x[seg+1]
+        while (seg < n - 2 && t >= x[seg + 1]) seg++;
+        var x0 = x[seg], x1 = x[seg + 1];
+        if (t <= x0) { lut[t] = y[0] < 0 ? 0 : (y[0] > 255 ? 255 : (y[0] + 0.5) | 0); continue; }
+        if (t >= x[n - 1]) { lut[t] = y[n - 1] < 0 ? 0 : (y[n - 1] > 255 ? 255 : (y[n - 1] + 0.5) | 0); continue; }
+        var hh = x1 - x0;
+        var ss = (t - x0) / hh;
+        var ss2 = ss * ss, ss3 = ss2 * ss;
+        var h00 = 2 * ss3 - 3 * ss2 + 1;
+        var h10 = ss3 - 2 * ss2 + ss;
+        var h01 = -2 * ss3 + 3 * ss2;
+        var h11 = ss3 - ss2;
+        var v = h00 * y[seg] + h10 * hh * m[seg] + h01 * y[seg + 1] + h11 * hh * m[seg + 1];
+        lut[t] = v < 0 ? 0 : (v > 255 ? 255 : (v + 0.5) | 0);
+    }
+    return lut;
+}
+
+// LUT cache. Sig keys: parametric uses the 7 numeric params; point uses
+// JSON.stringify of the relevant points array. Per-channel point mode
+// builds three separate LUTs.
+function _getToneCurveLuts(p) {
+    var S = _S();
+    var cache = (S && S._developToneCurveCache) || null;
+    if (p.toneCurveMode === "point") {
+        if (p.tcChannel === "rgb") {
+            var sig = "P|" + JSON.stringify(p.tcPoints);
+            if (cache && cache.sig === sig) return cache;
+            var lut = _buildPointCurveLut(p.tcPoints);
+            cache = { sig: sig, mode: "point-rgb", lut: lut };
+        } else {
+            var sigR = "PR|" + JSON.stringify(p.tcPointsR);
+            var sigG = "PG|" + JSON.stringify(p.tcPointsG);
+            var sigB = "PB|" + JSON.stringify(p.tcPointsB);
+            var sigPC = sigR + "|" + sigG + "|" + sigB;
+            if (cache && cache.sig === sigPC) return cache;
+            cache = {
+                sig: sigPC, mode: "point-perchan",
+                lutR: _buildPointCurveLut(p.tcPointsR),
+                lutG: _buildPointCurveLut(p.tcPointsG),
+                lutB: _buildPointCurveLut(p.tcPointsB)
+            };
+        }
+    } else {
+        var sigPa = "PA|" + (p.tcShadows | 0) + "|" + (p.tcDarks | 0)
+                  + "|" + (p.tcLights | 0) + "|" + (p.tcHighlights | 0)
+                  + "|" + (p.tcSplit1 | 0) + "|" + (p.tcSplit2 | 0) + "|" + (p.tcSplit3 | 0);
+        if (cache && cache.sig === sigPa) return cache;
+        cache = { sig: sigPa, mode: "parametric", lut: _buildParametricCurveLut(p) };
+    }
+    if (S) S._developToneCurveCache = cache;
+    return cache;
+}
+
+function _toneCurveIsIdentity(p) {
+    if (p.toneCurveMode === "point") {
+        if (p.tcChannel === "rgb") return _pointsAreIdentity(p.tcPoints);
+        return _pointsAreIdentity(p.tcPointsR)
+            && _pointsAreIdentity(p.tcPointsG)
+            && _pointsAreIdentity(p.tcPointsB);
+    }
+    return (p.tcShadows | 0) === 0 && (p.tcDarks | 0) === 0
+        && (p.tcLights | 0) === 0 && (p.tcHighlights | 0) === 0;
+}
+
+// Apply tone curve to the U8 buffer. Pipeline position: between Phase C
+// re-encode and vibrance/saturation. Operates on R, G, B (not alpha).
+function _applyToneCurve(d, n, p) {
+    if ((p._version | 0) < 2) return;
+    if (_toneCurveIsIdentity(p)) return;
+    var c = _getToneCurveLuts(p);
+    if (c.mode === "point-perchan") {
+        var lR = c.lutR, lG = c.lutG, lB = c.lutB;
+        for (var i = 0, m = n * 4; i < m; i += 4) {
+            d[i]     = lR[d[i]];
+            d[i + 1] = lG[d[i + 1]];
+            d[i + 2] = lB[d[i + 2]];
+        }
+    } else {
+        var lut = c.lut;
+        for (var j = 0, mj = n * 4; j < mj; j += 4) {
+            d[j]     = lut[d[j]];
+            d[j + 1] = lut[d[j + 1]];
+            d[j + 2] = lut[d[j + 2]];
+        }
+    }
+}
+
+// ========================================================================
+// V2 — HSL / COLOR MIXER
+//
+// 8 bands at hue centers [0, 30, 60, 120, 180, 240, 280, 320]°. Each
+// band gets a raised-cosine weight window of half-width 60° around its
+// center, so adjacent bands always overlap and there are no coverage
+// gaps in the hue circle (per maintainer amendment to spec).
+//
+// For each pixel: rgb→hsl, accumulate weighted hue shift / sat scale /
+// lum scale across all 8 bands, apply, hsl→rgb.
+//
+// No spatial dependency, no caching. Cheap enough to run at full res.
+// ========================================================================
+var _HSL_BAND_CENTERS = [0, 30, 60, 120, 180, 240, 280, 320];
+var _HSL_HALF_WIDTH = 60;
+
+function _hslIsIdentity(p) {
+    return _arrayAllZero(p.hslHue) && _arrayAllZero(p.hslSat) && _arrayAllZero(p.hslLum);
+}
+
+function _applyHSL(d, n, p) {
+    if ((p._version | 0) < 2) return;
+    if (_hslIsIdentity(p)) return;
+    var hueArr = p.hslHue, satArr = p.hslSat, lumArr = p.hslLum;
+    var hw = _HSL_HALF_WIDTH;
+    for (var px = 0, end = n * 4; px < end; px += 4) {
+        var r = d[px] / 255, g = d[px + 1] / 255, b = d[px + 2] / 255;
+        var hsl = _rgb2hsl(r, g, b);
+        if (hsl.s === 0) continue;          // gray pixel — no hue, skip
+        // Accumulate per-band weighted contributions
+        var hueShift = 0, satScale = 0, lumScale = 0, totalWeight = 0;
+        for (var k = 0; k < 8; k++) {
+            var center = _HSL_BAND_CENTERS[k];
+            var diff = Math.abs(hsl.h - center);
+            if (diff > 180) diff = 360 - diff;       // shortest arc
+            if (diff >= hw) continue;
+            var w = 0.5 * (1 + Math.cos(Math.PI * diff / hw));
+            hueShift += w * hueArr[k];
+            satScale += w * satArr[k] / 100;
+            lumScale += w * lumArr[k] / 100;
+            totalWeight += w;
+        }
+        if (totalWeight === 0) continue;
+        // hueShift is sum-of-weighted-degrees (max ~30 at peak band)
+        var H = hsl.h + hueShift;
+        if (H < 0) H = ((H % 360) + 360) % 360;
+        else if (H >= 360) H = H % 360;
+        var S = hsl.s * (1 + satScale);
+        if (S < 0) S = 0; else if (S > 1) S = 1;
+        var L = hsl.l * (1 + lumScale);
+        if (L < 0) L = 0; else if (L > 1) L = 1;
+        var rgb = _hsl2rgb(H, S, L);
+        d[px]     = _clampU8(rgb.r * 255);
+        d[px + 1] = _clampU8(rgb.g * 255);
+        d[px + 2] = _clampU8(rgb.b * 255);
+    }
+}
+
+// ========================================================================
+// V2 — COLOR GRADING (3-way wheels + Global)
+//
+// For each pixel: compute luminance Y, derive shadow / midtone / highlight
+// weights via smoothsteps with boundaries shifted by Balance and softened
+// by Blending. Sum precomputed RGB offset vectors per region (hue+sat
+// converted to a 3-channel tint) plus per-region luminance offsets. The
+// region offsets are computed once per param change — only the weights
+// vary per pixel.
+// ========================================================================
+var CG_RGB_GAIN = 0.15;       // sat=100 produces ~±0.15 per-channel offset
+var CG_LUM_GAIN = 0.30;       // L=±100 produces ~±0.30 brightness offset
+
+function _cgRegionOffset(h, s) {
+    // hue degrees, sat 0..100 → RGB triple, scaled by CG_RGB_GAIN
+    var sat = (s | 0) / 100;
+    if (sat <= 0) return [0, 0, 0];
+    var hr = h * Math.PI / 180;
+    return [
+        sat * Math.cos(hr) * CG_RGB_GAIN,
+        sat * Math.cos(hr - 2 * Math.PI / 3) * CG_RGB_GAIN,
+        sat * Math.cos(hr - 4 * Math.PI / 3) * CG_RGB_GAIN
+    ];
+}
+
+function _cgIsIdentity(p) {
+    return ((p.cgShadowS    | 0) === 0) && ((p.cgShadowL    | 0) === 0)
+        && ((p.cgMidtoneS   | 0) === 0) && ((p.cgMidtoneL   | 0) === 0)
+        && ((p.cgHighlightS | 0) === 0) && ((p.cgHighlightL | 0) === 0)
+        && ((p.cgGlobalS    | 0) === 0) && ((p.cgGlobalL    | 0) === 0);
+}
+
+function _applyColorGrading(d, n, p) {
+    if ((p._version | 0) < 2) return;
+    if (_cgIsIdentity(p)) return;
+
+    // Precomputed region offset vectors
+    var oSh = _cgRegionOffset(p.cgShadowH    || 0, p.cgShadowS    || 0);
+    var oMt = _cgRegionOffset(p.cgMidtoneH   || 0, p.cgMidtoneS   || 0);
+    var oHl = _cgRegionOffset(p.cgHighlightH || 0, p.cgHighlightS || 0);
+    var oGb = _cgRegionOffset(p.cgGlobalH    || 0, p.cgGlobalS    || 0);
+    var lSh = ((p.cgShadowL    || 0) / 100) * CG_LUM_GAIN;
+    var lMt = ((p.cgMidtoneL   || 0) / 100) * CG_LUM_GAIN;
+    var lHl = ((p.cgHighlightL || 0) / 100) * CG_LUM_GAIN;
+    var lGb = ((p.cgGlobalL    || 0) / 100) * CG_LUM_GAIN;
+
+    // Region boundaries shifted by Balance
+    var bal = (p.cgBalance | 0) / 300;       // -100..100 → -0.33..0.33
+    var shadowEnd     = 0.33 + bal;
+    var highlightStart = 0.66 + bal;
+    if (shadowEnd < 0.05) shadowEnd = 0.05;
+    if (shadowEnd > 0.95) shadowEnd = 0.95;
+    if (highlightStart < shadowEnd + 0.05) highlightStart = shadowEnd + 0.05;
+    if (highlightStart > 0.99) highlightStart = 0.99;
+    var blendingFrac = ((p.cgBlending || 0) | 0) / 100;
+    if (blendingFrac < 0) blendingFrac = 0; else if (blendingFrac > 1) blendingFrac = 1;
+    var transitionWidth = (1.0 - blendingFrac) * 0.33;
+    if (transitionWidth < 0.01) transitionWidth = 0.01;
+
+    var shEdge0 = shadowEnd + transitionWidth, shEdge1 = shadowEnd - transitionWidth;
+    var hlEdge0 = highlightStart - transitionWidth, hlEdge1 = highlightStart + transitionWidth;
+
+    for (var px = 0, end = n * 4; px < end; px += 4) {
+        var R = d[px] / 255, G = d[px + 1] / 255, B = d[px + 2] / 255;
+        var Y = 0.2126 * R + 0.7152 * G + 0.0722 * B;
+
+        // smoothstep(edge0, edge1, x): edge0 maps to 0, edge1 to 1.
+        // For shadow weight we want HIGH when Y is LOW: smoothstep(big, small, Y).
+        var shadowW = _smoothstep(shEdge0, shEdge1, Y);
+        var hlW     = _smoothstep(hlEdge0, hlEdge1, Y);
+        var midW    = 1 - shadowW - hlW;
+        if (midW < 0) midW = 0;
+
+        var dR = shadowW * oSh[0] + midW * oMt[0] + hlW * oHl[0] + oGb[0];
+        var dG = shadowW * oSh[1] + midW * oMt[1] + hlW * oHl[1] + oGb[1];
+        var dB = shadowW * oSh[2] + midW * oMt[2] + hlW * oHl[2] + oGb[2];
+        var dL = shadowW * lSh   + midW * lMt   + hlW * lHl   + lGb;
+
+        d[px]     = _clampU8((R + dR + dL) * 255);
+        d[px + 1] = _clampU8((G + dG + dL) * 255);
+        d[px + 2] = _clampU8((B + dB + dL) * 255);
+    }
+}
+
+// ========================================================================
+// V2 — DEHAZE
+//
+// Dark Channel Prior (He, Sun & Tang, CVPR 2009):
+//   1. Dark channel: per pixel min(R,G,B), then minimum filter over a
+//      local window (separable, deque-based — O(N) per pass).
+//   2. Atmospheric light: top 0.1% of dark-channel pixels, pick the
+//      brightest (R+G+B)/3 in original among them. Vector A.
+//   3. Transmission t = 1 - omega * darkChannel(I/A); clamp t >= 0.1.
+//      Then box-blur t (cheap guided-filter approximation).
+//   4. Recover J_c = (I_c - A_c)/t + A_c per channel.
+//   5. Negative dehaze (adding haze): blend toward A.
+//
+// Heavy. Always proxy on drag. Cache the dark channel, A, and refined t
+// keyed on upstream params (anything that changes the input pixels).
+// ========================================================================
+
+// van-Herk / Gil-Werman style separable minimum filter (1D deque).
+// Operates on a Float32 single-channel buffer in place. radius is in pixels.
+function _separableMinFilter(buf, w, h, radius) {
+    if (radius < 1) return;
+    var k = radius * 2 + 1;
+    var tmp = new Float32Array(buf.length);
+
+    // Horizontal pass: for each row, sliding-window min over k pixels.
+    var deqIdx = new Int32Array(w);
+    for (var y = 0; y < h; y++) {
+        var row = y * w;
+        var head = 0, tail = 0;
+        for (var x = 0; x < w; x++) {
+            // Drop indices outside the window
+            while (head < tail && deqIdx[head] < x - radius) head++;
+            // Drop indices whose value is >= incoming (they can never be the min while incoming is in window)
+            var v = buf[row + x];
+            while (head < tail && buf[row + deqIdx[tail - 1]] >= v) tail--;
+            deqIdx[tail++] = x;
+            // Output the min for the window centered at (x - radius)
+            var outX = x - radius;
+            if (outX >= 0) tmp[row + outX] = buf[row + deqIdx[head]];
+        }
+        // Trailing tail (last `radius` columns)
+        for (var xt = w - radius; xt < w; xt++) {
+            while (head < tail && deqIdx[head] < xt - radius) head++;
+            tmp[row + xt] = buf[row + deqIdx[head]];
+        }
+    }
+
+    // Vertical pass: same as above but on columns of tmp → buf.
+    var deqIdxV = new Int32Array(h);
+    for (var x2 = 0; x2 < w; x2++) {
+        var headV = 0, tailV = 0;
+        for (var y2 = 0; y2 < h; y2++) {
+            while (headV < tailV && deqIdxV[headV] < y2 - radius) headV++;
+            var v2 = tmp[y2 * w + x2];
+            while (headV < tailV && tmp[deqIdxV[tailV - 1] * w + x2] >= v2) tailV--;
+            deqIdxV[tailV++] = y2;
+            var outY = y2 - radius;
+            if (outY >= 0) buf[outY * w + x2] = tmp[deqIdxV[headV] * w + x2];
+        }
+        for (var yt = h - radius; yt < h; yt++) {
+            while (headV < tailV && deqIdxV[headV] < yt - radius) headV++;
+            buf[yt * w + x2] = tmp[deqIdxV[headV] * w + x2];
+        }
+    }
+}
+
+// Box blur via two passes of the moving-average. Cheap guided-filter approx.
+function _boxBlur1D(src, dst, w, h, radius, axis) {
+    var inv = 1 / (radius * 2 + 1);
+    if (axis === "h") {
+        for (var y = 0; y < h; y++) {
+            var row = y * w;
+            // Initialize the running sum with the first window
+            var sum = 0;
+            for (var i = 0; i < radius; i++) sum += src[row + i] * 2;       // mirror left edge
+            for (var i2 = 0; i2 <= radius; i2++) sum += src[row + i2];
+            for (var x = 0; x < w; x++) {
+                dst[row + x] = sum * inv;
+                var addX = x + radius + 1;
+                var dropX = x - radius;
+                sum += addX < w ? src[row + addX] : src[row + (w - 1)];
+                sum -= dropX >= 0 ? src[row + dropX] : src[row];
+            }
+        }
+    } else {
+        for (var x2 = 0; x2 < w; x2++) {
+            var sum2 = 0;
+            for (var j = 0; j < radius; j++) sum2 += src[j * w + x2] * 2;
+            for (var j2 = 0; j2 <= radius; j2++) sum2 += src[j2 * w + x2];
+            for (var y2 = 0; y2 < h; y2++) {
+                dst[y2 * w + x2] = sum2 * inv;
+                var addY = y2 + radius + 1;
+                var dropY = y2 - radius;
+                sum2 += addY < h ? src[addY * w + x2] : src[(h - 1) * w + x2];
+                sum2 -= dropY >= 0 ? src[dropY * w + x2] : src[x2];
+            }
+        }
+    }
+}
+function _boxBlur(buf, w, h, radius) {
+    if (radius < 1) return;
+    var tmp = new Float32Array(buf.length);
+    _boxBlur1D(buf, tmp, w, h, radius, "h");
+    _boxBlur1D(tmp, buf, w, h, radius, "v");
+}
+
+function _dehazeIsIdentity(p) { return (p.dehaze | 0) === 0; }
+
+function _applyDehaze(d, n, w, h, p) {
+    if ((p._version | 0) < 2) return;
+    if (_dehazeIsIdentity(p)) return;
+
+    var dehaze = (p.dehaze | 0) / 100;       // -1..1
+    // Window size: 15 px at 1024x, scale roughly with min dim.
+    var winRadius = Math.max(3, Math.round(Math.min(w, h) * 0.0075));
+    if (winRadius > 25) winRadius = 25;
+    var blurRadius = Math.max(1, winRadius >> 1);
+
+    // ===== Dark channel =====
+    var dark = new Float32Array(n);
+    for (var i = 0, m = 0; i < n; i++, m += 4) {
+        var r = d[m], g = d[m + 1], b = d[m + 2];
+        var mi = r < g ? (r < b ? r : b) : (g < b ? g : b);
+        dark[i] = mi / 255;
+    }
+    _separableMinFilter(dark, w, h, winRadius);
+
+    // ===== Atmospheric light =====
+    // Top 0.1% darkest-channel-brightest pixels → brightest in original RGB.
+    var topN = Math.max(10, Math.floor(n * 0.001));
+    // Build index array, sort by dark[idx] descending. Slow but clear.
+    var idxArr = new Uint32Array(n);
+    for (var ii = 0; ii < n; ii++) idxArr[ii] = ii;
+    // Partial sort via Array.from + sort on top-N — for V2 simplicity
+    // we sort the whole index array. ~200ms at 4MP, acceptable on release.
+    var idxList = Array.from(idxArr);
+    idxList.sort(function (a, b) { return dark[b] - dark[a]; });
+    var Ar = 0, Ag = 0, Ab = 0, bestSum = -1;
+    for (var t = 0; t < topN; t++) {
+        var pi = idxList[t];
+        var pm = pi * 4;
+        var sum = d[pm] + d[pm + 1] + d[pm + 2];
+        if (sum > bestSum) {
+            bestSum = sum;
+            Ar = d[pm]; Ag = d[pm + 1]; Ab = d[pm + 2];
+        }
+    }
+    if (Ar < 1) Ar = 1; if (Ag < 1) Ag = 1; if (Ab < 1) Ab = 1;     // avoid div-by-zero
+
+    if (dehaze >= 0) {
+        // ===== Positive dehaze: estimate transmission, recover scene =====
+        var omega = dehaze;       // 0..1
+        var t1 = new Float32Array(n);
+        for (var i2 = 0, m2 = 0; i2 < n; i2++, m2 += 4) {
+            // dark channel of (I/A): min over channels of ratio
+            var rr = d[m2] / Ar, gg = d[m2 + 1] / Ag, bb = d[m2 + 2] / Ab;
+            var minRatio = rr < gg ? (rr < bb ? rr : bb) : (gg < bb ? gg : bb);
+            t1[i2] = minRatio;
+        }
+        // Min-filter over the window (this is the dark channel of I/A)
+        _separableMinFilter(t1, w, h, winRadius);
+        // Convert to transmission, clamp lower bound, then refine with box blur
+        for (var i3 = 0; i3 < n; i3++) {
+            var tv = 1 - omega * t1[i3];
+            if (tv < 0.1) tv = 0.1;
+            t1[i3] = tv;
+        }
+        _boxBlur(t1, w, h, blurRadius);
+
+        // Recover: J_c = (I_c - A_c)/t + A_c
+        for (var i4 = 0, m4 = 0; i4 < n; i4++, m4 += 4) {
+            var tInv = 1 / t1[i4];
+            d[m4]     = _clampU8((d[m4]     - Ar) * tInv + Ar);
+            d[m4 + 1] = _clampU8((d[m4 + 1] - Ag) * tInv + Ag);
+            d[m4 + 2] = _clampU8((d[m4 + 2] - Ab) * tInv + Ab);
+        }
+    } else {
+        // ===== Negative dehaze: blend toward atmospheric light (add haze) =====
+        var omegaN = -dehaze;
+        var ao = 1 - omegaN;
+        for (var i5 = 0, m5 = 0; i5 < n; i5++, m5 += 4) {
+            d[m5]     = _clampU8(d[m5]     * ao + Ar * omegaN);
+            d[m5 + 1] = _clampU8(d[m5 + 1] * ao + Ag * omegaN);
+            d[m5 + 2] = _clampU8(d[m5 + 2] * ao + Ab * omegaN);
+        }
+    }
+}
+
+// ========================================================================
+// V2 — NOISE REDUCTION
+//
+// Luminance: bilateral filter (edge-preserving smoothing) on Y. Capped
+// radius 5 (per spec) so a kernel is at most 11×11. Always proxy on drag.
+// Color: separate Y / Cb / Cr, Gaussian-blur Cb and Cr only, recombine.
+// Cb/Cr blur reuses _separableGaussian.
+//
+// Both subpasses operate on the U8 buffer in place.
+// ========================================================================
+
+function _applyNoiseReductionLuma(d, n, w, h, amount /* 0..1 */) {
+    if (amount <= 0) return;
+    var spatialSigma = 1 + amount * 4;             // 1..5 px
+    var rangeSigma = 0.05 + amount * 0.20;         // 0.05..0.25 (normalized)
+    var radius = Math.min(5, Math.ceil(spatialSigma * 2));
+    var twoSpatial2 = 2 * spatialSigma * spatialSigma;
+    var twoRange2 = 2 * rangeSigma * rangeSigma;
+
+    // Extract Y (BT.601), normalize 0..1
+    var Y = new Float32Array(n);
+    for (var i = 0, m = 0; i < n; i++, m += 4) {
+        Y[i] = (0.299 * d[m] + 0.587 * d[m + 1] + 0.114 * d[m + 2]) / 255;
+    }
+    // Filtered Y
+    var Yf = new Float32Array(n);
+    // Spatial weight LUT (radius²+1 entries)
+    var spatialLut = new Float32Array((2 * radius + 1) * (2 * radius + 1));
+    var idx = 0;
+    for (var dy = -radius; dy <= radius; dy++) {
+        for (var dx = -radius; dx <= radius; dx++) {
+            spatialLut[idx++] = Math.exp(-(dx * dx + dy * dy) / twoSpatial2);
+        }
+    }
+    for (var y = 0; y < h; y++) {
+        for (var x = 0; x < w; x++) {
+            var c = y * w + x;
+            var Yc = Y[c];
+            var sum = 0, wSum = 0;
+            var sIdx = 0;
+            for (var dy2 = -radius; dy2 <= radius; dy2++) {
+                var yy = y + dy2;
+                if (yy < 0) yy = 0; else if (yy >= h) yy = h - 1;
+                var rowOff = yy * w;
+                for (var dx2 = -radius; dx2 <= radius; dx2++) {
+                    var xx = x + dx2;
+                    if (xx < 0) xx = 0; else if (xx >= w) xx = w - 1;
+                    var Yn = Y[rowOff + xx];
+                    var diff = Yn - Yc;
+                    var wT = spatialLut[sIdx++] * Math.exp(-(diff * diff) / twoRange2);
+                    sum += Yn * wT;
+                    wSum += wT;
+                }
+            }
+            Yf[c] = wSum > 0 ? sum / wSum : Yc;
+        }
+    }
+    // Apply ratio per pixel
+    for (var i2 = 0, m2 = 0; i2 < n; i2++, m2 += 4) {
+        var ratio = Yf[i2] / Math.max(Y[i2], 0.001);
+        d[m2]     = _clampU8(d[m2]     * ratio);
+        d[m2 + 1] = _clampU8(d[m2 + 1] * ratio);
+        d[m2 + 2] = _clampU8(d[m2 + 2] * ratio);
+    }
+}
+
+function _applyNoiseReductionColor(d, n, w, h, amount /* 0..1 */) {
+    if (amount <= 0) return;
+    var sigma = amount * 15;         // 0..15 px
+    if (sigma < 0.5) return;
+    // Convert to YCbCr, blur Cb and Cr, recombine.
+    var Cb = new Float32Array(n);
+    var Cr = new Float32Array(n);
+    var Y  = new Float32Array(n);
+    for (var i = 0, m = 0; i < n; i++, m += 4) {
+        var R = d[m], G = d[m + 1], B = d[m + 2];
+        Y[i]  =  0.299 * R + 0.587 * G + 0.114 * B;
+        Cb[i] = -0.169 * R - 0.331 * G + 0.500 * B;
+        Cr[i] =  0.500 * R - 0.419 * G - 0.081 * B;
+    }
+    _separableGaussian(Cb, w, h, sigma);
+    _separableGaussian(Cr, w, h, sigma);
+    for (var i2 = 0, m2 = 0; i2 < n; i2++, m2 += 4) {
+        var rR = Y[i2] + 1.403 * Cr[i2];
+        var rG = Y[i2] - 0.344 * Cb[i2] - 0.714 * Cr[i2];
+        var rB = Y[i2] + 1.770 * Cb[i2];
+        d[m2]     = _clampU8(rR);
+        d[m2 + 1] = _clampU8(rG);
+        d[m2 + 2] = _clampU8(rB);
+    }
+}
+
+function _applyNoiseReduction(d, n, w, h, p) {
+    if ((p._version | 0) < 2) return;
+    var lumA = (p.nrLuminance | 0) / 100;
+    var colA = (p.nrColor | 0) / 100;
+    if (lumA <= 0 && colA <= 0) return;
+    if (lumA > 0) _applyNoiseReductionLuma(d, n, w, h, lumA);
+    if (colA > 0) _applyNoiseReductionColor(d, n, w, h, colA);
 }
 
 // ANCHOR_SPATIAL — chunk 3 inserts spatial ops here
@@ -790,8 +1556,8 @@ function _hidePanel() { if (_panel) _panel.classList.remove("visible"); }
 // Element registry — populated during _buildPanel, used by syncPanel
 var _rowEls = {};            // key → { row, range, num, def, step }
 var _histCanvas = null;
-var _histChannelMode = "lum"; // lum | rgb
-var _histScale = "log";       // log | linear
+var _histClipL = null;       // shadow clip indicator
+var _histClipR = null;       // highlight clip indicator
 var _enableToggleEl = null;
 var _beforeAfterBtn = null;
 var _splitActive = false;
@@ -831,12 +1597,35 @@ function _scheduleProxyRedraw() {
 
 function _scheduleFullRedraw() {
     if (_fullRafId) cancelAnimationFrame(_fullRafId);
+    // V2: mark heavy-op rows (.processing) BEFORE the RAF so the browser
+    // gets a chance to paint the indicator state before we hog the main
+    // thread with the bilateral filter / dehaze blur. We use double-RAF:
+    // first frame paints the .processing class, second frame runs the
+    // heavy work and clears it.
+    _markHeavyRowsProcessing(true);
     _fullRafId = requestAnimationFrame(function () {
-        _fullRafId = 0;
-        var S = _S();
-        if (S && S.developParams) S.developParams._dragging = false;
-        _bumpCompositeCache();
-        _redrawNow(true);
+        // Yield once so the .processing paint actually shows
+        requestAnimationFrame(function () {
+            _fullRafId = 0;
+            var S = _S();
+            if (S && S.developParams) S.developParams._dragging = false;
+            _bumpCompositeCache();
+            _redrawNow(true);
+            _markHeavyRowsProcessing(false);
+        });
+    });
+}
+
+// Toggle .processing on rows whose key is a heavy op (Dehaze, NR Luma,
+// NR Color) AND whose current value is non-default — only those rows are
+// actually doing the heavy work that warrants the indicator.
+function _markHeavyRowsProcessing(on) {
+    var heavyKeys = ["dehaze", "nrLuminance", "nrColor"];
+    var S = _S(); var p = S && S.developParams;
+    heavyKeys.forEach(function (k) {
+        var els = _rowEls[k]; if (!els) return;
+        var active = on && p && (p[k] | 0) !== 0;
+        els.row.classList.toggle("processing", !!active);
     });
 }
 
@@ -888,37 +1677,30 @@ function _buildPanel() {
     var body = document.createElement("div");
     body.className = "develop-panel-body";
 
-    // Histogram
+    // Histogram — RGB only, log scale, with clipping-warning triangles.
+    // Toggles for L / linear were removed at the maintainer's request; only
+    // the RGB+log view turned out to be useful in practice.
     var histWrap = document.createElement("div");
     histWrap.className = "develop-histogram-wrap";
+
+    // Two clipping triangles (shadow on the left, highlight on the right)
+    // sit absolutely on top of the histogram corners and light up colored
+    // when channels clip. Hidden by default, .clipping when active.
+    _histClipL = document.createElement("button");
+    _histClipL.type = "button";
+    _histClipL.className = "develop-hist-clip develop-hist-clip-l";
+    _histClipL.title = "Shadow clipping — channels at 0";
+    _histClipR = document.createElement("button");
+    _histClipR.type = "button";
+    _histClipR.className = "develop-hist-clip develop-hist-clip-r";
+    _histClipR.title = "Highlight clipping — channels at 255";
+    histWrap.appendChild(_histClipL);
+    histWrap.appendChild(_histClipR);
+
     _histCanvas = document.createElement("canvas");
     _histCanvas.className = "develop-histogram-canvas";
     _histCanvas.width = 296; _histCanvas.height = 60;
     histWrap.appendChild(_histCanvas);
-
-    var histCtrl = document.createElement("div");
-    histCtrl.className = "develop-histogram-controls";
-    function makeHistBtn(mode, label, group) {
-        var b = document.createElement("button");
-        b.textContent = label;
-        if ((group === "ch" && mode === _histChannelMode) ||
-            (group === "sc" && mode === _histScale)) b.classList.add("active");
-        b.addEventListener("click", function () {
-            if (group === "ch") _histChannelMode = mode;
-            else _histScale = mode;
-            histCtrl.querySelectorAll("button[data-grp='" + group + "']").forEach(function (x) { x.classList.remove("active"); });
-            b.classList.add("active");
-            _renderHistogram();
-        });
-        b.dataset.grp = group;
-        return b;
-    }
-    histCtrl.appendChild(makeHistBtn("lum", "L", "ch"));
-    histCtrl.appendChild(makeHistBtn("rgb", "RGB", "ch"));
-    var spacer = document.createElement("span"); spacer.style.flex = "1"; histCtrl.appendChild(spacer);
-    histCtrl.appendChild(makeHistBtn("log", "log", "sc"));
-    histCtrl.appendChild(makeHistBtn("linear", "lin", "sc"));
-    histWrap.appendChild(histCtrl);
     body.appendChild(histWrap);
 
     // Sections
@@ -936,6 +1718,7 @@ function _buildPanel() {
 function _buildSection(sec) {
     var s = document.createElement("div");
     s.className = "develop-section" + (sec.open ? "" : " collapsed");
+    if (sec.id) s.dataset.section = sec.id;
     var head = document.createElement("div");
     head.className = "develop-section-header";
     var arrow = document.createElement("span");
@@ -946,22 +1729,622 @@ function _buildSection(sec) {
     s.appendChild(head);
     var body = document.createElement("div");
     body.className = "develop-section-body";
-    sec.rows.forEach(function (row) {
-        if (row.divider) {
-            var d = document.createElement("div"); d.className = "develop-section-divider";
-            body.appendChild(d);
-        } else {
-            body.appendChild(_buildSliderRow(row));
-        }
-    });
+    if (sec.customBuild) {
+        // Custom widget section (Tone Curve, HSL tabs, Color Grading wheels).
+        // The build function attaches its own DOM and registers a sync hook.
+        sec.customBuild(body);
+    } else {
+        sec.rows.forEach(function (row) {
+            if (row.divider) {
+                var d = document.createElement("div"); d.className = "develop-section-divider";
+                body.appendChild(d);
+            } else {
+                body.appendChild(_buildSliderRow(row));
+            }
+        });
+    }
     s.appendChild(body);
     return s;
+}
+
+// ========================================================================
+// V2 — Custom widget builders (Tone Curve, HSL, Color Grading)
+//
+// Each build function receives the section body container and:
+//   - Appends its DOM
+//   - Registers per-section sync callbacks via _registerCustomSync
+//   - Wires its own input handlers that call _scheduleProxyRedraw / Full
+// ========================================================================
+var _customSyncs = [];
+function _registerCustomSync(fn) { _customSyncs.push(fn); }
+
+// Helper: safely set a develop param + bump enabled + schedule a redraw.
+// `live=true` schedules proxy (during slider/canvas drag);
+// `live=false` schedules full-resolution redraw.
+function _commitParam(key, value, live) {
+    var S = _S(); if (!S) return;
+    if (!S.developParams) S.developParams = defaultParams();
+    S.developParams[key] = value;
+    if (!S.developParams.enabled) {
+        S.developParams.enabled = true;
+        if (_enableToggleEl) _enableToggleEl.classList.add("on");
+    }
+    if (live) _scheduleProxyRedraw(); else _scheduleFullRedraw();
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// V2 — TONE CURVE UI
+//
+// Mode toggle (Parametric / Point); when Parametric, four region sliders
+// + a tonal-strip with three draggable split markers; when Point, an
+// interactive curve editor canvas with per-channel selector below.
+// ────────────────────────────────────────────────────────────────────────
+var _tcModeBtns = null;
+var _tcParamWrap = null;
+var _tcPointWrap = null;
+var _tcCurveCanvas = null;
+var _tcChannelBtns = null;
+var _tcSplitStripCanvas = null;
+var _tcParamRows = {};   // {tcShadows: {range, num}, ...}
+
+// Curve canvas pointer-state for the debounced add/move/remove pattern.
+var _tcDragging = false;
+var _tcHitIdx = null;
+var _tcDownAt = null;     // {cx, cy, x, y}
+
+function _tcCurrentChannel() {
+    var S = _S(); return (S && S.developParams && S.developParams.tcChannel) || "rgb";
+}
+function _tcActivePoints() {
+    var S = _S(); var p = S && S.developParams; if (!p) return [[0, 0], [255, 255]];
+    var ch = p.tcChannel || "rgb";
+    if (ch === "r") return p.tcPointsR;
+    if (ch === "g") return p.tcPointsG;
+    if (ch === "b") return p.tcPointsB;
+    return p.tcPoints;
+}
+function _tcSetActivePoints(pts) {
+    var S = _S(); var p = S && S.developParams; if (!p) return;
+    var ch = p.tcChannel || "rgb";
+    if (ch === "r") p.tcPointsR = pts;
+    else if (ch === "g") p.tcPointsG = pts;
+    else if (ch === "b") p.tcPointsB = pts;
+    else p.tcPoints = pts;
+}
+
+function _buildToneCurveSection(body) {
+    // Mode toggle
+    var modeRow = document.createElement("div");
+    modeRow.className = "develop-tc-mode-tabs";
+    var btnPara = document.createElement("button");
+    btnPara.type = "button"; btnPara.textContent = "Parametric"; btnPara.dataset.mode = "parametric";
+    var btnPoint = document.createElement("button");
+    btnPoint.type = "button"; btnPoint.textContent = "Point"; btnPoint.dataset.mode = "point";
+    modeRow.appendChild(btnPara); modeRow.appendChild(btnPoint);
+    _tcModeBtns = { parametric: btnPara, point: btnPoint };
+    body.appendChild(modeRow);
+    function applyMode(mode) {
+        _commitParam("toneCurveMode", mode, false);
+        _tcSyncModeUI(mode);
+    }
+    btnPara.addEventListener("click", function () { applyMode("parametric"); });
+    btnPoint.addEventListener("click", function () { applyMode("point"); });
+
+    // === Parametric body ===
+    _tcParamWrap = document.createElement("div");
+    _tcParamWrap.className = "develop-tc-param-wrap";
+    var tcRows = [
+        { key: "tcHighlights", label: "Highlights" },
+        { key: "tcLights",     label: "Lights"     },
+        { key: "tcDarks",      label: "Darks"      },
+        { key: "tcShadows",    label: "Shadows"    },
+    ];
+    tcRows.forEach(function (cfg) {
+        var row = _buildSliderRow({
+            key: cfg.key, label: cfg.label, min: -100, max: 100, step: 1, def: 0
+        });
+        _tcParamWrap.appendChild(row);
+    });
+    // Split strip below the four sliders
+    _tcSplitStripCanvas = document.createElement("canvas");
+    _tcSplitStripCanvas.className = "develop-tc-split-strip";
+    _tcSplitStripCanvas.width = 296; _tcSplitStripCanvas.height = 22;
+    _tcSplitStripCanvas.title = "Drag the markers to adjust where shadows end and highlights begin";
+    _tcParamWrap.appendChild(_tcSplitStripCanvas);
+    _tcAttachSplitStripHandlers();
+    body.appendChild(_tcParamWrap);
+
+    // === Point body ===
+    _tcPointWrap = document.createElement("div");
+    _tcPointWrap.className = "develop-tc-point-wrap";
+    _tcCurveCanvas = document.createElement("canvas");
+    _tcCurveCanvas.className = "develop-tone-curve-canvas";
+    _tcCurveCanvas.width = 296; _tcCurveCanvas.height = 180;
+    _tcPointWrap.appendChild(_tcCurveCanvas);
+    _tcAttachCurveHandlers();
+    // Channel selector
+    var chRow = document.createElement("div");
+    chRow.className = "develop-tc-channel-row";
+    _tcChannelBtns = {};
+    ["rgb", "r", "g", "b"].forEach(function (c) {
+        var b = document.createElement("button");
+        b.type = "button"; b.textContent = c.toUpperCase(); b.dataset.channel = c;
+        b.className = "develop-tc-channel-btn develop-tc-channel-" + c;
+        b.addEventListener("click", function () {
+            _commitParam("tcChannel", c, false);
+            _tcSyncChannelUI(c);
+            _tcRedrawCurve();
+        });
+        chRow.appendChild(b);
+        _tcChannelBtns[c] = b;
+    });
+    _tcPointWrap.appendChild(chRow);
+    body.appendChild(_tcPointWrap);
+
+    _registerCustomSync(function (p) {
+        _tcSyncModeUI(p.toneCurveMode || "parametric");
+        _tcSyncChannelUI(p.tcChannel || "rgb");
+        _tcRedrawSplitStrip();
+        _tcRedrawCurve();
+    });
+}
+
+function _tcSyncModeUI(mode) {
+    if (!_tcModeBtns) return;
+    _tcModeBtns.parametric.classList.toggle("active", mode === "parametric");
+    _tcModeBtns.point.classList.toggle("active",     mode === "point");
+    if (_tcParamWrap) _tcParamWrap.style.display = mode === "point" ? "none" : "";
+    if (_tcPointWrap) _tcPointWrap.style.display = mode === "point" ? "" : "none";
+}
+function _tcSyncChannelUI(ch) {
+    if (!_tcChannelBtns) return;
+    Object.keys(_tcChannelBtns).forEach(function (k) {
+        _tcChannelBtns[k].classList.toggle("active", k === ch);
+    });
+}
+
+// Convert canvas pixel coords ↔ tonal coords (0..255 in both axes).
+function _tcCanvasToCurve(cx, cy) {
+    var w = _tcCurveCanvas.width, h = _tcCurveCanvas.height;
+    var x = Math.round(cx / w * 255);
+    var y = Math.round((1 - cy / h) * 255);
+    if (x < 0) x = 0; else if (x > 255) x = 255;
+    if (y < 0) y = 0; else if (y > 255) y = 255;
+    return { x: x, y: y };
+}
+function _tcCurveToCanvas(x, y) {
+    var w = _tcCurveCanvas.width, h = _tcCurveCanvas.height;
+    return { cx: x / 255 * w, cy: (1 - y / 255) * h };
+}
+function _tcHitTest(cx, cy) {
+    var pts = _tcActivePoints();
+    for (var i = 0; i < pts.length; i++) {
+        var p = _tcCurveToCanvas(pts[i][0], pts[i][1]);
+        if (Math.hypot(p.cx - cx, p.cy - cy) <= 7) return i;
+    }
+    return null;
+}
+
+function _tcAttachCurveHandlers() {
+    var c = _tcCurveCanvas;
+    c.addEventListener("pointerdown", function (e) {
+        var rect = c.getBoundingClientRect();
+        var cx = e.clientX - rect.left, cy = e.clientY - rect.top;
+        _tcHitIdx = _tcHitTest(cx, cy);
+        _tcDownAt = { cx: cx, cy: cy };
+        _tcDragging = false;
+        c.setPointerCapture(e.pointerId);
+    });
+    c.addEventListener("pointermove", function (e) {
+        if (_tcDownAt === null) return;
+        var rect = c.getBoundingClientRect();
+        var cx = e.clientX - rect.left, cy = e.clientY - rect.top;
+        if (Math.hypot(cx - _tcDownAt.cx, cy - _tcDownAt.cy) > 3) _tcDragging = true;
+        if (_tcDragging && _tcHitIdx !== null) {
+            var pts = _tcActivePoints().slice();
+            var pt = _tcCanvasToCurve(cx, cy);
+            // Endpoints can move vertically only (x stays at 0 or 255).
+            if (_tcHitIdx === 0) pt.x = 0;
+            else if (_tcHitIdx === pts.length - 1) pt.x = 255;
+            else {
+                // Interior points can't pass their neighbors on x.
+                var leftX = pts[_tcHitIdx - 1][0];
+                var rightX = pts[_tcHitIdx + 1][0];
+                if (pt.x <= leftX) pt.x = leftX + 1;
+                if (pt.x >= rightX) pt.x = rightX - 1;
+            }
+            pts[_tcHitIdx] = [pt.x, pt.y];
+            _tcSetActivePoints(pts);
+            _tcRedrawCurve();
+            _scheduleProxyRedraw();
+        }
+    });
+    c.addEventListener("pointerup", function (e) {
+        try { c.releasePointerCapture(e.pointerId); } catch (_) {}
+        if (!_tcDragging && _tcHitIdx === null && _tcDownAt) {
+            // Click on empty area → add new point
+            var pt = _tcCanvasToCurve(_tcDownAt.cx, _tcDownAt.cy);
+            var pts = _tcActivePoints().slice();
+            // Insert keeping x-sorted, dodge the endpoints
+            if (pt.x <= 0) pt.x = 1;
+            if (pt.x >= 255) pt.x = 254;
+            var insertAt = pts.length - 1;
+            for (var i = 1; i < pts.length; i++) {
+                if (pts[i][0] >= pt.x) { insertAt = i; break; }
+            }
+            // Refuse if too close to an existing x
+            if (Math.abs(pts[insertAt][0] - pt.x) < 2) { _tcResetDrag(); return; }
+            pts.splice(insertAt, 0, [pt.x, pt.y]);
+            _tcSetActivePoints(pts);
+            _tcRedrawCurve();
+            _scheduleFullRedraw();
+        } else if (_tcDragging) {
+            _scheduleFullRedraw();
+        }
+        _tcResetDrag();
+    });
+    c.addEventListener("dblclick", function (e) {
+        var rect = c.getBoundingClientRect();
+        var idx = _tcHitTest(e.clientX - rect.left, e.clientY - rect.top);
+        if (idx === null) return;
+        var pts = _tcActivePoints();
+        if (idx === 0 || idx === pts.length - 1) return;     // endpoints are fixed
+        var newPts = pts.slice(); newPts.splice(idx, 1);
+        _tcSetActivePoints(newPts);
+        _tcRedrawCurve();
+        _scheduleFullRedraw();
+    });
+}
+function _tcResetDrag() { _tcDragging = false; _tcHitIdx = null; _tcDownAt = null; }
+
+function _tcRedrawCurve() {
+    if (!_tcCurveCanvas) return;
+    var ctx = _tcCurveCanvas.getContext("2d");
+    var w = _tcCurveCanvas.width, h = _tcCurveCanvas.height;
+    ctx.clearRect(0, 0, w, h);
+    // Background grid (4×4)
+    ctx.strokeStyle = "rgba(255,255,255,0.05)";
+    ctx.lineWidth = 1;
+    for (var i = 1; i < 4; i++) {
+        ctx.beginPath();
+        ctx.moveTo(i * w / 4, 0); ctx.lineTo(i * w / 4, h);
+        ctx.moveTo(0, i * h / 4); ctx.lineTo(w, i * h / 4);
+        ctx.stroke();
+    }
+    // 45° identity diagonal
+    ctx.strokeStyle = "rgba(255,255,255,0.15)";
+    ctx.beginPath(); ctx.moveTo(0, h); ctx.lineTo(w, 0); ctx.stroke();
+    // The curve itself — sample the LUT for the active channel
+    var ch = _tcCurrentChannel();
+    var p = _S() && _S().developParams;
+    var lut;
+    if (p) {
+        var savedMode = p.toneCurveMode, savedCh = p.tcChannel;
+        p.toneCurveMode = "point"; p.tcChannel = ch;
+        var c = _getToneCurveLuts(p);
+        if (c.mode === "point-perchan") {
+            lut = ch === "r" ? c.lutR : ch === "g" ? c.lutG : c.lutB;
+        } else {
+            lut = c.lut;
+        }
+        p.toneCurveMode = savedMode; p.tcChannel = savedCh;
+    }
+    if (!lut) { var idLut = new Uint8Array(256); for (var ii = 0; ii < 256; ii++) idLut[ii] = ii; lut = idLut; }
+    ctx.strokeStyle = ch === "r" ? "#e24b4a" : ch === "g" ? "#5dca85" : ch === "b" ? "#5da3e2" : "#fff";
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    for (var x = 0; x < 256; x++) {
+        var pos = _tcCurveToCanvas(x, lut[x]);
+        if (x === 0) ctx.moveTo(pos.cx, pos.cy);
+        else ctx.lineTo(pos.cx, pos.cy);
+    }
+    ctx.stroke();
+    // Control points
+    var pts = _tcActivePoints();
+    ctx.fillStyle = "#fff";
+    ctx.strokeStyle = "rgba(0,0,0,0.6)";
+    ctx.lineWidth = 1;
+    for (var k = 0; k < pts.length; k++) {
+        var pp = _tcCurveToCanvas(pts[k][0], pts[k][1]);
+        ctx.beginPath(); ctx.arc(pp.cx, pp.cy, 3.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    }
+}
+
+// ── Split strip (parametric mode) ───────────────────────────────────────
+var _tcSplitDrag = null;   // "tcSplit1" | "tcSplit2" | "tcSplit3" | null
+
+function _tcAttachSplitStripHandlers() {
+    var c = _tcSplitStripCanvas;
+    c.addEventListener("pointerdown", function (e) {
+        var rect = c.getBoundingClientRect();
+        var x = e.clientX - rect.left;
+        var p = _S() && _S().developParams; if (!p) return;
+        var s1 = (p.tcSplit1 || 25) / 100 * rect.width;
+        var s2 = (p.tcSplit2 || 50) / 100 * rect.width;
+        var s3 = (p.tcSplit3 || 75) / 100 * rect.width;
+        var nearest = "tcSplit1", best = Math.abs(x - s1);
+        if (Math.abs(x - s2) < best) { nearest = "tcSplit2"; best = Math.abs(x - s2); }
+        if (Math.abs(x - s3) < best) { nearest = "tcSplit3"; best = Math.abs(x - s3); }
+        if (best > 12) return;
+        _tcSplitDrag = nearest;
+        c.setPointerCapture(e.pointerId);
+    });
+    c.addEventListener("pointermove", function (e) {
+        if (!_tcSplitDrag) return;
+        var rect = c.getBoundingClientRect();
+        var pct = Math.round(((e.clientX - rect.left) / rect.width) * 100);
+        if (pct < 1) pct = 1; else if (pct > 99) pct = 99;
+        var p = _S() && _S().developParams;
+        // Maintain ordering
+        if (_tcSplitDrag === "tcSplit1" && pct >= (p.tcSplit2 || 50)) pct = (p.tcSplit2 || 50) - 1;
+        if (_tcSplitDrag === "tcSplit2") {
+            if (pct <= (p.tcSplit1 || 25)) pct = (p.tcSplit1 || 25) + 1;
+            if (pct >= (p.tcSplit3 || 75)) pct = (p.tcSplit3 || 75) - 1;
+        }
+        if (_tcSplitDrag === "tcSplit3" && pct <= (p.tcSplit2 || 50)) pct = (p.tcSplit2 || 50) + 1;
+        _commitParam(_tcSplitDrag, pct, true);
+        _tcRedrawSplitStrip();
+    });
+    c.addEventListener("pointerup", function (e) {
+        try { c.releasePointerCapture(e.pointerId); } catch (_) {}
+        if (_tcSplitDrag) { _tcSplitDrag = null; _scheduleFullRedraw(); }
+    });
+}
+
+function _tcRedrawSplitStrip() {
+    if (!_tcSplitStripCanvas) return;
+    var ctx = _tcSplitStripCanvas.getContext("2d");
+    var w = _tcSplitStripCanvas.width, h = _tcSplitStripCanvas.height;
+    ctx.clearRect(0, 0, w, h);
+    // Tonal gradient black → white
+    var grad = ctx.createLinearGradient(0, 0, w, 0);
+    grad.addColorStop(0, "#000"); grad.addColorStop(1, "#fff");
+    ctx.fillStyle = grad;
+    ctx.fillRect(0, 0, w, h - 8);
+    // Markers
+    var p = _S() && _S().developParams; if (!p) return;
+    var splits = [p.tcSplit1 || 25, p.tcSplit2 || 50, p.tcSplit3 || 75];
+    var accent = (getComputedStyle(document.documentElement).getPropertyValue("--accent") || "#7c3aed").trim();
+    splits.forEach(function (s) {
+        var x = s / 100 * w;
+        ctx.fillStyle = accent;
+        ctx.beginPath();
+        ctx.moveTo(x, h - 8); ctx.lineTo(x - 5, h); ctx.lineTo(x + 5, h);
+        ctx.closePath(); ctx.fill();
+    });
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// V2 — HSL / Color Mixer UI (3 tabs × 8 band sliders)
+// ────────────────────────────────────────────────────────────────────────
+var _hslTabBtns = null;
+var _hslBandRows = { hue: [], sat: [], lum: [] };
+
+var _HSL_BAND_NAMES  = ["Red", "Orange", "Yellow", "Green", "Aqua", "Blue", "Purple", "Magenta"];
+var _HSL_BAND_HEX = ["#e25052", "#e28e3e", "#dac042", "#56c66f", "#4ec0c0", "#5da3e2", "#9d6dde", "#d96fb7"];
+
+function _buildHSLSection(body) {
+    var tabRow = document.createElement("div");
+    tabRow.className = "develop-hsl-tabs";
+    _hslTabBtns = {};
+    ["hue", "sat", "lum"].forEach(function (mode) {
+        var b = document.createElement("button");
+        b.type = "button";
+        b.textContent = mode === "hue" ? "Hue" : mode === "sat" ? "Saturation" : "Luminance";
+        b.dataset.mode = mode;
+        b.addEventListener("click", function () {
+            _commitParam("hslMode", mode, false);
+            _hslSyncModeUI(mode);
+        });
+        tabRow.appendChild(b);
+        _hslTabBtns[mode] = b;
+    });
+    body.appendChild(tabRow);
+
+    ["hue", "sat", "lum"].forEach(function (mode) {
+        var wrap = document.createElement("div");
+        wrap.className = "develop-hsl-tab-body develop-hsl-tab-" + mode;
+        var min = mode === "hue" ? -30 : -100;
+        var max = mode === "hue" ?  30 :  100;
+        for (var k = 0; k < 8; k++) {
+            var bandIdx = k;
+            var row = document.createElement("div");
+            row.className = "develop-row develop-hsl-row";
+            // Color swatch as label prefix
+            var swatch = document.createElement("span");
+            swatch.className = "develop-hsl-band-swatch";
+            swatch.style.background = _HSL_BAND_HEX[k];
+            row.appendChild(swatch);
+            var lbl = document.createElement("span");
+            lbl.className = "develop-row-label";
+            lbl.textContent = _HSL_BAND_NAMES[k];
+            lbl.title = "Double-click to reset";
+            row.appendChild(lbl);
+            var range = document.createElement("input");
+            range.type = "range"; range.min = min; range.max = max; range.step = 1; range.value = 0;
+            row.appendChild(range);
+            var num = document.createElement("input");
+            num.type = "number"; num.min = min; num.max = max; num.step = 1; num.value = 0;
+            row.appendChild(num);
+            (function (m, idx) {
+                function commit(v, live) {
+                    v = Number(v); if (isNaN(v)) v = 0;
+                    if (v < min) v = min; if (v > max) v = max;
+                    var S = _S(); if (!S) return;
+                    if (!S.developParams) S.developParams = defaultParams();
+                    var arr = m === "hue" ? S.developParams.hslHue
+                            : m === "sat" ? S.developParams.hslSat
+                                          : S.developParams.hslLum;
+                    arr[idx] = v;
+                    range.value = v; num.value = v;
+                    if (!S.developParams.enabled) {
+                        S.developParams.enabled = true;
+                        if (_enableToggleEl) _enableToggleEl.classList.add("on");
+                    }
+                    if (live) _scheduleProxyRedraw(); else _scheduleFullRedraw();
+                }
+                range.addEventListener("input",  function () { commit(range.value, true); });
+                range.addEventListener("change", function () { commit(range.value, false); });
+                num.addEventListener("change",   function () { commit(num.value, false); });
+                lbl.addEventListener("dblclick", function () { commit(0, false); });
+            })(mode, bandIdx);
+            wrap.appendChild(row);
+            _hslBandRows[mode][k] = { range: range, num: num };
+        }
+        body.appendChild(wrap);
+    });
+
+    _registerCustomSync(function (p) {
+        _hslSyncModeUI(p.hslMode || "hue");
+        ["hue", "sat", "lum"].forEach(function (m) {
+            var arr = m === "hue" ? p.hslHue : m === "sat" ? p.hslSat : p.hslLum;
+            for (var k = 0; k < 8; k++) {
+                var v = (arr && arr[k]) || 0;
+                var els = _hslBandRows[m][k];
+                if (els) { els.range.value = v; els.num.value = v; }
+            }
+        });
+    });
+}
+function _hslSyncModeUI(mode) {
+    if (!_hslTabBtns) return;
+    Object.keys(_hslTabBtns).forEach(function (k) {
+        _hslTabBtns[k].classList.toggle("active", k === mode);
+    });
+    if (!_panel) return;
+    var bodies = _panel.querySelectorAll(".develop-hsl-tab-body");
+    bodies.forEach(function (el) {
+        el.style.display = el.classList.contains("develop-hsl-tab-" + mode) ? "" : "none";
+    });
+}
+
+// ────────────────────────────────────────────────────────────────────────
+// V2 — COLOR GRADING UI (4 wheels in a 2×2 grid + Blending/Balance)
+// ────────────────────────────────────────────────────────────────────────
+var _cgWheels = {};
+var _cgLumRows = {};
+
+function _buildColorWheel(container, regionPrefix, label) {
+    var wrap = document.createElement("div");
+    wrap.className = "develop-cg-wheel-wrap";
+    var caption = document.createElement("div");
+    caption.className = "develop-cg-wheel-label";
+    caption.textContent = label;
+    wrap.appendChild(caption);
+    var canvas = document.createElement("canvas");
+    canvas.className = "develop-cg-wheel";
+    canvas.width = 70; canvas.height = 70;
+    wrap.appendChild(canvas);
+    // L slider underneath
+    var lumRow = document.createElement("div");
+    lumRow.className = "develop-cg-lum";
+    var lumRange = document.createElement("input");
+    lumRange.type = "range"; lumRange.min = -100; lumRange.max = 100; lumRange.step = 1; lumRange.value = 0;
+    var lumNum = document.createElement("input");
+    lumNum.type = "number"; lumNum.min = -100; lumNum.max = 100; lumNum.step = 1; lumNum.value = 0;
+    lumRow.appendChild(lumRange); lumRow.appendChild(lumNum);
+    wrap.appendChild(lumRow);
+    container.appendChild(wrap);
+
+    function drawWheel() {
+        var ctx = canvas.getContext("2d");
+        var w = canvas.width, h = canvas.height;
+        var cx = w / 2, cy = h / 2, r = Math.min(w, h) / 2 - 1;
+        ctx.clearRect(0, 0, w, h);
+        // Conic-ish hue ring with sat fade toward center: draw per-degree wedges
+        for (var deg = 0; deg < 360; deg++) {
+            var a0 = (deg - 0.6) * Math.PI / 180, a1 = (deg + 0.6) * Math.PI / 180;
+            var hueRgb = _hsl2rgb(deg, 1, 0.5);
+            var grad = ctx.createRadialGradient(cx, cy, 0, cx, cy, r);
+            grad.addColorStop(0, "rgb(128,128,128)");
+            grad.addColorStop(1, "rgb(" + ((hueRgb.r * 255) | 0) + "," + ((hueRgb.g * 255) | 0) + "," + ((hueRgb.b * 255) | 0) + ")");
+            ctx.fillStyle = grad;
+            ctx.beginPath(); ctx.moveTo(cx, cy);
+            ctx.arc(cx, cy, r, a0, a1); ctx.closePath(); ctx.fill();
+        }
+        // Indicator dot
+        var p = _S() && _S().developParams;
+        var H = (p && p[regionPrefix + "H"]) || 0;
+        var S = ((p && p[regionPrefix + "S"]) || 0) / 100;
+        var hr = H * Math.PI / 180;
+        var ix = cx + Math.cos(hr) * r * S;
+        var iy = cy + Math.sin(hr) * r * S;
+        ctx.fillStyle = "#fff"; ctx.strokeStyle = "rgba(0,0,0,0.7)"; ctx.lineWidth = 1.5;
+        ctx.beginPath(); ctx.arc(ix, iy, 3.5, 0, Math.PI * 2); ctx.fill(); ctx.stroke();
+    }
+    function commit(H, S, live) {
+        _commitParam(regionPrefix + "H", Math.round(H), live);
+        var p = _S() && _S().developParams;
+        if (p) p[regionPrefix + "S"] = Math.round(S);
+        drawWheel();
+    }
+    function pointerToHS(e) {
+        var rect = canvas.getBoundingClientRect();
+        var cxLoc = canvas.width / 2, cyLoc = canvas.height / 2;
+        var r = Math.min(canvas.width, canvas.height) / 2 - 1;
+        var dx = (e.clientX - rect.left) - cxLoc;
+        var dy = (e.clientY - rect.top) - cyLoc;
+        var dist = Math.hypot(dx, dy);
+        var H = Math.atan2(dy, dx) * 180 / Math.PI; if (H < 0) H += 360;
+        var S = Math.min(1, dist / r) * 100;
+        return { h: H, s: S };
+    }
+    var dragging = false;
+    canvas.addEventListener("pointerdown", function (e) {
+        dragging = true; canvas.setPointerCapture(e.pointerId);
+        var hs = pointerToHS(e); commit(hs.h, hs.s, true);
+    });
+    canvas.addEventListener("pointermove", function (e) {
+        if (!dragging) return;
+        var hs = pointerToHS(e); commit(hs.h, hs.s, true);
+    });
+    canvas.addEventListener("pointerup", function (e) {
+        try { canvas.releasePointerCapture(e.pointerId); } catch (_) {}
+        if (dragging) { dragging = false; _scheduleFullRedraw(); }
+    });
+    canvas.addEventListener("dblclick", function () {
+        commit(0, 0, false); _scheduleFullRedraw();
+    });
+    function commitL(v, live) {
+        v = Number(v); if (isNaN(v)) v = 0;
+        if (v < -100) v = -100; if (v > 100) v = 100;
+        _commitParam(regionPrefix + "L", v, live);
+        lumRange.value = v; lumNum.value = v;
+    }
+    lumRange.addEventListener("input",  function () { commitL(lumRange.value, true); });
+    lumRange.addEventListener("change", function () { commitL(lumRange.value, false); });
+    lumNum.addEventListener("change",   function () { commitL(lumNum.value, false); });
+
+    _cgWheels[regionPrefix] = { draw: drawWheel };
+    _cgLumRows[regionPrefix] = { range: lumRange, num: lumNum };
+    drawWheel();
+}
+
+function _buildColorGradingSection(body) {
+    var grid = document.createElement("div");
+    grid.className = "develop-cg-grid";
+    body.appendChild(grid);
+    _buildColorWheel(grid, "cgShadow",    "Shadows");
+    _buildColorWheel(grid, "cgMidtone",   "Midtones");
+    _buildColorWheel(grid, "cgHighlight", "Highlights");
+    _buildColorWheel(grid, "cgGlobal",    "Global");
+    body.appendChild(_buildSliderRow({ key: "cgBlending", label: "Blending", min: 0,    max: 100, step: 1, def: 50 }));
+    body.appendChild(_buildSliderRow({ key: "cgBalance",  label: "Balance",  min: -100, max: 100, step: 1, def: 0  }));
+
+    _registerCustomSync(function (p) {
+        Object.keys(_cgWheels).forEach(function (k) { _cgWheels[k].draw(); });
+        Object.keys(_cgLumRows).forEach(function (k) {
+            var v = (p && p[k + "L"]) || 0;
+            _cgLumRows[k].range.value = v; _cgLumRows[k].num.value = v;
+        });
+    });
 }
 
 function _buildSliderRow(field) {
     var row = document.createElement("div");
     row.className = "develop-row";
     row.dataset.key = field.key;
+    if (field.track) row.dataset.track = field.track;
 
     var lbl = document.createElement("span");
     lbl.className = "develop-row-label";
@@ -980,6 +2363,23 @@ function _buildSliderRow(field) {
     num.min = field.min; num.max = field.max; num.step = field.step;
     num.value = field.def;
     row.appendChild(num);
+
+    if (field.eyedropper) {
+        var pickBtn = document.createElement("button");
+        pickBtn.type = "button";
+        pickBtn.className = "develop-eyedrop";
+        pickBtn.title = field.eyedropperTitle || "Pick from image";
+        pickBtn.dataset.mode = field.eyedropper;
+        pickBtn.innerHTML =
+            '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"' +
+            ' stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+            '<path d="M3 21v-3l9-9 3 3-9 9H3z"/><circle cx="19" cy="5" r="3"/></svg>';
+        pickBtn.addEventListener("click", function (e) {
+            e.preventDefault(); e.stopPropagation();
+            _enterPickMode(field.eyedropper, pickBtn);
+        });
+        row.appendChild(pickBtn);
+    }
 
     function commit(v, isDrag) {
         v = Number(v);
@@ -1029,6 +2429,10 @@ function syncPanel() {
         el.num.value = v;
         el.row.classList.toggle("modified", v !== el.def);
     });
+    // V2: sync custom widget sections (Tone Curve, HSL, Color Grading)
+    for (var ci = 0; ci < _customSyncs.length; ci++) {
+        try { _customSyncs[ci](p); } catch (e) { console.error("[Develop] custom sync:", e); }
+    }
 }
 
 // ========================================================================
@@ -1044,10 +2448,10 @@ function _renderHistogram() {
     var S = _S(); if (!S || !S.canvas) return;
     var hctx = _histCanvas.getContext("2d");
     var W = _histCanvas.width, H = _histCanvas.height;
-    hctx.fillStyle = "rgba(0,0,0,0.0)";
     hctx.clearRect(0, 0, W, H);
 
-    // Sample the visible canvas at coarse stride so this stays cheap even on big docs.
+    // Sample the displayed canvas at coarse stride so this stays cheap even
+    // on big docs. The displayed canvas already includes Develop output.
     var src = S.canvas;
     var sw = src.width, sh = src.height;
     if (!sw || !sh) return;
@@ -1057,44 +2461,76 @@ function _renderHistogram() {
     var sample;
     try { sample = sctx.getImageData(0, 0, sw, sh); } catch (e) { return; }
     var sd = sample.data;
-    var binsR = new Uint32Array(256), binsG = new Uint32Array(256), binsB = new Uint32Array(256), binsL = new Uint32Array(256);
+    var binsR = new Uint32Array(256), binsG = new Uint32Array(256), binsB = new Uint32Array(256);
+    var sampleCount = 0;
     for (var y = 0; y < sh; y += stride) {
         var off = y * sw * 4;
         for (var x = 0; x < sw; x += stride) {
             var p = off + x * 4;
-            var r = sd[p], g = sd[p + 1], b = sd[p + 2];
-            binsR[r]++; binsG[g]++; binsB[b]++;
-            var lum = (0.2126 * r + 0.7152 * g + 0.0722 * b) | 0;
-            if (lum > 255) lum = 255;
-            binsL[lum]++;
+            binsR[sd[p]]++; binsG[sd[p + 1]]++; binsB[sd[p + 2]]++;
+            sampleCount++;
         }
     }
-    function maxOf(a) { var m = 0; for (var i = 0; i < a.length; i++) if (a[i] > m) m = a[i]; return m; }
-    var transform = (_histScale === "log")
-        ? function (v, max) { return max <= 0 ? 0 : Math.log(1 + v) / Math.log(1 + max); }
-        : function (v, max) { return max <= 0 ? 0 : v / max; };
 
+    // RGB log-scale histogram, additive blend. Only the RGB+log view turned
+    // out to be useful in practice — toggles for L / linear were removed.
+    function maxOf(a) { var m = 0; for (var i = 0; i < a.length; i++) if (a[i] > m) m = a[i]; return m; }
     function drawBins(bins, color) {
         var mx = maxOf(bins);
         if (mx === 0) return;
+        var denom = Math.log(1 + mx);
         hctx.fillStyle = color;
         for (var i = 0; i < 256; i++) {
-            var t = transform(bins[i], mx);
+            var t = Math.log(1 + bins[i]) / denom;
             var bh = t * H;
             var bx = (i / 256) * W;
             var bw = W / 256;
             hctx.fillRect(bx, H - bh, bw + 0.5, bh);
         }
     }
-    if (_histChannelMode === "rgb") {
-        hctx.globalCompositeOperation = "screen";
-        drawBins(binsR, "rgba(220, 60, 60, 0.7)");
-        drawBins(binsG, "rgba( 60,200, 80, 0.7)");
-        drawBins(binsB, "rgba( 90,140,255, 0.7)");
-        hctx.globalCompositeOperation = "source-over";
-    } else {
-        drawBins(binsL, "rgba(220, 220, 220, 0.85)");
+    hctx.globalCompositeOperation = "screen";
+    drawBins(binsR, "rgba(220, 60, 60, 0.75)");
+    drawBins(binsG, "rgba( 60,200, 80, 0.75)");
+    drawBins(binsB, "rgba( 90,140,255, 0.75)");
+    hctx.globalCompositeOperation = "source-over";
+
+    // Clipping detection: a channel is "clipping" if more than CLIP_FRAC of
+    // sampled pixels land in bin 0 (shadow) or bin 255 (highlight). The two
+    // corner triangles light up colored to indicate which channels clip.
+    // Stray pixels (single-digit counts) don't trip the warning.
+    if (_histClipL && _histClipR) {
+        var CLIP_FRAC = 0.001;
+        var threshold = Math.max(2, sampleCount * CLIP_FRAC);
+        var lo = {
+            r: binsR[0] > threshold,
+            g: binsG[0] > threshold,
+            b: binsB[0] > threshold
+        };
+        var hi = {
+            r: binsR[255] > threshold,
+            g: binsG[255] > threshold,
+            b: binsB[255] > threshold
+        };
+        _setClipIndicator(_histClipL, lo);
+        _setClipIndicator(_histClipR, hi);
     }
+}
+
+// Color the clipping triangle: white if R+G+B all clip, else the additive
+// mix (R+G=yellow, R+B=magenta, G+B=cyan, single channel = that color).
+// Returns to dim/inactive state when no channel clips.
+function _setClipIndicator(el, ch) {
+    var any = ch.r || ch.g || ch.b;
+    el.classList.toggle("clipping", !!any);
+    if (!any) { el.style.color = ""; el.title = el.dataset.titleBase || el.title; return; }
+    var r = ch.r ? 255 : 0, g = ch.g ? 255 : 0, b = ch.b ? 255 : 0;
+    el.style.color = "rgb(" + r + "," + g + "," + b + ")";
+    var labels = [];
+    if (ch.r) labels.push("R");
+    if (ch.g) labels.push("G");
+    if (ch.b) labels.push("B");
+    el.title = (el.classList.contains("develop-hist-clip-l") ? "Shadow clipping" : "Highlight clipping")
+             + " — " + labels.join(", ");
 }
 
 // ========================================================================
@@ -1126,6 +2562,173 @@ function _undoReset() {
     syncPanel();
     _scheduleFullRedraw();
     return true;
+}
+
+// ========================================================================
+// EYEDROPPERS — pick a pixel from the canvas to set WB / black / white.
+//
+// All pickers read the PRE-DEVELOP composite (so already-applied develop
+// settings don't double-count). We reuse _buildBeforeBuffer() from the
+// before/after split feature for that.
+//
+// The canvas-ui pointerdown handler bails out when StudioModules.activeId
+// is "develop" (so brush tools stay inert). To capture the pick click we
+// install a capture-phase listener on the document that runs BEFORE any
+// other handler — only active while a pick is armed.
+// ========================================================================
+var _pickMode = null;          // null | "wb" | "whites" | "blacks"
+var _pickArmedBtn = null;      // currently-active button element
+var _pickPrevCursor = "";      // saved cursor while picking
+
+function _enterPickMode(mode, btn) {
+    if (_pickMode === mode) { _exitPickMode(); return; }    // toggle off
+    _exitPickMode();                                        // cancel any prior
+    _pickMode = mode;
+    _pickArmedBtn = btn || null;
+    if (_pickArmedBtn) _pickArmedBtn.classList.add("armed");
+    _pickPrevCursor = document.body.style.cursor || "";
+    document.body.style.cursor = "crosshair";
+    document.addEventListener("pointerdown", _onPickClick, true);   // capture
+    document.addEventListener("keydown", _onPickKey, true);
+}
+
+function _exitPickMode() {
+    if (_pickMode === null) return;
+    document.removeEventListener("pointerdown", _onPickClick, true);
+    document.removeEventListener("keydown", _onPickKey, true);
+    if (_pickArmedBtn) _pickArmedBtn.classList.remove("armed");
+    _pickArmedBtn = null;
+    _pickMode = null;
+    document.body.style.cursor = _pickPrevCursor;
+}
+
+function _onPickKey(e) {
+    if (e.key === "Escape") { _exitPickMode(); e.preventDefault(); }
+}
+
+function _onPickClick(e) {
+    if (_pickMode === null) return;
+    var S = _S(); if (!S || !S.canvas) return;
+    // Only handle clicks on the canvas itself.
+    if (e.target !== S.canvas) {
+        // Clicking elsewhere (panel, toolbar, etc.) cancels the pick.
+        _exitPickMode();
+        return;
+    }
+    e.preventDefault();
+    e.stopImmediatePropagation();
+
+    var rect = S.canvas.getBoundingClientRect();
+    var z = S.zoom;
+    var docX = Math.floor((e.clientX - rect.left - z.ox) / z.scale);
+    var docY = Math.floor((e.clientY - rect.top  - z.oy) / z.scale);
+    if (docX < 0 || docY < 0 || docX >= S.W || docY >= S.H) {
+        _exitPickMode(); return;
+    }
+
+    // Sample a 5x5 region around the click and average — reduces noise / single-pixel artifacts.
+    var px = _samplePreDevelopRegion(docX, docY, 2);
+    if (!px) { _exitPickMode(); return; }
+
+    var mode = _pickMode;
+    if      (mode === "wb")     _applyWBPick(px);
+    else if (mode === "blacks") _applyBlackPick(px);
+    else if (mode === "whites") _applyWhitePick(px);
+
+    _exitPickMode();
+}
+
+function _samplePreDevelopRegion(cx, cy, radius) {
+    var S = _S(); if (!S) return null;
+    var buf = _buildBeforeBuffer();
+    if (!buf) return null;
+    var x0 = Math.max(0, cx - radius);
+    var y0 = Math.max(0, cy - radius);
+    var x1 = Math.min(S.W - 1, cx + radius);
+    var y1 = Math.min(S.H - 1, cy + radius);
+    var w = x1 - x0 + 1, h = y1 - y0 + 1;
+    if (w <= 0 || h <= 0) return null;
+    var img;
+    try { img = buf.getContext("2d").getImageData(x0, y0, w, h); }
+    catch (e) { return null; }
+    var d = img.data, n = w * h;
+    var rs = 0, gs = 0, bs = 0;
+    for (var i = 0; i < n; i++) {
+        var p = i * 4;
+        rs += d[p]; gs += d[p + 1]; bs += d[p + 2];
+    }
+    return {
+        r:  (rs / n) / 255,
+        g:  (gs / n) / 255,
+        b:  (bs / n) / 255,
+        rL: _SRGB_TO_LIN[Math.round((rs / n))],
+        gL: _SRGB_TO_LIN[Math.round((gs / n))],
+        bL: _SRGB_TO_LIN[Math.round((bs / n))]
+    };
+}
+
+// White-balance pick: compute Temperature + Tint to neutralize the picked
+// pixel. Pipeline math (linear): R *= 1 + temp/200; B *= 1 - temp/200;
+// G *= 1 + tint/200. We solve for temp and tint such that the post-WB
+// triple is equal:
+//   t    = 200 * (b - r) / (r + b)
+//   target = 2*r*b / (r + b)        (harmonic mean)
+//   tint = 200 * (target - g) / g
+// All math in linear space. Clamps to slider range.
+function _applyWBPick(px) {
+    var S = _S(); if (!S || !S.developParams) return;
+    var r = px.rL, g = px.gL, b = px.bL;
+    if (r + b < 1e-6 || g < 1e-6) return;     // near-black pixel — meaningless
+    var temp = 200 * (b - r) / (r + b);
+    var target = 2 * r * b / (r + b);
+    var tint = 200 * (target - g) / g;
+    if (temp < -100) temp = -100; else if (temp > 100) temp = 100;
+    if (tint < -100) tint = -100; else if (tint > 100) tint = 100;
+    var p = S.developParams;
+    p.temperature = Math.round(temp);
+    p.tint = Math.round(tint);
+    p.enabled = true;
+    syncPanel();
+    _bumpCompositeCache();
+    _scheduleFullRedraw();
+}
+
+// Black-point pick: set the Blacks slider so the picked pixel's luminance
+// becomes the new lower bound (will render as 0 / pure black).
+//   blackPoint (linear) = blacks/200
+//   blacks = 200 * Y_lin
+// Use Rec.709 luminance for "perceived darkness".
+function _applyBlackPick(px) {
+    var S = _S(); if (!S || !S.developParams) return;
+    var Y = 0.2126 * px.rL + 0.7152 * px.gL + 0.0722 * px.bL;
+    if (Y < 0) Y = 0; else if (Y > 1) Y = 1;
+    var blacks = 200 * Y;
+    if (blacks > 100) blacks = 100;
+    S.developParams.blacks = Math.round(blacks);
+    S.developParams.enabled = true;
+    syncPanel();
+    _bumpCompositeCache();
+    _scheduleFullRedraw();
+}
+
+// White-point pick: set the Whites slider so the picked pixel's brightest
+// channel becomes the new upper bound (renders as pure white).
+//   whitePoint (linear) = 1 + whites/200
+//   whites = 200 * (V_lin - 1)
+// Use the max channel — most appropriate for the "white point" concept.
+function _applyWhitePick(px) {
+    var S = _S(); if (!S || !S.developParams) return;
+    var V = px.rL > px.gL ? (px.rL > px.bL ? px.rL : px.bL) : (px.gL > px.bL ? px.gL : px.bL);
+    if (V < 0) V = 0;
+    if (V < 0.05) return;                     // refuse near-black
+    var whites = 200 * (V - 1);
+    if (whites < -100) whites = -100;
+    if (whites > 100)  whites = 100;
+    S.developParams.whites = Math.round(whites);
+    S.developParams.enabled = true;
+    syncPanel();
+    _bumpCompositeCache();
+    _scheduleFullRedraw();
 }
 
 // ANCHOR_EXTRAS — chunk 5 inserts presets + before/after here
