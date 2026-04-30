@@ -73,6 +73,7 @@ function defaultParams() {
         // === V1: Detail ===
         sharpenAmount: 0,
         sharpenRadius: 1.0,
+        sharpenThreshold: 0,           // 0..255 — skip pixels below this detail level
 
         // === V1: Effects ===
         vignetteAmount: 0,
@@ -105,6 +106,7 @@ function defaultParams() {
         cgGlobalH:    0, cgGlobalS:    0, cgGlobalL:    0,
         cgBlending: 50,                // 0..100
         cgBalance: 0,                  // -100..100
+        cgPreserveLuminosity: true,    // restore L after RGB offsets (Krita default)
 
         // === V2: Dehaze ===
         dehaze: 0,                     // -100..100
@@ -171,8 +173,9 @@ var SECTIONS = [
     {
         id: "detail", label: "Detail", open: false,
         rows: [
-            { key: "sharpenAmount", label: "Sharpen Amt", min: 0,   max: 150, step: 1,   def: 0   },
-            { key: "sharpenRadius", label: "Sharpen Rad", min: 0.5, max: 3.0, step: 0.1, def: 1.0 },
+            { key: "sharpenAmount",    label: "Sharpen Amt", min: 0,   max: 150, step: 1,   def: 0   },
+            { key: "sharpenRadius",    label: "Sharpen Rad", min: 0.5, max: 3.0, step: 0.1, def: 1.0 },
+            { key: "sharpenThreshold", label: "Threshold",   min: 0,   max: 255, step: 1,   def: 0   },
             // V2: Noise Reduction
             { key: "nrLuminance",   label: "NR Luma",    min: 0,   max: 100, step: 1, def: 0, heavyOp: true },
             { key: "nrColor",       label: "NR Color",   min: 0,   max: 100, step: 1, def: 0, heavyOp: true },
@@ -317,6 +320,12 @@ function _lin2u8(v) {
 // xorshift32 — deterministic per-document grain seed
 function _xs32(state) { state ^= state << 13; state ^= state >>> 17; state ^= state << 5; return state >>> 0; }
 
+// CIE Lab helpers — used by Lab-space white balance. D65 reference white.
+// Domain: linear (NOT sRGB) RGB → XYZ → Lab.
+function _labF(t)    { return t > 0.008856 ? Math.cbrt(t) : (903.3 * t + 16) / 116; }
+function _labFInv(t) { return t > 0.206897 ? t * t * t   : (116 * t - 16) / 903.3; }
+var _LAB_WHITE_X = 0.95047, _LAB_WHITE_Y = 1.0, _LAB_WHITE_Z = 1.08883;
+
 // ========================================================================
 // STATE access — lazily resolved (StudioCore boots before us)
 // ========================================================================
@@ -344,55 +353,102 @@ function applyToContext(ctx, w, h, params) {
 // ========================================================================
 // PHASE A — per-channel Float32 LUT
 //
-// Chains: linearize (sRGB→linear) → WB scale → exposure scale.
+// Chains: linearize (sRGB→linear) → exposure scale.
 // Output is Float32 in linear space (may exceed 1.0 due to exposure gain).
-// Cached on S._developLutCache keyed by the params that contribute.
+// White balance moved out of the LUT into Phase A.5 so it can run in Lab
+// (perceptually uniform) instead of as RGB multipliers — see
+// _applyWhiteBalance below.
 //
-// WB math:
-//   R *= 1 + temp/200             (warm raises red)
-//   B *= 1 - temp/200             (warm lowers blue)
-//   G *= 1 + temp/600 - tint/300  (warm raises green ~1/3 as much as red,
-//                                  so the cast looks orange/yellow rather
-//                                  than pink; tint at ±33% — visible green
-//                                  / magenta cast without pushing G hard
-//                                  past 1.0 the way the prior ±50% did,
-//                                  which was washing out highlight detail
-//                                  through the Reinhard shoulder.)
-//   Positive tint = magenta, negative = green (matches the slider's
-//   green→magenta gradient track).
-// Exposure: v *= 2^(exposure * 5/100)   ⇒ ±5 stops at slider extremes
-// (was ±3 — felt weak compared to Lightroom's slider).
+// Exposure: v *= 2^(exposure * 5/100)   ⇒ ±5 stops at slider extremes.
 // ========================================================================
 function _buildLutA(p) {
-    var temp = p.temperature || 0;
-    var tint = p.tint || 0;
-    var rGain = 1 + temp / 200;
-    var bGain = 1 - temp / 200;
-    var gGain = 1 + temp / 600 - tint / 300;
     var expGain = Math.pow(2, (p.exposure || 0) * 5 / 100);
-    var rScale = rGain * expGain;
-    var gScale = gGain * expGain;
-    var bScale = bGain * expGain;
     var lutR = new Float32Array(256);
     var lutG = new Float32Array(256);
     var lutB = new Float32Array(256);
     for (var i = 0; i < 256; i++) {
-        var lin = _SRGB_TO_LIN[i];
-        lutR[i] = lin * rScale;
-        lutG[i] = lin * gScale;
-        lutB[i] = lin * bScale;
+        var lin = _SRGB_TO_LIN[i] * expGain;
+        lutR[i] = lin;
+        lutG[i] = lin;
+        lutB[i] = lin;
     }
     return { lutR: lutR, lutG: lutG, lutB: lutB };
 }
 
 function _getLutA(p) {
     var S = _S();
-    var sig = (p.temperature | 0) + "|" + (p.tint | 0) + "|" + (p.exposure | 0);
+    var sig = "E" + (p.exposure | 0);
     if (S && S._developLutCache && S._developLutCache.sig === sig) return S._developLutCache;
     var lut = _buildLutA(p);
     lut.sig = sig;
     if (S) S._developLutCache = lut;
     return lut;
+}
+
+// ========================================================================
+// PHASE A.5 — White Balance (Lab-space)
+//
+// Convert linear RGB → XYZ (D65) → Lab, shift the b* axis (blue↔yellow)
+// by `temperature * 0.3` and the a* axis (green↔magenta) by `-tint * 0.15`,
+// then convert back. Lab is perceptually uniform, so a temperature shift
+// adjusts colour without inadvertently darkening or brightening the image,
+// the way RGB-multiplier WB does.
+//
+// Drag-time (proxy) renders fall back to the cheaper RGB multipliers from
+// the V1 implementation; the difference between the two is invisible at
+// drag resolution and saves ~6 Math.cbrt calls per pixel.
+// ========================================================================
+function _applyWhiteBalance(rLin, gLin, bLin, n, p) {
+    var temp = p.temperature || 0;
+    var tint = p.tint || 0;
+    if (temp === 0 && tint === 0) return;
+
+    if (p._dragging) {
+        // V1-style RGB multipliers — fast path for slider drag.
+        var rGain = 1 + temp / 200;
+        var bGain = 1 - temp / 200;
+        var gGain = 1 + temp / 600 - tint / 300;
+        for (var i = 0; i < n; i++) {
+            rLin[i] *= rGain;
+            gLin[i] *= gGain;
+            bLin[i] *= bGain;
+        }
+        return;
+    }
+
+    // Full-resolution Lab path.
+    var aShift = -tint * 0.15;
+    var bShift =  temp * 0.3;
+    var invX = 1 / _LAB_WHITE_X, invZ = 1 / _LAB_WHITE_Z;
+    var aDelta = aShift / 500;
+    var bDelta = bShift / 200;
+    for (var j = 0; j < n; j++) {
+        var R = rLin[j], G = gLin[j], B = bLin[j];
+        // Linear sRGB → XYZ (D65)
+        var X = 0.4124564 * R + 0.3575761 * G + 0.1804375 * B;
+        var Y = 0.2126729 * R + 0.7151522 * G + 0.0721750 * B;
+        var Z = 0.0193339 * R + 0.1191920 * G + 0.9503041 * B;
+        // XYZ → Lab (we never need L itself here — only fx/fy/fz to shift)
+        var fx = _labF(X * invX);
+        var fy = _labF(Y);                  // _LAB_WHITE_Y is 1.0
+        var fz = _labF(Z * invZ);
+        // Apply shifts in Lab space:
+        //   fx' = fy + (a* + aShift)/500 = fx + aShift/500
+        //   fz' = fy - (b* + bShift)/200 = fz - bShift/200
+        var fxn = fx + aDelta;
+        var fzn = fz - bDelta;
+        // Lab → XYZ
+        var Xn = _LAB_WHITE_X * _labFInv(fxn);
+        var Yn = _labFInv(fy);              // _LAB_WHITE_Y is 1.0
+        var Zn = _LAB_WHITE_Z * _labFInv(fzn);
+        // XYZ → linear sRGB
+        var Rn =  3.2404542 * Xn - 1.5371385 * Yn - 0.4985314 * Zn;
+        var Gn = -0.9692660 * Xn + 1.8760108 * Yn + 0.0415560 * Zn;
+        var Bn =  0.0556434 * Xn - 0.2040259 * Yn + 1.0572252 * Zn;
+        rLin[j] = Rn < 0 ? 0 : Rn;
+        gLin[j] = Gn < 0 ? 0 : Gn;
+        bLin[j] = Bn < 0 ? 0 : Bn;
+    }
 }
 
 // ========================================================================
@@ -447,21 +503,14 @@ function _applyHighlightsShadows(rLin, gLin, bLin, blurCache, w, h, hlAmt, shAmt
     var lw = blurCache.lw;
     var hl = hlAmt / 100;
     var sh = shAmt / 100;
-    // Piecewise lift/recover targets:
-    //   +Highlights → lift bright pixels toward 1.0 (clean push to white).
-    //   -Highlights → recover toward 0.4 (pull blown areas back).
-    //   +Shadows    → lift dark pixels toward 0.6 (open shadows).
-    //   -Shadows    → crush toward 0 (deepen shadows).
-    // Previously both directions lerped toward fixed 0.4/0.6, so +Highlights
-    // pushed bright pixels past 1.0 into the Reinhard shoulder and washed
-    // out highlight detail across the whole image; this version stays in
-    // [0,1] for both signs, matching the Lightroom feel.
-    var hlPos = hl > 0;
-    var shPos = sh > 0;
-    var hlTarget = hlPos ? 1.0 : 0.4;
-    var shTarget = shPos ? 0.6 : 0.0;
-    var hlMag = hlPos ? hl : -hl;
-    var shMag = shPos ? sh : -sh;
+    // Krita-derived toward-edge proportional push (replaces the previous
+    // additive lerp toward fixed targets):
+    //   dstV = dv > 0 ? 1.0 : 0.0
+    //   v   += |dv| * (dstV - v)
+    //   chroma *= 1 - |dv|              // pixels approach gray near edges
+    // Effect: a dark pixel (v=0.2) moves much further than a bright pixel
+    // (v=0.9) under the same +Shadows slider, output never overshoots, and
+    // chroma drops naturally as pixels are pushed toward the extremes.
     for (var y = 0; y < h; y++) {
         var ly = (y >> 2) * lw;
         var rowF = y * w;
@@ -475,20 +524,42 @@ function _applyHighlightsShadows(rLin, gLin, bLin, blurCache, w, h, hlAmt, shAmt
             // luminance for the threshold only — the lift/pull math below
             // still runs in linear for HDR correctness.
             var Yp = _lin2u8(Yl) / 255;
+            var R = rLin[i], G = gLin[i], B = bLin[i];
             if (sh !== 0) {
                 var sm = 1 - _smoothstep(0, 0.5, Yp);
-                var sd = shMag * sm;
-                rLin[i] += (shTarget - rLin[i]) * sd;
-                gLin[i] += (shTarget - gLin[i]) * sd;
-                bLin[i] += (shTarget - bLin[i]) * sd;
+                var dv = sh * sm;                    // signed
+                if (dv !== 0) {
+                    var dst = dv > 0 ? 1.0 : 0.0;
+                    var mag = dv < 0 ? -dv : dv;
+                    R += mag * (dst - R);
+                    G += mag * (dst - G);
+                    B += mag * (dst - B);
+                    var Y1 = 0.2126 * R + 0.7152 * G + 0.0722 * B;
+                    var k1 = 1 - mag;
+                    R = Y1 + (R - Y1) * k1;
+                    G = Y1 + (G - Y1) * k1;
+                    B = Y1 + (B - Y1) * k1;
+                }
             }
             if (hl !== 0) {
                 var hm = _smoothstep(0.5, 1.0, Yp);
-                var hd = hlMag * hm;
-                rLin[i] += (hlTarget - rLin[i]) * hd;
-                gLin[i] += (hlTarget - gLin[i]) * hd;
-                bLin[i] += (hlTarget - bLin[i]) * hd;
+                var dv2 = hl * hm;
+                if (dv2 !== 0) {
+                    var dst2 = dv2 > 0 ? 1.0 : 0.0;
+                    var mag2 = dv2 < 0 ? -dv2 : dv2;
+                    R += mag2 * (dst2 - R);
+                    G += mag2 * (dst2 - G);
+                    B += mag2 * (dst2 - B);
+                    var Y2 = 0.2126 * R + 0.7152 * G + 0.0722 * B;
+                    var k2 = 1 - mag2;
+                    R = Y2 + (R - Y2) * k2;
+                    G = Y2 + (G - Y2) * k2;
+                    B = Y2 + (B - Y2) * k2;
+                }
             }
+            rLin[i] = R;
+            gLin[i] = G;
+            bLin[i] = B;
         }
     }
 }
@@ -501,7 +572,7 @@ function _applyDevelopFull(ctx, w, h, p) {
     var d = img.data;
     var n = w * h;
 
-    // ---- Phase A: per-channel LUT, sRGB U8 → linear Float32 ----
+    // ---- Phase A: per-channel LUT, sRGB U8 → linear Float32 (exposure only) ----
     var lut = _getLutA(p);
     var lutR = lut.lutR, lutG = lut.lutG, lutB = lut.lutB;
     var rLin = new Float32Array(n);
@@ -513,11 +584,15 @@ function _applyDevelopFull(ctx, w, h, p) {
         bLin[i] = lutB[d[j + 2]];
     }
 
+    // ---- Phase A.5: white balance (Lab-space at full res, RGB on drag) ----
+    _applyWhiteBalance(rLin, gLin, bLin, n, p);
+
     // ---- Phase B: highlights/shadows ----
     var hlAmt = p.highlights | 0;
     var shAmt = p.shadows | 0;
     if (hlAmt !== 0 || shAmt !== 0) {
-        var blurCache = _getLumBlur(rLin, gLin, bLin, w, h, lut.sig);
+        var wbSig = lut.sig + "|T" + (p.temperature | 0) + "|N" + (p.tint | 0);
+        var blurCache = _getLumBlur(rLin, gLin, bLin, w, h, wbSig);
         _applyHighlightsShadows(rLin, gLin, bLin, blurCache, w, h, hlAmt, shAmt);
     }
 
@@ -599,7 +674,9 @@ function _applyDevelopFull(ctx, w, h, p) {
     if ((p.clarity | 0) !== 0)        _unsharpMaskLuma(d, w, h, 40, (p.clarity || 0) / 200, true);
     // V2: Dehaze sits between Clarity and Sharpening per spec
     _applyDehaze(d, n, w, h, p);
-    if ((p.sharpenAmount | 0) !== 0)  _unsharpMaskLuma(d, w, h, p.sharpenRadius || 1.0, (p.sharpenAmount || 0) / 100, false);
+    if ((p.sharpenAmount | 0) !== 0)
+        _unsharpMaskLuma(d, w, h, p.sharpenRadius || 1.0, (p.sharpenAmount || 0) / 100, false,
+                         p.sharpenThreshold | 0, true);
 
     // ---- V2: Noise Reduction (luminance bilateral + color Cb/Cr blur) ----
     _applyNoiseReduction(d, n, w, h, p);
@@ -713,14 +790,25 @@ function _hsl2rgb(H, S, L) {
 }
 
 function _applySaturation(d, n, amount) {
-    var scale = 1 + amount;
-    if (scale < 0) scale = 0;
+    // Krita's nonlinear positive boost: moderate amounts produce natural
+    // saturation, extremes ramp up aggressively. Negative stays linear so
+    // -100 cleanly desaturates to gray.
+    var posMul = 1 + amount + 2 * amount * amount;     // amount > 0
+    var negMul = 1 + amount;                           // amount <= 0
+    if (negMul < 0) negMul = 0;
+    var positive = amount > 0;
     for (var p = 0, end = n * 4; p < end; p += 4) {
         var r = d[p] / 255, g = d[p + 1] / 255, b = d[p + 2] / 255;
         var hsl = _rgb2hsl(r, g, b);
         if (hsl.s === 0) continue;            // gray pixel — saturation has no effect
-        var S = hsl.s * scale;
-        if (S > 1) S = 1; else if (S < 0) S = 0;
+        var S;
+        if (positive) {
+            S = hsl.s * posMul;
+            if (S > 1) S = 1;
+        } else {
+            S = hsl.s * negMul;
+            if (S < 0) S = 0;
+        }
         var rgb = _hsl2rgb(hsl.h, S, hsl.l);
         d[p]     = _clampU8(rgb.r * 255);
         d[p + 1] = _clampU8(rgb.g * 255);
@@ -1032,41 +1120,59 @@ function _applyColorGrading(d, n, p) {
     var lHl = ((p.cgHighlightL || 0) / 100) * CG_LUM_GAIN;
     var lGb = ((p.cgGlobalL    || 0) / 100) * CG_LUM_GAIN;
 
-    // Region boundaries shifted by Balance
-    var bal = (p.cgBalance | 0) / 300;       // -100..100 → -0.33..0.33
-    var shadowEnd     = 0.33 + bal;
-    var highlightStart = 0.66 + bal;
-    if (shadowEnd < 0.05) shadowEnd = 0.05;
-    if (shadowEnd > 0.95) shadowEnd = 0.95;
-    if (highlightStart < shadowEnd + 0.05) highlightStart = shadowEnd + 0.05;
-    if (highlightStart > 0.99) highlightStart = 0.99;
-    var blendingFrac = ((p.cgBlending || 0) | 0) / 100;
-    if (blendingFrac < 0) blendingFrac = 0; else if (blendingFrac > 1) blendingFrac = 1;
-    var transitionWidth = (1.0 - blendingFrac) * 0.33;
-    if (transitionWidth < 0.01) transitionWidth = 0.01;
-
-    var shEdge0 = shadowEnd + transitionWidth, shEdge1 = shadowEnd - transitionWidth;
-    var hlEdge0 = highlightStart - transitionWidth, hlEdge1 = highlightStart + transitionWidth;
+    // Krita / GIMP color-balance transfer function. Linear ramps with a
+    // single transition width, multiplied for the midtone band so its
+    // weight peaks in the middle and decays into both shoulders.
+    var a = 0.25;
+    var b = 0.333 + ((p.cgBalance | 0) / 300);    // cgBalance shifts boundary
+    if (b < 0.05) b = 0.05; else if (b > 0.95) b = 0.95;
+    var cgScale = 0.7;
+    var invA = 1 / a;
+    var preserveLum = p.cgPreserveLuminosity !== false;
 
     for (var px = 0, end = n * 4; px < end; px += 4) {
         var R = d[px] / 255, G = d[px + 1] / 255, B = d[px + 2] / 255;
-        var Y = 0.2126 * R + 0.7152 * G + 0.0722 * B;
+        var hsl = _rgb2hsl(R, G, B);
+        var L = hsl.l;
 
-        // smoothstep(edge0, edge1, x): edge0 maps to 0, edge1 to 1.
-        // For shadow weight we want HIGH when Y is LOW: smoothstep(big, small, Y).
-        var shadowW = _smoothstep(shEdge0, shEdge1, Y);
-        var hlW     = _smoothstep(hlEdge0, hlEdge1, Y);
-        var midW    = 1 - shadowW - hlW;
-        if (midW < 0) midW = 0;
+        var shadowW = -(L - b) * invA + 0.5;
+        if (shadowW < 0) shadowW = 0; else if (shadowW > 1) shadowW = 1;
+        shadowW *= cgScale;
+
+        var midA = (L - b) * invA + 0.5;
+        if (midA < 0) midA = 0; else if (midA > 1) midA = 1;
+        var midC = -(L + b - 1) * invA + 0.5;
+        if (midC < 0) midC = 0; else if (midC > 1) midC = 1;
+        var midW = midA * midC * cgScale;
+
+        var hlW = (L + b - 1) * invA + 0.5;
+        if (hlW < 0) hlW = 0; else if (hlW > 1) hlW = 1;
+        hlW *= cgScale;
 
         var dR = shadowW * oSh[0] + midW * oMt[0] + hlW * oHl[0] + oGb[0];
         var dG = shadowW * oSh[1] + midW * oMt[1] + hlW * oHl[1] + oGb[1];
         var dB = shadowW * oSh[2] + midW * oMt[2] + hlW * oHl[2] + oGb[2];
         var dL = shadowW * lSh   + midW * lMt   + hlW * lHl   + lGb;
 
-        d[px]     = _clampU8((R + dR + dL) * 255);
-        d[px + 1] = _clampU8((G + dG + dL) * 255);
-        d[px + 2] = _clampU8((B + dB + dL) * 255);
+        var nR = R + dR, nG = G + dG, nB = B + dB;
+
+        if (preserveLum) {
+            // Restore the original L, applying any explicit L offset on top.
+            var clampedR = nR < 0 ? 0 : (nR > 1 ? 1 : nR);
+            var clampedG = nG < 0 ? 0 : (nG > 1 ? 1 : nG);
+            var clampedB = nB < 0 ? 0 : (nB > 1 ? 1 : nB);
+            var newHsl = _rgb2hsl(clampedR, clampedG, clampedB);
+            var finalL = L + dL;
+            if (finalL < 0) finalL = 0; else if (finalL > 1) finalL = 1;
+            var rgb = _hsl2rgb(newHsl.h, newHsl.s, finalL);
+            nR = rgb.r; nG = rgb.g; nB = rgb.b;
+        } else {
+            nR += dL; nG += dL; nB += dL;
+        }
+
+        d[px]     = _clampU8(nR * 255);
+        d[px + 1] = _clampU8(nG * 255);
+        d[px + 2] = _clampU8(nB * 255);
     }
 }
 
@@ -1419,11 +1525,19 @@ function _separableGaussian(buf, w, h, sigma) {
 // UNSHARP MASK on luminance only.
 //
 // Avoids color fringing by extracting Y, blurring, computing Y - Yblur,
-// and adding (amount * detail) back to all three channels equally.
-// `midToneWeighted` clamps the boost near pure black/white using
-// 4 * v * (1 - v) — used by Clarity to preserve highlights/shadows.
+// and adding (amount * detail) back. `midToneWeighted` clamps the boost
+// near pure black/white using 4 * v * (1 - v) — used by Clarity to
+// preserve highlights/shadows.
+//
+// `threshold` (0..255 in U8 detail-magnitude units) skips pixels in flat
+// areas — prevents noise amplification under aggressive sharpening.
+//
+// `useRatio` (sharpening only) scales R/G/B by Y_sharpened/Y_original
+// instead of additive boost — preserves chroma at high-contrast edges,
+// eliminates the colour fringing that the additive approach produces on
+// saturated highlights.
 // ========================================================================
-function _unsharpMaskLuma(d, w, h, radius, amount, midToneWeighted) {
+function _unsharpMaskLuma(d, w, h, radius, amount, midToneWeighted, threshold, useRatio) {
     if (amount === 0 || radius <= 0) return;
     var n = w * h;
     var Y = new Float32Array(n);
@@ -1464,23 +1578,39 @@ function _unsharpMaskLuma(d, w, h, radius, amount, midToneWeighted) {
         };
     }
 
+    var thr = (threshold | 0) > 0 ? (threshold | 0) / 255 : 0;
     for (var yyy = 0; yyy < h; yyy++) {
         var rowI = yyy * w;
         var rowP = yyy * w * 4;
         for (var xxx = 0; xxx < w; xxx++) {
             var fullY = Y[rowI + xxx];
             var detail = detailLookup(xxx, yyy, fullY);
+            if (thr > 0) {
+                var ad = detail < 0 ? -detail : detail;
+                if (ad < thr) continue;          // flat area — skip
+            }
             var boost = amount * detail;
             if (midToneWeighted) {
                 var v = fullY;
                 if (v < 0) v = 0; else if (v > 1) v = 1;
                 boost *= 4 * v * (1 - v);
             }
-            var add = boost * 255;
             var p = rowP + xxx * 4;
-            d[p]     = _clampU8(d[p]     + add);
-            d[p + 1] = _clampU8(d[p + 1] + add);
-            d[p + 2] = _clampU8(d[p + 2] + add);
+            if (useRatio) {
+                // Lightness-only via ratio scaling — chroma preserved.
+                var origY = fullY > 1e-4 ? fullY : 1e-4;
+                var newY  = fullY + boost;
+                if (newY < 0) newY = 0;
+                var ratio = newY / origY;
+                d[p]     = _clampU8(d[p]     * ratio);
+                d[p + 1] = _clampU8(d[p + 1] * ratio);
+                d[p + 2] = _clampU8(d[p + 2] * ratio);
+            } else {
+                var add = boost * 255;
+                d[p]     = _clampU8(d[p]     + add);
+                d[p + 1] = _clampU8(d[p + 1] + add);
+                d[p + 2] = _clampU8(d[p + 2] + add);
+            }
         }
     }
 }
@@ -1828,9 +1958,17 @@ var _tcParamRows = {};   // {tcShadows: {range, num}, ...}
 var _tcDragging = false;
 var _tcHitIdx = null;
 var _tcDownAt = null;     // {cx, cy, x, y}
+// Drag-state for grab-offset + drag-away-to-delete behaviour.
+var _tcGrabOff = null;    // {dx, dy} — offset from cursor to point centre at pointerdown
+var _tcOrigPoint = null;  // [x, y] — original coords, used for re-insertion
+var _tcOrigIdx = null;    // original index in the points array (for re-insert)
+var _tcRemoved = false;   // true while the point is temporarily detached
 // Currently-selected interior point index (for Delete/Backspace removal).
 // Endpoints (0 and last) are never selectable. null = nothing selected.
 var _tcSelectedIdx = null;
+// Number of pixels the cursor must move beyond the canvas bounds before a
+// drag detaches the point (drag-away-to-delete behaviour).
+var _TC_DETACH_PX = 15;
 
 function _tcCurrentChannel() {
     var S = _S(); return (S && S.developParams && S.developParams.tcChannel) || "rgb";
@@ -1994,6 +2132,20 @@ function _tcAttachCurveHandlers() {
         _tcHitIdx = _tcHitTest(cx, cy);
         _tcDownAt = { cx: cx, cy: cy };
         _tcDragging = false;
+        _tcRemoved = false;
+        _tcOrigIdx = _tcHitIdx;
+        if (_tcHitIdx !== null) {
+            var ptsDown = _tcActivePoints();
+            var hp = ptsDown[_tcHitIdx];
+            var hpC = _tcCurveToCanvas(hp[0], hp[1]);
+            // Offset from cursor to the actual point — preserved through
+            // the drag so the point doesn't snap to the cursor's centre.
+            _tcGrabOff = { dx: hpC.cx - cx, dy: hpC.cy - cy };
+            _tcOrigPoint = [hp[0], hp[1]];
+        } else {
+            _tcGrabOff = null;
+            _tcOrigPoint = null;
+        }
         // Selection: clicking a point selects it (interior only). Clicking
         // empty area clears selection. Confirmed on pointerup (so a drag
         // doesn't double-trigger selection logic).
@@ -2007,16 +2159,47 @@ function _tcAttachCurveHandlers() {
         if (Math.hypot(cx - _tcDownAt.cx, cy - _tcDownAt.cy) > 3) _tcDragging = true;
         if (_tcDragging && _tcHitIdx !== null) {
             var pts = _tcActivePoints().slice();
-            var pt = _tcCanvasToCurve(cx, cy);
+            var canRemove = _tcOrigIdx !== null && _tcOrigIdx > 0
+                         && _tcOrigPoint !== null
+                         && (_tcRemoved || _tcOrigIdx < pts.length - 1);
+            var outOfBounds = cx < -_TC_DETACH_PX || cx > c.width + _TC_DETACH_PX
+                           || cy < -_TC_DETACH_PX || cy > c.height + _TC_DETACH_PX;
+
+            if (canRemove && outOfBounds && !_tcRemoved) {
+                // Detach: temporarily remove this point. If the cursor comes
+                // back inside before pointerup it's re-inserted at the
+                // original position; otherwise the deletion is committed.
+                pts.splice(_tcHitIdx, 1);
+                _tcRemoved = true;
+                _tcSetActivePoints(pts);
+                _tcRedrawCurve();
+                _scheduleProxyRedraw();
+                return;
+            }
+            if (canRemove && !outOfBounds && _tcRemoved) {
+                // Re-insert at the original index/position; resume dragging.
+                pts.splice(_tcOrigIdx, 0, [_tcOrigPoint[0], _tcOrigPoint[1]]);
+                _tcRemoved = false;
+                _tcHitIdx = _tcOrigIdx;
+                _tcSetActivePoints(pts);
+            }
+            if (_tcRemoved) return;     // detached — don't update position
+
+            // Apply the grab offset so the point tracks the cursor without
+            // snapping to its centre.
+            var adjCx = cx + (_tcGrabOff ? _tcGrabOff.dx : 0);
+            var adjCy = cy + (_tcGrabOff ? _tcGrabOff.dy : 0);
+            var pt = _tcCanvasToCurve(adjCx, adjCy);
             // Endpoints can move vertically only (x stays at 0 or 255).
             if (_tcHitIdx === 0) pt.x = 0;
             else if (_tcHitIdx === pts.length - 1) pt.x = 255;
             else {
-                // Interior points can't pass their neighbors on x.
-                var leftX = pts[_tcHitIdx - 1][0];
-                var rightX = pts[_tcHitIdx + 1][0];
-                if (pt.x <= leftX) pt.x = leftX + 1;
-                if (pt.x >= rightX) pt.x = rightX - 1;
+                // Interior points: clamp horizontally so they can't cross
+                // their neighbours — prevents curve self-intersection.
+                var leftX  = pts[_tcHitIdx - 1][0] + 1;
+                var rightX = pts[_tcHitIdx + 1][0] - 1;
+                if (pt.x < leftX)  pt.x = leftX;
+                if (pt.x > rightX) pt.x = rightX;
             }
             pts[_tcHitIdx] = [pt.x, pt.y];
             _tcSetActivePoints(pts);
@@ -2054,6 +2237,13 @@ function _tcAttachCurveHandlers() {
             }
             _tcRedrawCurve();
         } else if (_tcDragging) {
+            // Drag-away-to-delete: if the point ended up detached, the
+            // splice already removed it from the points array — just
+            // commit and clear selection.
+            if (_tcRemoved) {
+                _tcSelectedIdx = null;
+                _tcRedrawCurve();
+            }
             _scheduleFullRedraw();
         }
         _tcResetDrag();
@@ -2086,7 +2276,15 @@ function _tcAttachCurveHandlers() {
         e.preventDefault();
     });
 }
-function _tcResetDrag() { _tcDragging = false; _tcHitIdx = null; _tcDownAt = null; }
+function _tcResetDrag() {
+    _tcDragging = false;
+    _tcHitIdx = null;
+    _tcDownAt = null;
+    _tcGrabOff = null;
+    _tcOrigPoint = null;
+    _tcOrigIdx = null;
+    _tcRemoved = false;
+}
 
 function _tcRedrawCurve() {
     if (!_tcCurveCanvas) return;
@@ -2568,81 +2766,58 @@ function _renderHistogram() {
     var W = _histCanvas.width, H = _histCanvas.height;
     hctx.clearRect(0, 0, W, H);
 
-    // Sample the displayed canvas at coarse stride so this stays cheap even
-    // on big docs. The displayed canvas already includes Develop output.
+    // Sample the displayed canvas — already includes Develop output.
     var src = S.canvas;
     var sw = src.width, sh = src.height;
     if (!sw || !sh) return;
-    var stride = Math.max(1, Math.floor(Math.sqrt((sw * sh) / 90000)));
     var sctx;
     try { sctx = src.getContext("2d"); } catch (e) { return; }
     var sample;
     try { sample = sctx.getImageData(0, 0, sw, sh); } catch (e) { return; }
     var sd = sample.data;
+    var pixelCount = sw * sh;
+    // Skip sampling: every Nth pixel for canvases > 1MP. nSkip=1 below 1MP,
+    // 2 at 2MP, 5 at 4MP — keeps the histogram cost ~constant per frame.
+    var nSkip = 1 + (pixelCount >> 20);
     var binsR = new Uint32Array(256), binsG = new Uint32Array(256), binsB = new Uint32Array(256);
     var sampleCount = 0;
-    for (var y = 0; y < sh; y += stride) {
-        var off = y * sw * 4;
-        for (var x = 0; x < sw; x += stride) {
-            var p = off + x * 4;
-            // Skip transparent pixels — without this, every pixel of canvas
-            // padding around the image dumps into bin 0, swamping the real
-            // distribution with a giant fake spike at black (which is why the
-            // histogram looked nothing like Lightroom's for the same image).
-            if (sd[p + 3] === 0) continue;
-            binsR[sd[p]]++; binsG[sd[p + 1]]++; binsB[sd[p + 2]]++;
-            sampleCount++;
-        }
+    var step = nSkip * 4;
+    for (var idx = 0, total = pixelCount * 4; idx < total; idx += step) {
+        // Skip transparent pixels — without this, every pixel of canvas
+        // padding around the image dumps into bin 0.
+        if (sd[idx + 3] === 0) continue;
+        binsR[sd[idx]]++; binsG[sd[idx + 1]]++; binsB[sd[idx + 2]]++;
+        sampleCount++;
     }
 
-    // RGB log-scale histogram. Each channel rendered as a smoothed filled
-    // shape (fill + thin stroke on top) over an additive ('lighter') blend
-    // so overlap regions show the secondary/tertiary colors the way
-    // Lightroom's histogram does.
-    function maxOf(a) { var m = 0; for (var i = 0; i < a.length; i++) if (a[i] > m) m = a[i]; return m; }
-    // 3-tap moving average smooths single-bin spikes that read as visual
-    // noise on the curve. Keeps endpoints as-is so clipping is honest.
-    function smoothBins(src) {
-        var out = new Float32Array(256);
-        out[0] = src[0]; out[255] = src[255];
-        for (var i = 1; i < 255; i++) out[i] = (src[i - 1] + src[i] + src[i + 1]) / 3;
-        return out;
+    // 98th-percentile ceiling per channel: sort bin counts descending and
+    // take the value at index floor(length*0.02). Prevents one outlier
+    // spike (e.g. a saturated background) from crushing the rest of the
+    // distribution to a flat line.
+    function ceiling98(bins) {
+        var arr = Array.prototype.slice.call(bins);
+        arr.sort(function (a, b) { return b - a; });
+        var i = Math.floor(arr.length * 0.02);
+        var v = arr[i];
+        return v > 0 ? v : 1;
     }
-    function drawBins(bins, fill, stroke) {
-        var smoothed = smoothBins(bins);
-        var mx = 0;
-        for (var i = 0; i < 256; i++) if (smoothed[i] > mx) mx = smoothed[i];
-        if (mx === 0) return;
-        var denom = Math.log(1 + mx);
-        hctx.beginPath();
-        hctx.moveTo(0, H);
-        for (var j = 0; j < 256; j++) {
-            var t = Math.log(1 + smoothed[j]) / denom;
-            var bx = (j / 255) * W;
-            var by = H - t * H;
-            hctx.lineTo(bx, by);
-        }
-        hctx.lineTo(W, H);
-        hctx.closePath();
+    function drawBars(bins, fill) {
+        var ceiling = ceiling98(bins);
+        var barW = W / 256;
         hctx.fillStyle = fill;
-        hctx.fill();
-        // Thin stroke on the top edge gives the curve a clean outline
-        // instead of the muddy edge that screen-blended bars produced.
-        hctx.beginPath();
-        for (var k = 0; k < 256; k++) {
-            var t2 = Math.log(1 + smoothed[k]) / denom;
-            var cx = (k / 255) * W;
-            var cy = H - t2 * H;
-            if (k === 0) hctx.moveTo(cx, cy); else hctx.lineTo(cx, cy);
+        for (var i = 0; i < 256; i++) {
+            var v = bins[i];
+            if (v <= 0) continue;
+            var t = v / ceiling;
+            if (t > 1) t = 1;
+            var bh = t * H;
+            hctx.fillRect(i * barW, H - bh, barW, bh);
         }
-        hctx.lineWidth = 1;
-        hctx.strokeStyle = stroke;
-        hctx.stroke();
     }
     hctx.globalCompositeOperation = "lighter";
-    drawBins(binsR, "rgba(220, 60, 60, 0.55)", "rgba(255, 90, 90, 0.85)");
-    drawBins(binsG, "rgba( 60,200, 80, 0.55)", "rgba(110,235,130, 0.85)");
-    drawBins(binsB, "rgba( 90,140,255, 0.55)", "rgba(140,180,255, 0.85)");
+    drawBars(binsR, "rgba(255, 0, 0, 0.25)");
+    drawBars(binsG, "rgba(0, 255, 0, 0.25)");
+    drawBars(binsB, "rgba(0, 0, 255, 0.25)");
     hctx.globalCompositeOperation = "source-over";
 
     // Clipping detection: a channel is "clipping" if more than CLIP_FRAC of
@@ -2819,23 +2994,24 @@ function _samplePreDevelopRegion(cx, cy, radius) {
 }
 
 // White-balance pick: compute Temperature + Tint to neutralize the picked
-// pixel. Pipeline math (linear):
-//   R *= 1 + temp/200
-//   B *= 1 - temp/200
-//   G *= 1 + temp/600 - tint/300
-// Solve for temp and tint so the post-WB triple is equal (= harmonic mean
-// of r and b):
-//   temp   = 200 * (b - r) / (r + b)
-//   target = 2 * r * b / (r + b)
-//   tint   = 300 * (g * (1 + temp/600) - target) / g
-// All math in linear space. Clamps to slider range.
+// pixel in Lab space. The pipeline shifts:
+//   new_a* = a* - tint * 0.15
+//   new_b* = b* + temperature * 0.3
+// To null both axes:  tint = a*/0.15, temperature = -b*/0.3.
 function _applyWBPick(px) {
     var S = _S(); if (!S || !S.developParams) return;
     var r = px.rL, g = px.gL, b = px.bL;
-    if (r + b < 1e-6 || g < 1e-6) return;     // near-black pixel — meaningless
-    var temp = 200 * (b - r) / (r + b);
-    var target = 2 * r * b / (r + b);
-    var tint = 300 * (g * (1 + temp / 600) - target) / g;
+    if (r + g + b < 1e-6) return;             // near-black pixel — meaningless
+    var X = 0.4124564 * r + 0.3575761 * g + 0.1804375 * b;
+    var Y = 0.2126729 * r + 0.7151522 * g + 0.0721750 * b;
+    var Z = 0.0193339 * r + 0.1191920 * g + 0.9503041 * b;
+    var fx = _labF(X / _LAB_WHITE_X);
+    var fy = _labF(Y);
+    var fz = _labF(Z / _LAB_WHITE_Z);
+    var aStar = 500 * (fx - fy);
+    var bStar = 200 * (fy - fz);
+    var tint = aStar / 0.15;
+    var temp = -bStar / 0.3;
     if (temp < -100) temp = -100; else if (temp > 100) temp = 100;
     if (tint < -100) tint = -100; else if (tint > 100) tint = 100;
     var p = S.developParams;
