@@ -308,9 +308,10 @@ body.develop-active #canvasArea canvas {
   font-weight: 500;
 }
 
-/* Per-row eyedropper button (WB on Temperature, white-point on Whites,
-   black-point on Blacks). Sits to the right of the numeric input. .armed
-   shows the selection state while waiting for a canvas click. */
+/* Eyedropper button — used by the dedicated calibration block at the top
+   of the Calibrate section (no longer attached to sliders). .armed shows
+   the selection state while waiting for a canvas click. .calibrated shows
+   that the calibration for this mode is currently set. */
 .develop-eyedrop {
   width: 18px;
   height: 18px;
@@ -330,6 +331,80 @@ body.develop-active #canvasArea canvas {
   color: var(--accent);
   border-color: var(--accent);
   background: var(--accent-dim, rgba(124,58,237,0.18));
+}
+.develop-eyedrop.calibrated {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* ═══════════════════════════════════════════
+   CALIBRATION BLOCK
+   Dedicated WB / White / Black eyedroppers at the top of the Calibrate
+   section. Each row is pick button + label + status text + clear "×"
+   button. Rows highlight when their calibration is currently set.
+   ═══════════════════════════════════════════ */
+.develop-calib-block {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 0 6px 0;
+  margin-bottom: 4px;
+  border-bottom: 1px dashed var(--border);
+}
+.develop-calib-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+}
+.develop-calib-label {
+  font-size: 10px;
+  color: var(--text-3);
+  flex: 1;
+  cursor: default;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.develop-calib-row.calibrated .develop-calib-label {
+  color: var(--text-1);
+  font-weight: 500;
+}
+.develop-calib-status {
+  font-size: 9px;
+  font-family: var(--mono, monospace);
+  color: var(--text-3);
+  min-width: 22px;
+  text-align: right;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.develop-calib-row.calibrated .develop-calib-status {
+  color: var(--accent);
+}
+.develop-calib-clear {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  background: transparent;
+  color: var(--text-3);
+  border: 1px solid transparent;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0;
+  visibility: hidden;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.develop-calib-row.calibrated .develop-calib-clear {
+  visibility: visible;
+}
+.develop-calib-clear:hover {
+  color: var(--accent);
+  border-color: var(--accent);
 }
 
 /* Gradient slider tracks for Temperature (blue→yellow) and Tint

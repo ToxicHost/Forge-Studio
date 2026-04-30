@@ -64,6 +64,17 @@ function defaultParams() {
         whites: 0,
         blacks: 0,
 
+        // === Calibration (set by eyedroppers — true remap, independent of sliders) ===
+        // Linear-RGB endpoints: pixel ≤ calibBlackLin → 0, ≥ calibWhiteLin → 1.
+        // Defaults preserve identity. Slider blacks/whites apply on top.
+        calibBlackLin: 0,
+        calibWhiteLin: 1,
+        // Lab a*/b* offset added to the Phase A.5 shift to neutralize a picked
+        // pixel. Defaults zero (no calibration). Slider Temperature/Tint apply
+        // on top.
+        calibLabA: 0,
+        calibLabB: 0,
+
         // === V1: Presence ===
         texture: 0,
         clarity: 0,
@@ -125,12 +136,24 @@ function defaultParams() {
 // gated on the source _version BEFORE bumping _version.
 function _migrateParams(p) {
     if (!p) return;
-    if ((p._version | 0) >= 2) return;
     var defaults = defaultParams();
-    Object.keys(defaults).forEach(function (k) {
+    // V1 → V2: fill every missing field with current defaults.
+    if ((p._version | 0) < 2) {
+        Object.keys(defaults).forEach(function (k) {
+            if (!(k in p)) p[k] = defaults[k];
+        });
+        p._version = 2;
+        return;
+    }
+    // Forward-fill for V2 docs that predate the calibration eyedropper
+    // fields. Any field added post-V2 with an identity default is safe to
+    // back-fill on load — without this, _calibIsActive misreads
+    // `undefined` calibWhiteLin (default 1) as "calibration set".
+    var v2NewKeys = ["calibBlackLin", "calibWhiteLin", "calibLabA", "calibLabB"];
+    for (var i = 0; i < v2NewKeys.length; i++) {
+        var k = v2NewKeys[i];
         if (!(k in p)) p[k] = defaults[k];
-    });
-    p._version = 2;
+    }
 }
 
 // ========================================================================
@@ -141,21 +164,23 @@ function _migrateParams(p) {
 // (Hoisted by the JS engine since they're function declarations below.)
 var SECTIONS = [
     {
-        id: "basic", label: "Color", open: true,
+        id: "basic", label: "Calibrate", open: true,
+        // Calibration eyedroppers (WB / White / Black) sit in their own
+        // block at the top of the section — see _buildCalibrationBlock.
+        // The sliders below are pure adjustments that apply *on top of*
+        // whatever the eyedroppers calibrated.
+        customBuild: _buildCalibrationBlock,
         rows: [
             { key: "temperature", label: "Temperature", min: -100, max: 100, step: 1, def: 0,
-              track: "temperature",
-              eyedropper: "wb", eyedropperTitle: "White balance — pick a neutral pixel (sets Temperature + Tint)" },
+              track: "temperature" },
             { key: "tint",        label: "Tint",        min: -100, max: 100, step: 1, def: 0, track: "tint" },
             { divider: true },
             { key: "exposure",    label: "Exposure",    min: -100, max: 100, step: 1, def: 0 },
             { key: "contrast",    label: "Contrast",    min: -100, max: 100, step: 1, def: 0 },
             { key: "highlights",  label: "Highlights",  min: -100, max: 100, step: 1, def: 0 },
             { key: "shadows",     label: "Shadows",     min: -100, max: 100, step: 1, def: 0 },
-            { key: "whites",      label: "Whites",      min: -100, max: 100, step: 1, def: 0,
-              eyedropper: "whites", eyedropperTitle: "White point — pick the brightest pixel that should be pure white" },
-            { key: "blacks",      label: "Blacks",      min: -100, max: 100, step: 1, def: 0,
-              eyedropper: "blacks", eyedropperTitle: "Black point — pick the darkest pixel that should be pure black" },
+            { key: "whites",      label: "Whites",      min: -100, max: 100, step: 1, def: 0 },
+            { key: "blacks",      label: "Blacks",      min: -100, max: 100, step: 1, def: 0 },
             { divider: true },
             { key: "vibrance",   label: "Vibrance",   min: -100, max: 100, step: 1, def: 0 },
             { key: "saturation", label: "Saturation", min: -100, max: 100, step: 1, def: 0 },
@@ -226,6 +251,9 @@ function _isIdentity(p) {
     if (((p.exposure | 0) !== 0) || ((p.contrast | 0) !== 0)) return false;
     if (((p.highlights | 0) !== 0) || ((p.shadows | 0) !== 0)) return false;
     if (((p.whites | 0) !== 0) || ((p.blacks | 0) !== 0)) return false;
+    // Calibration (set by eyedroppers — independent of sliders)
+    if ((p.calibBlackLin || 0) > 1e-6 || Math.abs((p.calibWhiteLin || 1) - 1) > 1e-6) return false;
+    if (Math.abs(p.calibLabA || 0) > 1e-6 || Math.abs(p.calibLabB || 0) > 1e-6) return false;
     if (((p.texture | 0) !== 0) || ((p.clarity | 0) !== 0)) return false;
     if (((p.vibrance | 0) !== 0) || ((p.saturation | 0) !== 0)) return false;
     if ((p.sharpenAmount | 0) !== 0) return false;
@@ -401,10 +429,17 @@ function _getLutA(p) {
 function _applyWhiteBalance(rLin, gLin, bLin, n, p) {
     var temp = p.temperature || 0;
     var tint = p.tint || 0;
-    if (temp === 0 && tint === 0) return;
+    // Calibration shifts (Lab a*/b*) from the WB eyedropper. Added on top of
+    // slider-driven shifts so the eyedropper truly *re-calibrates* (picked
+    // pixel becomes neutral) and the slider provides further adjustment.
+    var calibA = p.calibLabA || 0;
+    var calibB = p.calibLabB || 0;
+    var hasCalib = calibA !== 0 || calibB !== 0;
+    if (temp === 0 && tint === 0 && !hasCalib) return;
 
-    if (p._dragging) {
+    if (p._dragging && !hasCalib) {
         // V1-style RGB multipliers — fast path for slider drag.
+        // Skip when calibration is in play; a true Lab remap is needed.
         var rGain = 1 + temp / 200;
         var bGain = 1 - temp / 200;
         var gGain = 1 + temp / 600 - tint / 300;
@@ -416,9 +451,10 @@ function _applyWhiteBalance(rLin, gLin, bLin, n, p) {
         return;
     }
 
-    // Full-resolution Lab path.
-    var aShift = -tint * 0.15;
-    var bShift =  temp * 0.3;
+    // Full-resolution Lab path. Calibration shifts add to slider shifts so
+    // the picked-neutral target is preserved after subsequent slider tweaks.
+    var aShift = -tint * 0.15 + calibA;
+    var bShift =  temp * 0.3  + calibB;
     var invX = 1 / _LAB_WHITE_X, invZ = 1 / _LAB_WHITE_Z;
     var aDelta = aShift / 500;
     var bDelta = bShift / 200;
@@ -637,8 +673,16 @@ function _applyDevelopFull(ctx, w, h, p) {
     // slider extremes, which felt drastically more aggressive than Lightroom.
     // whitePoint < 1 brightens (output gets multiplied by 1/whitePoint > 1);
     // blackPoint > 0 clips dark pixels to 0 after the (r - bp) * invRange map.
-    var blackPoint = (p.blacks  || 0) / 500;
-    var whitePoint = 1 - (p.whites || 0) / 500;
+    // Calibration endpoints from the eyedroppers do a true linear remap:
+    //   pixel ≤ calibBlackLin → 0,  pixel ≥ calibWhiteLin → 1
+    // Slider blacks/whites apply *on top* as additional offset, so the
+    // user can fine-tune after calibrating.
+    var calibBlk = p.calibBlackLin || 0;
+    var calibWht = (p.calibWhiteLin == null) ? 1 : p.calibWhiteLin;
+    if (calibBlk < 0) calibBlk = 0; else if (calibBlk > 1) calibBlk = 1;
+    if (calibWht < 0) calibWht = 0; else if (calibWht > 1) calibWht = 1;
+    var blackPoint = calibBlk + (p.blacks  || 0) / 500;
+    var whitePoint = calibWht - (p.whites  || 0) / 500;
     var range = whitePoint - blackPoint;
     if (Math.abs(range) < 1e-4) range = 1e-4;
     var invRange = 1 / range;
@@ -650,8 +694,13 @@ function _applyDevelopFull(ctx, w, h, p) {
     var cNorm = (p.contrast || 0) * 0.0015;
     if (cNorm < -0.95) cNorm = -0.95; else if (cNorm > 0.95) cNorm = 0.95;
     var contrastSlope = Math.tan((cNorm + 1) * Math.PI / 4);
-    var doRemap = blackPoint !== 0 || whitePoint !== 1;
+    var doRemap = Math.abs(blackPoint) > 1e-6 || Math.abs(whitePoint - 1) > 1e-6;
     var doContrast = (p.contrast | 0) !== 0;
+    // Hard-clamp post-remap when calibration is active so the picked-white
+    // pixel renders as exact sRGB 255 (and picked-black as exact 0). Without
+    // this, the soft HDR shoulder in _lin2u8 turns "calibrated white" into
+    // ~241 instead of 255, defeating the point of the calibration.
+    var hardClamp = (calibBlk > 1e-6) || ((1 - calibWht) > 1e-6);
 
     for (var k = 0, m = 0; k < n; k++, m += 4) {
         var r = rLin[k], g = gLin[k], b = bLin[k];
@@ -659,6 +708,11 @@ function _applyDevelopFull(ctx, w, h, p) {
             r = (r - blackPoint) * invRange;
             g = (g - blackPoint) * invRange;
             b = (b - blackPoint) * invRange;
+            if (hardClamp) {
+                if (r < 0) r = 0; else if (r > 1) r = 1;
+                if (g < 0) g = 0; else if (g > 1) g = 1;
+                if (b < 0) b = 0; else if (b > 1) b = 1;
+            }
         }
         // clamp + re-encode via 4096-entry LUT (no Math.pow in the hot loop)
         d[m]     = _lin2u8(r);
@@ -1943,10 +1997,12 @@ function _buildSection(sec) {
     var body = document.createElement("div");
     body.className = "develop-section-body";
     if (sec.customBuild) {
-        // Custom widget section (Tone Curve, HSL tabs, Color Grading wheels).
+        // Custom widget section (Tone Curve, HSL tabs, Color Grading wheels,
+        // or — for "Calibrate" — the calibration eyedropper block).
         // The build function attaches its own DOM and registers a sync hook.
         sec.customBuild(body);
-    } else {
+    }
+    if (sec.rows) {
         sec.rows.forEach(function (row) {
             if (row.divider) {
                 var d = document.createElement("div"); d.className = "develop-section-divider";
@@ -2695,6 +2751,127 @@ function _buildColorGradingSection(body) {
     });
 }
 
+// Map an eyedropper mode to the developParams keys it calibrates. Used to
+// detect "this row currently has a non-default calibration" and to clear it.
+var _CALIB_KEYS = {
+    wb:     ["calibLabA", "calibLabB"],
+    blacks: ["calibBlackLin"],
+    whites: ["calibWhiteLin"]
+};
+
+// ========================================================================
+// CALIBRATION BLOCK — dedicated WB / White / Black eyedroppers shown at
+// the top of the "Calibrate" section. These are calibration pickers (true
+// remap), independent of the Temperature / Whites / Blacks sliders below
+// them. Each row: pick button + label + active-state badge + clear button
+// (the last is shown only while a calibration is active).
+// ========================================================================
+var _calibBlockEls = {};
+
+function _buildCalibrationBlock(body) {
+    var wrap = document.createElement("div");
+    wrap.className = "develop-calib-block";
+    body.appendChild(wrap);
+
+    function row(mode, label, title) {
+        var r = document.createElement("div");
+        r.className = "develop-calib-row";
+        r.dataset.mode = mode;
+
+        var pick = document.createElement("button");
+        pick.type = "button";
+        pick.className = "develop-eyedrop develop-calib-pick";
+        pick.title = title + "\nClick to pick, then click the image. Shift-click to clear.";
+        pick.innerHTML =
+            '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"' +
+            ' stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
+            '<path d="M3 21v-3l9-9 3 3-9 9H3z"/><circle cx="19" cy="5" r="3"/></svg>';
+        pick.addEventListener("click", function (e) {
+            e.preventDefault(); e.stopPropagation();
+            if (e.shiftKey || e.altKey || e.metaKey) {
+                if (!_clearCalib(mode) && _pickMode === mode) _exitPickMode();
+                return;
+            }
+            _enterPickMode(mode, pick);
+        });
+        pick.addEventListener("contextmenu", function (e) {
+            e.preventDefault(); e.stopPropagation();
+            _clearCalib(mode);
+        });
+        r.appendChild(pick);
+
+        var lbl = document.createElement("span");
+        lbl.className = "develop-calib-label";
+        lbl.textContent = label;
+        r.appendChild(lbl);
+
+        var status = document.createElement("span");
+        status.className = "develop-calib-status";
+        status.textContent = "—";
+        status.title = "No calibration set";
+        r.appendChild(status);
+
+        var clear = document.createElement("button");
+        clear.type = "button";
+        clear.className = "develop-calib-clear";
+        clear.title = "Clear " + label.toLowerCase() + " calibration";
+        clear.textContent = "×";
+        clear.addEventListener("click", function (e) {
+            e.preventDefault(); e.stopPropagation();
+            _clearCalib(mode);
+        });
+        r.appendChild(clear);
+
+        wrap.appendChild(r);
+        _calibBlockEls[mode] = { row: r, pick: pick, status: status, clear: clear };
+    }
+
+    row("wb",     "White Balance", "White balance — pick a neutral pixel that should render as gray");
+    row("whites", "White Point",   "White point — pick the brightest pixel that should render as pure white");
+    row("blacks", "Black Point",   "Black point — pick the darkest pixel that should render as pure black");
+
+    _registerCustomSync(_syncCalibrationBlock);
+}
+
+function _syncCalibrationBlock(p) {
+    if (!p) return;
+    Object.keys(_calibBlockEls).forEach(function (mode) {
+        var el = _calibBlockEls[mode];
+        if (!el) return;
+        var active = _calibIsActive(p, mode);
+        el.row.classList.toggle("calibrated", active);
+        el.pick.classList.toggle("calibrated", active);
+        el.status.textContent = active ? "set" : "—";
+        el.status.title = active ? "Calibration set — click × to clear" : "No calibration set";
+    });
+}
+function _calibIsActive(p, mode) {
+    if (!p || !mode) return false;
+    var keys = _CALIB_KEYS[mode]; if (!keys) return false;
+    var defs = defaultParams();
+    for (var i = 0; i < keys.length; i++) {
+        var k = keys[i];
+        if (Math.abs((p[k] || 0) - (defs[k] || 0)) > 1e-6) return true;
+    }
+    return false;
+}
+function _clearCalib(mode) {
+    var S = _S(); if (!S || !S.developParams) return false;
+    var keys = _CALIB_KEYS[mode]; if (!keys) return false;
+    var defs = defaultParams();
+    var changed = false;
+    for (var i = 0; i < keys.length; i++) {
+        var k = keys[i];
+        if (S.developParams[k] !== defs[k]) { S.developParams[k] = defs[k]; changed = true; }
+    }
+    if (changed) {
+        syncPanel();
+        _bumpCompositeCache();
+        _scheduleFullRedraw();
+    }
+    return changed;
+}
+
 function _buildSliderRow(field) {
     var row = document.createElement("div");
     row.className = "develop-row";
@@ -2718,23 +2895,6 @@ function _buildSliderRow(field) {
     num.min = field.min; num.max = field.max; num.step = field.step;
     num.value = field.def;
     row.appendChild(num);
-
-    if (field.eyedropper) {
-        var pickBtn = document.createElement("button");
-        pickBtn.type = "button";
-        pickBtn.className = "develop-eyedrop";
-        pickBtn.title = field.eyedropperTitle || "Pick from image";
-        pickBtn.dataset.mode = field.eyedropper;
-        pickBtn.innerHTML =
-            '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"' +
-            ' stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
-            '<path d="M3 21v-3l9-9 3 3-9 9H3z"/><circle cx="19" cy="5" r="3"/></svg>';
-        pickBtn.addEventListener("click", function (e) {
-            e.preventDefault(); e.stopPropagation();
-            _enterPickMode(field.eyedropper, pickBtn);
-        });
-        row.appendChild(pickBtn);
-    }
 
     function commit(v, isDrag) {
         v = Number(v);
@@ -2937,7 +3097,18 @@ function _undoReset() {
 }
 
 // ========================================================================
-// EYEDROPPERS — pick a pixel from the canvas to set WB / black / white.
+// EYEDROPPERS — pick a pixel from the canvas to CALIBRATE WB / black /
+// white. These are true calibration pickers, not slider helpers:
+//   • Black eyedropper: picked pixel becomes pure black (and anything
+//     darker also clips to black). Stored as a linear-RGB endpoint.
+//   • White eyedropper: picked pixel becomes pure white (and anything
+//     brighter also clips). Stored as a linear-RGB endpoint.
+//   • White-balance eyedropper: picked pixel becomes neutral gray.
+//     Stored as a Lab a*/b* offset that the pipeline applies on top of
+//     the user's Temperature/Tint slider shifts.
+// The user's Temperature / Tint / Whites / Blacks sliders are *not*
+// touched by the eyedropper — they remain available for further
+// adjustment relative to the calibrated baseline.
 //
 // All pickers read the PRE-DEVELOP composite (so already-applied develop
 // settings don't double-count). We reuse _buildBeforeBuffer() from the
@@ -3039,11 +3210,14 @@ function _samplePreDevelopRegion(cx, cy, radius) {
     };
 }
 
-// White-balance pick: compute Temperature + Tint to neutralize the picked
-// pixel in Lab space. The pipeline shifts:
-//   new_a* = a* - tint * 0.15
-//   new_b* = b* + temperature * 0.3
-// To null both axes:  tint = a*/0.15, temperature = -b*/0.3.
+// White-balance pick (CALIBRATION): store the Lab a*/b* shifts needed to
+// neutralize the picked pixel. The pipeline applies these on top of the
+// slider-driven shifts, so picked → neutral gray, and the user's
+// Temperature/Tint sliders remain free for further adjustment.
+//   pipeline aShift = -tint * 0.15 + calibLabA
+//   pipeline bShift =  temp * 0.3  + calibLabB
+// To null the picked pixel's a*/b* we need:  calibLabA = -aStar,
+// calibLabB = -bStar.
 function _applyWBPick(px) {
     var S = _S(); if (!S || !S.developParams) return;
     var r = px.rL, g = px.gL, b = px.bL;
@@ -3056,53 +3230,50 @@ function _applyWBPick(px) {
     var fz = _labF(Z / _LAB_WHITE_Z);
     var aStar = 500 * (fx - fy);
     var bStar = 200 * (fy - fz);
-    var tint = aStar / 0.15;
-    var temp = -bStar / 0.3;
-    if (temp < -100) temp = -100; else if (temp > 100) temp = 100;
-    if (tint < -100) tint = -100; else if (tint > 100) tint = 100;
     var p = S.developParams;
-    p.temperature = Math.round(temp);
-    p.tint = Math.round(tint);
+    p.calibLabA = -aStar;
+    p.calibLabB = -bStar;
     p.enabled = true;
     syncPanel();
     _bumpCompositeCache();
     _scheduleFullRedraw();
 }
 
-// Black-point pick: set the Blacks slider so the picked pixel's luminance
-// becomes the new lower bound (will render as 0 / pure black).
-//   blackPoint (linear) = blacks/500
-//   blacks = 500 * Y_lin
-// Use Rec.709 luminance for "perceived darkness".
+// Black-point pick (CALIBRATION): the picked pixel becomes the new black
+// endpoint. Pixels at or below this luminance render as pure black; pixels
+// above scale linearly into the new range. Use Rec.709 luminance.
 function _applyBlackPick(px) {
     var S = _S(); if (!S || !S.developParams) return;
     var Y = 0.2126 * px.rL + 0.7152 * px.gL + 0.0722 * px.bL;
     if (Y < 0) Y = 0; else if (Y > 1) Y = 1;
-    var blacks = 500 * Y;
-    if (blacks > 100) blacks = 100;
-    S.developParams.blacks = Math.round(blacks);
-    S.developParams.enabled = true;
+    var p = S.developParams;
+    // Refuse a black calibration that would collide with the white
+    // calibration (range collapse → divide-by-zero in the remap).
+    var calibWht = (p.calibWhiteLin == null) ? 1 : p.calibWhiteLin;
+    if (Y >= calibWht - 0.02) Y = calibWht - 0.02;
+    if (Y < 0) Y = 0;
+    p.calibBlackLin = Y;
+    p.enabled = true;
     syncPanel();
     _bumpCompositeCache();
     _scheduleFullRedraw();
 }
 
-// White-point pick: set the Whites slider so the picked pixel's brightest
-// channel becomes the new upper bound (renders as pure white).
-//   whitePoint (linear) = 1 - whites/500
-//   For r_out = r/whitePoint = 1 we need whitePoint = V_lin
-//   ⇒ whites = 500 * (1 - V_lin)
-// Use the max channel — most appropriate for the "white point" concept.
+// White-point pick (CALIBRATION): the picked pixel becomes the new white
+// endpoint. Pixels at or above this brightness render as pure white;
+// pixels below scale linearly. Use the max channel — matches the
+// conventional "this is the brightest non-clipping color" semantics.
 function _applyWhitePick(px) {
     var S = _S(); if (!S || !S.developParams) return;
     var V = px.rL > px.gL ? (px.rL > px.bL ? px.rL : px.bL) : (px.gL > px.bL ? px.gL : px.bL);
-    if (V < 0) V = 0;
+    if (V < 0) V = 0; else if (V > 1) V = 1;
     if (V < 0.05) return;                     // refuse near-black
-    var whites = 500 * (1 - V);
-    if (whites < -100) whites = -100;
-    if (whites > 100)  whites = 100;
-    S.developParams.whites = Math.round(whites);
-    S.developParams.enabled = true;
+    var p = S.developParams;
+    var calibBlk = p.calibBlackLin || 0;
+    if (V <= calibBlk + 0.02) V = calibBlk + 0.02;
+    if (V > 1) V = 1;
+    p.calibWhiteLin = V;
+    p.enabled = true;
     syncPanel();
     _bumpCompositeCache();
     _scheduleFullRedraw();
