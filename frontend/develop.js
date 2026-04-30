@@ -1808,6 +1808,12 @@ function _tcCurrentChannel() {
 }
 function _tcActivePoints() {
     var S = _S(); var p = S && S.developParams; if (!p) return [[0, 0], [255, 255]];
+    // Lazy-init the per-channel arrays if missing — covers the case where
+    // a V1 doc made it past syncPanel migration (e.g., panel opened mid-load).
+    if (!p.tcPoints)  p.tcPoints  = [[0, 0], [255, 255]];
+    if (!p.tcPointsR) p.tcPointsR = [[0, 0], [255, 255]];
+    if (!p.tcPointsG) p.tcPointsG = [[0, 0], [255, 255]];
+    if (!p.tcPointsB) p.tcPointsB = [[0, 0], [255, 255]];
     var ch = p.tcChannel || "rgb";
     if (ch === "r") return p.tcPointsR;
     if (ch === "g") return p.tcPointsG;
@@ -2247,9 +2253,10 @@ function _buildHSLSection(body) {
                     if (v < min) v = min; if (v > max) v = max;
                     var S = _S(); if (!S) return;
                     if (!S.developParams) S.developParams = defaultParams();
-                    var arr = m === "hue" ? S.developParams.hslHue
-                            : m === "sat" ? S.developParams.hslSat
-                                          : S.developParams.hslLum;
+                    // Lazy-init the bands array if missing (V1 docs predate V2).
+                    var key = m === "hue" ? "hslHue" : m === "sat" ? "hslSat" : "hslLum";
+                    if (!S.developParams[key]) S.developParams[key] = [0, 0, 0, 0, 0, 0, 0, 0];
+                    var arr = S.developParams[key];
                     arr[idx] = v;
                     range.value = v; num.value = v;
                     if (!S.developParams.enabled) {
@@ -2495,6 +2502,13 @@ function syncPanel() {
     var S = _S(); if (!S) return;
     var p = S.developParams;
     if (!p) { p = defaultParams(); S.developParams = p; }
+    // Run migration HERE (not just inside applyToContext): the panel reads
+    // and the UI handlers WRITE V2 fields (tcPoints, hslHue, etc.) before
+    // the pipeline ever runs. Without this, a V1 doc loaded from disk has
+    // tcPoints/hslHue as undefined, and the first click on the curve
+    // canvas crashes silently inside _tcHitTest (undefined.length), and
+    // HSL slider commits crash on `arr[idx] = v`.
+    _migrateParams(p);
     if (_enableToggleEl) _enableToggleEl.classList.toggle("on", !!p.enabled);
     Object.keys(_rowEls).forEach(function (key) {
         var el = _rowEls[key];
