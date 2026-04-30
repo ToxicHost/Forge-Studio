@@ -2565,7 +2565,7 @@ function _buildHSLSection(body) {
             var num = document.createElement("input");
             num.type = "number"; num.min = min; num.max = max; num.step = 1; num.value = 0;
             row.appendChild(num);
-            (function (m, idx) {
+            (function (m, idx, rangeEl, numEl) {
                 function commit(v, live) {
                     v = Number(v); if (isNaN(v)) v = 0;
                     if (v < min) v = min; if (v > max) v = max;
@@ -2576,18 +2576,19 @@ function _buildHSLSection(body) {
                     if (!S.developParams[key]) S.developParams[key] = [0, 0, 0, 0, 0, 0, 0, 0];
                     var arr = S.developParams[key];
                     arr[idx] = v;
-                    range.value = v; num.value = v;
+                    rangeEl.value = v; numEl.value = v;
                     if (!S.developParams.enabled) {
                         S.developParams.enabled = true;
                         if (_enableToggleEl) _enableToggleEl.classList.add("on");
                     }
                     if (live) _scheduleProxyRedraw(); else _scheduleFullRedraw();
                 }
-                range.addEventListener("input",  function () { commit(range.value, true); });
-                range.addEventListener("change", function () { commit(range.value, false); });
-                num.addEventListener("change",   function () { commit(num.value, false); });
+                rangeEl.addEventListener("input",  function () { commit(rangeEl.value, true); });
+                rangeEl.addEventListener("change", function () { commit(rangeEl.value, false); });
+                numEl.addEventListener("change",   function () { commit(numEl.value, false); });
+                numEl.addEventListener("input",    function () { commit(numEl.value, true); });
                 lbl.addEventListener("dblclick", function () { commit(0, false); });
-            })(mode, bandIdx);
+            })(mode, bandIdx, range, num);
             wrap.appendChild(row);
             _hslBandRows[mode][k] = { range: range, num: num };
         }
@@ -2978,10 +2979,22 @@ function _renderHistogram() {
     if (!sw || !sh) return;
     var sctx;
     try { sctx = src.getContext("2d"); } catch (e) { return; }
+    // Compute the image's rect inside the display canvas so we can ignore
+    // the surrounding "void" padding that the display canvas paints. Inside
+    // the image rect, alpha=0 pixels count as bin 0 (the user sees them
+    // against the dark backdrop and expects the histogram to reflect that);
+    // outside the image rect, padding pixels are excluded entirely.
+    var z = S.zoom || { scale: 1, ox: 0, oy: 0 };
+    var rx0 = Math.max(0, Math.floor(z.ox));
+    var ry0 = Math.max(0, Math.floor(z.oy));
+    var rx1 = Math.min(sw, Math.ceil(z.ox + S.W * z.scale));
+    var ry1 = Math.min(sh, Math.ceil(z.oy + S.H * z.scale));
+    if (rx1 <= rx0 || ry1 <= ry0) { rx0 = 0; ry0 = 0; rx1 = sw; ry1 = sh; }
+    var rw = rx1 - rx0, rh = ry1 - ry0;
     var sample;
-    try { sample = sctx.getImageData(0, 0, sw, sh); } catch (e) { return; }
+    try { sample = sctx.getImageData(rx0, ry0, rw, rh); } catch (e) { return; }
     var sd = sample.data;
-    var pixelCount = sw * sh;
+    var pixelCount = rw * rh;
     // Skip sampling: every Nth pixel for canvases > 1MP. nSkip=1 below 1MP,
     // 2 at 2MP, 5 at 4MP — keeps the histogram cost ~constant per frame.
     var nSkip = 1 + (pixelCount >> 20);
@@ -2989,32 +3002,47 @@ function _renderHistogram() {
     var sampleCount = 0;
     var step = nSkip * 4;
     for (var idx = 0, total = pixelCount * 4; idx < total; idx += step) {
-        // Skip transparent pixels — without this, every pixel of canvas
-        // padding around the image dumps into bin 0.
-        if (sd[idx + 3] === 0) continue;
+        // We're already inside the image rect, so alpha=0 means a
+        // transparent pixel within the image bounds (e.g. a layer mask or
+        // erased area). The user sees those rendered against the dark
+        // canvas backdrop — count them as bin-0 in all channels so the
+        // histogram matches what they see, instead of disappearing.
         binsR[sd[idx]]++; binsG[sd[idx + 1]]++; binsB[sd[idx + 2]]++;
         sampleCount++;
     }
 
-    // 98th-percentile ceiling per channel: sort bin counts descending and
-    // take the value at index floor(length*0.02). Prevents one outlier
-    // spike (e.g. a saturated background) from crushing the rest of the
-    // distribution to a flat line.
-    function ceiling98(bins) {
-        var arr = Array.prototype.slice.call(bins);
-        arr.sort(function (a, b) { return b - a; });
-        var i = Math.floor(arr.length * 0.02);
-        var v = arr[i];
-        return v > 0 ? v : 1;
+    // Per-channel ceiling. Old code took the 98th percentile across ALL
+    // 256 bins; for a concentrated distribution (e.g. a fully-white image
+    // where only bin 255 has content) that returns 0 and falls back to 1,
+    // which made every single stray pixel render as a full-height bar —
+    // so a uniform image looked like multiple noise spikes. Compute the
+    // 95th percentile across NON-ZERO bins instead, so:
+    //   • A single dominant bin keeps the ceiling near its own count and
+    //     renders as one tall bar with no fake noise around it.
+    //   • A spread distribution still gets the percentile-clip behaviour
+    //     so one outlier doesn't crush the rest of the chart.
+    function ceilingP(bins) {
+        var nz = [];
+        for (var i = 0; i < bins.length; i++) if (bins[i] > 0) nz.push(bins[i]);
+        if (nz.length === 0) return 1;
+        nz.sort(function (a, b) { return b - a; });
+        var idx = Math.floor(nz.length * 0.05);
+        if (idx >= nz.length) idx = nz.length - 1;
+        var v = nz[idx];
+        return v > 0 ? v : nz[0];
     }
     function drawBars(bins, fill) {
-        var ceiling = ceiling98(bins);
+        var ceiling = ceilingP(bins);
+        // Square-root compression so a 100× spike doesn't crush the rest
+        // of the distribution into invisibility, while still ranking bins
+        // monotonically.
+        var sqCeil = Math.sqrt(ceiling);
         var barW = W / 256;
         hctx.fillStyle = fill;
         for (var i = 0; i < 256; i++) {
             var v = bins[i];
             if (v <= 0) continue;
-            var t = v / ceiling;
+            var t = Math.sqrt(v) / sqCeil;
             if (t > 1) t = 1;
             var bh = t * H;
             hctx.fillRect(i * barW, H - bh, barW, bh);
