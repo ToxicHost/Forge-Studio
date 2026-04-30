@@ -3523,12 +3523,39 @@ function _compositeFloatWithMask(planes, mask, canvasUint8) {
     }
 }
 
-function setFloatSource(floatUrl, maskUrl, w, h) {
-    // Null floatUrl = clear. Same (float, mask) URL pair = no-op.
-    // Otherwise fetch float + (optional) mask, run the load-time
-    // composite over the canvas pixels read from StudioCore at the
-    // moment of the call, and stash the result. The pipeline's float
-    // branch reads from the same planar buffers as before.
+function _decodeImageToRGBA(url, w, h) {
+    // Rasterize an arbitrary image URL (file URL or data URL) into a
+    // throwaway canvas at the requested dimensions, returning the raw
+    // RGBA Uint8ClampedArray. Used as the canvas source for the AD
+    // mask composite — we deliberately do NOT read from Studio's live
+    // canvas because the visible composite hasn't necessarily flushed
+    // by the time setFloatSource fires (Studio's redraw is rAF-deferred).
+    return new Promise(function (resolve, reject) {
+        var im = new Image();
+        im.onload = function () {
+            try {
+                var c = document.createElement("canvas");
+                c.width = w; c.height = h;
+                var cx = c.getContext("2d");
+                cx.drawImage(im, 0, 0, w, h);
+                resolve(cx.getImageData(0, 0, w, h).data);
+            } catch (e) { reject(e); }
+        };
+        im.onerror = function () { reject(new Error("image source failed to load")); };
+        im.src = url;
+    });
+}
+
+function setFloatSource(floatUrl, maskUrl, sourceUrl, w, h) {
+    // Null floatUrl = clear. Same (float, mask, source) URL triple = no-op.
+    // Otherwise fetch float + (optional) mask + (optional) source image,
+    // composite at load time, and stash the result.
+    //
+    // sourceUrl is the canonical post-modification image (saved PNG/JPG
+    // data URL or /file= URL). When a mask is present, we draw this
+    // image into a throwaway canvas at (w, h) and read its pixel data —
+    // this gives us deterministic post-AD pixels regardless of whether
+    // Studio's visible canvas has finished its async redraw.
     if (!floatUrl) {
         _floatSrc = null;
         _floatSrcLoading = null;
@@ -3539,10 +3566,11 @@ function setFloatSource(floatUrl, maskUrl, w, h) {
     if (_floatSrc
             && _floatSrc.url === floatUrl
             && _floatSrc.maskUrl === (maskUrl || "")
+            && _floatSrc.sourceUrl === (sourceUrl || "")
             && _floatSrc.w === w && _floatSrc.h === h) {
         return;
     }
-    var token = { url: floatUrl, maskUrl: maskUrl || "", w: w, h: h };
+    var token = { url: floatUrl, maskUrl: maskUrl || "", sourceUrl: sourceUrl || "", w: w, h: h };
     _floatSrcLoading = token;
 
     var floatP = fetch(floatUrl).then(function (r) {
@@ -3552,42 +3580,35 @@ function setFloatSource(floatUrl, maskUrl, w, h) {
     // Mask is optional — when absent, resolve to null and skip composite.
     var maskP = maskUrl
         ? _decodeMaskPng(maskUrl, w, h).catch(function (e) {
-            // Mask fetch/decode failure is non-fatal: fall back to the
-            // V1 plain-float path so user still gets HP precision
-            // outside AD regions (face will be slightly off but most
-            // of the image still benefits).
             console.warn(TAG, "blend-mask decode failed, falling back to plain HP:", e);
             return null;
         })
         : Promise.resolve(null);
+    // Source image is needed only when we have a mask to composite with.
+    var sourceP = (maskUrl && sourceUrl)
+        ? _decodeImageToRGBA(sourceUrl, w, h).catch(function (e) {
+            console.warn(TAG, "source image decode failed, falling back to plain HP:", e);
+            return null;
+        })
+        : Promise.resolve(null);
 
-    Promise.all([floatP, maskP]).then(function (results) {
+    Promise.all([floatP, maskP, sourceP]).then(function (results) {
         if (_floatSrcLoading !== token) return;  // superseded
         try {
             var planes = _splitInterleavedRGB(results[0], w, h);
             var maskArr = results[1];
+            var sourceRGBA = results[2];
             var hasMask = false;
-            if (maskArr) {
-                // NOTE: reads composited canvas (all visible layers).
-                // For V1 we treat that as authoritative for AD regions —
-                // if the user has painted layers on top, the composite
-                // mixes float-base with painted-canvas in the AD areas,
-                // which is a strictly better outcome than dropping float.
-                var S = _S();
-                if (S && S.canvas) {
-                    var ctx = S.canvas.getContext("2d");
-                    if (ctx && S.W === w && S.H === h) {
-                        var u8 = ctx.getImageData(0, 0, w, h).data;
-                        _compositeFloatWithMask(planes, maskArr, u8);
-                        hasMask = true;
-                    } else {
-                        console.warn(TAG, "skipping mask composite — canvas dims mismatch (", S && S.W, S && S.H, "vs", w, h, ")");
-                    }
-                }
+            if (maskArr && sourceRGBA) {
+                _compositeFloatWithMask(planes, maskArr, sourceRGBA);
+                hasMask = true;
+            } else if (maskArr && !sourceRGBA) {
+                console.warn(TAG, "have mask but no source image — skipping composite");
             }
             _floatSrc = {
                 url: floatUrl,
                 maskUrl: maskUrl || "",
+                sourceUrl: sourceUrl || "",
                 w: w, h: h,
                 r: planes.r, g: planes.g, b: planes.b,
                 hasMask: hasMask,

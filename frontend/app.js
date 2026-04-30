@@ -878,14 +878,22 @@ async function populateDropdowns() {
       }
     };
 
+    // Defaults / session-restore stashes the intended value in
+    // dataset.pendingValue when the dropdown's options haven't been
+    // populated yet. We honor that BEFORE the live .value when re-
+    // populating, otherwise the rebuilt <option selected> for the HTML
+    // default wins and the user's saved choice is silently discarded.
+    const _pickPrev = (el) => el.dataset.pendingValue || el.value;
+
     // Model selector in settings
     const modelSelect = document.getElementById("paramModel");
     if (modelSelect) {
-      const prev = modelSelect.value;
+      const prev = _pickPrev(modelSelect);
       modelSelect.innerHTML = models.map(m =>
         `<option value="${m.title}">${m.title}</option>`
       ).join("");
       restoreSelection(modelSelect, prev);
+      delete modelSelect.dataset.pendingValue;
       // attach is idempotent — second call returns existing handle.
       window.StudioSearchableSelect?.attach(modelSelect, {
         placeholder: "— Select model —",
@@ -896,11 +904,12 @@ async function populateDropdowns() {
     // Sampler dropdown
     const samplerSelect = document.getElementById("paramSampler");
     if (samplerSelect) {
-      const prev = samplerSelect.value;
+      const prev = _pickPrev(samplerSelect);
       samplerSelect.innerHTML = samplers.map(s =>
         `<option value="${s.name}" ${s.name === "DPM++ 2M SDE" ? "selected" : ""}>${s.name}</option>`
       ).join("");
       restoreSelection(samplerSelect, prev);
+      delete samplerSelect.dataset.pendingValue;
       window.StudioSearchableSelect?.attach(samplerSelect, {
         placeholder: "— Select sampler —",
         searchPlaceholder: "Filter samplers…",
@@ -910,45 +919,49 @@ async function populateDropdowns() {
     // Scheduler dropdown
     const schedSelect = document.getElementById("paramScheduler");
     if (schedSelect) {
-      const prev = schedSelect.value;
+      const prev = _pickPrev(schedSelect);
       schedSelect.innerHTML = schedulers.map(s =>
         `<option value="${s.label}" ${s.label === "Karras" ? "selected" : ""}>${s.label}</option>`
       ).join("");
       restoreSelection(schedSelect, prev);
+      delete schedSelect.dataset.pendingValue;
     }
 
     // Hires Fix upscaler dropdown
     const hrUpscaler = document.getElementById("paramHrUpscaler");
     if (hrUpscaler && upscalers.length) {
-      const prev = hrUpscaler.value;
+      const prev = _pickPrev(hrUpscaler);
       hrUpscaler.innerHTML =
         '<option value="Latent">Latent</option>' +
         upscalers.map(u =>
           `<option value="${u.name}">${u.name}</option>`
         ).join("");
       restoreSelection(hrUpscaler, prev);
+      delete hrUpscaler.dataset.pendingValue;
     }
 
     // Standalone upscale dropdown (no Latent option — always real upscaler)
     const upscaleModel = document.getElementById("paramUpscaleModel");
     if (upscaleModel && upscalers.length) {
-      const prev = upscaleModel.value;
+      const prev = _pickPrev(upscaleModel);
       upscaleModel.innerHTML = upscalers.map(u =>
         `<option value="${u.name}" ${u.name === "R-ESRGAN 4x+" ? "selected" : ""}>${u.name}</option>`
       ).join("");
       restoreSelection(upscaleModel, prev);
+      delete upscaleModel.dataset.pendingValue;
     }
 
     // Hires Fix checkpoint dropdown
     const hrCheckpoint = document.getElementById("paramHrCheckpoint");
     if (hrCheckpoint) {
-      const prev = hrCheckpoint.value;
+      const prev = _pickPrev(hrCheckpoint);
       hrCheckpoint.innerHTML =
         '<option value="Same">Same</option>' +
         models.map(m =>
           `<option value="${m.title}">${m.title}</option>`
         ).join("");
       restoreSelection(hrCheckpoint, prev);
+      delete hrCheckpoint.dataset.pendingValue;
     }
 
     // Status bar — fetch actual loaded model
@@ -1677,14 +1690,20 @@ function displayOnCanvas(imgSrc, opts) {
     // High Precision: bind/unbind the Develop module's float source to
     // match what we just put on the canvas. Sender passes opts.floatPath
     // when the image came from a generation with a sidecar; opts.maskPath
-    // is the optional V2 blend-mask sidecar (AD/brush composite). If we
-    // pass null we clear so a previously-bound buffer doesn't leak across.
+    // is the optional V2 blend-mask sidecar (AD/brush composite). The
+    // third arg (imgSrc — the saved image's data URL or /file= URL) is
+    // what Develop reads as the canvas pixels for the AD-mask composite.
+    // We deliberately pass the source URL instead of letting Develop
+    // read from S.canvas, because Studio's redraw is rAF-deferred and
+    // the visible canvas isn't guaranteed to contain the new image yet
+    // when this fires — that timing race produced the "black square at
+    // AD region" bug from V2's first ship.
     try {
       const SD = window.StudioDevelop;
       if (SD && typeof SD.setFloatSource === "function") {
         if (opts.floatPath) {
           const mUrl = opts.maskPath ? (API.base + "/file=" + opts.maskPath) : null;
-          SD.setFloatSource(API.base + "/file=" + opts.floatPath, mUrl, outW, outH);
+          SD.setFloatSource(API.base + "/file=" + opts.floatPath, mUrl, imgSrc, outW, outH);
         } else {
           SD.setFloatSource(null);
         }
@@ -3036,6 +3055,7 @@ function bindUI() {
       ["paramPrompt", "val"], ["paramNeg", "val"],
     ],
     gen: [
+      ["paramModel", "val"],
       ["paramSampler", "val"], ["paramScheduler", "val"],
       ["paramSteps", "val"], ["paramCFG", "val"], ["paramDenoise", "val"],
       ["paramWidth", "val"], ["paramHeight", "val"],
@@ -3206,9 +3226,19 @@ function bindUI() {
         if (data[id]) el.classList.add("active");
         else el.classList.remove("active");
       } else if (type === "open") {
-        // Collapse panel state — sync both body and its sibling arrow
-        if (data[id]) el.classList.add("open");
-        else el.classList.remove("open");
+        // Collapse panel state — sync both body and its sibling arrow.
+        // Inline max-height: "none" when opening (so dynamic content
+        // can grow freely) and "" when closing (lets the closed-state
+        // base rule take over). Without this, panels restored as open
+        // would inherit the CSS fallback and fail to size to actual
+        // content; closed ones could get stuck at the fallback height.
+        if (data[id]) {
+          el.classList.add("open");
+          el.style.maxHeight = "none";
+        } else {
+          el.classList.remove("open");
+          el.style.maxHeight = "";
+        }
         const arrow = el.previousElementSibling?.querySelector(".collapse-arrow");
         if (arrow) {
           if (data[id]) arrow.classList.add("open");

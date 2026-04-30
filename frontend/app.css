@@ -1023,7 +1023,12 @@ body {
   transition: max-height 0.22s ease;
   padding: 0 12px;
 }
-.collapse-body.open { padding: 0 12px 10px; }
+/* Fallback max-height: handles the brief window before the JS init at
+   page-load can replace this with `none` (and any future restore path
+   that adds `.open` without setting an inline max-height). Without this
+   fallback, panels marked `.open` in the HTML or via session restore
+   render with padding visible but no body — the "half-collapsed" look. */
+.collapse-body.open { padding: 0 12px 10px; max-height: 9999px; }
 
 
 /* ═══════════════════════════════════════════
