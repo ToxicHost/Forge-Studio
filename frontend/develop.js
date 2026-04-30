@@ -360,7 +360,8 @@ function applyToContext(ctx, w, h, params) {
 //                                  through the Reinhard shoulder.)
 //   Positive tint = magenta, negative = green (matches the slider's
 //   green→magenta gradient track).
-// Exposure: v *= 2^(exposure * 3/100)   ⇒ ±3 stops at the slider extremes.
+// Exposure: v *= 2^(exposure * 5/100)   ⇒ ±5 stops at slider extremes
+// (was ±3 — felt weak compared to Lightroom's slider).
 // ========================================================================
 function _buildLutA(p) {
     var temp = p.temperature || 0;
@@ -368,7 +369,7 @@ function _buildLutA(p) {
     var rGain = 1 + temp / 200;
     var bGain = 1 - temp / 200;
     var gGain = 1 + temp / 600 - tint / 300;
-    var expGain = Math.pow(2, (p.exposure || 0) * 3 / 100);
+    var expGain = Math.pow(2, (p.exposure || 0) * 5 / 100);
     var rScale = rGain * expGain;
     var gScale = gGain * expGain;
     var bScale = bGain * expGain;
@@ -446,8 +447,21 @@ function _applyHighlightsShadows(rLin, gLin, bLin, blurCache, w, h, hlAmt, shAmt
     var lw = blurCache.lw;
     var hl = hlAmt / 100;
     var sh = shAmt / 100;
-    var hlTarget = 0.4;
-    var shTarget = 0.6;
+    // Piecewise lift/recover targets:
+    //   +Highlights → lift bright pixels toward 1.0 (clean push to white).
+    //   -Highlights → recover toward 0.4 (pull blown areas back).
+    //   +Shadows    → lift dark pixels toward 0.6 (open shadows).
+    //   -Shadows    → crush toward 0 (deepen shadows).
+    // Previously both directions lerped toward fixed 0.4/0.6, so +Highlights
+    // pushed bright pixels past 1.0 into the Reinhard shoulder and washed
+    // out highlight detail across the whole image; this version stays in
+    // [0,1] for both signs, matching the Lightroom feel.
+    var hlPos = hl > 0;
+    var shPos = sh > 0;
+    var hlTarget = hlPos ? 1.0 : 0.4;
+    var shTarget = shPos ? 0.6 : 0.0;
+    var hlMag = hlPos ? hl : -hl;
+    var shMag = shPos ? sh : -sh;
     for (var y = 0; y < h; y++) {
         var ly = (y >> 2) * lw;
         var rowF = y * w;
@@ -463,18 +477,14 @@ function _applyHighlightsShadows(rLin, gLin, bLin, blurCache, w, h, hlAmt, shAmt
             var Yp = _lin2u8(Yl) / 255;
             if (sh !== 0) {
                 var sm = 1 - _smoothstep(0, 0.5, Yp);
-                var sd = sh * sm;
+                var sd = shMag * sm;
                 rLin[i] += (shTarget - rLin[i]) * sd;
                 gLin[i] += (shTarget - gLin[i]) * sd;
                 bLin[i] += (shTarget - bLin[i]) * sd;
             }
             if (hl !== 0) {
                 var hm = _smoothstep(0.5, 1.0, Yp);
-                // Lightroom convention: +Highlights brightens (boosts) bright
-                // pixels, -Highlights recovers them toward hlTarget (0.4).
-                // Negate so positive slider pushes AWAY from the recovery
-                // target, matching +Shadows = lift.
-                var hd = -hl * hm;
+                var hd = hlMag * hm;
                 rLin[i] += (hlTarget - rLin[i]) * hd;
                 gLin[i] += (hlTarget - gLin[i]) * hd;
                 bLin[i] += (hlTarget - bLin[i]) * hd;
@@ -520,17 +530,24 @@ function _applyDevelopFull(ctx, w, h, p) {
     // toward 0 by the sigmoid.
     //   Krita-style sigmoid: slope = tan((c+1)*π/4), c ∈ [-1, 1].
     //   Gentle near 0 (slope 1.5 at +25), ramps sharply near ±1.
-    // Lightroom convention: +Whites lifts whites (brighter). +Blacks crushes
-    // blacks (darker) — each slider drives toward its named extreme.
+    // +Whites lifts whites (brighter). +Blacks crushes blacks (darker) — each
+    // slider drives toward its named extreme. Divisor /500 (max ±20% endpoint
+    // shift): the previous /200 was clipping ±50% of the tonal range at the
+    // slider extremes, which felt drastically more aggressive than Lightroom.
     // whitePoint < 1 brightens (output gets multiplied by 1/whitePoint > 1);
     // blackPoint > 0 clips dark pixels to 0 after the (r - bp) * invRange map.
-    var blackPoint = (p.blacks  || 0) / 200;
-    var whitePoint = 1 - (p.whites || 0) / 200;
+    var blackPoint = (p.blacks  || 0) / 500;
+    var whitePoint = 1 - (p.whites || 0) / 500;
     var range = whitePoint - blackPoint;
     if (Math.abs(range) < 1e-4) range = 1e-4;
     var invRange = 1 / range;
-    var cNorm = (p.contrast || 0) / 100;
-    if (cNorm < -1) cNorm = -1; else if (cNorm > 1) cNorm = 1;
+    // Contrast scaling: slider 100 was hitting Studio-15-equivalent feel
+    // (slope tan(0.575π) ≈ 1.27) only at slider 15; at slider 100 the slope
+    // ran toward tan(π/2) → ∞ and at slider -100 it hit slope 0 (which
+    // collapsed every pixel to gray 128 — the spike-in-histogram bug).
+    // Scale slider 100 to cNorm 0.15 so slider 100 ≈ Lightroom +100.
+    var cNorm = (p.contrast || 0) * 0.0015;
+    if (cNorm < -0.95) cNorm = -0.95; else if (cNorm > 0.95) cNorm = 0.95;
     var contrastSlope = Math.tan((cNorm + 1) * Math.PI / 4);
     var doRemap = blackPoint !== 0 || whitePoint !== 1;
     var doContrast = (p.contrast | 0) !== 0;
@@ -1599,6 +1616,10 @@ function _bumpCompositeCache() {
     if (C && C.markCompositeDirty) C.markCompositeDirty();
 }
 
+// Histogram update during proxy redraw is throttled — getImageData on the
+// final canvas is the dominant cost on big docs, so we skip every other
+// frame during drag rather than fire it on each one.
+var _proxyHistFlip = 0;
 function _scheduleProxyRedraw() {
     if (_proxyRafId) return;
     _proxyRafId = requestAnimationFrame(function () {
@@ -1606,7 +1627,8 @@ function _scheduleProxyRedraw() {
         var S = _S();
         if (S && S.developParams) S.developParams._dragging = true;
         _bumpCompositeCache();
-        _redrawNow(false);
+        var hist = (++_proxyHistFlip & 1) === 0;
+        _redrawNow(hist);
     });
 }
 
@@ -2573,26 +2595,54 @@ function _renderHistogram() {
         }
     }
 
-    // RGB log-scale histogram, additive blend. Only the RGB+log view turned
-    // out to be useful in practice — toggles for L / linear were removed.
+    // RGB log-scale histogram. Each channel rendered as a smoothed filled
+    // shape (fill + thin stroke on top) over an additive ('lighter') blend
+    // so overlap regions show the secondary/tertiary colors the way
+    // Lightroom's histogram does.
     function maxOf(a) { var m = 0; for (var i = 0; i < a.length; i++) if (a[i] > m) m = a[i]; return m; }
-    function drawBins(bins, color) {
-        var mx = maxOf(bins);
+    // 3-tap moving average smooths single-bin spikes that read as visual
+    // noise on the curve. Keeps endpoints as-is so clipping is honest.
+    function smoothBins(src) {
+        var out = new Float32Array(256);
+        out[0] = src[0]; out[255] = src[255];
+        for (var i = 1; i < 255; i++) out[i] = (src[i - 1] + src[i] + src[i + 1]) / 3;
+        return out;
+    }
+    function drawBins(bins, fill, stroke) {
+        var smoothed = smoothBins(bins);
+        var mx = 0;
+        for (var i = 0; i < 256; i++) if (smoothed[i] > mx) mx = smoothed[i];
         if (mx === 0) return;
         var denom = Math.log(1 + mx);
-        hctx.fillStyle = color;
-        for (var i = 0; i < 256; i++) {
-            var t = Math.log(1 + bins[i]) / denom;
-            var bh = t * H;
-            var bx = (i / 256) * W;
-            var bw = W / 256;
-            hctx.fillRect(bx, H - bh, bw + 0.5, bh);
+        hctx.beginPath();
+        hctx.moveTo(0, H);
+        for (var j = 0; j < 256; j++) {
+            var t = Math.log(1 + smoothed[j]) / denom;
+            var bx = (j / 255) * W;
+            var by = H - t * H;
+            hctx.lineTo(bx, by);
         }
+        hctx.lineTo(W, H);
+        hctx.closePath();
+        hctx.fillStyle = fill;
+        hctx.fill();
+        // Thin stroke on the top edge gives the curve a clean outline
+        // instead of the muddy edge that screen-blended bars produced.
+        hctx.beginPath();
+        for (var k = 0; k < 256; k++) {
+            var t2 = Math.log(1 + smoothed[k]) / denom;
+            var cx = (k / 255) * W;
+            var cy = H - t2 * H;
+            if (k === 0) hctx.moveTo(cx, cy); else hctx.lineTo(cx, cy);
+        }
+        hctx.lineWidth = 1;
+        hctx.strokeStyle = stroke;
+        hctx.stroke();
     }
-    hctx.globalCompositeOperation = "screen";
-    drawBins(binsR, "rgba(220, 60, 60, 0.75)");
-    drawBins(binsG, "rgba( 60,200, 80, 0.75)");
-    drawBins(binsB, "rgba( 90,140,255, 0.75)");
+    hctx.globalCompositeOperation = "lighter";
+    drawBins(binsR, "rgba(220, 60, 60, 0.55)", "rgba(255, 90, 90, 0.85)");
+    drawBins(binsG, "rgba( 60,200, 80, 0.55)", "rgba(110,235,130, 0.85)");
+    drawBins(binsB, "rgba( 90,140,255, 0.55)", "rgba(140,180,255, 0.85)");
     hctx.globalCompositeOperation = "source-over";
 
     // Clipping detection: a channel is "clipping" if more than CLIP_FRAC of
@@ -2799,14 +2849,14 @@ function _applyWBPick(px) {
 
 // Black-point pick: set the Blacks slider so the picked pixel's luminance
 // becomes the new lower bound (will render as 0 / pure black).
-//   blackPoint (linear) = blacks/200
-//   blacks = 200 * Y_lin
+//   blackPoint (linear) = blacks/500
+//   blacks = 500 * Y_lin
 // Use Rec.709 luminance for "perceived darkness".
 function _applyBlackPick(px) {
     var S = _S(); if (!S || !S.developParams) return;
     var Y = 0.2126 * px.rL + 0.7152 * px.gL + 0.0722 * px.bL;
     if (Y < 0) Y = 0; else if (Y > 1) Y = 1;
-    var blacks = 200 * Y;
+    var blacks = 500 * Y;
     if (blacks > 100) blacks = 100;
     S.developParams.blacks = Math.round(blacks);
     S.developParams.enabled = true;
@@ -2817,16 +2867,16 @@ function _applyBlackPick(px) {
 
 // White-point pick: set the Whites slider so the picked pixel's brightest
 // channel becomes the new upper bound (renders as pure white).
-//   whitePoint (linear) = 1 - whites/200
+//   whitePoint (linear) = 1 - whites/500
 //   For r_out = r/whitePoint = 1 we need whitePoint = V_lin
-//   ⇒ whites = 200 * (1 - V_lin)
+//   ⇒ whites = 500 * (1 - V_lin)
 // Use the max channel — most appropriate for the "white point" concept.
 function _applyWhitePick(px) {
     var S = _S(); if (!S || !S.developParams) return;
     var V = px.rL > px.gL ? (px.rL > px.bL ? px.rL : px.bL) : (px.gL > px.bL ? px.gL : px.bL);
     if (V < 0) V = 0;
     if (V < 0.05) return;                     // refuse near-black
-    var whites = 200 * (1 - V);
+    var whites = 500 * (1 - V);
     if (whites < -100) whites = -100;
     if (whites > 100)  whites = 100;
     S.developParams.whites = Math.round(whites);

@@ -3003,8 +3003,11 @@ function composite(dirtyOnly) {
 
     c.setTransform(z.scale, 0, 0, z.scale, z.ox, z.oy);
 
-    // Nearest-neighbor filtering at high zoom — crisp pixels instead of blurry interpolation
-    c.imageSmoothingEnabled = z.scale < 2.0;
+    // Smoothing on for moderate zoom (matches Lightroom feel); switch to
+    // nearest-neighbor only at very high pixel-peeping zoom (>= 8x), where
+    // bilinear blur becomes visible and crisp pixels are preferable.
+    c.imageSmoothingEnabled = z.scale < 8.0;
+    if (c.imageSmoothingEnabled) c.imageSmoothingQuality = "high";
 
     // Clip checkerboard to exact document bounds — prevents subpixel bleed at edges
     c.save();
