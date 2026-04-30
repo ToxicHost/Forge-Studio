@@ -1760,25 +1760,6 @@ def _hp_install_decode_hook():
             this_batch = []
             # `out` is a list of CHW tensors in [-1, 1] (Forge convention).
             for sample in out:
-                # === TEMPORARY: HP clamp investigation — remove after report ===
-                # Bracket experiment found pct_above_1 = 0% across all latent
-                # scales on Forge Neo + SDXL fp16 VAE. That suggests the VAE
-                # output reaching this hook is already clamped to [-1, 1],
-                # contradicting the HP "0.5 stops of headroom" claim. Log raw
-                # sample stats so we can confirm or refute on a real run.
-                try:
-                    _s = sample.detach().float()
-                    _smin = float(_s.min())
-                    _smax = float(_s.max())
-                    _pa1 = float((_s > 1.0).float().mean() * 100.0)
-                    _pbn1 = float((_s < -1.0).float().mean() * 100.0)
-                    print(f"[Studio HP DEBUG] raw VAE sample [-1,1] convention: "
-                          f"min={_smin:.6f} max={_smax:.6f} "
-                          f"pct>1.0={_pa1:.4f}% pct<-1.0={_pbn1:.4f}% "
-                          f"shape={list(sample.shape)} dtype={sample.dtype}")
-                except Exception as _dbg_e:
-                    print(f"[Studio HP DEBUG] stats error: {_dbg_e}")
-                # === END TEMPORARY: HP clamp investigation ===
                 # Remap to [0, 1] WITHOUT clamping. Sub-LSB precision and
                 # values >1 / <0 carry through here — that's the win.
                 float_img = (sample + 1.0) / 2.0
