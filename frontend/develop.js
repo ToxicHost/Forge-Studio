@@ -67,13 +67,11 @@ function defaultParams() {
         // === Calibration (set by eyedroppers — true remap, independent of sliders) ===
         // Linear-RGB endpoints: pixel ≤ calibBlackLin → 0, ≥ calibWhiteLin → 1.
         // Defaults preserve identity. Slider blacks/whites apply on top.
+        // Note: White Balance is NOT a calibration field — the WB eyedropper
+        // adjusts the Temperature/Tint sliders directly so the user can fine
+        // tune from the picked neutral.
         calibBlackLin: 0,
         calibWhiteLin: 1,
-        // Lab a*/b* offset added to the Phase A.5 shift to neutralize a picked
-        // pixel. Defaults zero (no calibration). Slider Temperature/Tint apply
-        // on top.
-        calibLabA: 0,
-        calibLabB: 0,
 
         // === V1: Presence ===
         texture: 0,
@@ -149,7 +147,7 @@ function _migrateParams(p) {
     // fields. Any field added post-V2 with an identity default is safe to
     // back-fill on load — without this, _calibIsActive misreads
     // `undefined` calibWhiteLin (default 1) as "calibration set".
-    var v2NewKeys = ["calibBlackLin", "calibWhiteLin", "calibLabA", "calibLabB"];
+    var v2NewKeys = ["calibBlackLin", "calibWhiteLin"];
     for (var i = 0; i < v2NewKeys.length; i++) {
         var k = v2NewKeys[i];
         if (!(k in p)) p[k] = defaults[k];
@@ -251,9 +249,8 @@ function _isIdentity(p) {
     if (((p.exposure | 0) !== 0) || ((p.contrast | 0) !== 0)) return false;
     if (((p.highlights | 0) !== 0) || ((p.shadows | 0) !== 0)) return false;
     if (((p.whites | 0) !== 0) || ((p.blacks | 0) !== 0)) return false;
-    // Calibration (set by eyedroppers — independent of sliders)
+    // Calibration (set by white/black eyedroppers — independent of sliders)
     if ((p.calibBlackLin || 0) > 1e-6 || Math.abs((p.calibWhiteLin || 1) - 1) > 1e-6) return false;
-    if (Math.abs(p.calibLabA || 0) > 1e-6 || Math.abs(p.calibLabB || 0) > 1e-6) return false;
     if (((p.texture | 0) !== 0) || ((p.clarity | 0) !== 0)) return false;
     if (((p.vibrance | 0) !== 0) || ((p.saturation | 0) !== 0)) return false;
     if ((p.sharpenAmount | 0) !== 0) return false;
@@ -429,17 +426,10 @@ function _getLutA(p) {
 function _applyWhiteBalance(rLin, gLin, bLin, n, p) {
     var temp = p.temperature || 0;
     var tint = p.tint || 0;
-    // Calibration shifts (Lab a*/b*) from the WB eyedropper. Added on top of
-    // slider-driven shifts so the eyedropper truly *re-calibrates* (picked
-    // pixel becomes neutral) and the slider provides further adjustment.
-    var calibA = p.calibLabA || 0;
-    var calibB = p.calibLabB || 0;
-    var hasCalib = calibA !== 0 || calibB !== 0;
-    if (temp === 0 && tint === 0 && !hasCalib) return;
+    if (temp === 0 && tint === 0) return;
 
-    if (p._dragging && !hasCalib) {
+    if (p._dragging) {
         // V1-style RGB multipliers — fast path for slider drag.
-        // Skip when calibration is in play; a true Lab remap is needed.
         var rGain = 1 + temp / 200;
         var bGain = 1 - temp / 200;
         var gGain = 1 + temp / 600 - tint / 300;
@@ -451,10 +441,9 @@ function _applyWhiteBalance(rLin, gLin, bLin, n, p) {
         return;
     }
 
-    // Full-resolution Lab path. Calibration shifts add to slider shifts so
-    // the picked-neutral target is preserved after subsequent slider tweaks.
-    var aShift = -tint * 0.15 + calibA;
-    var bShift =  temp * 0.3  + calibB;
+    // Full-resolution Lab path.
+    var aShift = -tint * 0.15;
+    var bShift =  temp * 0.3;
     var invX = 1 / _LAB_WHITE_X, invZ = 1 / _LAB_WHITE_Z;
     var aDelta = aShift / 500;
     var bDelta = bShift / 200;
@@ -2576,7 +2565,7 @@ function _buildHSLSection(body) {
             var num = document.createElement("input");
             num.type = "number"; num.min = min; num.max = max; num.step = 1; num.value = 0;
             row.appendChild(num);
-            (function (m, idx) {
+            (function (m, idx, rangeEl, numEl) {
                 function commit(v, live) {
                     v = Number(v); if (isNaN(v)) v = 0;
                     if (v < min) v = min; if (v > max) v = max;
@@ -2587,18 +2576,19 @@ function _buildHSLSection(body) {
                     if (!S.developParams[key]) S.developParams[key] = [0, 0, 0, 0, 0, 0, 0, 0];
                     var arr = S.developParams[key];
                     arr[idx] = v;
-                    range.value = v; num.value = v;
+                    rangeEl.value = v; numEl.value = v;
                     if (!S.developParams.enabled) {
                         S.developParams.enabled = true;
                         if (_enableToggleEl) _enableToggleEl.classList.add("on");
                     }
                     if (live) _scheduleProxyRedraw(); else _scheduleFullRedraw();
                 }
-                range.addEventListener("input",  function () { commit(range.value, true); });
-                range.addEventListener("change", function () { commit(range.value, false); });
-                num.addEventListener("change",   function () { commit(num.value, false); });
+                rangeEl.addEventListener("input",  function () { commit(rangeEl.value, true); });
+                rangeEl.addEventListener("change", function () { commit(rangeEl.value, false); });
+                numEl.addEventListener("change",   function () { commit(numEl.value, false); });
+                numEl.addEventListener("input",    function () { commit(numEl.value, true); });
                 lbl.addEventListener("dblclick", function () { commit(0, false); });
-            })(mode, bandIdx);
+            })(mode, bandIdx, range, num);
             wrap.appendChild(row);
             _hslBandRows[mode][k] = { range: range, num: num };
         }
@@ -2753,8 +2743,13 @@ function _buildColorGradingSection(body) {
 
 // Map an eyedropper mode to the developParams keys it calibrates. Used to
 // detect "this row currently has a non-default calibration" and to clear it.
+// Map an eyedropper mode to the developParams keys the picker writes.
+// White-point and Black-point are calibration fields (true remap).
+// White-balance is special: the picker writes the Temperature and Tint
+// sliders directly, since WB is treated as an adjustment rather than a
+// stored calibration. _calibIsActive / _clearCalib treat it accordingly.
 var _CALIB_KEYS = {
-    wb:     ["calibLabA", "calibLabB"],
+    wb:     ["temperature", "tint"],
     blacks: ["calibBlackLin"],
     whites: ["calibWhiteLin"]
 };
@@ -2911,6 +2906,12 @@ function _buildSliderRow(field) {
         }
         range.value = v; num.value = v;
         row.classList.toggle("modified", v !== field.def);
+        // Keep the WB calibration row's "set" badge in sync when the user
+        // drags Temperature or Tint directly — those are the WB picker's
+        // backing fields. Cheap (3 DOM nodes), safe to call on every commit.
+        if (field.key === "temperature" || field.key === "tint") {
+            _syncCalibrationBlock(S.developParams);
+        }
         if (isDrag) _scheduleProxyRedraw(); else _scheduleFullRedraw();
     }
 
@@ -2978,10 +2979,22 @@ function _renderHistogram() {
     if (!sw || !sh) return;
     var sctx;
     try { sctx = src.getContext("2d"); } catch (e) { return; }
+    // Compute the image's rect inside the display canvas so we can ignore
+    // the surrounding "void" padding that the display canvas paints. Inside
+    // the image rect, alpha=0 pixels count as bin 0 (the user sees them
+    // against the dark backdrop and expects the histogram to reflect that);
+    // outside the image rect, padding pixels are excluded entirely.
+    var z = S.zoom || { scale: 1, ox: 0, oy: 0 };
+    var rx0 = Math.max(0, Math.floor(z.ox));
+    var ry0 = Math.max(0, Math.floor(z.oy));
+    var rx1 = Math.min(sw, Math.ceil(z.ox + S.W * z.scale));
+    var ry1 = Math.min(sh, Math.ceil(z.oy + S.H * z.scale));
+    if (rx1 <= rx0 || ry1 <= ry0) { rx0 = 0; ry0 = 0; rx1 = sw; ry1 = sh; }
+    var rw = rx1 - rx0, rh = ry1 - ry0;
     var sample;
-    try { sample = sctx.getImageData(0, 0, sw, sh); } catch (e) { return; }
+    try { sample = sctx.getImageData(rx0, ry0, rw, rh); } catch (e) { return; }
     var sd = sample.data;
-    var pixelCount = sw * sh;
+    var pixelCount = rw * rh;
     // Skip sampling: every Nth pixel for canvases > 1MP. nSkip=1 below 1MP,
     // 2 at 2MP, 5 at 4MP — keeps the histogram cost ~constant per frame.
     var nSkip = 1 + (pixelCount >> 20);
@@ -2989,32 +3002,47 @@ function _renderHistogram() {
     var sampleCount = 0;
     var step = nSkip * 4;
     for (var idx = 0, total = pixelCount * 4; idx < total; idx += step) {
-        // Skip transparent pixels — without this, every pixel of canvas
-        // padding around the image dumps into bin 0.
-        if (sd[idx + 3] === 0) continue;
+        // We're already inside the image rect, so alpha=0 means a
+        // transparent pixel within the image bounds (e.g. a layer mask or
+        // erased area). The user sees those rendered against the dark
+        // canvas backdrop — count them as bin-0 in all channels so the
+        // histogram matches what they see, instead of disappearing.
         binsR[sd[idx]]++; binsG[sd[idx + 1]]++; binsB[sd[idx + 2]]++;
         sampleCount++;
     }
 
-    // 98th-percentile ceiling per channel: sort bin counts descending and
-    // take the value at index floor(length*0.02). Prevents one outlier
-    // spike (e.g. a saturated background) from crushing the rest of the
-    // distribution to a flat line.
-    function ceiling98(bins) {
-        var arr = Array.prototype.slice.call(bins);
-        arr.sort(function (a, b) { return b - a; });
-        var i = Math.floor(arr.length * 0.02);
-        var v = arr[i];
-        return v > 0 ? v : 1;
+    // Per-channel ceiling. Old code took the 98th percentile across ALL
+    // 256 bins; for a concentrated distribution (e.g. a fully-white image
+    // where only bin 255 has content) that returns 0 and falls back to 1,
+    // which made every single stray pixel render as a full-height bar —
+    // so a uniform image looked like multiple noise spikes. Compute the
+    // 95th percentile across NON-ZERO bins instead, so:
+    //   • A single dominant bin keeps the ceiling near its own count and
+    //     renders as one tall bar with no fake noise around it.
+    //   • A spread distribution still gets the percentile-clip behaviour
+    //     so one outlier doesn't crush the rest of the chart.
+    function ceilingP(bins) {
+        var nz = [];
+        for (var i = 0; i < bins.length; i++) if (bins[i] > 0) nz.push(bins[i]);
+        if (nz.length === 0) return 1;
+        nz.sort(function (a, b) { return b - a; });
+        var idx = Math.floor(nz.length * 0.05);
+        if (idx >= nz.length) idx = nz.length - 1;
+        var v = nz[idx];
+        return v > 0 ? v : nz[0];
     }
     function drawBars(bins, fill) {
-        var ceiling = ceiling98(bins);
+        var ceiling = ceilingP(bins);
+        // Square-root compression so a 100× spike doesn't crush the rest
+        // of the distribution into invisibility, while still ranking bins
+        // monotonically.
+        var sqCeil = Math.sqrt(ceiling);
         var barW = W / 256;
         hctx.fillStyle = fill;
         for (var i = 0; i < 256; i++) {
             var v = bins[i];
             if (v <= 0) continue;
-            var t = v / ceiling;
+            var t = Math.sqrt(v) / sqCeil;
             if (t > 1) t = 1;
             var bh = t * H;
             hctx.fillRect(i * barW, H - bh, barW, bh);
@@ -3097,18 +3125,18 @@ function _undoReset() {
 }
 
 // ========================================================================
-// EYEDROPPERS — pick a pixel from the canvas to CALIBRATE WB / black /
-// white. These are true calibration pickers, not slider helpers:
-//   • Black eyedropper: picked pixel becomes pure black (and anything
-//     darker also clips to black). Stored as a linear-RGB endpoint.
-//   • White eyedropper: picked pixel becomes pure white (and anything
-//     brighter also clips). Stored as a linear-RGB endpoint.
-//   • White-balance eyedropper: picked pixel becomes neutral gray.
-//     Stored as a Lab a*/b* offset that the pipeline applies on top of
-//     the user's Temperature/Tint slider shifts.
-// The user's Temperature / Tint / Whites / Blacks sliders are *not*
-// touched by the eyedropper — they remain available for further
-// adjustment relative to the calibrated baseline.
+// EYEDROPPERS — pick a pixel from the canvas to set WB / black / white.
+//   • Black eyedropper (CALIBRATION): picked pixel becomes pure black
+//     (and anything darker also clips to black). Stored as a linear-RGB
+//     endpoint independent of the Blacks slider — the slider then acts
+//     as further adjustment on top of the calibrated baseline.
+//   • White eyedropper (CALIBRATION): picked pixel becomes pure white
+//     (and anything brighter also clips). Stored as a linear-RGB
+//     endpoint independent of the Whites slider.
+//   • White-balance eyedropper (ADJUSTMENT): writes Temperature and
+//     Tint slider values that neutralize the picked pixel. The user
+//     can fine-tune from the picked neutral — same behaviour as
+//     Lightroom's WB picker.
 //
 // All pickers read the PRE-DEVELOP composite (so already-applied develop
 // settings don't double-count). We reuse _buildBeforeBuffer() from the
@@ -3210,14 +3238,13 @@ function _samplePreDevelopRegion(cx, cy, radius) {
     };
 }
 
-// White-balance pick (CALIBRATION): store the Lab a*/b* shifts needed to
-// neutralize the picked pixel. The pipeline applies these on top of the
-// slider-driven shifts, so picked → neutral gray, and the user's
-// Temperature/Tint sliders remain free for further adjustment.
-//   pipeline aShift = -tint * 0.15 + calibLabA
-//   pipeline bShift =  temp * 0.3  + calibLabB
-// To null the picked pixel's a*/b* we need:  calibLabA = -aStar,
-// calibLabB = -bStar.
+// White-balance pick: compute Temperature + Tint slider values that
+// neutralize the picked pixel in Lab space. The pipeline shifts:
+//   new_a* = a* - tint * 0.15
+//   new_b* = b* + temperature * 0.3
+// To null both axes:  tint = a*/0.15, temperature = -b*/0.3.
+// (WB stays a slider adjustment so the user can fine-tune from the
+// picked neutral — only Whites/Blacks are stored as separate calibration.)
 function _applyWBPick(px) {
     var S = _S(); if (!S || !S.developParams) return;
     var r = px.rL, g = px.gL, b = px.bL;
@@ -3230,9 +3257,13 @@ function _applyWBPick(px) {
     var fz = _labF(Z / _LAB_WHITE_Z);
     var aStar = 500 * (fx - fy);
     var bStar = 200 * (fy - fz);
+    var tint = aStar / 0.15;
+    var temp = -bStar / 0.3;
+    if (temp < -100) temp = -100; else if (temp > 100) temp = 100;
+    if (tint < -100) tint = -100; else if (tint > 100) tint = 100;
     var p = S.developParams;
-    p.calibLabA = -aStar;
-    p.calibLabB = -bStar;
+    p.temperature = Math.round(temp);
+    p.tint = Math.round(tint);
     p.enabled = true;
     syncPanel();
     _bumpCompositeCache();
