@@ -1840,6 +1840,109 @@ def _hp_pick_final_floats(batches, expected_count):
     return batches[-1]
 
 
+# =========================================================================
+# === TEMPORARY: latent bracket HDR investigation — remove after report ===
+# =========================================================================
+# Companion to the HP capture path above, but one-shot: install a separate
+# hook that records the *input latent* to decode_latent_batch, then remove
+# itself. Lives alongside (not inside) _hp_decode_wrapper so a bug here
+# can't break production HP capture. See /studio/test/bracket in studio_api.
+# =========================================================================
+_BRK_HOOK_PREV = None  # holds the function decode_latent_batch pointed at before we installed
+_BRK_LATENTS = []      # list[torch.Tensor] — one entry per decode_latent_batch call observed
+
+
+def _brk_install_latent_hook():
+    """Install a one-shot hook that captures the input latent z passed to
+    modules.processing.decode_latent_batch. Returns True on success.
+
+    Idempotent-ish: refuses to double-install and logs.
+    """
+    global _BRK_HOOK_PREV
+    try:
+        import modules.processing as _proc
+    except Exception as e:
+        print(f"[Studio Bracket] cannot import modules.processing — {e}")
+        return False
+    if _BRK_HOOK_PREV is not None:
+        print("[Studio Bracket] hook already installed — refusing to double-wrap")
+        return False
+    orig = getattr(_proc, "decode_latent_batch", None)
+    if orig is None:
+        print("[Studio Bracket] modules.processing.decode_latent_batch missing — disabled")
+        return False
+
+    def _brk_wrapper(*args, **kwargs):
+        # First positional arg is the latent tensor in the standard signature
+        # decode_latent_batch(samples, target_device=..., check_for_nans=...).
+        # Some Forge variants pass it as kwarg "samples"; handle both.
+        try:
+            z = None
+            if args:
+                z = args[0]
+            if z is None:
+                z = kwargs.get("samples", None)
+            if z is not None:
+                # Detach + clone so it survives the call's lifetime.
+                _BRK_LATENTS.append(z.detach().clone())
+        except Exception as e:
+            print(f"[Studio Bracket] latent-capture error — {e}")
+        return orig(*args, **kwargs)
+
+    _proc.decode_latent_batch = _brk_wrapper
+    _BRK_HOOK_PREV = orig
+    _BRK_LATENTS.clear()
+    return True
+
+
+def _brk_uninstall_latent_hook():
+    """Restore decode_latent_batch to its pre-install value and return the
+    captured latent list (and clear the buffer)."""
+    global _BRK_HOOK_PREV
+    captured = list(_BRK_LATENTS)
+    _BRK_LATENTS.clear()
+    if _BRK_HOOK_PREV is None:
+        return captured
+    try:
+        import modules.processing as _proc
+        _proc.decode_latent_batch = _BRK_HOOK_PREV
+    except Exception as e:
+        print(f"[Studio Bracket] hook restore error — {e}")
+    _BRK_HOOK_PREV = None
+    return captured
+
+
+def _brk_build_minimal_txt2img(prompt, neg_prompt, steps, sampler_name,
+                               schedule_type, cfg_scale, width, height, seed,
+                               outpath):
+    """Build a minimal txt2img Processing object for the bracket experiment.
+
+    Mirrors _build_txt2img_obj but with NO script runner attachment — we
+    don't want wildcards, dynamic prompts, ControlNet, ADetailer, regional,
+    or attention couple interfering with what should be an isolated VAE
+    decode test. Hires is also off (default for the txt2img class).
+    """
+    p = StableDiffusionProcessingTxt2Img(
+        sd_model=shared.sd_model,
+        outpath_samples=outpath, outpath_grids=outpath,
+        prompt=prompt or "", negative_prompt=neg_prompt or "",
+        n_iter=1, batch_size=1,
+        steps=int(steps), cfg_scale=float(cfg_scale),
+        width=int(width), height=int(height),
+        sampler_name=sampler_name or "Euler a",
+        seed=int(seed),
+        do_not_save_samples=True,
+        do_not_save_grid=True,
+    )
+    if schedule_type and schedule_type != "Automatic" and hasattr(p, 'scheduler'):
+        p.scheduler = schedule_type
+    p.enable_hr = False
+    return p
+
+
+# === END TEMPORARY: latent bracket HDR investigation ===
+
+
 def run_generation(
     canvas_b64, mask_b64, fg_b64, mode, inpaint_mode, prompt, neg_prompt,
     steps, sampler_name, schedule_type, cfg_scale, denoising,

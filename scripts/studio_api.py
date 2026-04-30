@@ -1733,6 +1733,264 @@ def setup_studio_routes(app: FastAPI):
         get_studio_task_id = _import("studio_generation", "get_studio_task_id")
         return {"task_id": get_studio_task_id()}
 
+    # ==================================================================
+    # === TEMPORARY: latent bracket HDR investigation ===
+    # ==================================================================
+    # Decodes one latent at multiple scales (e.g. 0.8 / 1.0 / 1.2) to test
+    # whether the VAE produces spatially consistent output across latent
+    # magnitudes. If yes, multi-decode merging could give 2-3 stops of
+    # extra dynamic range. This endpoint is throwaway — remove the whole
+    # block (and its helpers in studio_generation.py) after the report.
+    # ==================================================================
+
+    class BracketRequest(BaseModel):
+        prompt: str = ""
+        neg_prompt: str = ""
+        seed: int = -1
+        steps: int = 30
+        sampler_name: str = "DPM++ 2M SDE"
+        schedule_type: str = "Karras"
+        cfg_scale: float = 5.0
+        width: int = 768
+        height: int = 768
+        scales: List[float] = Field(default_factory=lambda: [0.8, 1.0, 1.2])
+        merge: bool = False
+
+    def _bracket_merge(under, normal, over):
+        """Luminance-weighted merge of three decoded float buffers.
+
+        under  = decoded(z * 0.8); rescale by / 0.8 to recover normal exposure
+        normal = decoded(z * 1.0)
+        over   = decoded(z * 1.2); rescale by / 1.2
+
+        Highlights (lum > 0.5..0.8) → under_remapped (has headroom there)
+        Shadows    (lum < 0.5..0.2) → over_remapped  (has precision there)
+        Midtones                    → normal
+        """
+        import numpy as np
+        under_remapped = under / 0.8
+        over_remapped = over / 1.2
+        lum = (0.2126 * normal[:, :, 0]
+             + 0.7152 * normal[:, :, 1]
+             + 0.0722 * normal[:, :, 2])
+        highlight_w = np.clip((lum - 0.5) / 0.3, 0.0, 1.0)
+        shadow_w = np.clip((0.5 - lum) / 0.3, 0.0, 1.0)
+        mid_w = np.maximum(1.0 - highlight_w - shadow_w, 0.0)
+        highlight_w = highlight_w[:, :, np.newaxis]
+        shadow_w = shadow_w[:, :, np.newaxis]
+        mid_w = mid_w[:, :, np.newaxis]
+        return (under_remapped * highlight_w
+              + normal * mid_w
+              + over_remapped * shadow_w).astype(np.float32)
+
+    @app.post("/studio/test/bracket")
+    async def test_bracket(req: BracketRequest):
+        """Decode one latent at multiple scales and report stats.
+
+        See block header for the why. Walks the same hook surface that
+        High Precision uses, but installs its own one-shot wrapper so a
+        bug here can't taint the production HP path.
+        """
+        def _run():
+            import numpy as np
+            import torch
+            try:
+                from modules.processing import process_images, decode_first_stage
+            except Exception as e:
+                return {"ok": False, "error": f"cannot import modules.processing: {e}"}
+
+            _build = _import("studio_generation", "_brk_build_minimal_txt2img")
+            _install = _import("studio_generation", "_brk_install_latent_hook")
+            _uninstall = _import("studio_generation", "_brk_uninstall_latent_hook")
+
+            warnings = []
+
+            # Output dir under output/studio/test/bracket/<date>/<seed>/
+            try:
+                base_outdir = shared.opts.data.get("outdir_samples", "")
+                if not base_outdir:
+                    base_outdir = shared.opts.data.get("outdir_img2img_samples", "")
+                if not base_outdir:
+                    from modules.paths import data_path
+                    base_outdir = os.path.join(data_path, "output")
+                if os.path.basename(base_outdir) in ("txt2img-images", "img2img-images"):
+                    base_outdir = os.path.dirname(base_outdir)
+            except Exception:
+                base_outdir = os.path.abspath("output")
+            seed_for_path = req.seed if req.seed != -1 else int(time.time())
+            output_dir = (Path(base_outdir) / "studio" / "test" / "bracket"
+                          / date.today().strftime("%Y-%m-%d") / str(seed_for_path))
+            output_dir.mkdir(parents=True, exist_ok=True)
+
+            # Build minimal txt2img processing object — no scripts, no
+            # extensions, no hires, no AD. Cleanest possible run.
+            p = _build(
+                req.prompt, req.neg_prompt, req.steps, req.sampler_name,
+                req.schedule_type, req.cfg_scale, req.width, req.height,
+                req.seed, str(output_dir),
+            )
+
+            # Install one-shot latent capture hook
+            if not _install():
+                try: p.close()
+                except Exception: pass
+                return {"ok": False, "error": "latent capture hook install failed"}
+
+            try:
+                processed = process_images(p)
+            except Exception as e:
+                _uninstall()
+                try: p.close()
+                except Exception: pass
+                return {"ok": False, "error": f"process_images: {e}"}
+
+            captured = _uninstall()
+            try: p.close()
+            except Exception: pass
+
+            if not captured:
+                return {"ok": False, "error": "decode hook never fired during process_images "
+                                              "— Forge variant may use a non-standard decode path"}
+
+            # Take the LAST captured latent — matches _hp_pick_final_floats
+            # logic. With hires off this is also typically the only one.
+            z = captured[-1]
+            if len(captured) > 1:
+                warnings.append(f"hook fired {len(captured)} times — using the last "
+                                "(hires/scripts may be intercepting the decode path)")
+
+            # Save the normal-decode PNG that process_images produced as
+            # a sanity check vs our re-decode of z * 1.0.
+            ref_png_path = ""
+            try:
+                if processed and getattr(processed, "images", None):
+                    ref_png_path = str(output_dir / "bracket_reference.png")
+                    processed.images[0].save(ref_png_path)
+            except Exception as e:
+                warnings.append(f"reference save failed: {e}")
+
+            # Iterate over scales — separate try/except per scale so an
+            # OOM at one extreme doesn't kill the rest.
+            brackets = []
+            arrs_by_name = {}  # name -> HWC float32 numpy (for merge)
+            sd_model = shared.sd_model
+            for idx, scale in enumerate(req.scales):
+                # Generate a stable name. 0.8/1.0/1.2 → under/normal/over;
+                # anything else gets scale value as its name.
+                if abs(scale - 0.8) < 1e-6:
+                    name = "under"
+                elif abs(scale - 1.0) < 1e-6:
+                    name = "normal"
+                elif abs(scale - 1.2) < 1e-6:
+                    name = "over"
+                else:
+                    name = f"scale_{scale:.3f}".replace(".", "p").rstrip("0").rstrip("p")
+
+                stat = {"name": name, "scale": float(scale)}
+                try:
+                    with torch.inference_mode():
+                        z_scaled = z[0:1] * float(scale)
+                        decoded = decode_first_stage(sd_model, z_scaled)
+                        # decoded is in [-1, 1]; remap to [0, 1] WITHOUT clamping
+                        float_t = (decoded + 1.0) / 2.0
+                        np_chw = float_t[0].detach().to("cpu").float().numpy()
+                        np_hwc = np.ascontiguousarray(np.transpose(np_chw, (1, 2, 0)),
+                                                     dtype=np.float32)
+                        del decoded, float_t, z_scaled
+
+                    has_nan = bool(np.isnan(np_hwc).any())
+                    has_inf = bool(np.isinf(np_hwc).any())
+                    finite = np_hwc[np.isfinite(np_hwc)] if (has_nan or has_inf) else np_hwc
+                    stat.update({
+                        "min": float(finite.min()) if finite.size else float("nan"),
+                        "max": float(finite.max()) if finite.size else float("nan"),
+                        "mean": float(finite.mean()) if finite.size else float("nan"),
+                        "std": float(finite.std()) if finite.size else float("nan"),
+                        "pct_above_1": float((np_hwc > 1.0).mean() * 100.0),
+                        "pct_below_0": float((np_hwc < 0.0).mean() * 100.0),
+                        "has_nan": has_nan,
+                        "has_inf": has_inf,
+                    })
+
+                    # Save clamped PNG
+                    png_path = output_dir / f"bracket_{name}.png"
+                    clamped = np.clip(np_hwc, 0.0, 1.0)
+                    Image.fromarray((clamped * 255.0 + 0.5).astype(np.uint8)).save(
+                        str(png_path), icc_profile=_SRGB_ICC)
+                    stat["png_path"] = str(png_path)
+
+                    # Save raw float32 sidecar
+                    bin_path = output_dir / f"bracket_{name}.float32.bin"
+                    with open(str(bin_path), "wb") as f:
+                        f.write(np_hwc.tobytes())
+                    stat["bin_path"] = str(bin_path)
+
+                    arrs_by_name[name] = np_hwc
+
+                except torch.cuda.OutOfMemoryError:
+                    stat["error"] = "OOM"
+                except Exception as e:
+                    stat["error"] = f"{type(e).__name__}: {e}"
+                finally:
+                    try: torch.cuda.empty_cache()
+                    except Exception: pass
+
+                brackets.append(stat)
+
+            # Optional Step-3 merge — needs all three named scales present
+            merged = None
+            if req.merge:
+                under = arrs_by_name.get("under")
+                normal = arrs_by_name.get("normal")
+                over = arrs_by_name.get("over")
+                if under is None or normal is None or over is None:
+                    warnings.append("merge requested but one of under/normal/over is "
+                                    "missing — needs scales [0.8, 1.0, 1.2]")
+                else:
+                    try:
+                        merged_arr = _bracket_merge(under, normal, over)
+                        png_path = output_dir / "bracket_merged.png"
+                        Image.fromarray((np.clip(merged_arr, 0.0, 1.0) * 255.0 + 0.5)
+                                        .astype(np.uint8)).save(str(png_path), icc_profile=_SRGB_ICC)
+                        bin_path = output_dir / "bracket_merged.float32.bin"
+                        with open(str(bin_path), "wb") as f:
+                            f.write(np.ascontiguousarray(merged_arr, dtype=np.float32).tobytes())
+                        normal_pct_above = float((normal > 1.0).mean() * 100.0)
+                        merged_pct_above = float((merged_arr > 1.0).mean() * 100.0)
+                        merged = {
+                            "min": float(merged_arr.min()),
+                            "max": float(merged_arr.max()),
+                            "mean": float(merged_arr.mean()),
+                            "std": float(merged_arr.std()),
+                            "pct_above_1": merged_pct_above,
+                            "pct_below_0": float((merged_arr < 0.0).mean() * 100.0),
+                            "pct_above_1_normal_only": normal_pct_above,
+                            "pct_above_1_delta_vs_normal": merged_pct_above - normal_pct_above,
+                            "png_path": str(png_path),
+                            "bin_path": str(bin_path),
+                        }
+                    except Exception as e:
+                        warnings.append(f"merge failed: {type(e).__name__}: {e}")
+
+            return {
+                "ok": True,
+                "output_dir": str(output_dir),
+                "reference_png": ref_png_path,
+                "brackets": brackets,
+                "merged": merged,
+                "warnings": warnings,
+                "latent_shape": list(z.shape),
+                "latent_dtype": str(z.dtype),
+            }
+
+        try:
+            return await asyncio.to_thread(_run)
+        except Exception as e:
+            traceback.print_exc()
+            return {"ok": False, "error": f"{type(e).__name__}: {e}"}
+
+    # === END TEMPORARY: latent bracket HDR investigation ===
+
     @app.get("/studio/srgb-icc")
     async def srgb_icc():
         """Serve the sRGB ICC profile bytes so the JS PSD writer (ag-psd)
