@@ -1196,7 +1196,7 @@ async function doGenerate() {
     // Inpaint
     mask_blur:     parseInt(document.getElementById("paramMaskBlur")?.value) || 4,
     inpainting_fill: parseInt(document.getElementById("paramFill")?.value ?? "1"),
-    inpaint_full_res: parseInt(document.getElementById("paramInpaintArea")?.value ?? "0"),
+    inpaint_full_res: parseInt(document.getElementById("paramInpaintArea")?.value ?? "1"),
     inpaint_pad:   parseInt(document.getElementById("paramPadding")?.value) || 64,
 
     // Soft Inpainting

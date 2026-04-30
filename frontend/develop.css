@@ -452,12 +452,17 @@ body.develop-active #canvasArea canvas {
 
 .develop-cg-grid {
   display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 8px;
+  /* minmax(0, 1fr) keeps wide children (lum-row range + number input) from
+     pushing the track past the section width when the body scrollbar is
+     present, which was clipping the right-column wheels off-panel. */
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 6px;
   margin-bottom: 8px;
 }
 .develop-cg-wheel-wrap {
   display: flex; flex-direction: column; align-items: center; gap: 4px;
+  min-width: 0;
+  overflow: hidden;
 }
 .develop-cg-wheel-label {
   font-size: 10px;
