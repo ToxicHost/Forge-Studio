@@ -2095,13 +2095,31 @@ async function saveFlattened(ext, mime) {
     await _ctxSaveCanvas(fmtMap[ext] || "png");
 }
 
-function savePSD() {
+// Cached sRGB ICC profile bytes — fetched lazily on the first PSD export
+// and reused thereafter so the user doesn't pay the round-trip on every
+// save. Same profile that the Python save path embeds in PNG/JPEG/WebP.
+let _srgbIccBytes = null;
+async function _loadSrgbIcc() {
+    if (_srgbIccBytes) return _srgbIccBytes;
+    try {
+        const r = await fetch("/studio/srgb-icc", { cache: "force-cache" });
+        if (!r.ok) return null;
+        _srgbIccBytes = new Uint8Array(await r.arrayBuffer());
+        return _srgbIccBytes;
+    } catch (e) {
+        console.warn("[StudioUI] sRGB ICC fetch failed:", e);
+        return null;
+    }
+}
+
+async function savePSD() {
     if (!window.agPsd) { alert("PSD library not loaded"); return; }
     // Initialize ag-psd for browser canvas
     window.agPsd.initializeCanvas(
         (w, h) => { const c = document.createElement("canvas"); c.width = w; c.height = h; return c; },
         (w, h) => new ImageData(w, h)
     );
+    const iccBytes = await _loadSrgbIcc();
     const children = [];
     for (let i = 0; i < S.layers.length; i++) {
         const L = S.layers[i];
@@ -2147,6 +2165,11 @@ function savePSD() {
     }
 
     const psd = { width: S.W, height: S.H, children: children };
+    if (iccBytes) {
+        // ag-psd embeds image resources (incl. ICC profile) when the
+        // imageResources.iccProfile field is set on the root PSD object.
+        psd.imageResources = Object.assign({}, psd.imageResources, { iccProfile: iccBytes });
+    }
     const buf = window.agPsd.writePsd(psd);
     const blob = new Blob([buf], { type: "application/octet-stream" });
     const url = URL.createObjectURL(blob);

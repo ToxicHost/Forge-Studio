@@ -37,7 +37,7 @@ from threading import Thread
 from typing import Optional, List
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
-from fastapi.responses import JSONResponse, FileResponse, RedirectResponse
+from fastapi.responses import JSONResponse, FileResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from PIL import Image
@@ -45,6 +45,19 @@ from PIL import Image
 from modules import shared, sd_models, sd_samplers, sd_schedulers
 
 TAG = "[Studio API]"
+
+
+# sRGB ICC profile bytes — built once at import. Passed to every PIL save
+# (PNG / JPEG / WebP) so output files are explicitly tagged as sRGB instead
+# of untagged. Professional tools (Photoshop, Affinity, GIMP) can otherwise
+# misinterpret untagged images. Roughly a few hundred bytes per file, no
+# per-call processing cost.
+try:
+    from PIL.ImageCms import ImageCmsProfile, createProfile
+    _SRGB_ICC = ImageCmsProfile(createProfile("sRGB")).tobytes()
+except Exception as _icc_err:
+    print(f"{TAG} sRGB ICC profile unavailable, saves will be untagged: {_icc_err}")
+    _SRGB_ICC = None
 
 
 _NAT_SORT_RE = re.compile(r'(\d+)')
@@ -480,7 +493,7 @@ def _save_mask_sidecar(fpath: Path, mask_arr) -> str:
 def _pil_to_b64(img: Image.Image) -> str:
     """Encode a PIL image to base64 PNG data URL."""
     buf = io.BytesIO()
-    img.save(buf, format="PNG")
+    img.save(buf, format="PNG", icc_profile=_SRGB_ICC)
     return "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
 
 
@@ -490,7 +503,7 @@ def _pil_to_preview_b64(img: Image.Image) -> str:
     buf = io.BytesIO()
     if img.mode != "RGB":
         img = img.convert("RGB")
-    img.save(buf, format="JPEG", quality=70)
+    img.save(buf, format="JPEG", quality=70, icc_profile=_SRGB_ICC)
     return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
 
 
@@ -1543,7 +1556,7 @@ def setup_studio_routes(app: FastAPI):
                                 pass
                         # Encode to buffer once, use for both disk and b64
                         buf = io.BytesIO()
-                        img.save(buf, format="PNG", **save_kwargs)
+                        img.save(buf, format="PNG", icc_profile=_SRGB_ICC, **save_kwargs)
                         png_bytes = buf.getvalue()
                         # Write to disk from buffer (no re-encode)
                         with open(str(fpath), "wb") as f:
@@ -1620,7 +1633,7 @@ def setup_studio_routes(app: FastAPI):
 
                         # Encode once, reuse for disk and b64 (no double-encode).
                         buf = io.BytesIO()
-                        img.save(buf, format=pil_format, **save_kwargs)
+                        img.save(buf, format=pil_format, icc_profile=_SRGB_ICC, **save_kwargs)
                         file_bytes = buf.getvalue()
                         with open(str(fpath), "wb") as f:
                             f.write(file_bytes)
@@ -1719,6 +1732,15 @@ def setup_studio_routes(app: FastAPI):
     async def task_id():
         get_studio_task_id = _import("studio_generation", "get_studio_task_id")
         return {"task_id": get_studio_task_id()}
+
+    @app.get("/studio/srgb-icc")
+    async def srgb_icc():
+        """Serve the sRGB ICC profile bytes so the JS PSD writer (ag-psd)
+        can embed the same profile in exported PSDs that the Python save
+        path embeds in PNG / JPEG / WebP outputs."""
+        if _SRGB_ICC is None:
+            return JSONResponse({"error": "sRGB profile unavailable"}, status_code=503)
+        return Response(content=_SRGB_ICC, media_type="application/vnd.iccprofile")
 
     # ------------------------------------------------------------------
     # High Precision — OpenEXR export
@@ -2025,7 +2047,7 @@ def setup_studio_routes(app: FastAPI):
 
             # Encode result
             buf = BytesIO()
-            upscaled.save(buf, format="PNG")
+            upscaled.save(buf, format="PNG", icc_profile=_SRGB_ICC)
             result_b64 = "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode()
 
             result = {
@@ -2058,7 +2080,7 @@ def setup_studio_routes(app: FastAPI):
                     import time
                     fname = f"upscale_{int(time.time())}_{new_w}x{new_h}.png"
                     save_path = os.path.join(save_dir, fname)
-                    upscaled.save(save_path)
+                    upscaled.save(save_path, icc_profile=_SRGB_ICC)
                     result["saved_path"] = save_path
                     result["filename"] = fname
                     print(f"{TAG} Upscale saved: {save_path}")
@@ -2415,7 +2437,7 @@ def setup_studio_routes(app: FastAPI):
                         except Exception:
                             pass
                     buf = io.BytesIO()
-                    result.save(buf, format="PNG", **save_kwargs)
+                    result.save(buf, format="PNG", icc_profile=_SRGB_ICC, **save_kwargs)
                     png_bytes = buf.getvalue()
                     with open(str(fpath), "wb") as f:
                         f.write(png_bytes)
@@ -2426,7 +2448,7 @@ def setup_studio_routes(app: FastAPI):
                         exif_bytes = _build_exif_usercomment(infotext)
                         if exif_bytes:
                             save_kwargs["exif"] = exif_bytes
-                    save_img.save(str(fpath), "JPEG", **save_kwargs)
+                    save_img.save(str(fpath), "JPEG", icc_profile=_SRGB_ICC, **save_kwargs)
                 elif req.save_format == "webp":
                     if req.save_lossless:
                         save_kwargs = {"lossless": True}
@@ -2436,7 +2458,7 @@ def setup_studio_routes(app: FastAPI):
                         exif_bytes = _build_exif_usercomment(infotext)
                         if exif_bytes:
                             save_kwargs["exif"] = exif_bytes
-                    result.save(str(fpath), "WEBP", **save_kwargs)
+                    result.save(str(fpath), "WEBP", icc_profile=_SRGB_ICC, **save_kwargs)
 
                 filename = fname
                 saved_path = str(fpath)
@@ -2807,7 +2829,7 @@ def setup_studio_routes(app: FastAPI):
             max_dim = 512
             if img.width > max_dim or img.height > max_dim:
                 img.thumbnail((max_dim, max_dim), Image.LANCZOS)
-            img.save(preview_path, format="PNG")
+            img.save(preview_path, format="PNG", icc_profile=_SRGB_ICC)
 
             print(f"{TAG} Saved LoRA preview: {preview_path}")
             return {"ok": True, "path": preview_path}
@@ -3329,7 +3351,7 @@ def setup_studio_routes(app: FastAPI):
                 pnginfo.add_text("parameters", req.metadata)
                 save_kwargs["pnginfo"] = pnginfo
 
-            img.save(str(path), **save_kwargs)
+            img.save(str(path), icc_profile=_SRGB_ICC, **save_kwargs)
             print(f"{TAG} Saved {req.format.upper()} → {path}")
 
             return {"ok": True, "path": str(path), "filename": path.name}
