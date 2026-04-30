@@ -1873,18 +1873,28 @@ def _brk_install_latent_hook():
         return False
 
     def _brk_wrapper(*args, **kwargs):
-        # First positional arg is the latent tensor in the standard signature
-        # decode_latent_batch(samples, target_device=..., check_for_nans=...).
-        # Some Forge variants pass it as kwarg "samples"; handle both.
+        # Forge Neo signature is decode_latent_batch(model, batch, target_device=None,
+        # check_for_nans=...). args[0] is the SD model object, args[1] is the latent
+        # tensor. Other forks may use "samples" or "batch" as kwarg names. Be liberal
+        # — pick the first torch.Tensor we find across positional args + kwargs.
         try:
+            import torch as _torch
             z = None
-            if args:
-                z = args[0]
+            for a in args:
+                if isinstance(a, _torch.Tensor):
+                    z = a
+                    break
             if z is None:
-                z = kwargs.get("samples", None)
+                for v in kwargs.values():
+                    if isinstance(v, _torch.Tensor):
+                        z = v
+                        break
             if z is not None:
-                # Detach + clone so it survives the call's lifetime.
                 _BRK_LATENTS.append(z.detach().clone())
+            else:
+                print(f"[Studio Bracket] decode_latent_batch called but no tensor arg found "
+                      f"(args types: {[type(a).__name__ for a in args]}, "
+                      f"kwarg keys: {list(kwargs.keys())})")
         except Exception as e:
             print(f"[Studio Bracket] latent-capture error — {e}")
         return orig(*args, **kwargs)
