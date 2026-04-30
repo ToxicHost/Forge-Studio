@@ -656,12 +656,14 @@ function _applyDevelopFull(ctx, w, h, p) {
     // toward 0 by the sigmoid.
     //   Krita-style sigmoid: slope = tan((c+1)*π/4), c ∈ [-1, 1].
     //   Gentle near 0 (slope 1.5 at +25), ramps sharply near ±1.
-    // +Whites lifts whites (brighter). +Blacks crushes blacks (darker) — each
-    // slider drives toward its named extreme. Divisor /500 (max ±20% endpoint
-    // shift): the previous /200 was clipping ±50% of the tonal range at the
-    // slider extremes, which felt drastically more aggressive than Lightroom.
+    // +Whites lifts whites (brighter). +Blacks lifts blacks (brighter) —
+    // both sliders move their endpoint toward the middle, matching
+    // Lightroom convention. -Blacks crushes blacks toward 0; -Whites
+    // pulls whites down. Divisor /500 (max ±20% endpoint shift): the
+    // previous /200 was clipping ±50% of the tonal range at the slider
+    // extremes, which felt drastically more aggressive than Lightroom.
     // whitePoint < 1 brightens (output gets multiplied by 1/whitePoint > 1);
-    // blackPoint > 0 clips dark pixels to 0 after the (r - bp) * invRange map.
+    // blackPoint < 0 lifts dark pixels above 0 after the (r - bp) * invRange map.
     // Calibration endpoints from the eyedroppers do a true linear remap:
     //   pixel ≤ calibBlackLin → 0,  pixel ≥ calibWhiteLin → 1
     // Slider blacks/whites apply *on top* as additional offset, so the
@@ -670,7 +672,7 @@ function _applyDevelopFull(ctx, w, h, p) {
     var calibWht = (p.calibWhiteLin == null) ? 1 : p.calibWhiteLin;
     if (calibBlk < 0) calibBlk = 0; else if (calibBlk > 1) calibBlk = 1;
     if (calibWht < 0) calibWht = 0; else if (calibWht > 1) calibWht = 1;
-    var blackPoint = calibBlk + (p.blacks  || 0) / 500;
+    var blackPoint = calibBlk - (p.blacks  || 0) / 500;
     var whitePoint = calibWht - (p.whites  || 0) / 500;
     var range = whitePoint - blackPoint;
     if (Math.abs(range) < 1e-4) range = 1e-4;
@@ -685,11 +687,13 @@ function _applyDevelopFull(ctx, w, h, p) {
     var contrastSlope = Math.tan((cNorm + 1) * Math.PI / 4);
     var doRemap = Math.abs(blackPoint) > 1e-6 || Math.abs(whitePoint - 1) > 1e-6;
     var doContrast = (p.contrast | 0) !== 0;
-    // Hard-clamp post-remap when calibration is active so the picked-white
-    // pixel renders as exact sRGB 255 (and picked-black as exact 0). Without
-    // this, the soft HDR shoulder in _lin2u8 turns "calibrated white" into
-    // ~241 instead of 255, defeating the point of the calibration.
-    var hardClamp = (calibBlk > 1e-6) || ((1 - calibWht) > 1e-6);
+    // Note: we deliberately do NOT hard-clamp the remap output. _lin2u8's
+    // soft shoulder (Reinhard roll-off above linear 0.85) preserves
+    // highlight detail above the picked-white instead of slamming
+    // everything to a flat sRGB 255 spike — matches Lightroom-style
+    // highlight preservation. The cost is that the picked-white pixel
+    // renders at ~241 sRGB instead of exact 255; users wanting exact
+    // 255-clip can pull the Whites slider on top of the calibration.
 
     for (var k = 0, m = 0; k < n; k++, m += 4) {
         var r = rLin[k], g = gLin[k], b = bLin[k];
@@ -697,11 +701,6 @@ function _applyDevelopFull(ctx, w, h, p) {
             r = (r - blackPoint) * invRange;
             g = (g - blackPoint) * invRange;
             b = (b - blackPoint) * invRange;
-            if (hardClamp) {
-                if (r < 0) r = 0; else if (r > 1) r = 1;
-                if (g < 0) g = 0; else if (g > 1) g = 1;
-                if (b < 0) b = 0; else if (b > 1) b = 1;
-            }
         }
         // clamp + re-encode via 4096-entry LUT (no Math.pow in the hot loop)
         d[m]     = _lin2u8(r);
@@ -766,12 +765,15 @@ function _applyDevelopFull(ctx, w, h, p) {
 // ========================================================================
 function _proxyScale(w, h) {
     // Drag-time only — full-resolution path runs on slider release.
-    // Empirically the LUT-based pipeline tops out around 0.5 MP at 60fps,
-    // so half-res starts kicking in at ~0.5 MP.
+    // Earlier thresholds (0.5 MP / 2 MP / 0.25 fallback) caused visible
+    // pixelation at SDXL native (1024² = 1 MP) and worse at hires
+    // (2048² = 4 MP → quartered to 512²). Bumped to keep all common
+    // generation sizes at full or half res — never quarter. The LUT-based
+    // pipeline holds 60fps at 2 MP on any modern hardware; 0.5 scale
+    // covers everything up through ~2832².
     var mp = (w * h) / 1e6;
-    if (mp <= 0.5) return 1;
-    if (mp <= 2) return 0.5;
-    return 0.25;
+    if (mp <= 2) return 1;
+    return 0.5;
 }
 
 function _applyDevelopProxy(ctx, w, h, p) {
