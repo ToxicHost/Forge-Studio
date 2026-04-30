@@ -1677,14 +1677,20 @@ function displayOnCanvas(imgSrc, opts) {
     // High Precision: bind/unbind the Develop module's float source to
     // match what we just put on the canvas. Sender passes opts.floatPath
     // when the image came from a generation with a sidecar; opts.maskPath
-    // is the optional V2 blend-mask sidecar (AD/brush composite). If we
-    // pass null we clear so a previously-bound buffer doesn't leak across.
+    // is the optional V2 blend-mask sidecar (AD/brush composite). The
+    // third arg (imgSrc — the saved image's data URL or /file= URL) is
+    // what Develop reads as the canvas pixels for the AD-mask composite.
+    // We deliberately pass the source URL instead of letting Develop
+    // read from S.canvas, because Studio's redraw is rAF-deferred and
+    // the visible canvas isn't guaranteed to contain the new image yet
+    // when this fires — that timing race produced the "black square at
+    // AD region" bug from V2's first ship.
     try {
       const SD = window.StudioDevelop;
       if (SD && typeof SD.setFloatSource === "function") {
         if (opts.floatPath) {
           const mUrl = opts.maskPath ? (API.base + "/file=" + opts.maskPath) : null;
-          SD.setFloatSource(API.base + "/file=" + opts.floatPath, mUrl, outW, outH);
+          SD.setFloatSource(API.base + "/file=" + opts.floatPath, mUrl, imgSrc, outW, outH);
         } else {
           SD.setFloatSource(null);
         }
