@@ -67,13 +67,11 @@ function defaultParams() {
         // === Calibration (set by eyedroppers — true remap, independent of sliders) ===
         // Linear-RGB endpoints: pixel ≤ calibBlackLin → 0, ≥ calibWhiteLin → 1.
         // Defaults preserve identity. Slider blacks/whites apply on top.
+        // Note: White Balance is NOT a calibration field — the WB eyedropper
+        // adjusts the Temperature/Tint sliders directly so the user can fine
+        // tune from the picked neutral.
         calibBlackLin: 0,
         calibWhiteLin: 1,
-        // Lab a*/b* offset added to the Phase A.5 shift to neutralize a picked
-        // pixel. Defaults zero (no calibration). Slider Temperature/Tint apply
-        // on top.
-        calibLabA: 0,
-        calibLabB: 0,
 
         // === V1: Presence ===
         texture: 0,
@@ -149,7 +147,7 @@ function _migrateParams(p) {
     // fields. Any field added post-V2 with an identity default is safe to
     // back-fill on load — without this, _calibIsActive misreads
     // `undefined` calibWhiteLin (default 1) as "calibration set".
-    var v2NewKeys = ["calibBlackLin", "calibWhiteLin", "calibLabA", "calibLabB"];
+    var v2NewKeys = ["calibBlackLin", "calibWhiteLin"];
     for (var i = 0; i < v2NewKeys.length; i++) {
         var k = v2NewKeys[i];
         if (!(k in p)) p[k] = defaults[k];
@@ -251,9 +249,8 @@ function _isIdentity(p) {
     if (((p.exposure | 0) !== 0) || ((p.contrast | 0) !== 0)) return false;
     if (((p.highlights | 0) !== 0) || ((p.shadows | 0) !== 0)) return false;
     if (((p.whites | 0) !== 0) || ((p.blacks | 0) !== 0)) return false;
-    // Calibration (set by eyedroppers — independent of sliders)
+    // Calibration (set by white/black eyedroppers — independent of sliders)
     if ((p.calibBlackLin || 0) > 1e-6 || Math.abs((p.calibWhiteLin || 1) - 1) > 1e-6) return false;
-    if (Math.abs(p.calibLabA || 0) > 1e-6 || Math.abs(p.calibLabB || 0) > 1e-6) return false;
     if (((p.texture | 0) !== 0) || ((p.clarity | 0) !== 0)) return false;
     if (((p.vibrance | 0) !== 0) || ((p.saturation | 0) !== 0)) return false;
     if ((p.sharpenAmount | 0) !== 0) return false;
@@ -429,17 +426,10 @@ function _getLutA(p) {
 function _applyWhiteBalance(rLin, gLin, bLin, n, p) {
     var temp = p.temperature || 0;
     var tint = p.tint || 0;
-    // Calibration shifts (Lab a*/b*) from the WB eyedropper. Added on top of
-    // slider-driven shifts so the eyedropper truly *re-calibrates* (picked
-    // pixel becomes neutral) and the slider provides further adjustment.
-    var calibA = p.calibLabA || 0;
-    var calibB = p.calibLabB || 0;
-    var hasCalib = calibA !== 0 || calibB !== 0;
-    if (temp === 0 && tint === 0 && !hasCalib) return;
+    if (temp === 0 && tint === 0) return;
 
-    if (p._dragging && !hasCalib) {
+    if (p._dragging) {
         // V1-style RGB multipliers — fast path for slider drag.
-        // Skip when calibration is in play; a true Lab remap is needed.
         var rGain = 1 + temp / 200;
         var bGain = 1 - temp / 200;
         var gGain = 1 + temp / 600 - tint / 300;
@@ -451,10 +441,9 @@ function _applyWhiteBalance(rLin, gLin, bLin, n, p) {
         return;
     }
 
-    // Full-resolution Lab path. Calibration shifts add to slider shifts so
-    // the picked-neutral target is preserved after subsequent slider tweaks.
-    var aShift = -tint * 0.15 + calibA;
-    var bShift =  temp * 0.3  + calibB;
+    // Full-resolution Lab path.
+    var aShift = -tint * 0.15;
+    var bShift =  temp * 0.3;
     var invX = 1 / _LAB_WHITE_X, invZ = 1 / _LAB_WHITE_Z;
     var aDelta = aShift / 500;
     var bDelta = bShift / 200;
@@ -2753,8 +2742,13 @@ function _buildColorGradingSection(body) {
 
 // Map an eyedropper mode to the developParams keys it calibrates. Used to
 // detect "this row currently has a non-default calibration" and to clear it.
+// Map an eyedropper mode to the developParams keys the picker writes.
+// White-point and Black-point are calibration fields (true remap).
+// White-balance is special: the picker writes the Temperature and Tint
+// sliders directly, since WB is treated as an adjustment rather than a
+// stored calibration. _calibIsActive / _clearCalib treat it accordingly.
 var _CALIB_KEYS = {
-    wb:     ["calibLabA", "calibLabB"],
+    wb:     ["temperature", "tint"],
     blacks: ["calibBlackLin"],
     whites: ["calibWhiteLin"]
 };
@@ -2911,6 +2905,12 @@ function _buildSliderRow(field) {
         }
         range.value = v; num.value = v;
         row.classList.toggle("modified", v !== field.def);
+        // Keep the WB calibration row's "set" badge in sync when the user
+        // drags Temperature or Tint directly — those are the WB picker's
+        // backing fields. Cheap (3 DOM nodes), safe to call on every commit.
+        if (field.key === "temperature" || field.key === "tint") {
+            _syncCalibrationBlock(S.developParams);
+        }
         if (isDrag) _scheduleProxyRedraw(); else _scheduleFullRedraw();
     }
 
@@ -3097,18 +3097,18 @@ function _undoReset() {
 }
 
 // ========================================================================
-// EYEDROPPERS — pick a pixel from the canvas to CALIBRATE WB / black /
-// white. These are true calibration pickers, not slider helpers:
-//   • Black eyedropper: picked pixel becomes pure black (and anything
-//     darker also clips to black). Stored as a linear-RGB endpoint.
-//   • White eyedropper: picked pixel becomes pure white (and anything
-//     brighter also clips). Stored as a linear-RGB endpoint.
-//   • White-balance eyedropper: picked pixel becomes neutral gray.
-//     Stored as a Lab a*/b* offset that the pipeline applies on top of
-//     the user's Temperature/Tint slider shifts.
-// The user's Temperature / Tint / Whites / Blacks sliders are *not*
-// touched by the eyedropper — they remain available for further
-// adjustment relative to the calibrated baseline.
+// EYEDROPPERS — pick a pixel from the canvas to set WB / black / white.
+//   • Black eyedropper (CALIBRATION): picked pixel becomes pure black
+//     (and anything darker also clips to black). Stored as a linear-RGB
+//     endpoint independent of the Blacks slider — the slider then acts
+//     as further adjustment on top of the calibrated baseline.
+//   • White eyedropper (CALIBRATION): picked pixel becomes pure white
+//     (and anything brighter also clips). Stored as a linear-RGB
+//     endpoint independent of the Whites slider.
+//   • White-balance eyedropper (ADJUSTMENT): writes Temperature and
+//     Tint slider values that neutralize the picked pixel. The user
+//     can fine-tune from the picked neutral — same behaviour as
+//     Lightroom's WB picker.
 //
 // All pickers read the PRE-DEVELOP composite (so already-applied develop
 // settings don't double-count). We reuse _buildBeforeBuffer() from the
@@ -3210,14 +3210,13 @@ function _samplePreDevelopRegion(cx, cy, radius) {
     };
 }
 
-// White-balance pick (CALIBRATION): store the Lab a*/b* shifts needed to
-// neutralize the picked pixel. The pipeline applies these on top of the
-// slider-driven shifts, so picked → neutral gray, and the user's
-// Temperature/Tint sliders remain free for further adjustment.
-//   pipeline aShift = -tint * 0.15 + calibLabA
-//   pipeline bShift =  temp * 0.3  + calibLabB
-// To null the picked pixel's a*/b* we need:  calibLabA = -aStar,
-// calibLabB = -bStar.
+// White-balance pick: compute Temperature + Tint slider values that
+// neutralize the picked pixel in Lab space. The pipeline shifts:
+//   new_a* = a* - tint * 0.15
+//   new_b* = b* + temperature * 0.3
+// To null both axes:  tint = a*/0.15, temperature = -b*/0.3.
+// (WB stays a slider adjustment so the user can fine-tune from the
+// picked neutral — only Whites/Blacks are stored as separate calibration.)
 function _applyWBPick(px) {
     var S = _S(); if (!S || !S.developParams) return;
     var r = px.rL, g = px.gL, b = px.bL;
@@ -3230,9 +3229,13 @@ function _applyWBPick(px) {
     var fz = _labF(Z / _LAB_WHITE_Z);
     var aStar = 500 * (fx - fy);
     var bStar = 200 * (fy - fz);
+    var tint = aStar / 0.15;
+    var temp = -bStar / 0.3;
+    if (temp < -100) temp = -100; else if (temp > 100) temp = 100;
+    if (tint < -100) tint = -100; else if (tint > 100) tint = 100;
     var p = S.developParams;
-    p.calibLabA = -aStar;
-    p.calibLabB = -bStar;
+    p.temperature = Math.round(temp);
+    p.tint = Math.round(tint);
     p.enabled = true;
     syncPanel();
     _bumpCompositeCache();
