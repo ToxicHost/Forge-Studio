@@ -1783,6 +1783,70 @@ def setup_studio_routes(app: FastAPI):
               + normal * mid_w
               + over_remapped * shadow_w).astype(np.float32)
 
+    def _bracket_clip_recovery(under, normal, over):
+        """Quantify what each bracket sees in regions where the normal decode
+        clips (highlights >= 0.999) or crushes (shadows <= 0.001).
+
+        Returns a nested dict {"hi": {...}, "lo": {...}} with these per-side keys:
+
+          normal_clipped_pct      - % of total pixels in the clipped/crushed band
+          <bracket>_<m/M>_mean    - mean of the bracket's max/min channel values
+                                    measured AT pixels that clipped in normal
+          ..._p5 / ..._p50 / ..._p95
+                                  - percentiles of those values (lower hi-p5 =
+                                    more sub-clip detail in highlights; higher
+                                    lo-p95 = more above-floor detail in shadows)
+          ..._below_linear_pct / ..._above_linear_pct
+                                  - % of clipped/crushed pixels whose bracket
+                                    value is BEYOND the linear-scaling prediction.
+                                    Linear says under_at_clipped = 0.8*1.0 = 0.8;
+                                    a value of 0.6 implies the VAE would have
+                                    produced 0.75 in normal but capped at 1.0,
+                                    i.e. the under bracket is recovering tone
+                                    information that normal clipped away.
+          ..._std_in_region       - structural variance the bracket carries in
+                                    the clipped band (proves it's not just a
+                                    flat dimmer copy of the same flat blowout)
+        """
+        import numpy as np
+        out = {"hi": {}, "lo": {}}
+        h, w, _ = normal.shape
+        total = h * w
+
+        # Highlight side — pixels normal clipped to white
+        normal_max = normal.max(axis=2)
+        hi_mask = normal_max >= 0.999
+        n_hi = int(hi_mask.sum())
+        out["hi"]["normal_clipped_pct"] = float(n_hi / total * 100.0)
+        if n_hi > 0 and under is not None:
+            under_max_in_clipped = under.max(axis=2)[hi_mask]
+            out["hi"]["under_max_mean"] = float(under_max_in_clipped.mean())
+            out["hi"]["under_max_p5"]   = float(np.percentile(under_max_in_clipped, 5))
+            out["hi"]["under_max_p50"]  = float(np.percentile(under_max_in_clipped, 50))
+            # Linear prediction at a clipped pixel: under = 0.8 * normal_pre_clip.
+            # If normal pre-clip would have been exactly 1.0, under = 0.8.
+            # Anything below 0.79 means normal clipped a value > 1.0, and the
+            # under bracket carries that over-1.0 information (recoverable).
+            out["hi"]["under_below_linear_pct"] = float((under_max_in_clipped < 0.79).mean() * 100.0)
+            out["hi"]["under_std_in_region"]    = float(under_max_in_clipped.std())
+
+        # Shadow side — pixels normal crushed to black
+        normal_min = normal.min(axis=2)
+        lo_mask = normal_min <= 0.001
+        n_lo = int(lo_mask.sum())
+        out["lo"]["normal_crushed_pct"] = float(n_lo / total * 100.0)
+        if n_lo > 0 and over is not None:
+            over_min_in_crushed = over.min(axis=2)[lo_mask]
+            out["lo"]["over_min_mean"] = float(over_min_in_crushed.mean())
+            out["lo"]["over_min_p50"]  = float(np.percentile(over_min_in_crushed, 50))
+            out["lo"]["over_min_p95"]  = float(np.percentile(over_min_in_crushed, 95))
+            # Linear prediction at a crushed pixel: over = 1.2 * 0 = 0. Anything
+            # above 0.05 means over preserves shadow detail normal lost to clip-to-zero.
+            out["lo"]["over_above_linear_pct"] = float((over_min_in_crushed > 0.05).mean() * 100.0)
+            out["lo"]["over_std_in_region"]    = float(over_min_in_crushed.std())
+
+        return out
+
     @app.post("/studio/test/bracket")
     async def test_bracket(req: BracketRequest):
         """Decode one latent at multiple scales and report stats.
@@ -1937,6 +2001,21 @@ def setup_studio_routes(app: FastAPI):
 
                 brackets.append(stat)
 
+            # Clip-recovery metrics — quantify what the brackets actually
+            # buy us in regions where the normal decode hits the VAE clamp.
+            # Always computed when normal succeeded; under/over are optional.
+            clip_recovery = None
+            normal_arr = arrs_by_name.get("normal")
+            if normal_arr is not None:
+                try:
+                    clip_recovery = _bracket_clip_recovery(
+                        arrs_by_name.get("under"),
+                        normal_arr,
+                        arrs_by_name.get("over"),
+                    )
+                except Exception as e:
+                    warnings.append(f"clip-recovery metric failed: {type(e).__name__}: {e}")
+
             # Optional Step-3 merge — needs all three named scales present
             merged = None
             if req.merge:
@@ -1977,6 +2056,7 @@ def setup_studio_routes(app: FastAPI):
                 "output_dir": str(output_dir),
                 "reference_png": ref_png_path,
                 "brackets": brackets,
+                "clip_recovery": clip_recovery,
                 "merged": merged,
                 "warnings": warnings,
                 "latent_shape": list(z.shape),
