@@ -348,20 +348,26 @@ function applyToContext(ctx, w, h, params) {
 // Output is Float32 in linear space (may exceed 1.0 due to exposure gain).
 // Cached on S._developLutCache keyed by the params that contribute.
 //
-// WB math (matches spec):
-//   R *= 1 + temp/200       (warm = +R)
-//   B *= 1 - temp/200       (warm = -B)
-//   G *= 1 - tint/200       (positive tint = magenta, negative = green —
-//                            matches the slider's green→magenta gradient)
+// WB math:
+//   R *= 1 + temp/200             (warm raises red)
+//   B *= 1 - temp/200             (warm lowers blue)
+//   G *= 1 + temp/600 - tint/300  (warm raises green ~1/3 as much as red,
+//                                  so the cast looks orange/yellow rather
+//                                  than pink; tint at ±33% — visible green
+//                                  / magenta cast without pushing G hard
+//                                  past 1.0 the way the prior ±50% did,
+//                                  which was washing out highlight detail
+//                                  through the Reinhard shoulder.)
+//   Positive tint = magenta, negative = green (matches the slider's
+//   green→magenta gradient track).
 // Exposure: v *= 2^(exposure * 3/100)   ⇒ ±3 stops at the slider extremes.
-// (Was ±5 stops — too easy to crush highlights at moderate slider values.)
 // ========================================================================
 function _buildLutA(p) {
     var temp = p.temperature || 0;
     var tint = p.tint || 0;
     var rGain = 1 + temp / 200;
     var bGain = 1 - temp / 200;
-    var gGain = 1 - tint / 200;
+    var gGain = 1 + temp / 600 - tint / 300;
     var expGain = Math.pow(2, (p.exposure || 0) * 3 / 100);
     var rScale = rGain * expGain;
     var gScale = gGain * expGain;
@@ -514,10 +520,11 @@ function _applyDevelopFull(ctx, w, h, p) {
     // toward 0 by the sigmoid.
     //   Krita-style sigmoid: slope = tan((c+1)*π/4), c ∈ [-1, 1].
     //   Gentle near 0 (slope 1.5 at +25), ramps sharply near ±1.
-    // Lightroom convention: +Whites lifts whites (brighter), +Blacks lifts
-    // blacks (brighter). Pulling the white point IN (below 1.0) and pushing
-    // the black point BELOW 0 expands the linear range upward, brightening.
-    var blackPoint = -((p.blacks  || 0) / 200);
+    // Lightroom convention: +Whites lifts whites (brighter). +Blacks crushes
+    // blacks (darker) — each slider drives toward its named extreme.
+    // whitePoint < 1 brightens (output gets multiplied by 1/whitePoint > 1);
+    // blackPoint > 0 clips dark pixels to 0 after the (r - bp) * invRange map.
+    var blackPoint = (p.blacks  || 0) / 200;
     var whitePoint = 1 - (p.whites || 0) / 200;
     var range = whitePoint - blackPoint;
     if (Math.abs(range) < 1e-4) range = 1e-4;
@@ -2556,6 +2563,11 @@ function _renderHistogram() {
         var off = y * sw * 4;
         for (var x = 0; x < sw; x += stride) {
             var p = off + x * 4;
+            // Skip transparent pixels — without this, every pixel of canvas
+            // padding around the image dumps into bin 0, swamping the real
+            // distribution with a giant fake spike at black (which is why the
+            // histogram looked nothing like Lightroom's for the same image).
+            if (sd[p + 3] === 0) continue;
             binsR[sd[p]]++; binsG[sd[p + 1]]++; binsB[sd[p + 2]]++;
             sampleCount++;
         }
@@ -2757,12 +2769,15 @@ function _samplePreDevelopRegion(cx, cy, radius) {
 }
 
 // White-balance pick: compute Temperature + Tint to neutralize the picked
-// pixel. Pipeline math (linear): R *= 1 + temp/200; B *= 1 - temp/200;
-// G *= 1 + tint/200. We solve for temp and tint such that the post-WB
-// triple is equal:
-//   t    = 200 * (b - r) / (r + b)
-//   target = 2*r*b / (r + b)        (harmonic mean)
-//   tint = 200 * (target - g) / g
+// pixel. Pipeline math (linear):
+//   R *= 1 + temp/200
+//   B *= 1 - temp/200
+//   G *= 1 + temp/600 - tint/300
+// Solve for temp and tint so the post-WB triple is equal (= harmonic mean
+// of r and b):
+//   temp   = 200 * (b - r) / (r + b)
+//   target = 2 * r * b / (r + b)
+//   tint   = 300 * (g * (1 + temp/600) - target) / g
 // All math in linear space. Clamps to slider range.
 function _applyWBPick(px) {
     var S = _S(); if (!S || !S.developParams) return;
@@ -2770,7 +2785,7 @@ function _applyWBPick(px) {
     if (r + b < 1e-6 || g < 1e-6) return;     // near-black pixel — meaningless
     var temp = 200 * (b - r) / (r + b);
     var target = 2 * r * b / (r + b);
-    var tint = 200 * (target - g) / g;
+    var tint = 300 * (g * (1 + temp / 600) - target) / g;
     if (temp < -100) temp = -100; else if (temp > 100) temp = 100;
     if (tint < -100) tint = -100; else if (tint > 100) tint = 100;
     var p = S.developParams;
@@ -2802,15 +2817,16 @@ function _applyBlackPick(px) {
 
 // White-point pick: set the Whites slider so the picked pixel's brightest
 // channel becomes the new upper bound (renders as pure white).
-//   whitePoint (linear) = 1 + whites/200
-//   whites = 200 * (V_lin - 1)
+//   whitePoint (linear) = 1 - whites/200
+//   For r_out = r/whitePoint = 1 we need whitePoint = V_lin
+//   ⇒ whites = 200 * (1 - V_lin)
 // Use the max channel — most appropriate for the "white point" concept.
 function _applyWhitePick(px) {
     var S = _S(); if (!S || !S.developParams) return;
     var V = px.rL > px.gL ? (px.rL > px.bL ? px.rL : px.bL) : (px.gL > px.bL ? px.gL : px.bL);
     if (V < 0) V = 0;
     if (V < 0.05) return;                     // refuse near-black
-    var whites = 200 * (V - 1);
+    var whites = 200 * (1 - V);
     if (whites < -100) whites = -100;
     if (whites > 100)  whites = 100;
     S.developParams.whites = Math.round(whites);
