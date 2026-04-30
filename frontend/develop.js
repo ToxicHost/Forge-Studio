@@ -3031,27 +3031,37 @@ function _renderHistogram() {
         var v = nz[idx];
         return v > 0 ? v : nz[0];
     }
-    function drawBars(bins, fill) {
-        var ceiling = ceilingP(bins);
-        // Square-root compression so a 100× spike doesn't crush the rest
-        // of the distribution into invisibility, while still ranking bins
-        // monotonically.
-        var sqCeil = Math.sqrt(ceiling);
+    // Draw a channel as a filled polyline (Photoshop-style) rather than
+    // chunky bars. The path traces bin tops + closes along the baseline,
+    // and is filled with low alpha; with "lighter" blend, overlapping
+    // channels mix additively (R+G=yellow, R+G+B=white) so each channel
+    // remains visible. Sqrt scaling keeps the chart readable when one
+    // bin has 100× more pixels than its neighbours.
+    function tracePath(bins, sqCeil) {
         var barW = W / 256;
-        hctx.fillStyle = fill;
+        hctx.beginPath();
+        hctx.moveTo(0, H);
         for (var i = 0; i < 256; i++) {
             var v = bins[i];
-            if (v <= 0) continue;
-            var t = Math.sqrt(v) / sqCeil;
+            var t = v > 0 ? Math.sqrt(v) / sqCeil : 0;
             if (t > 1) t = 1;
-            var bh = t * H;
-            hctx.fillRect(i * barW, H - bh, barW, bh);
+            var x = i * barW + barW * 0.5;
+            var y = H - t * H;
+            hctx.lineTo(x, y);
         }
+        hctx.lineTo(W, H);
+        hctx.closePath();
+    }
+    function drawChannel(bins, fill, stroke) {
+        var sqCeil = Math.sqrt(ceilingP(bins));
+        tracePath(bins, sqCeil);
+        if (fill)   { hctx.fillStyle   = fill;   hctx.fill(); }
+        if (stroke) { hctx.strokeStyle = stroke; hctx.lineWidth = 1; hctx.stroke(); }
     }
     hctx.globalCompositeOperation = "lighter";
-    drawBars(binsR, "rgba(255, 0, 0, 0.25)");
-    drawBars(binsG, "rgba(0, 255, 0, 0.25)");
-    drawBars(binsB, "rgba(0, 0, 255, 0.25)");
+    drawChannel(binsR, "rgba(180, 40, 40, 0.55)",  "rgba(255, 90, 90, 0.85)");
+    drawChannel(binsG, "rgba(40, 160, 40, 0.55)",  "rgba(90, 255, 90, 0.85)");
+    drawChannel(binsB, "rgba(40, 80, 200, 0.55)",  "rgba(90, 140, 255, 0.85)");
     hctx.globalCompositeOperation = "source-over";
 
     // Clipping detection: a channel is "clipping" if more than CLIP_FRAC of
