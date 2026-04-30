@@ -1678,79 +1678,125 @@ def _run_attention_couple_image(
 
 # =========================================================================
 # HIGH PRECISION — float tensor capture
+#
+# We hook modules.processing.decode_latent_batch — Forge's wrapper that
+# every standard decode path (txt2img, img2img, hires fix) runs through.
+# At that hook the tensor is still in the [-1, 1] range produced by the
+# VAE; modules.processing then remaps to [0, 1] and clamps. We capture
+# the pre-clamp values, remap without clamp, and stash them on a
+# module-level buffer keyed by call. The buffer is read out per image
+# in the run_generation loop. This avoids depending on processed.samples
+# (not populated on every Forge fork, including Forge Neo) and skips the
+# extra VAE pass the spec's fallback would have cost.
 # =========================================================================
 _HP_FP16_VAE_WARNED = False
+_HP_HOOK_INSTALLED = False
+_HP_CAPTURE_ACTIVE = False
+_HP_CAPTURE_BATCHES = []  # list[list[np.ndarray]] — one entry per decode_latent_batch call
 
 
-def _capture_float_images(processed):
-    """Re-decode latents to get unclamped float32 pixel data.
+def _hp_install_decode_hook():
+    """Install the decode_latent_batch capture hook (idempotent)."""
+    global _HP_HOOK_INSTALLED
+    if _HP_HOOK_INSTALLED:
+        return True
+    try:
+        import modules.processing as _proc
+    except Exception as e:
+        print(f"[Studio] High Precision: cannot import modules.processing — {e}")
+        return False
 
-    Returns a list parallel to processed.images. Each entry is a float32
-    HxWx3 numpy array in roughly [0, 1] (with small headroom above 1.0
-    on highlights and tiny negatives in deep shadows) — i.e. the VAE
-    output BEFORE modules.processing's `torch.clamp(..., 0, 1)`.
+    orig = getattr(_proc, "decode_latent_batch", None)
+    if orig is None:
+        print("[Studio] High Precision: modules.processing.decode_latent_batch missing — disabled")
+        return False
 
-    Wrapped in try/except — any failure (OOM, missing samples, decoder
-    error) returns an empty list. The generation result is never
-    affected; this is a bonus feature that degrades gracefully.
+    def _hp_decode_wrapper(*args, **kwargs):
+        out = orig(*args, **kwargs)
+        if not _HP_CAPTURE_ACTIVE:
+            return out
+        try:
+            this_batch = []
+            # `out` is a list of CHW tensors in [-1, 1] (Forge convention).
+            for sample in out:
+                # Remap to [0, 1] WITHOUT clamping. Sub-LSB precision and
+                # values >1 / <0 carry through here — that's the win.
+                float_img = (sample + 1.0) / 2.0
+                np_img = float_img.detach().to("cpu").float().numpy()
+                # CHW → HWC
+                np_img = np.transpose(np_img, (1, 2, 0))
+                this_batch.append(np.ascontiguousarray(np_img, dtype=np.float32))
+            _HP_CAPTURE_BATCHES.append(this_batch)
+        except Exception as e:
+            print(f"[Studio] High Precision: capture-hook error — {e}")
+        return out
+
+    _proc.decode_latent_batch = _hp_decode_wrapper
+    _proc._studio_hp_decode_orig = orig
+    _HP_HOOK_INSTALLED = True
+    print("[Studio] High Precision: decode_latent_batch hook installed")
+    return True
+
+
+def _hp_begin_capture():
+    """Arm the hook and clear any previous capture buffer."""
+    global _HP_CAPTURE_ACTIVE
+    _HP_CAPTURE_BATCHES.clear()
+    _HP_CAPTURE_ACTIVE = True
+
+
+def _hp_end_capture():
+    """Disarm the hook and return the captured batches.
+
+    Returns a list[list[np.ndarray]] — one inner list per
+    decode_latent_batch call observed during the capture window. For a
+    standard txt2img generation there's one call (the final decode).
+    For txt2img + Forge built-in hires there are typically two — base
+    decode then hires decode; the LAST one corresponds to processed.images.
     """
-    samples = getattr(processed, "samples", None)
-    if samples is None:
-        return []
+    global _HP_CAPTURE_ACTIVE
+    _HP_CAPTURE_ACTIVE = False
+    return list(_HP_CAPTURE_BATCHES)
 
+
+def _hp_warn_fp16_vae_once():
+    """Emit a one-time note when the VAE is fp16 (tighter numeric range)."""
+    global _HP_FP16_VAE_WARNED
+    if _HP_FP16_VAE_WARNED:
+        return
     try:
         import torch
-        from modules.processing import decode_first_stage
-    except Exception as e:
-        print(f"[Studio] High Precision: import failed — {e}")
-        return []
-
-    sd_model = getattr(shared, "sd_model", None)
-    if sd_model is None:
-        return []
-
-    # fp16 VAE has tighter numerical range; warn once.
-    global _HP_FP16_VAE_WARNED
-    try:
-        vae = getattr(sd_model, "first_stage_model", None)
-        if vae is not None and not _HP_FP16_VAE_WARNED:
-            for prm in vae.parameters():
-                if prm.dtype == torch.float16:
-                    print("[Studio] High Precision: fp16 VAE detected — fp32 VAE recommended for best precision")
-                    _HP_FP16_VAE_WARNED = True
-                    break
+        sd_model = getattr(shared, "sd_model", None)
+        vae = getattr(sd_model, "first_stage_model", None) if sd_model else None
+        if vae is None:
+            return
+        for prm in vae.parameters():
+            if prm.dtype == torch.float16:
+                print("[Studio] High Precision: fp16 VAE detected — fp32 VAE recommended for best precision")
+                _HP_FP16_VAE_WARNED = True
+                break
     except Exception:
         pass
 
-    out = []
-    try:
-        with torch.inference_mode():
-            n = int(samples.shape[0])
-            for i in range(n):
-                try:
-                    sample = samples[i:i + 1]
-                    decoded = decode_first_stage(sd_model, sample)
-                    # Forge's decode_first_stage is the [-1, 1] tensor
-                    # that modules.processing then remaps to [0, 1]
-                    # via (x + 1) / 2 and clamps. We replicate the
-                    # remap WITHOUT the clamp.
-                    float_img = (decoded + 1.0) / 2.0
-                    float_np = float_img[0].detach().to("cpu").float().numpy()
-                    del decoded, float_img
-                    # CHW → HWC
-                    float_np = np.transpose(float_np, (1, 2, 0))
-                    out.append(np.ascontiguousarray(float_np, dtype=np.float32))
-                except torch.cuda.OutOfMemoryError:
-                    print("[Studio] High Precision: OOM on sample %d — skipping that one" % i)
-                    out.append(None)
-                except Exception as e:
-                    print(f"[Studio] High Precision: sample {i} capture failed — {e}")
-                    out.append(None)
-    except Exception as e:
-        print(f"[Studio] High Precision: float capture failed — {e}")
-        return []
 
-    return out
+def _hp_pick_final_floats(batches, expected_count):
+    """Choose the capture batch that corresponds to processed.images.
+
+    Strategy: take the LAST captured batch whose length matches the
+    final image count. Forge may decode multiple times during a single
+    generation (e.g. base → hires fix), but the final one is the one
+    that produced the images we'll save.
+    """
+    if not batches:
+        return []
+    # Prefer a length match — guards against TAESD or other side-channel
+    # decodes that might slip into the buffer.
+    for batch in reversed(batches):
+        if len(batch) == expected_count:
+            return batch
+    # Fall back to the last batch even if size differs; the dimension
+    # check downstream will drop entries that don't fit the final image.
+    return batches[-1]
 
 
 def run_generation(
@@ -2115,6 +2161,12 @@ def run_generation(
                           f"sampler={p.sampler_name}, scheduler={getattr(p, 'scheduler', 'N/A')}, "
                           f"steps={p.steps}, cfg={p.cfg_scale}, seed={batch_seed}")
 
+                # High Precision: arm decode_latent_batch hook just for this
+                # process_images call so we capture the unclamped tensor.
+                if high_precision:
+                    if _hp_install_decode_hook():
+                        _hp_warn_fp16_vae_once()
+                        _hp_begin_capture()
                 try:
                     # Suppress stock ADetailer — Studio runs its own AD pipeline
                     # with centroid-based mask filtering after hires fix.
@@ -2124,6 +2176,8 @@ def run_generation(
                 except Exception as e:
                     print(f"[Studio] process_images error: {e}")
                     traceback.print_exc()
+                    if high_precision:
+                        _hp_end_capture()
                     # p.close() may already have been called by Forge's finally block;
                     # guard with attribute to avoid double-close corrupting weakrefs.
                     if not getattr(p, '_studio_closed', False):
@@ -2131,6 +2185,7 @@ def run_generation(
                         try: p.close()
                         except Exception: pass
                     continue
+                _hp_batches = _hp_end_capture() if high_precision else []
 
                 if shared.state.interrupted:
                     print("[Studio] Generation interrupted")
@@ -2159,15 +2214,26 @@ def run_generation(
 
                 result = processed.images[0]
 
-                # ── High Precision: capture pre-clamp float pixels ──────
-                # Done BEFORE any post-processing; if any of mask
-                # composite / hires fix / Studio AD runs, the float data
-                # no longer matches final pixels and we drop it.
+                # ── High Precision: pull captured pre-clamp float pixels ──
+                # _hp_batches was populated by the decode_latent_batch hook
+                # we armed before process_images. We use the LAST batch
+                # whose length matches processed.images — that's the final
+                # decode (post-hires when Forge's built-in hires ran).
+                # If post-processing modifies the result later (mask
+                # composite / img2img hires fix / Studio AD), we drop it.
                 hp_floats = []
                 hp_post_processed = False
                 hp_post_reason = ""
                 if high_precision:
-                    hp_floats = _capture_float_images(processed)
+                    expected = len(processed.images) if getattr(processed, "images", None) else 1
+                    hp_floats = _hp_pick_final_floats(_hp_batches, expected)
+                    if not hp_floats:
+                        if not _hp_batches:
+                            print("[Studio] High Precision: decode hook never fired during process_images — "
+                                  "Forge may have used a non-standard decode path")
+                        else:
+                            print(f"[Studio] High Precision: hook fired {len(_hp_batches)} time(s) but "
+                                  f"none matched the expected image count ({expected})")
 
                 # ── Post-process mask composite ─────────────────────────
                 # Clips any changes from non-AD postprocess callbacks that
