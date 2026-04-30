@@ -615,6 +615,27 @@ def _init_db():
             db.commit()
     except Exception:
         pass
+    # High Precision: optional sidecar path on each metadata row. Stores
+    # the absolute path to a {stem}.float32.bin file written next to the
+    # PNG. Empty string when no sidecar exists.
+    try:
+        meta_cols2 = [r[1] for r in db.execute("PRAGMA table_info(image_metadata)").fetchall()]
+        if "float_path" not in meta_cols2:
+            db.execute("ALTER TABLE image_metadata ADD COLUMN float_path TEXT DEFAULT ''")
+            db.commit()
+    except Exception:
+        pass
+    # High Precision V2 (AD-aware): optional blend-mask sidecar path
+    # ({stem}.blend_mask.png). White = "use canvas uint8 here", black =
+    # "use float buffer here". Develop composites at load time. Empty
+    # string when no AD/brush composite ran.
+    try:
+        meta_cols3 = [r[1] for r in db.execute("PRAGMA table_info(image_metadata)").fetchall()]
+        if "blend_mask_path" not in meta_cols3:
+            db.execute("ALTER TABLE image_metadata ADD COLUMN blend_mask_path TEXT DEFAULT ''")
+            db.commit()
+    except Exception:
+        pass
     db.commit()
     db.close()
 
@@ -1469,7 +1490,7 @@ def _parse_meta_fields(infotext, settings=None):
     return meta
 
 
-def _meta_row_values(meta, content_hash="", image_id=None):
+def _meta_row_values(meta, content_hash="", image_id=None, float_path="", blend_mask_path=""):
     """Build the VALUES tuple for image_metadata INSERT."""
     return (
         content_hash,
@@ -1491,6 +1512,8 @@ def _meta_row_values(meta, content_hash="", image_id=None):
         meta.get("hires_upscale") or meta.get("Hires upscale"),
         meta.get("raw_infotext"),
         time.time(),
+        float_path or "",
+        blend_mask_path or "",
     )
 
 
@@ -1500,8 +1523,8 @@ _META_INSERT_SQL = """
         prompt, negative_prompt, seed, steps, cfg,
         sampler, scheduler, model, model_hash, denoising,
         width, height, clip_skip, hires_upscaler, hires_upscale,
-        raw_infotext, created_at
-    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+        raw_infotext, created_at, float_path, blend_mask_path
+    ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
 """
 
 
@@ -1601,7 +1624,7 @@ def _preinsert_image_row(db, filepath, content_hash):
     return image_id
 
 
-def save_metadata_by_hash(content_hash, infotext, settings=None, filepath=None):
+def save_metadata_by_hash(content_hash, infotext, settings=None, filepath=None, float_path="", blend_mask_path=""):
     """Save generation metadata keyed by content hash.
 
     Called from studio_api.py immediately after saving an image to disk.
@@ -1619,6 +1642,9 @@ def save_metadata_by_hash(content_hash, infotext, settings=None, filepath=None):
         infotext: A1111-format parameters string
         settings: Optional dict with structured generation params
         filepath: Optional disk path; enables pre-insertion when given
+        float_path: Optional path to a .float32.bin sidecar (High Precision)
+        blend_mask_path: Optional path to a .blend_mask.png sidecar
+                         (V2: AD/brush composite mask)
     """
     if not content_hash:
         return
@@ -1640,7 +1666,9 @@ def save_metadata_by_hash(content_hash, infotext, settings=None, filepath=None):
                 print(f"[Gallery] Pre-insert failed (hash {content_hash[:12]}): {e}")
                 # Fall through with image_id=None; the watcher will catch
                 # up later and link the orphan metadata row by hash.
-        db.execute(_META_INSERT_SQL, _meta_row_values(meta, content_hash, image_id))
+        db.execute(_META_INSERT_SQL, _meta_row_values(meta, content_hash, image_id,
+                                                      float_path or "",
+                                                      blend_mask_path or ""))
         db.commit()
     except Exception as e:
         print(f"[Gallery] Metadata save error (hash {content_hash[:12]}): {e}")

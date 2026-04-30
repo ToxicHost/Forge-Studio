@@ -246,12 +246,15 @@ const State = {
   outputInfotexts: [],     // array of infotext strings, parallel to outputImages
   outputFilenames: [],     // array of original filenames (without ext), parallel to outputImages
   outputContentHashes: [], // SHA256 of decoded RGB pixels, parallel to outputImages; "" when not saved
+  outputFloatPaths: [],    // High Precision sidecar paths, parallel to outputImages; "" when none
+  outputMaskPaths: [],     // High Precision V2 blend-mask sidecar paths, parallel to outputImages; "" when no AD/brush composite
   selectedOutputIdx: 0,
   embedMetadata: true,     // whether to embed generation params in saved images
   saveOutputs: true,       // auto-save generated images to disk
   saveFormat: "png",       // output format: png | jpeg | webp
   saveQuality: 80,         // JPEG/WebP quality (0-100)
   saveLossless: false,     // WebP lossless mode
+  highPrecision: false,    // capture float32 VAE output, save .float32.bin sidecar
   livePreview: true,       // show preview thumbnail during generation
   baseGenW: 768,           // pre-hires base dimensions (restored after display)
   baseGenH: 768,
@@ -1241,6 +1244,7 @@ async function doGenerate() {
     save_quality: State.saveQuality || 80,
     save_lossless: State.saveLossless || false,
     embed_metadata: State.embedMetadata ?? true,
+    high_precision: !!State.highPrecision,
     is_txt2img: isTxt2img,
 
     // Extension bridge args
@@ -1273,6 +1277,8 @@ async function doGenerate() {
       const newB64 = result.images;
       const newInfotexts = result.infotexts || [];
       const newContentHashes = result.content_hashes || [];
+      const newFloatPaths = result.float_paths || [];
+      const newMaskPaths = result.mask_paths || [];
       // Extract original filenames (without extension) from server paths
       const newFilenames = (result.image_paths || []).map(p => {
         const base = p.replace(/\\/g, "/").split("/").pop() || "";
@@ -1283,12 +1289,16 @@ async function doGenerate() {
       // Pad infotexts to match image count
       while (newInfotexts.length < newB64.length) newInfotexts.push("");
       while (newContentHashes.length < newB64.length) newContentHashes.push("");
+      while (newFloatPaths.length < newB64.length) newFloatPaths.push("");
+      while (newMaskPaths.length < newB64.length) newMaskPaths.push("");
 
       State.outputImages = [...newFileUrls, ...State.outputImages].slice(0, MAX_GALLERY);
       State.outputImagesB64 = [...newB64, ...State.outputImagesB64].slice(0, MAX_GALLERY);
       State.outputInfotexts = [...newInfotexts, ...State.outputInfotexts].slice(0, MAX_GALLERY);
       State.outputFilenames = [...newFilenames, ...State.outputFilenames].slice(0, MAX_GALLERY);
       State.outputContentHashes = [...newContentHashes, ...State.outputContentHashes].slice(0, MAX_GALLERY);
+      State.outputFloatPaths = [...newFloatPaths, ...State.outputFloatPaths].slice(0, MAX_GALLERY);
+      State.outputMaskPaths = [...newMaskPaths, ...State.outputMaskPaths].slice(0, MAX_GALLERY);
       State.selectedOutputIdx = 0;
       renderOutputGallery();
       addHistoryEntry(`Generate (seed ${result.seed})`);
@@ -1663,6 +1673,23 @@ function displayOnCanvas(imgSrc, opts) {
     } else {
       Core.composite();
     }
+
+    // High Precision: bind/unbind the Develop module's float source to
+    // match what we just put on the canvas. Sender passes opts.floatPath
+    // when the image came from a generation with a sidecar; opts.maskPath
+    // is the optional V2 blend-mask sidecar (AD/brush composite). If we
+    // pass null we clear so a previously-bound buffer doesn't leak across.
+    try {
+      const SD = window.StudioDevelop;
+      if (SD && typeof SD.setFloatSource === "function") {
+        if (opts.floatPath) {
+          const mUrl = opts.maskPath ? (API.base + "/file=" + opts.maskPath) : null;
+          SD.setFloatSource(API.base + "/file=" + opts.floatPath, mUrl, outW, outH);
+        } else {
+          SD.setFloatSource(null);
+        }
+      }
+    } catch (e) { /* Develop not loaded yet; ignore */ }
   };
   img.src = imgSrc;
 }
@@ -2100,7 +2127,9 @@ function bindUI() {
   document.getElementById("outputToCanvas")?.addEventListener("click", () => {
     // Use data URL version for canvas drawing (file URLs can't be drawn to canvas due to CORS)
     const img = (State.outputImagesB64 || State.outputImages)[State.selectedOutputIdx];
-    if (img) displayOnCanvas(img, { newLayer: true, layerName: "Output", undoLabel: "Send to canvas" });
+    const fpath = State.outputFloatPaths[State.selectedOutputIdx] || "";
+    const mpath = State.outputMaskPaths[State.selectedOutputIdx] || "";
+    if (img) displayOnCanvas(img, { newLayer: true, layerName: "Output", undoLabel: "Send to canvas", floatPath: fpath, maskPath: mpath });
   });
 
   // Gallery click = select, double-click = lightbox (event delegation, bound once)
@@ -2159,6 +2188,8 @@ function bindUI() {
 
       const menu = document.createElement("div");
       menu.className = "gallery-ctx-menu";
+      const _hasFloatCtx = !!(State.outputFloatPaths && State.outputFloatPaths[idx]);
+      const _exrCtxLabel = _hasFloatCtx ? "Export EXR (High Precision)" : "Export EXR (Standard)";
       menu.innerHTML = [
         { label: "Send to Canvas", action: "canvas" },
         seed ? { label: `Copy Seed (${seed})`, action: "seed" } : null,
@@ -2166,6 +2197,7 @@ function bindUI() {
         { label: "Save as PNG", action: "save-png" },
         { label: "Save as JPEG", action: "save-jpeg" },
         { label: "Save as WebP", action: "save-webp" },
+        { label: _exrCtxLabel, action: "save-exr" },
       ].filter(Boolean).map(item =>
         item.label ? `<div class="gallery-ctx-item" data-action="${item.action}">${item.label}</div>`
                    : '<div class="gallery-ctx-sep"></div>'
@@ -2179,10 +2211,14 @@ function bindUI() {
         if (!action) return;
         menu.remove();
         const imgSrc = (State.outputImagesB64 || State.outputImages)[idx];
+        const fpath = State.outputFloatPaths[idx] || "";
+        const mpath = State.outputMaskPaths[idx] || "";
         if (action === "canvas" && imgSrc) {
-          displayOnCanvas(imgSrc, { newLayer: true, layerName: "Output", undoLabel: "Send to canvas" });
+          displayOnCanvas(imgSrc, { newLayer: true, layerName: "Output", undoLabel: "Send to canvas", floatPath: fpath, maskPath: mpath });
         } else if (action === "seed" && seed) {
           navigator.clipboard.writeText(seed).then(() => showToast(`Seed ${seed} copied`, "success"));
+        } else if (action === "save-exr") {
+          await _exportEXR(idx, false);
         } else if (action.startsWith("save-")) {
           const fmt = action.replace("save-", "");
           const metadata = State.embedMetadata ? (infotext || "") : "";
@@ -2214,6 +2250,12 @@ function bindUI() {
       b64Url: State.outputImagesB64[i] || url,
       filename: State.outputFilenames[i] || "",
       infotext: State.outputInfotexts[i] || "",
+      // High Precision sidecar — Gallery threads this through to Develop
+      // via setFloatSource when the detail view opens.
+      floatPath: State.outputFloatPaths[i] || "",
+      // V2: blend-mask sidecar (AD/brush composite). When present,
+      // Develop will composite canvas-uint8 over the float buffer.
+      maskPath: State.outputMaskPaths[i] || "",
     }));
   }
 
@@ -2247,7 +2289,9 @@ function bindUI() {
     const canvasArea = document.getElementById("canvasArea");
     if (canvasArea && canvasArea.contains(e.target)) {
       const img = (State.outputImagesB64 || State.outputImages)[idx];
-      if (img) displayOnCanvas(img, { newLayer: true, layerName: "Output", undoLabel: "Drag to canvas" });
+      const fpath = State.outputFloatPaths[idx] || "";
+      const mpath = State.outputMaskPaths[idx] || "";
+      if (img) displayOnCanvas(img, { newLayer: true, layerName: "Output", undoLabel: "Drag to canvas", floatPath: fpath, maskPath: mpath });
     }
   });
 
@@ -2306,6 +2350,63 @@ function bindUI() {
       }
     });
   }
+  // High Precision: post the selected output to the EXR exporter. Uses
+  // the .float32.bin sidecar when available (true float pixels). Falls
+  // back to the 8-bit image_b64 otherwise — still emits a valid EXR for
+  // pipeline compatibility, just without precision gain.
+  async function _exportEXR(idx, toGallery) {
+    if (idx == null || idx < 0) return;
+    const floatPath = State.outputFloatPaths[idx] || "";
+    const maskPath  = State.outputMaskPaths[idx]  || "";
+    const imgSrc = (State.outputImagesB64 || State.outputImages)[idx];
+    if (!floatPath && !imgSrc) return;
+    // Float sidecar requires accurate dims so the backend can reshape it.
+    // Probe the corresponding image (any of the parallel sources) for its
+    // natural dimensions — the active canvas size may differ if the user
+    // resized after generation.
+    let w = 0, h = 0;
+    if (floatPath && imgSrc) {
+      try {
+        await new Promise((resolve) => {
+          const probe = new Image();
+          probe.onload = () => { w = probe.naturalWidth; h = probe.naturalHeight; resolve(); };
+          probe.onerror = () => resolve();
+          probe.src = imgSrc;
+        });
+      } catch (e) { /* fall through with w=h=0 */ }
+    }
+    const subfolder = toGallery ? "" : "downloads";
+    const stem = (State.outputFilenames[idx] || "").trim();
+    const body = {
+      float_path: floatPath,
+      // V2: when a mask sidecar exists, also send image_b64 so the
+      // backend can composite canvas-uint8 over the float buffer in
+      // AD/brush regions before writing the EXR.
+      mask_path: (floatPath && maskPath) ? maskPath : "",
+      image_b64: (floatPath && maskPath) ? (imgSrc || "") : (floatPath ? "" : (imgSrc || "")),
+      width:  floatPath ? w : 0,
+      height: floatPath ? h : 0,
+      subfolder: subfolder,
+      filename: stem || null,
+    };
+    try {
+      const r = await fetch(API.base + "/studio/export/exr", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await r.json();
+      if (data.ok) {
+        showToast("Exported " + data.filename, "success");
+      } else {
+        showToast(data.error || "EXR export failed", "error");
+      }
+    } catch (e) {
+      console.error("[Studio] EXR export failed:", e);
+      showToast("EXR export failed: " + e.message, "error");
+    }
+  }
+
   // Gallery save — anchor a floating popover off the icon button so we
   // can offer "Save to Gallery" (drops in the watched outputs root) in
   // addition to the format-specific download targets.
@@ -2345,10 +2446,18 @@ function bindUI() {
     const existing = document.getElementById("outputSaveMenu");
     if (existing) { existing.remove(); return; }
 
+    // EXR label tracks whether the selected slot has a float sidecar — so
+    // users know whether they're getting true HDR data or a uint8 → EXR
+    // conversion.
+    const _idx = State.selectedOutputIdx;
+    const _hasFloat = !!(State.outputFloatPaths && State.outputFloatPaths[_idx]);
+    const _exrLabel = _hasFloat ? "Export EXR (High Precision)" : "Export EXR (Standard)";
+
     const items = [
       { label: "Save as PNG",  fn: () => _saveSelectedOutput("png",  false) },
       { label: "Save as JPEG", fn: () => _saveSelectedOutput("jpeg", false) },
       { label: "Save as WebP", fn: () => _saveSelectedOutput("webp", false) },
+      { label: _exrLabel,      fn: () => _exportEXR(_idx, false) },
       { label: "Save to Gallery", fn: () => _saveSelectedOutput("png", true) },
     ];
 
@@ -2702,6 +2811,11 @@ function bindUI() {
     State.saveOutputs = document.getElementById("toggleSaveOutputs")?.classList.contains("on") ?? true;
   });
 
+  // High Precision: capture float32 VAE output and save .float32.bin sidecar
+  document.getElementById("toggleHighPrecision")?.addEventListener("click", () => {
+    State.highPrecision = document.getElementById("toggleHighPrecision")?.classList.contains("on") ?? false;
+  });
+
   // Live preview → gate preview thumbnail during generation
   document.getElementById("toggleLivePreview")?.addEventListener("click", () => {
     State.livePreview = document.getElementById("toggleLivePreview")?.classList.contains("on") ?? true;
@@ -2954,7 +3068,7 @@ function bindUI() {
     canvas: [
       ["toggleGrid", "on"],
       ["pressureBtn", "active"], ["pressureSizeBtn", "active"], ["pressureOpacityBtn", "active"],
-      ["toggleSaveOutputs", "on"], ["toggleLivePreview", "on"],
+      ["toggleSaveOutputs", "on"], ["toggleHighPrecision", "on"], ["toggleLivePreview", "on"],
       ["toggleMetadata", "on"],
       // Panel collapse state (Generate tab sections)
       ["panelSampling", "open"], ["panelCanvas", "open"], ["panelSeedBatch", "open"],
@@ -3131,6 +3245,7 @@ function bindUI() {
     if (window.StudioCore) window.StudioCore.state.showGrid = gridOn;
     _syncPressureState();
     State.saveOutputs = document.getElementById("toggleSaveOutputs")?.classList.contains("on") ?? true;
+    State.highPrecision = document.getElementById("toggleHighPrecision")?.classList.contains("on") ?? false;
     State.livePreview = document.getElementById("toggleLivePreview")?.classList.contains("on") ?? true;
     State.embedMetadata = document.getElementById("toggleMetadata")?.classList.contains("on") ?? true;
     // Sync output format state

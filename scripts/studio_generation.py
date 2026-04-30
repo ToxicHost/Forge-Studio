@@ -26,6 +26,10 @@ import base64, io, os, json, random, time, traceback
 from dataclasses import dataclass, field
 from typing import Optional, List
 
+# Enable OpenCV's optional OpenEXR codec — used by /studio/export/exr.
+# Setting this in cv2's process before the first cv2 import is required.
+os.environ.setdefault("OPENCV_IO_ENABLE_OPENEXR", "1")
+
 try:
     from scripts.studio_ar import ARConfig, randomize_dimensions
     _HAS_AR = True
@@ -802,7 +806,7 @@ def _match_detection_to_region(bbox, regions, image_size):
     return None, None
 
 
-def _run_studio_ad(result_img, p, ad_slots, mask_img=None):
+def _run_studio_ad(result_img, p, ad_slots, mask_img=None, capture_blend_mask=False):
     """Run Studio's own ADetailer pipeline on the result image.
 
     Parameters
@@ -815,21 +819,38 @@ def _run_studio_ad(result_img, p, ad_slots, mask_img=None):
         Slot dicts from _build_native_ad_dicts.
     mask_img : PIL.Image or None
         The user's inpaint mask (for centroid filtering).
+    capture_blend_mask : bool
+        When True, accumulate a per-pixel blend mask describing which
+        pixels AD actually painted (post-feather). Used by High Precision
+        to composite the AD result over the pre-AD float buffer at
+        Develop load time. White = AD touched (use canvas), black =
+        untouched (use float). Returns ``(image, blend_mask_or_None)``.
+        When False, returns ``image`` only — backward-compat for older
+        callers (Attention Couple inner pass).
 
     Returns
     -------
-    PIL.Image — the processed result with faces refined.
+    PIL.Image, or (PIL.Image, np.ndarray|None) when capture_blend_mask=True.
     """
     if not _HAS_AD_LIBS:
-        return result_img
+        return (result_img, None) if capture_blend_mask else result_img
 
     model_map = _get_ad_model_mapping()
     if not model_map:
-        return result_img
+        return (result_img, None) if capture_blend_mask else result_img
 
     device = _get_ad_device()
     image = ensure_pil_image(result_img, "RGB")
     processed_any = False
+
+    # High Precision: accumulator at the AD input resolution. Each
+    # detection's blurred mask is OR'd in (np.maximum) so overlapping
+    # detections don't over-count. Lazily initialized — None if no
+    # detection ever fires, in which case there's no point in a sidecar.
+    blend_acc = None
+    if capture_blend_mask:
+        _w0, _h0 = image.size
+        blend_acc = np.zeros((_h0, _w0), dtype=np.float32)
 
     for slot_idx, slot in enumerate(ad_slots):
         if not slot.get("ad_tab_enable"):
@@ -1022,6 +1043,26 @@ def _run_studio_ad(result_img, p, ad_slots, mask_img=None):
                 if proc and proc.images:
                     current_img = proc.images[0]
                     processed_any = True
+                    # High Precision: contribute this detection's blurred
+                    # mask to the global blend accumulator. The Gaussian
+                    # blur radius matches the slot's mask_blur so the
+                    # captured mask describes the same soft alpha that
+                    # Forge's inpainting actually painted with.
+                    if blend_acc is not None:
+                        try:
+                            from PIL import ImageFilter
+                            dm_pil = ensure_pil_image(dm, "L")
+                            if dm_pil.size != (blend_acc.shape[1], blend_acc.shape[0]):
+                                dm_pil = dm_pil.resize(
+                                    (blend_acc.shape[1], blend_acc.shape[0]),
+                                    Image.LANCZOS,
+                                )
+                            if mask_blur > 0:
+                                dm_pil = dm_pil.filter(ImageFilter.GaussianBlur(radius=mask_blur))
+                            dm_arr = np.asarray(dm_pil, dtype=np.float32) / 255.0
+                            np.maximum(blend_acc, dm_arr, out=blend_acc)
+                        except Exception as _me:
+                            print(f"[Studio AD] Mask accumulation error slot {slot_idx+1} det {j+1}: {_me}")
             except Exception as e:
                 print(f"[Studio AD] Inpaint error slot {slot_idx+1} det {j+1}: {e}")
                 traceback.print_exc()
@@ -1033,6 +1074,10 @@ def _run_studio_ad(result_img, p, ad_slots, mask_img=None):
 
     if processed_any:
         print(f"[Studio AD] Pipeline complete")
+    if capture_blend_mask:
+        # If nothing was actually processed, no mask is meaningful — let
+        # caller treat this as a regular HP capture (no sidecar).
+        return image, (blend_acc if processed_any else None)
     return image
 
 
@@ -1672,6 +1717,129 @@ def _run_attention_couple_image(
     return result, img_info
 
 
+# =========================================================================
+# HIGH PRECISION — float tensor capture
+#
+# We hook modules.processing.decode_latent_batch — Forge's wrapper that
+# every standard decode path (txt2img, img2img, hires fix) runs through.
+# At that hook the tensor is still in the [-1, 1] range produced by the
+# VAE; modules.processing then remaps to [0, 1] and clamps. We capture
+# the pre-clamp values, remap without clamp, and stash them on a
+# module-level buffer keyed by call. The buffer is read out per image
+# in the run_generation loop. This avoids depending on processed.samples
+# (not populated on every Forge fork, including Forge Neo) and skips the
+# extra VAE pass the spec's fallback would have cost.
+# =========================================================================
+_HP_FP16_VAE_WARNED = False
+_HP_HOOK_INSTALLED = False
+_HP_CAPTURE_ACTIVE = False
+_HP_CAPTURE_BATCHES = []  # list[list[np.ndarray]] — one entry per decode_latent_batch call
+
+
+def _hp_install_decode_hook():
+    """Install the decode_latent_batch capture hook (idempotent)."""
+    global _HP_HOOK_INSTALLED
+    if _HP_HOOK_INSTALLED:
+        return True
+    try:
+        import modules.processing as _proc
+    except Exception as e:
+        print(f"[Studio] High Precision: cannot import modules.processing — {e}")
+        return False
+
+    orig = getattr(_proc, "decode_latent_batch", None)
+    if orig is None:
+        print("[Studio] High Precision: modules.processing.decode_latent_batch missing — disabled")
+        return False
+
+    def _hp_decode_wrapper(*args, **kwargs):
+        out = orig(*args, **kwargs)
+        if not _HP_CAPTURE_ACTIVE:
+            return out
+        try:
+            this_batch = []
+            # `out` is a list of CHW tensors in [-1, 1] (Forge convention).
+            for sample in out:
+                # Remap to [0, 1] WITHOUT clamping. Sub-LSB precision and
+                # values >1 / <0 carry through here — that's the win.
+                float_img = (sample + 1.0) / 2.0
+                np_img = float_img.detach().to("cpu").float().numpy()
+                # CHW → HWC
+                np_img = np.transpose(np_img, (1, 2, 0))
+                this_batch.append(np.ascontiguousarray(np_img, dtype=np.float32))
+            _HP_CAPTURE_BATCHES.append(this_batch)
+        except Exception as e:
+            print(f"[Studio] High Precision: capture-hook error — {e}")
+        return out
+
+    _proc.decode_latent_batch = _hp_decode_wrapper
+    _proc._studio_hp_decode_orig = orig
+    _HP_HOOK_INSTALLED = True
+    print("[Studio] High Precision: decode_latent_batch hook installed")
+    return True
+
+
+def _hp_begin_capture():
+    """Arm the hook and clear any previous capture buffer."""
+    global _HP_CAPTURE_ACTIVE
+    _HP_CAPTURE_BATCHES.clear()
+    _HP_CAPTURE_ACTIVE = True
+
+
+def _hp_end_capture():
+    """Disarm the hook and return the captured batches.
+
+    Returns a list[list[np.ndarray]] — one inner list per
+    decode_latent_batch call observed during the capture window. For a
+    standard txt2img generation there's one call (the final decode).
+    For txt2img + Forge built-in hires there are typically two — base
+    decode then hires decode; the LAST one corresponds to processed.images.
+    """
+    global _HP_CAPTURE_ACTIVE
+    _HP_CAPTURE_ACTIVE = False
+    return list(_HP_CAPTURE_BATCHES)
+
+
+def _hp_warn_fp16_vae_once():
+    """Emit a one-time note when the VAE is fp16 (tighter numeric range)."""
+    global _HP_FP16_VAE_WARNED
+    if _HP_FP16_VAE_WARNED:
+        return
+    try:
+        import torch
+        sd_model = getattr(shared, "sd_model", None)
+        vae = getattr(sd_model, "first_stage_model", None) if sd_model else None
+        if vae is None:
+            return
+        for prm in vae.parameters():
+            if prm.dtype == torch.float16:
+                print("[Studio] High Precision: fp16 VAE detected — fp32 VAE recommended for best precision")
+                _HP_FP16_VAE_WARNED = True
+                break
+    except Exception:
+        pass
+
+
+def _hp_pick_final_floats(batches, expected_count):
+    """Choose the capture batch that corresponds to processed.images.
+
+    Strategy: take the LAST captured batch whose length matches the
+    final image count. Forge may decode multiple times during a single
+    generation (e.g. base → hires fix), but the final one is the one
+    that produced the images we'll save.
+    """
+    if not batches:
+        return []
+    # Prefer a length match — guards against TAESD or other side-channel
+    # decodes that might slip into the buffer.
+    for batch in reversed(batches):
+        if len(batch) == expected_count:
+            return batch
+    # Fall back to the last batch even if size differs; the dimension
+    # check downstream will drop entries that don't fit the final image.
+    return batches[-1]
+
+
 def run_generation(
     canvas_b64, mask_b64, fg_b64, mode, inpaint_mode, prompt, neg_prompt,
     steps, sampler_name, schedule_type, cfg_scale, denoising,
@@ -1708,6 +1876,7 @@ def run_generation(
     is_txt2img=False,
     extension_args=None,
     ar_config_dict=None,
+    high_precision=False,
 ):
     # === DEBUG: confirm function is being called ===
     print(f"[Studio] run_generation called: mode={repr(mode)}, inpaint_mode={repr(inpaint_mode)}, is_txt2img={is_txt2img}, regions_json_len={len(regions_json) if regions_json else 0}")
@@ -1761,13 +1930,13 @@ def run_generation(
     else:
         if not canvas_b64 or canvas_b64 in ("null", ""):
             finish_task(id_task)
-            return [], "<p style='color:#f66;'>No canvas data.</p>", "", "", id_task
+            return [], "<p style='color:#f66;'>No canvas data.</p>", "", "", id_task, [], []
 
         try:
             canvas_img = to_rgb(decode_b64(canvas_b64))
         except Exception as e:
             finish_task(id_task)
-            return [], f"<p>Canvas error: {e}</p>", "", "", id_task
+            return [], f"<p>Canvas error: {e}</p>", "", "", id_task, [], []
 
         canvas_img = canvas_img.resize((gp.width, gp.height), Image.LANCZOS)
 
@@ -1791,7 +1960,7 @@ def run_generation(
 
     if not is_txt2img and mode == "Edit" and (not mask_b64 or mask_b64 in ("null", "")) and not _has_region_data:
         finish_task(id_task)
-        return [], "<p style='color:#fa0;'>No mask painted. Draw a mask before generating in Edit mode.</p>", "", "", id_task
+        return [], "<p style='color:#fa0;'>No mask painted. Draw a mask before generating in Edit mode.</p>", "", "", id_task, [], []
 
     # Seed
     use_seed = gp.seed
@@ -1865,6 +2034,15 @@ def run_generation(
     # v3.1: Flatten batch_count × batch_size into a single loop so each image
     # gets its own process_images() call with fresh wildcard/dynamic prompt resolution.
     all_images, all_infotexts, settings_json = [], [], ""
+    # High Precision: float32 HWC numpy array per generated image, parallel
+    # to all_images. Entry is None when capture failed or post-processing
+    # changed the result so the float data no longer matches final pixels.
+    all_float_arrays = []
+    # High Precision V2 (AD-aware): blend mask per image, parallel to
+    # all_float_arrays. float32 HxW in [0, 1]. White (1.0) = use canvas
+    # uint8 here, black (0.0) = use float here. None when no mask is
+    # needed (no AD pass and no brush composite ran).
+    all_blend_masks = []
     total_images = gp.batch_count * max(1, gp.batch_size)
     shared.state.job_count = total_images
     shared.state.job_no = 0
@@ -1932,7 +2110,7 @@ def run_generation(
                 print("[Studio] Generation interrupted between images")
                 if all_images: break
                 finish_task(id_task)
-                return [], "<p style='color:#fa0;'>Generation interrupted.</p>", "", "", id_task
+                return [], "<p style='color:#fa0;'>Generation interrupted.</p>", "", "", id_task, [], []
 
             shared.state.skipped = False
             batch_seed = use_seed + img_num
@@ -1946,7 +2124,7 @@ def run_generation(
                     print("[Studio] Regional generation interrupted")
                     if all_images: break
                     finish_task(id_task)
-                    return [], "<p style='color:#fa0;'>Generation interrupted.</p>", "", "", id_task
+                    return [], "<p style='color:#fa0;'>Generation interrupted.</p>", "", "", id_task, [], []
 
                 if shared.state.skipped:
                     shared.state.skipped = False
@@ -1958,6 +2136,11 @@ def run_generation(
                 # handles its own per-region passes), so AD won't fire automatically here.
                 # This is acceptable — regional mode has its own per-region inpainting.
                 all_images.append(result)
+                # Regional pipeline runs multiple inner passes; no single
+                # latent corresponds to the final composite, so float
+                # capture is N/A for this branch.
+                all_float_arrays.append(None)
+                all_blend_masks.append(None)
                 region_info = f"Regional inpainting | Seed: {batch_seed}"
                 all_infotexts.append(region_info)
 
@@ -1973,10 +2156,15 @@ def run_generation(
                     if shared.state.interrupted:
                         if all_images: break
                         finish_task(id_task)
-                        return [], "<p style='color:#fa0;'>Generation interrupted.</p>", "", "", id_task
+                        return [], "<p style='color:#fa0;'>Generation interrupted.</p>", "", "", id_task, [], []
                     continue
 
                 all_images.append(result)
+                # Attention Couple's inner _run_attention_couple_image
+                # owns its own process_images call; no parallel latent
+                # capture path here. Float capture skipped for this branch.
+                all_float_arrays.append(None)
+                all_blend_masks.append(None)
                 all_infotexts.append(img_info)
 
             else:
@@ -2021,6 +2209,12 @@ def run_generation(
                           f"sampler={p.sampler_name}, scheduler={getattr(p, 'scheduler', 'N/A')}, "
                           f"steps={p.steps}, cfg={p.cfg_scale}, seed={batch_seed}")
 
+                # High Precision: arm decode_latent_batch hook just for this
+                # process_images call so we capture the unclamped tensor.
+                if high_precision:
+                    if _hp_install_decode_hook():
+                        _hp_warn_fp16_vae_once()
+                        _hp_begin_capture()
                 try:
                     # Suppress stock ADetailer — Studio runs its own AD pipeline
                     # with centroid-based mask filtering after hires fix.
@@ -2030,6 +2224,8 @@ def run_generation(
                 except Exception as e:
                     print(f"[Studio] process_images error: {e}")
                     traceback.print_exc()
+                    if high_precision:
+                        _hp_end_capture()
                     # p.close() may already have been called by Forge's finally block;
                     # guard with attribute to avoid double-close corrupting weakrefs.
                     if not getattr(p, '_studio_closed', False):
@@ -2037,6 +2233,7 @@ def run_generation(
                         try: p.close()
                         except Exception: pass
                     continue
+                _hp_batches = _hp_end_capture() if high_precision else []
 
                 if shared.state.interrupted:
                     print("[Studio] Generation interrupted")
@@ -2046,7 +2243,7 @@ def run_generation(
                         except Exception: pass
                     if all_images: break
                     finish_task(id_task)
-                    return [], "<p style='color:#fa0;'>Generation interrupted.</p>", "", "", id_task
+                    return [], "<p style='color:#fa0;'>Generation interrupted.</p>", "", "", id_task, [], []
 
                 if shared.state.skipped:
                     shared.state.skipped = False
@@ -2065,6 +2262,50 @@ def run_generation(
 
                 result = processed.images[0]
 
+                # ── High Precision: pull captured pre-clamp float pixels ──
+                # _hp_batches was populated by the decode_latent_batch hook
+                # we armed before process_images. We use the LAST batch
+                # whose length matches processed.images — that's the final
+                # decode (post-hires when Forge's built-in hires ran).
+                #
+                # V2 (AD-aware): post-processing branches that change pixels
+                # in *some* regions (brush composite, Studio AD) accumulate
+                # a blend mask into hp_blend_mask instead of dropping the
+                # float entirely. Develop composites canvas-uint8 over the
+                # float buffer at load time using the mask. The img2img
+                # hires fix branch still drops because it changes resolution.
+                hp_floats = []
+                hp_post_processed = False
+                hp_post_reason = ""
+                hp_blend_mask = None  # np.float32 HxW in [0,1]; 1 = use canvas, 0 = use float
+                if high_precision:
+                    expected = len(processed.images) if getattr(processed, "images", None) else 1
+                    hp_floats = _hp_pick_final_floats(_hp_batches, expected)
+                    if not hp_floats:
+                        if not _hp_batches:
+                            print("[Studio] High Precision: decode hook never fired during process_images — "
+                                  "Forge may have used a non-standard decode path")
+                        else:
+                            print(f"[Studio] High Precision: hook fired {len(_hp_batches)} time(s) but "
+                                  f"none matched the expected image count ({expected})")
+
+                def _hp_or_into_blend_mask(mask_arr_01):
+                    """OR a [0,1] float32 HxW mask into hp_blend_mask, resizing if needed."""
+                    nonlocal hp_blend_mask
+                    if mask_arr_01 is None:
+                        return
+                    try:
+                        if hp_blend_mask is None:
+                            hp_blend_mask = np.zeros_like(mask_arr_01, dtype=np.float32)
+                        if hp_blend_mask.shape != mask_arr_01.shape:
+                            # Resize to hp_blend_mask's reference shape via PIL.
+                            tmp = Image.fromarray((mask_arr_01 * 255).clip(0, 255).astype(np.uint8), "L")
+                            tmp = tmp.resize((hp_blend_mask.shape[1], hp_blend_mask.shape[0]), Image.LANCZOS)
+                            mask_arr_01 = np.asarray(tmp, dtype=np.float32) / 255.0
+                        np.maximum(hp_blend_mask, mask_arr_01, out=hp_blend_mask)
+                    except Exception as _be:
+                        print(f"[Studio] High Precision: blend-mask OR error — {_be}")
+
                 # ── Post-process mask composite ─────────────────────────
                 # Clips any changes from non-AD postprocess callbacks that
                 # leaked outside the inpaint mask.
@@ -2077,13 +2318,26 @@ def run_generation(
                         if _blur > 0:
                             _msk = _msk.filter(ImageFilter.GaussianBlur(radius=_blur))
                         result = Image.composite(result, _orig, _msk)
+                        # HP V2: brush mask is white where VAE was inpainted
+                        # (we want float there). Invert so blend_mask is
+                        # white *outside* the brush — that's where the
+                        # canvas (original, non-VAE) pixels live and the
+                        # float buffer doesn't represent them. Develop will
+                        # then read canvas uint8 in those regions.
+                        if high_precision:
+                            inv = 1.0 - (np.asarray(_msk, dtype=np.float32) / 255.0)
+                            _hp_or_into_blend_mask(inv)
                     except Exception as _ce:
                         print(f"[Studio] Post-process mask composite error: {_ce}")
 
                 # Hires Fix for img2img only — txt2img uses built-in enable_hr above.
+                # Resolution change → float buffer no longer aligns with the
+                # final canvas in any coordinate space, mask trick can't fix.
                 if not is_txt2img and hr.enable and hr.scale > 1.0:
                     result = run_hires_fix(result, hr.upscaler, hr.scale,
                                           hr.steps, hr.denoise, hr.cfg, p, hr.checkpoint)
+                    hp_post_processed = True
+                    hp_post_reason = "img2img hires fix"
 
                 # ── Studio ADetailer ────────────────────────────────────
                 # Runs AFTER hires fix so faces are refined at full
@@ -2095,10 +2349,17 @@ def run_generation(
                         d.get("ad_tab_enable") and d.get("ad_model", "None") != "None"
                         for d in _ad_slot_dicts
                     ):
-                        result = _run_studio_ad(
+                        ad_ret = _run_studio_ad(
                             result, p, _ad_slot_dicts,
                             mask_img=mask_img if has_mask else None,
+                            capture_blend_mask=high_precision,
                         )
+                        if isinstance(ad_ret, tuple):
+                            result, _ad_blend = ad_ret
+                            if high_precision and _ad_blend is not None:
+                                _hp_or_into_blend_mask(_ad_blend)
+                        else:
+                            result = ad_ret
                         # Final mask composite — clips any AD overshoot
                         if has_mask and mask_img and canvas_img and not is_txt2img:
                             try:
@@ -2109,10 +2370,46 @@ def run_generation(
                                 if _blur2 > 0:
                                     _msk2 = _msk2.filter(ImageFilter.GaussianBlur(radius=_blur2))
                                 result = Image.composite(result, _orig2, _msk2)
+                                if high_precision:
+                                    inv2 = 1.0 - (np.asarray(_msk2, dtype=np.float32) / 255.0)
+                                    _hp_or_into_blend_mask(inv2)
                             except Exception as _ce2:
                                 print(f"[Studio] Post-AD mask composite error: {_ce2}")
 
                 all_images.append(result)
+                # Float data is only valid when post-processing didn't
+                # alter the image AND dimensions match the captured tensor.
+                # In V2, "altered" means resolution change — pixel-level
+                # alterations (AD, brush composite) are tracked in
+                # hp_blend_mask and composited at Develop load time.
+                fa = hp_floats[0] if hp_floats else None
+                if high_precision and hp_floats and not hp_post_processed \
+                        and fa is not None \
+                        and fa.shape[1] == result.size[0] and fa.shape[0] == result.size[1]:
+                    # Drop a near-empty mask (sub-0.5% coverage) — it's
+                    # noise from rounding and not worth a sidecar.
+                    if hp_blend_mask is not None and float(hp_blend_mask.sum()) / hp_blend_mask.size < 0.005:
+                        hp_blend_mask = None
+                    all_float_arrays.append(fa)
+                    all_blend_masks.append(hp_blend_mask)
+                    if hp_blend_mask is not None:
+                        coverage = float(hp_blend_mask.mean()) * 100.0
+                        print(f"[Studio] High Precision: captured {fa.shape[1]}x{fa.shape[0]} float "
+                              f"+ blend mask ({coverage:.1f}% canvas coverage) for image {img_num+1}")
+                    else:
+                        print(f"[Studio] High Precision: captured {fa.shape[1]}x{fa.shape[0]} float for image {img_num+1}")
+                else:
+                    all_float_arrays.append(None)
+                    all_blend_masks.append(None)
+                    if high_precision:
+                        if hp_post_processed:
+                            reason = f"post-processing changed resolution ({hp_post_reason})"
+                        elif fa is None:
+                            reason = "decode hook produced no usable batch (see prior log)"
+                        else:
+                            reason = (f"dimension mismatch (float {fa.shape[1]}x{fa.shape[0]} "
+                                      f"vs final {result.size[0]}x{result.size[1]})")
+                        print(f"[Studio] High Precision: skipped sidecar for image {img_num+1} — {reason}")
 
                 # Collect per-image info text (resolved prompt, seed, etc.)
                 img_info = ""
@@ -2141,7 +2438,7 @@ def run_generation(
     except Exception as e:
         traceback.print_exc()
         finish_task(id_task)
-        return [], f"<p style='color:#f66;'>Error: {e}</p>", "", "", id_task
+        return [], f"<p style='color:#f66;'>Error: {e}</p>", "", "", id_task, [], []
     finally:
         # Restore any scripts we temporarily removed
         for runner, script in _removed_scripts:
@@ -2173,8 +2470,10 @@ def run_generation(
             f"<div class='studio-info-text'><pre>{display_info}</pre></div>",
             "",  # result_b64 — unused by API endpoint, skip expensive PNG encode
             settings_json,
-            id_task)
-    return [], "<p>No images generated.</p>", "", "", id_task
+            id_task,
+            all_float_arrays,
+            all_blend_masks)
+    return [], "<p>No images generated.</p>", "", "", id_task, [], []
 
 
 # =========================================================================

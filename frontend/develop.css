@@ -114,6 +114,20 @@ body.develop-active #canvasArea canvas {
 .develop-header-btn:hover { color: var(--accent); border-color: var(--accent); }
 .develop-header-btn.active { color: var(--accent); border-color: var(--accent); background: var(--accent-dim, rgba(124,58,237,0.18)); }
 
+.develop-hp-badge {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  padding: 2px 5px;
+  margin: 0 4px;
+  color: var(--accent, #7c3aed);
+  background: var(--accent-dim, rgba(124,58,237,0.18));
+  border: 1px solid var(--accent, #7c3aed);
+  border-radius: 3px;
+  font-family: var(--mono, monospace);
+  user-select: none;
+}
+
 /* ═══════════════════════════════════════════
    HISTOGRAM
    ═══════════════════════════════════════════ */
