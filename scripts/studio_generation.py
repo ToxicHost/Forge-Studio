@@ -2165,6 +2165,7 @@ def run_generation(
                 # no longer matches final pixels and we drop it.
                 hp_floats = []
                 hp_post_processed = False
+                hp_post_reason = ""
                 if high_precision:
                     hp_floats = _capture_float_images(processed)
 
@@ -2181,6 +2182,7 @@ def run_generation(
                             _msk = _msk.filter(ImageFilter.GaussianBlur(radius=_blur))
                         result = Image.composite(result, _orig, _msk)
                         hp_post_processed = True
+                        hp_post_reason = "mask composite"
                     except Exception as _ce:
                         print(f"[Studio] Post-process mask composite error: {_ce}")
 
@@ -2189,6 +2191,7 @@ def run_generation(
                     result = run_hires_fix(result, hr.upscaler, hr.scale,
                                           hr.steps, hr.denoise, hr.cfg, p, hr.checkpoint)
                     hp_post_processed = True
+                    hp_post_reason = "img2img hires fix"
 
                 # ── Studio ADetailer ────────────────────────────────────
                 # Runs AFTER hires fix so faces are refined at full
@@ -2205,6 +2208,7 @@ def run_generation(
                             mask_img=mask_img if has_mask else None,
                         )
                         hp_post_processed = True
+                        hp_post_reason = "Studio ADetailer"
                         # Final mask composite — clips any AD overshoot
                         if has_mask and mask_img and canvas_img and not is_txt2img:
                             try:
@@ -2221,14 +2225,26 @@ def run_generation(
                 all_images.append(result)
                 # Float data is only valid when post-processing didn't
                 # alter the image AND dimensions match the captured tensor.
-                if high_precision and hp_floats and not hp_post_processed:
-                    fa = hp_floats[0] if hp_floats else None
-                    if fa is not None and fa.shape[1] == result.size[0] and fa.shape[0] == result.size[1]:
-                        all_float_arrays.append(fa)
-                    else:
-                        all_float_arrays.append(None)
+                # Print a one-line reason whenever HP was requested but no
+                # sidecar will be written — silent failure was a real UX
+                # cliff in V1 (users see no badge, no file, no log).
+                fa = hp_floats[0] if hp_floats else None
+                if high_precision and hp_floats and not hp_post_processed \
+                        and fa is not None \
+                        and fa.shape[1] == result.size[0] and fa.shape[0] == result.size[1]:
+                    all_float_arrays.append(fa)
+                    print(f"[Studio] High Precision: captured {fa.shape[1]}x{fa.shape[0]} float for image {img_num+1}")
                 else:
                     all_float_arrays.append(None)
+                    if high_precision:
+                        if hp_post_processed:
+                            reason = f"post-processing modified the image ({hp_post_reason})"
+                        elif fa is None:
+                            reason = "VAE re-decode failed (see prior error)"
+                        else:
+                            reason = (f"dimension mismatch (float {fa.shape[1]}x{fa.shape[0]} "
+                                      f"vs final {result.size[0]}x{result.size[1]})")
+                        print(f"[Studio] High Precision: skipped sidecar for image {img_num+1} — {reason}")
 
                 # Collect per-image info text (resolved prompt, seed, etc.)
                 img_info = ""
