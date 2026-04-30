@@ -338,8 +338,20 @@ var _LIN_TO_SRGB_U8 = (function () {
 })();
 function _lin2u8(v) {
     if (v <= 0) return 0;
-    if (v >= 2) return 255;
-    return _LIN_TO_SRGB_U8[(v * 2048) | 0];
+    if (v < 2) return _LIN_TO_SRGB_U8[(v * 2048) | 0];
+    // v >= 2: continue the Reinhard shoulder beyond the LUT's range so
+    // values asymptote toward sRGB 255 instead of hard-clipping at v=2.
+    // White-point calibration combined with HP-mode float sources or
+    // strong exposure gain can easily push pixels above 2.0; without
+    // this fallback those would all flatten to 255 and reappear as a
+    // histogram spike. Inputs above ~v=8 round to exactly 255 anyway,
+    // so only a small handful of pixels per image take this slow path.
+    var t = v - 0.85;
+    var lin = 0.85 + 0.15 * t / (t + 0.6);
+    if (lin >= 1) return 255;
+    var srgb = lin <= 0.0031308 ? lin * 12.92 : 1.055 * Math.pow(lin, 1 / 2.4) - 0.055;
+    var u = (srgb * 255 + 0.5) | 0;
+    return u > 255 ? 255 : u;
 }
 
 // xorshift32 — deterministic per-document grain seed
