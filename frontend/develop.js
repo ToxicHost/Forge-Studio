@@ -572,16 +572,42 @@ function _applyDevelopFull(ctx, w, h, p) {
     var d = img.data;
     var n = w * h;
 
-    // ---- Phase A: per-channel LUT, sRGB U8 → linear Float32 (exposure only) ----
+    // ---- Phase A: sRGB → linear Float32 (with exposure gain) ----
+    // High-precision path: when a float32 sidecar is loaded and matches
+    // the canvas dims, decode from float (sub-LSB precision + headroom
+    // above 1.0). Float values are sRGB-encoded just like the uint8
+    // input, so the gamma decode still runs — only the /255 normalize
+    // step is skipped and headroom carries through into linear space.
     var lut = _getLutA(p);
-    var lutR = lut.lutR, lutG = lut.lutG, lutB = lut.lutB;
     var rLin = new Float32Array(n);
     var gLin = new Float32Array(n);
     var bLin = new Float32Array(n);
-    for (var i = 0, j = 0; i < n; i++, j += 4) {
-        rLin[i] = lutR[d[j]];
-        gLin[i] = lutG[d[j + 1]];
-        bLin[i] = lutB[d[j + 2]];
+    if (_floatSrc && _floatSrc.w === w && _floatSrc.h === h
+            && _floatSrc.r && _floatSrc.r.length === n) {
+        var srcR = _floatSrc.r, srcG = _floatSrc.g, srcB = _floatSrc.b;
+        var expGain = Math.pow(2, (p.exposure || 0) * 5 / 100);
+        for (var k = 0; k < n; k++) {
+            // Inline sRGB → linear (Rec.709 piecewise gamma). VAE noise
+            // can produce small negatives — clamp to 0 (LUT does the
+            // same implicitly). Values >1 carry through the curve so the
+            // headroom feeds into linear.
+            var sr = srcR[k]; if (sr < 0) sr = 0;
+            var sg = srcG[k]; if (sg < 0) sg = 0;
+            var sb = srcB[k]; if (sb < 0) sb = 0;
+            var lr = sr <= 0.04045 ? sr / 12.92 : Math.pow((sr + 0.055) / 1.055, 2.4);
+            var lg = sg <= 0.04045 ? sg / 12.92 : Math.pow((sg + 0.055) / 1.055, 2.4);
+            var lb = sb <= 0.04045 ? sb / 12.92 : Math.pow((sb + 0.055) / 1.055, 2.4);
+            rLin[k] = lr * expGain;
+            gLin[k] = lg * expGain;
+            bLin[k] = lb * expGain;
+        }
+    } else {
+        var lutR = lut.lutR, lutG = lut.lutG, lutB = lut.lutB;
+        for (var i = 0, j = 0; i < n; i++, j += 4) {
+            rLin[i] = lutR[d[j]];
+            gLin[i] = lutG[d[j + 1]];
+            bLin[i] = lutB[d[j + 2]];
+        }
     }
 
     // ---- Phase A.5: white balance (Lab-space at full res, RGB on drag) ----
@@ -1712,6 +1738,17 @@ var _splitLabelR = null;
 var _proxyRafId = 0;
 var _fullRafId = 0;
 
+// High Precision: cached float32 RGB source loaded from a .float32.bin
+// sidecar. When _floatSrc.w/h match the canvas dims passed to
+// _applyDevelopFull, we feed planar Float32 data directly into the
+// pipeline (with an inline sRGB→linear conversion + exposure gain),
+// skipping the uint8 LUT path and preserving sub-LSB precision plus
+// the small headroom above 1.0 the VAE produces on highlights.
+var _floatSrc = null;
+// Track the in-flight fetch so a rapid url change can supersede it.
+var _floatSrcLoading = null;
+var _hpBadge = null;
+
 function _showPanel() { if (_panel) _panel.classList.add("visible"); }
 function _hidePanel() { if (_panel) _panel.classList.remove("visible"); }
 
@@ -1812,6 +1849,15 @@ function _buildPanel() {
     title.className = "develop-panel-title";
     title.textContent = "Develop";
     header.appendChild(title);
+
+    // High Precision badge — shown when a float32 sidecar is loaded
+    // and matches the current canvas dims. Hidden by default.
+    _hpBadge = document.createElement("span");
+    _hpBadge.className = "develop-hp-badge";
+    _hpBadge.textContent = "HP";
+    _hpBadge.title = "High Precision: float32 source pixels active";
+    _hpBadge.style.display = "none";
+    header.appendChild(_hpBadge);
 
     _enableToggleEl = document.createElement("button");
     _enableToggleEl.className = "develop-toggle";
@@ -3399,12 +3445,94 @@ if (window.StudioModules) {
 }
 
 // ========================================================================
+// HIGH PRECISION — float32 sidecar source
+// ========================================================================
+function _updateHpBadge() {
+    if (!_hpBadge) return;
+    var visible = !!(_floatSrc && _floatSrc.r);
+    _hpBadge.style.display = visible ? "" : "none";
+}
+
+function _splitInterleavedRGB(buf, w, h) {
+    // Source layout: HxWx3 row-major float32, interleaved RGB (the
+    // backend writes float_arr.tobytes() of an HWC numpy array).
+    // We slice it into three planar arrays the pipeline consumes.
+    var n = w * h;
+    var f32 = new Float32Array(buf);
+    if (f32.length !== n * 3) {
+        throw new Error("float buffer size " + f32.length + " != " + (n * 3));
+    }
+    var R = new Float32Array(n);
+    var G = new Float32Array(n);
+    var B = new Float32Array(n);
+    for (var i = 0, j = 0; i < n; i++, j += 3) {
+        R[i] = f32[j];
+        G[i] = f32[j + 1];
+        B[i] = f32[j + 2];
+    }
+    return { r: R, g: G, b: B };
+}
+
+function setFloatSource(url, w, h) {
+    // Null url = clear. Same url = no-op. Otherwise fetch the sidecar
+    // and replace the cached planar buffers. Per-document switches and
+    // module deactivation must call this with null to release the ~12 MB
+    // backing memory.
+    if (!url) {
+        _floatSrc = null;
+        _floatSrcLoading = null;
+        _updateHpBadge();
+        _scheduleFullRedraw();
+        return;
+    }
+    if (_floatSrc && _floatSrc.url === url && _floatSrc.w === w && _floatSrc.h === h) {
+        return;
+    }
+    var token = { url: url, w: w, h: h };
+    _floatSrcLoading = token;
+    fetch(url).then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status);
+        return r.arrayBuffer();
+    }).then(function (buf) {
+        // Discard if a newer setFloatSource superseded us.
+        if (_floatSrcLoading !== token) return;
+        try {
+            var planes = _splitInterleavedRGB(buf, w, h);
+            _floatSrc = { url: url, w: w, h: h, r: planes.r, g: planes.g, b: planes.b };
+            _updateHpBadge();
+            _scheduleFullRedraw();
+        } catch (e) {
+            console.warn(TAG, "float sidecar parse failed:", e);
+            _floatSrc = null;
+            _updateHpBadge();
+        }
+    }).catch(function (e) {
+        if (_floatSrcLoading !== token) return;
+        console.warn(TAG, "float sidecar fetch failed:", e);
+        _floatSrc = null;
+        _updateHpBadge();
+    });
+}
+
+function clearFloatSource() { setFloatSource(null); }
+
+function hasFloatSource(w, h) {
+    return !!(_floatSrc && _floatSrc.r
+        && (w == null || _floatSrc.w === w)
+        && (h == null || _floatSrc.h === h));
+}
+
+
+// ========================================================================
 // PUBLIC API
 // ========================================================================
 window.StudioDevelop = {
     defaultParams: defaultParams,
     applyToContext: applyToContext,
     syncPanel: function () { try { syncPanel(); } catch (e) {} },
+    setFloatSource: setFloatSource,
+    clearFloatSource: clearFloatSource,
+    hasFloatSource: hasFloatSource,
     _isIdentity: _isIdentity,
 };
 

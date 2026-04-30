@@ -26,6 +26,11 @@ import traceback
 import urllib.error
 import urllib.request
 import zipfile
+
+# Enable OpenCV's optional OpenEXR codec — used by /studio/export/exr.
+# Must be set before cv2 is imported anywhere in the process.
+os.environ.setdefault("OPENCV_IO_ENABLE_OPENEXR", "1")
+
 from datetime import date
 from pathlib import Path
 from threading import Thread
@@ -276,17 +281,41 @@ class GenerateRequest(BaseModel):
     ar_base_pool: List[int] = Field(default_factory=list)     # empty = all bases
     ar_ratio_pool: List[str] = Field(default_factory=list)    # empty = all ratios
 
+    # High Precision Mode: capture pre-clamp float32 VAE output and save a
+    # .float32.bin sidecar next to each PNG for the Develop module + EXR export.
+    high_precision: bool = False
+
 
 class GenerateResponse(BaseModel):
     """Generation result."""
     images: List[str] = []
     image_paths: List[str] = []   # server-side file paths for /file= URLs
+    # High Precision sidecar paths, parallel to image_paths; "" when capture
+    # was disabled, skipped, or failed for that image.
+    float_paths: List[str] = []
     content_hashes: List[str] = []  # SHA256 of decoded RGB pixels, "" if not saved
     infotexts: List[str] = []
     settings: dict = {}
     seed: int = -1
     task_id: str = ""
     error: Optional[str] = None
+
+
+class ExrExportRequest(BaseModel):
+    """Request body for /studio/export/exr."""
+    # Path to the .float32.bin sidecar (preferred — gives true float data).
+    # If empty or missing on disk, falls back to image_b64.
+    float_path: str = ""
+    # Float sidecar dimensions (required when float_path is provided).
+    width: int = 0
+    height: int = 0
+    # Fallback path: a base64 data URL (uint8) — produces an EXR for
+    # pipeline compatibility but no precision gain over the source PNG.
+    image_b64: str = ""
+    # Optional file naming. Subfolder lives under the studio output root,
+    # mirroring the regular save-image endpoint's contract.
+    subfolder: str = "downloads"
+    filename: Optional[str] = None
 
 
 # =========================================================================
@@ -318,6 +347,100 @@ def _decode_b64_to_numpy(b64_str: Optional[str]):
         return np.array(img)
     except Exception:
         return None
+
+
+def _write_exr_minimal(path: str, rgb) -> None:
+    """Write an uncompressed scanline single-part OpenEXR with float32 RGB.
+
+    Used as a fallback when OpenCV's OPENCV_IO_ENABLE_OPENEXR codec
+    isn't compiled in. `rgb` is an HxWx3 float32 numpy array; channels
+    are stored as B, G, R (alphabetical, per EXR convention) and the
+    file is uncompressed (compression=0) so there are no codec deps.
+
+    Format reference: openexr.com/en/latest/OpenEXRFileLayout.html
+    """
+    import struct
+    import numpy as np
+    if rgb.ndim != 3 or rgb.shape[2] < 3:
+        raise ValueError("rgb must be HxWx3")
+    if rgb.dtype != np.float32:
+        rgb = np.ascontiguousarray(rgb, dtype=np.float32)
+    h, w = rgb.shape[0], rgb.shape[1]
+    R = np.ascontiguousarray(rgb[:, :, 0], dtype=np.float32)
+    G = np.ascontiguousarray(rgb[:, :, 1], dtype=np.float32)
+    B = np.ascontiguousarray(rgb[:, :, 2], dtype=np.float32)
+
+    out = bytearray()
+    out += b"\x76\x2f\x31\x01"          # magic
+    out += struct.pack("<I", 2)         # version=2, all flags zero (single-part scanline)
+
+    def _attr(name: str, atype: str, payload: bytes) -> bytes:
+        return (name.encode("ascii") + b"\x00"
+                + atype.encode("ascii") + b"\x00"
+                + struct.pack("<I", len(payload))
+                + payload)
+
+    # channels: B, G, R in alphabetical order, FLOAT pixelType.
+    chlist = bytearray()
+    for cn in ("B", "G", "R"):
+        chlist += cn.encode("ascii") + b"\x00"
+        chlist += struct.pack("<i", 2)      # pixelType: 2 = FLOAT
+        chlist += struct.pack("<I", 0)      # pLinear (1 byte) + 3 reserved bytes
+        chlist += struct.pack("<i", 1)      # xSampling
+        chlist += struct.pack("<i", 1)      # ySampling
+    chlist += b"\x00"
+    out += _attr("channels", "chlist", bytes(chlist))
+    out += _attr("compression", "compression", b"\x00")  # NO_COMPRESSION
+    box = struct.pack("<iiii", 0, 0, w - 1, h - 1)
+    out += _attr("dataWindow", "box2i", box)
+    out += _attr("displayWindow", "box2i", box)
+    out += _attr("lineOrder", "lineOrder", b"\x00")      # INCREASING_Y
+    out += _attr("pixelAspectRatio", "float", struct.pack("<f", 1.0))
+    out += _attr("screenWindowCenter", "v2f", struct.pack("<ff", 0.0, 0.0))
+    out += _attr("screenWindowWidth", "float", struct.pack("<f", 1.0))
+    out += b"\x00"  # end-of-header
+
+    # Per-scanline payload: y(int32) + pixelDataSize(uint32) + B + G + R bytes.
+    pixel_data_size = 3 * w * 4
+    line_size = 4 + 4 + pixel_data_size
+    first_offset = len(out) + h * 8  # 8-byte offset per scanline
+    for i in range(h):
+        out += struct.pack("<Q", first_offset + i * line_size)
+    for y in range(h):
+        out += struct.pack("<i", y)
+        out += struct.pack("<I", pixel_data_size)
+        out += B[y].tobytes()
+        out += G[y].tobytes()
+        out += R[y].tobytes()
+
+    with open(path, "wb") as f:
+        f.write(bytes(out))
+
+
+def _save_float_sidecar(fpath: Path, float_arr) -> str:
+    """Write a {stem}.float32.bin sidecar next to the saved image.
+
+    `float_arr` is an HxWx3 float32 numpy array (the unclamped VAE
+    output, in [0, 1] with small headroom). Returns the sidecar path on
+    success, "" on any failure (so the regular PNG save is unaffected).
+    """
+    if float_arr is None:
+        return ""
+    try:
+        import numpy as np
+    except Exception:
+        return ""
+    try:
+        sidecar = fpath.with_name(fpath.stem + ".float32.bin")
+        # Tobytes() with a contiguous float32 array gives the layout
+        # the JS reader expects: row-major, RGB-interleaved, no header.
+        data = np.ascontiguousarray(float_arr, dtype=np.float32).tobytes()
+        with open(str(sidecar), "wb") as f:
+            f.write(data)
+        return str(sidecar)
+    except Exception as e:
+        print(f"{TAG} High Precision: sidecar write failed for {fpath.name}: {e}")
+        return ""
 
 
 def _pil_to_b64(img: Image.Image) -> str:
@@ -1279,6 +1402,9 @@ def setup_studio_routes(app: FastAPI):
                     "base_pool": req.ar_base_pool,
                     "ratio_pool": req.ar_ratio_pool,
                 } if (req.ar_rand_base or req.ar_rand_ratio or req.ar_rand_orientation) else None,
+                # High Precision: only worth the extra VAE decode when
+                # we'll actually save the resulting sidecar to disk.
+                bool(req.high_precision and req.save_outputs),
             )
         except Exception as e:
             print(f"{TAG} Generation error: {e}")
@@ -1288,10 +1414,18 @@ def setup_studio_routes(app: FastAPI):
         if not result or not isinstance(result, (list, tuple)) or len(result) < 5:
             return GenerateResponse(error="Generation returned no result")
 
-        images_list, info_html, result_b64, settings_json, task_id = result
+        # run_generation now returns a 6-tuple (with float arrays); tolerate
+        # the legacy 5-tuple in case an older module is in the import cache.
+        images_list = result[0]
+        info_html = result[1]
+        result_b64 = result[2]
+        settings_json = result[3]
+        task_id = result[4]
+        float_arrays = list(result[5]) if len(result) >= 6 else []
 
         images_b64 = []
         image_paths = []
+        float_paths = []  # parallel to images_b64; "" when no sidecar saved
         content_hashes = []  # parallel to images_b64; "" when not saved/hashed
 
         # Auto-save images to output/studio/{mode}/ (unless disabled by user)
@@ -1342,6 +1476,8 @@ def setup_studio_routes(app: FastAPI):
 
         for i, img in enumerate(images_list or []):
             _per_image_hash = ""
+            _per_image_float_path = ""
+            _img_float = float_arrays[i] if i < len(float_arrays) else None
             if isinstance(img, Image.Image):
                 # When saving as PNG, encode once to buffer and reuse for both
                 # disk save and b64 response (avoids double PNG compression).
@@ -1374,6 +1510,11 @@ def setup_studio_routes(app: FastAPI):
                         with open(str(fpath), "wb") as f:
                             f.write(png_bytes)
                         image_paths.append(str(fpath))
+                        # High Precision: write the float32 sidecar next
+                        # to the PNG. Best-effort; failure here doesn't
+                        # affect the saved image.
+                        if _img_float is not None:
+                            _per_image_float_path = _save_float_sidecar(fpath, _img_float)
                         # Hash the saved image so the frontend can look it up in
                         # Gallery (Canvas → Gallery detail view bridge).
                         try:
@@ -1383,7 +1524,7 @@ def setup_studio_routes(app: FastAPI):
                                 # PNG is lossless — hash the original PIL pixels directly (faster, no re-decode)
                                 _per_image_hash = _hash_fn(img) or ""
                                 if _per_image_hash and _gallery_save and _parsed_infotexts and i < len(_parsed_infotexts) and _parsed_infotexts[i]:
-                                    _gallery_save(_per_image_hash, _parsed_infotexts[i], _parsed_settings, filepath=str(fpath))
+                                    _gallery_save(_per_image_hash, _parsed_infotexts[i], _parsed_settings, filepath=str(fpath), float_path=_per_image_float_path)
                         except Exception:
                             pass
                         # b64 from same buffer (no re-encode)
@@ -1438,6 +1579,11 @@ def setup_studio_routes(app: FastAPI):
                             f.write(file_bytes)
                         image_paths.append(str(fpath))
                         images_b64.append(f"data:{mime};base64," + base64.b64encode(file_bytes).decode())
+                        # High Precision: write float32 sidecar next to
+                        # the lossy file. The sidecar holds the true
+                        # pre-encode pixels regardless of compression.
+                        if _img_float is not None:
+                            _per_image_float_path = _save_float_sidecar(fpath, _img_float)
                         # Hash the saved image so the frontend can look it up in
                         # Gallery (Canvas → Gallery detail view bridge).
                         # Lossy formats: must hash from file (post-encode pixels differ from original).
@@ -1447,7 +1593,7 @@ def setup_studio_routes(app: FastAPI):
                             if _hash_fn:
                                 _per_image_hash = _hash_fn(str(fpath)) or ""
                                 if _per_image_hash and _gallery_save and _parsed_infotexts and i < len(_parsed_infotexts) and _parsed_infotexts[i]:
-                                    _gallery_save(_per_image_hash, _parsed_infotexts[i], _parsed_settings, filepath=str(fpath))
+                                    _gallery_save(_per_image_hash, _parsed_infotexts[i], _parsed_settings, filepath=str(fpath), float_path=_per_image_float_path)
                         except Exception:
                             pass
                     except Exception as e:
@@ -1462,6 +1608,7 @@ def setup_studio_routes(app: FastAPI):
             elif isinstance(img, str):
                 images_b64.append(img)
             content_hashes.append(_per_image_hash)
+            float_paths.append(_per_image_float_path)
 
         settings = {}
         infotexts = []
@@ -1489,6 +1636,7 @@ def setup_studio_routes(app: FastAPI):
         return GenerateResponse(
             images=images_b64,
             image_paths=image_paths,
+            float_paths=float_paths,
             content_hashes=content_hashes,
             infotexts=infotexts,
             settings=settings,
@@ -1517,6 +1665,110 @@ def setup_studio_routes(app: FastAPI):
     async def task_id():
         get_studio_task_id = _import("studio_generation", "get_studio_task_id")
         return {"task_id": get_studio_task_id()}
+
+    # ------------------------------------------------------------------
+    # High Precision — OpenEXR export
+    # ------------------------------------------------------------------
+
+    @app.post("/studio/export/exr")
+    async def export_exr(req: ExrExportRequest):
+        """Export a float32 OpenEXR file.
+
+        Two source paths:
+        - float_path: a .float32.bin sidecar from a High Precision
+          generation (preferred — true float pixels with headroom).
+        - image_b64: fallback for images without a sidecar (still useful
+          for pipeline compatibility, but no precision gain over the PNG).
+        """
+        try:
+            import numpy as np
+        except Exception as e:
+            return {"ok": False, "error": f"numpy unavailable: {e}"}
+
+        # Resolve float_data (HxWx3 float32) from whichever source applies.
+        float_data = None
+        try:
+            if req.float_path and os.path.isfile(req.float_path) and req.width > 0 and req.height > 0:
+                raw = np.fromfile(req.float_path, dtype=np.float32)
+                expected = req.height * req.width * 3
+                if raw.size != expected:
+                    return {"ok": False,
+                            "error": f"sidecar size mismatch: got {raw.size} floats, expected {expected}"}
+                float_data = raw.reshape((req.height, req.width, 3))
+            elif req.image_b64:
+                arr = _decode_b64_to_numpy(req.image_b64)
+                if arr is None:
+                    return {"ok": False, "error": "could not decode image_b64"}
+                # _decode_b64_to_numpy returns a uint8 HxWx3 (or HxWx4) ndarray
+                arr = np.asarray(arr)
+                if arr.ndim == 2:
+                    # Greyscale → broadcast to RGB
+                    arr = np.stack([arr, arr, arr], axis=-1)
+                if arr.ndim == 3 and arr.shape[2] >= 3:
+                    arr = arr[:, :, :3]
+                float_data = (arr.astype(np.float32) / 255.0)
+            else:
+                return {"ok": False, "error": "neither float_path nor image_b64 provided"}
+        except Exception as e:
+            traceback.print_exc()
+            return {"ok": False, "error": f"input decode failed: {e}"}
+
+        # Build output path under the same studio output root the regular
+        # save endpoint uses, so EXR exports land alongside other downloads.
+        try:
+            base_outdir = shared.opts.data.get("outdir_samples", "")
+            if not base_outdir:
+                base_outdir = shared.opts.data.get("outdir_img2img_samples", "")
+            if not base_outdir:
+                from modules.paths import data_path
+                base_outdir = os.path.join(data_path, "output")
+            if os.path.basename(base_outdir) in ("txt2img-images", "img2img-images"):
+                base_outdir = os.path.dirname(base_outdir)
+        except Exception:
+            base_outdir = os.path.abspath("output")
+        sub = (req.subfolder or "downloads").strip().strip("/\\")
+        out_dir = Path(base_outdir) / "studio" / sub
+        try:
+            out_dir.mkdir(parents=True, exist_ok=True)
+        except Exception as e:
+            return {"ok": False, "error": f"could not create output dir: {e}"}
+
+        # Filename: prefer client-supplied stem, else timestamped fallback.
+        stem = (req.filename or "").strip()
+        if stem:
+            stem = re.sub(r"[^\w.\-]+", "_", Path(stem).stem) or "export"
+        else:
+            stem = f"Studio-{int(time.time())}"
+        exr_path = out_dir / f"{stem}.exr"
+        # Avoid overwrite — append a counter if the file already exists.
+        n = 1
+        while exr_path.exists():
+            exr_path = out_dir / f"{stem}-{n}.exr"
+            n += 1
+
+        # Try OpenCV first (already a Forge dependency). Falls back to a
+        # minimal pure-Python writer if OpenCV's EXR codec isn't compiled in.
+        success = False
+        cv2_err = None
+        try:
+            import cv2
+            bgr = np.ascontiguousarray(float_data[:, :, ::-1], dtype=np.float32)
+            success = bool(cv2.imwrite(
+                str(exr_path), bgr,
+                [int(cv2.IMWRITE_EXR_TYPE), int(cv2.IMWRITE_EXR_TYPE_FLOAT)]
+            ))
+        except Exception as e:
+            cv2_err = e
+
+        if not success:
+            try:
+                _write_exr_minimal(str(exr_path), np.ascontiguousarray(float_data, dtype=np.float32))
+                success = True
+            except Exception as e:
+                detail = f"cv2: {cv2_err}; fallback: {e}" if cv2_err else f"fallback: {e}"
+                return {"ok": False, "error": f"EXR write failed ({detail})"}
+
+        return {"ok": True, "path": str(exr_path), "filename": exr_path.name}
 
     # ------------------------------------------------------------------
     # Live Painting

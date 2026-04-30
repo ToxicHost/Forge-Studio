@@ -26,6 +26,10 @@ import base64, io, os, json, random, time, traceback
 from dataclasses import dataclass, field
 from typing import Optional, List
 
+# Enable OpenCV's optional OpenEXR codec — used by /studio/export/exr.
+# Setting this in cv2's process before the first cv2 import is required.
+os.environ.setdefault("OPENCV_IO_ENABLE_OPENEXR", "1")
+
 try:
     from scripts.studio_ar import ARConfig, randomize_dimensions
     _HAS_AR = True
@@ -1672,6 +1676,83 @@ def _run_attention_couple_image(
     return result, img_info
 
 
+# =========================================================================
+# HIGH PRECISION — float tensor capture
+# =========================================================================
+_HP_FP16_VAE_WARNED = False
+
+
+def _capture_float_images(processed):
+    """Re-decode latents to get unclamped float32 pixel data.
+
+    Returns a list parallel to processed.images. Each entry is a float32
+    HxWx3 numpy array in roughly [0, 1] (with small headroom above 1.0
+    on highlights and tiny negatives in deep shadows) — i.e. the VAE
+    output BEFORE modules.processing's `torch.clamp(..., 0, 1)`.
+
+    Wrapped in try/except — any failure (OOM, missing samples, decoder
+    error) returns an empty list. The generation result is never
+    affected; this is a bonus feature that degrades gracefully.
+    """
+    samples = getattr(processed, "samples", None)
+    if samples is None:
+        return []
+
+    try:
+        import torch
+        from modules.processing import decode_first_stage
+    except Exception as e:
+        print(f"[Studio] High Precision: import failed — {e}")
+        return []
+
+    sd_model = getattr(shared, "sd_model", None)
+    if sd_model is None:
+        return []
+
+    # fp16 VAE has tighter numerical range; warn once.
+    global _HP_FP16_VAE_WARNED
+    try:
+        vae = getattr(sd_model, "first_stage_model", None)
+        if vae is not None and not _HP_FP16_VAE_WARNED:
+            for prm in vae.parameters():
+                if prm.dtype == torch.float16:
+                    print("[Studio] High Precision: fp16 VAE detected — fp32 VAE recommended for best precision")
+                    _HP_FP16_VAE_WARNED = True
+                    break
+    except Exception:
+        pass
+
+    out = []
+    try:
+        with torch.inference_mode():
+            n = int(samples.shape[0])
+            for i in range(n):
+                try:
+                    sample = samples[i:i + 1]
+                    decoded = decode_first_stage(sd_model, sample)
+                    # Forge's decode_first_stage is the [-1, 1] tensor
+                    # that modules.processing then remaps to [0, 1]
+                    # via (x + 1) / 2 and clamps. We replicate the
+                    # remap WITHOUT the clamp.
+                    float_img = (decoded + 1.0) / 2.0
+                    float_np = float_img[0].detach().to("cpu").float().numpy()
+                    del decoded, float_img
+                    # CHW → HWC
+                    float_np = np.transpose(float_np, (1, 2, 0))
+                    out.append(np.ascontiguousarray(float_np, dtype=np.float32))
+                except torch.cuda.OutOfMemoryError:
+                    print("[Studio] High Precision: OOM on sample %d — skipping that one" % i)
+                    out.append(None)
+                except Exception as e:
+                    print(f"[Studio] High Precision: sample {i} capture failed — {e}")
+                    out.append(None)
+    except Exception as e:
+        print(f"[Studio] High Precision: float capture failed — {e}")
+        return []
+
+    return out
+
+
 def run_generation(
     canvas_b64, mask_b64, fg_b64, mode, inpaint_mode, prompt, neg_prompt,
     steps, sampler_name, schedule_type, cfg_scale, denoising,
@@ -1708,6 +1789,7 @@ def run_generation(
     is_txt2img=False,
     extension_args=None,
     ar_config_dict=None,
+    high_precision=False,
 ):
     # === DEBUG: confirm function is being called ===
     print(f"[Studio] run_generation called: mode={repr(mode)}, inpaint_mode={repr(inpaint_mode)}, is_txt2img={is_txt2img}, regions_json_len={len(regions_json) if regions_json else 0}")
@@ -1761,13 +1843,13 @@ def run_generation(
     else:
         if not canvas_b64 or canvas_b64 in ("null", ""):
             finish_task(id_task)
-            return [], "<p style='color:#f66;'>No canvas data.</p>", "", "", id_task
+            return [], "<p style='color:#f66;'>No canvas data.</p>", "", "", id_task, []
 
         try:
             canvas_img = to_rgb(decode_b64(canvas_b64))
         except Exception as e:
             finish_task(id_task)
-            return [], f"<p>Canvas error: {e}</p>", "", "", id_task
+            return [], f"<p>Canvas error: {e}</p>", "", "", id_task, []
 
         canvas_img = canvas_img.resize((gp.width, gp.height), Image.LANCZOS)
 
@@ -1791,7 +1873,7 @@ def run_generation(
 
     if not is_txt2img and mode == "Edit" and (not mask_b64 or mask_b64 in ("null", "")) and not _has_region_data:
         finish_task(id_task)
-        return [], "<p style='color:#fa0;'>No mask painted. Draw a mask before generating in Edit mode.</p>", "", "", id_task
+        return [], "<p style='color:#fa0;'>No mask painted. Draw a mask before generating in Edit mode.</p>", "", "", id_task, []
 
     # Seed
     use_seed = gp.seed
@@ -1865,6 +1947,10 @@ def run_generation(
     # v3.1: Flatten batch_count × batch_size into a single loop so each image
     # gets its own process_images() call with fresh wildcard/dynamic prompt resolution.
     all_images, all_infotexts, settings_json = [], [], ""
+    # High Precision: float32 HWC numpy array per generated image, parallel
+    # to all_images. Entry is None when capture failed or post-processing
+    # changed the result so the float data no longer matches final pixels.
+    all_float_arrays = []
     total_images = gp.batch_count * max(1, gp.batch_size)
     shared.state.job_count = total_images
     shared.state.job_no = 0
@@ -1932,7 +2018,7 @@ def run_generation(
                 print("[Studio] Generation interrupted between images")
                 if all_images: break
                 finish_task(id_task)
-                return [], "<p style='color:#fa0;'>Generation interrupted.</p>", "", "", id_task
+                return [], "<p style='color:#fa0;'>Generation interrupted.</p>", "", "", id_task, []
 
             shared.state.skipped = False
             batch_seed = use_seed + img_num
@@ -1946,7 +2032,7 @@ def run_generation(
                     print("[Studio] Regional generation interrupted")
                     if all_images: break
                     finish_task(id_task)
-                    return [], "<p style='color:#fa0;'>Generation interrupted.</p>", "", "", id_task
+                    return [], "<p style='color:#fa0;'>Generation interrupted.</p>", "", "", id_task, []
 
                 if shared.state.skipped:
                     shared.state.skipped = False
@@ -1958,6 +2044,10 @@ def run_generation(
                 # handles its own per-region passes), so AD won't fire automatically here.
                 # This is acceptable — regional mode has its own per-region inpainting.
                 all_images.append(result)
+                # Regional pipeline runs multiple inner passes; no single
+                # latent corresponds to the final composite, so float
+                # capture is N/A for this branch.
+                all_float_arrays.append(None)
                 region_info = f"Regional inpainting | Seed: {batch_seed}"
                 all_infotexts.append(region_info)
 
@@ -1973,10 +2063,14 @@ def run_generation(
                     if shared.state.interrupted:
                         if all_images: break
                         finish_task(id_task)
-                        return [], "<p style='color:#fa0;'>Generation interrupted.</p>", "", "", id_task
+                        return [], "<p style='color:#fa0;'>Generation interrupted.</p>", "", "", id_task, []
                     continue
 
                 all_images.append(result)
+                # Attention Couple's inner _run_attention_couple_image
+                # owns its own process_images call; no parallel latent
+                # capture path here. Float capture skipped for this branch.
+                all_float_arrays.append(None)
                 all_infotexts.append(img_info)
 
             else:
@@ -2046,7 +2140,7 @@ def run_generation(
                         except Exception: pass
                     if all_images: break
                     finish_task(id_task)
-                    return [], "<p style='color:#fa0;'>Generation interrupted.</p>", "", "", id_task
+                    return [], "<p style='color:#fa0;'>Generation interrupted.</p>", "", "", id_task, []
 
                 if shared.state.skipped:
                     shared.state.skipped = False
@@ -2065,6 +2159,15 @@ def run_generation(
 
                 result = processed.images[0]
 
+                # ── High Precision: capture pre-clamp float pixels ──────
+                # Done BEFORE any post-processing; if any of mask
+                # composite / hires fix / Studio AD runs, the float data
+                # no longer matches final pixels and we drop it.
+                hp_floats = []
+                hp_post_processed = False
+                if high_precision:
+                    hp_floats = _capture_float_images(processed)
+
                 # ── Post-process mask composite ─────────────────────────
                 # Clips any changes from non-AD postprocess callbacks that
                 # leaked outside the inpaint mask.
@@ -2077,6 +2180,7 @@ def run_generation(
                         if _blur > 0:
                             _msk = _msk.filter(ImageFilter.GaussianBlur(radius=_blur))
                         result = Image.composite(result, _orig, _msk)
+                        hp_post_processed = True
                     except Exception as _ce:
                         print(f"[Studio] Post-process mask composite error: {_ce}")
 
@@ -2084,6 +2188,7 @@ def run_generation(
                 if not is_txt2img and hr.enable and hr.scale > 1.0:
                     result = run_hires_fix(result, hr.upscaler, hr.scale,
                                           hr.steps, hr.denoise, hr.cfg, p, hr.checkpoint)
+                    hp_post_processed = True
 
                 # ── Studio ADetailer ────────────────────────────────────
                 # Runs AFTER hires fix so faces are refined at full
@@ -2099,6 +2204,7 @@ def run_generation(
                             result, p, _ad_slot_dicts,
                             mask_img=mask_img if has_mask else None,
                         )
+                        hp_post_processed = True
                         # Final mask composite — clips any AD overshoot
                         if has_mask and mask_img and canvas_img and not is_txt2img:
                             try:
@@ -2113,6 +2219,16 @@ def run_generation(
                                 print(f"[Studio] Post-AD mask composite error: {_ce2}")
 
                 all_images.append(result)
+                # Float data is only valid when post-processing didn't
+                # alter the image AND dimensions match the captured tensor.
+                if high_precision and hp_floats and not hp_post_processed:
+                    fa = hp_floats[0] if hp_floats else None
+                    if fa is not None and fa.shape[1] == result.size[0] and fa.shape[0] == result.size[1]:
+                        all_float_arrays.append(fa)
+                    else:
+                        all_float_arrays.append(None)
+                else:
+                    all_float_arrays.append(None)
 
                 # Collect per-image info text (resolved prompt, seed, etc.)
                 img_info = ""
@@ -2141,7 +2257,7 @@ def run_generation(
     except Exception as e:
         traceback.print_exc()
         finish_task(id_task)
-        return [], f"<p style='color:#f66;'>Error: {e}</p>", "", "", id_task
+        return [], f"<p style='color:#f66;'>Error: {e}</p>", "", "", id_task, []
     finally:
         # Restore any scripts we temporarily removed
         for runner, script in _removed_scripts:
@@ -2173,8 +2289,9 @@ def run_generation(
             f"<div class='studio-info-text'><pre>{display_info}</pre></div>",
             "",  # result_b64 — unused by API endpoint, skip expensive PNG encode
             settings_json,
-            id_task)
-    return [], "<p>No images generated.</p>", "", "", id_task
+            id_task,
+            all_float_arrays)
+    return [], "<p>No images generated.</p>", "", "", id_task, []
 
 
 # =========================================================================
