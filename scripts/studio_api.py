@@ -293,6 +293,9 @@ class GenerateResponse(BaseModel):
     # High Precision sidecar paths, parallel to image_paths; "" when capture
     # was disabled, skipped, or failed for that image.
     float_paths: List[str] = []
+    # AD/brush blend mask sidecar paths (V2), parallel to float_paths;
+    # "" when no post-processing modified pixels (no AD/no brush composite).
+    mask_paths: List[str] = []
     content_hashes: List[str] = []  # SHA256 of decoded RGB pixels, "" if not saved
     infotexts: List[str] = []
     settings: dict = {}
@@ -312,6 +315,12 @@ class ExrExportRequest(BaseModel):
     # Fallback path: a base64 data URL (uint8) — produces an EXR for
     # pipeline compatibility but no precision gain over the source PNG.
     image_b64: str = ""
+    # Optional V2 blend mask path (.blend_mask.png). When provided, the
+    # endpoint composites canvas-uint8 over the float buffer using this
+    # mask before writing the EXR — same composite the Develop module
+    # does at load time. Image_b64 must also be provided as the canvas
+    # source for the masked regions.
+    mask_path: str = ""
     # Optional file naming. Subfolder lives under the studio output root,
     # mirroring the regular save-image endpoint's contract.
     subfolder: str = "downloads"
@@ -440,6 +449,31 @@ def _save_float_sidecar(fpath: Path, float_arr) -> str:
         return str(sidecar)
     except Exception as e:
         print(f"{TAG} High Precision: sidecar write failed for {fpath.name}: {e}")
+        return ""
+
+
+def _save_mask_sidecar(fpath: Path, mask_arr) -> str:
+    """Write a {stem}.blend_mask.png sidecar describing AD/brush coverage.
+
+    `mask_arr` is a float32 HxW array in [0, 1] where 1.0 means "use
+    canvas uint8 here at Develop load time" and 0.0 means "use the
+    pre-modification float buffer here". Saved as 8-bit grayscale PNG —
+    ~50 KB at 1024² vs ~4 MB raw, debuggable in any image viewer, and
+    the 256-level quantization is invisible in a feathered alpha mask.
+    """
+    if mask_arr is None:
+        return ""
+    try:
+        import numpy as np
+    except Exception:
+        return ""
+    try:
+        sidecar = fpath.with_name(fpath.stem + ".blend_mask.png")
+        u8 = (np.clip(mask_arr, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8)
+        Image.fromarray(u8, mode="L").save(str(sidecar), format="PNG", optimize=True)
+        return str(sidecar)
+    except Exception as e:
+        print(f"{TAG} High Precision: blend-mask sidecar write failed for {fpath.name}: {e}")
         return ""
 
 
@@ -1414,18 +1448,21 @@ def setup_studio_routes(app: FastAPI):
         if not result or not isinstance(result, (list, tuple)) or len(result) < 5:
             return GenerateResponse(error="Generation returned no result")
 
-        # run_generation now returns a 6-tuple (with float arrays); tolerate
-        # the legacy 5-tuple in case an older module is in the import cache.
+        # run_generation returns a 7-tuple (V2: float arrays + blend masks).
+        # Tolerate the V1 6-tuple and the pre-HP 5-tuple if an older
+        # module is in the import cache.
         images_list = result[0]
         info_html = result[1]
         result_b64 = result[2]
         settings_json = result[3]
         task_id = result[4]
         float_arrays = list(result[5]) if len(result) >= 6 else []
+        blend_masks = list(result[6]) if len(result) >= 7 else []
 
         images_b64 = []
         image_paths = []
         float_paths = []  # parallel to images_b64; "" when no sidecar saved
+        mask_paths = []   # parallel to images_b64; "" when no blend-mask sidecar
         content_hashes = []  # parallel to images_b64; "" when not saved/hashed
 
         # Auto-save images to output/studio/{mode}/ (unless disabled by user)
@@ -1477,7 +1514,9 @@ def setup_studio_routes(app: FastAPI):
         for i, img in enumerate(images_list or []):
             _per_image_hash = ""
             _per_image_float_path = ""
+            _per_image_mask_path = ""
             _img_float = float_arrays[i] if i < len(float_arrays) else None
+            _img_mask = blend_masks[i] if i < len(blend_masks) else None
             if isinstance(img, Image.Image):
                 # When saving as PNG, encode once to buffer and reuse for both
                 # disk save and b64 response (avoids double PNG compression).
@@ -1515,6 +1554,11 @@ def setup_studio_routes(app: FastAPI):
                         # affect the saved image.
                         if _img_float is not None:
                             _per_image_float_path = _save_float_sidecar(fpath, _img_float)
+                            # V2: AD/brush blend-mask sidecar. Only meaningful
+                            # when there's a float to composite over, so it's
+                            # gated on float having been saved.
+                            if _img_mask is not None:
+                                _per_image_mask_path = _save_mask_sidecar(fpath, _img_mask)
                         # Hash the saved image so the frontend can look it up in
                         # Gallery (Canvas → Gallery detail view bridge).
                         try:
@@ -1524,7 +1568,10 @@ def setup_studio_routes(app: FastAPI):
                                 # PNG is lossless — hash the original PIL pixels directly (faster, no re-decode)
                                 _per_image_hash = _hash_fn(img) or ""
                                 if _per_image_hash and _gallery_save and _parsed_infotexts and i < len(_parsed_infotexts) and _parsed_infotexts[i]:
-                                    _gallery_save(_per_image_hash, _parsed_infotexts[i], _parsed_settings, filepath=str(fpath), float_path=_per_image_float_path)
+                                    _gallery_save(_per_image_hash, _parsed_infotexts[i], _parsed_settings,
+                                                  filepath=str(fpath),
+                                                  float_path=_per_image_float_path,
+                                                  blend_mask_path=_per_image_mask_path)
                         except Exception:
                             pass
                         # b64 from same buffer (no re-encode)
@@ -1584,6 +1631,8 @@ def setup_studio_routes(app: FastAPI):
                         # pre-encode pixels regardless of compression.
                         if _img_float is not None:
                             _per_image_float_path = _save_float_sidecar(fpath, _img_float)
+                            if _img_mask is not None:
+                                _per_image_mask_path = _save_mask_sidecar(fpath, _img_mask)
                         # Hash the saved image so the frontend can look it up in
                         # Gallery (Canvas → Gallery detail view bridge).
                         # Lossy formats: must hash from file (post-encode pixels differ from original).
@@ -1593,7 +1642,10 @@ def setup_studio_routes(app: FastAPI):
                             if _hash_fn:
                                 _per_image_hash = _hash_fn(str(fpath)) or ""
                                 if _per_image_hash and _gallery_save and _parsed_infotexts and i < len(_parsed_infotexts) and _parsed_infotexts[i]:
-                                    _gallery_save(_per_image_hash, _parsed_infotexts[i], _parsed_settings, filepath=str(fpath), float_path=_per_image_float_path)
+                                    _gallery_save(_per_image_hash, _parsed_infotexts[i], _parsed_settings,
+                                                  filepath=str(fpath),
+                                                  float_path=_per_image_float_path,
+                                                  blend_mask_path=_per_image_mask_path)
                         except Exception:
                             pass
                     except Exception as e:
@@ -1609,6 +1661,7 @@ def setup_studio_routes(app: FastAPI):
                 images_b64.append(img)
             content_hashes.append(_per_image_hash)
             float_paths.append(_per_image_float_path)
+            mask_paths.append(_per_image_mask_path)
 
         settings = {}
         infotexts = []
@@ -1637,6 +1690,7 @@ def setup_studio_routes(app: FastAPI):
             images=images_b64,
             image_paths=image_paths,
             float_paths=float_paths,
+            mask_paths=mask_paths,
             content_hashes=content_hashes,
             infotexts=infotexts,
             settings=settings,
@@ -1687,6 +1741,7 @@ def setup_studio_routes(app: FastAPI):
 
         # Resolve float_data (HxWx3 float32) from whichever source applies.
         float_data = None
+        canvas_uint8 = None  # for V2 mask composite, when both sources present
         try:
             if req.float_path and os.path.isfile(req.float_path) and req.width > 0 and req.height > 0:
                 raw = np.fromfile(req.float_path, dtype=np.float32)
@@ -1695,6 +1750,36 @@ def setup_studio_routes(app: FastAPI):
                     return {"ok": False,
                             "error": f"sidecar size mismatch: got {raw.size} floats, expected {expected}"}
                 float_data = raw.reshape((req.height, req.width, 3))
+                # Optional V2 composite: if a blend mask sidecar AND a
+                # canvas image_b64 were both provided, composite them
+                # before writing the EXR — matches Develop's load-time
+                # composite, so the EXR mirrors what the user sees.
+                if req.mask_path and os.path.isfile(req.mask_path) and req.image_b64:
+                    try:
+                        mask_pil = Image.open(req.mask_path).convert("L")
+                        if mask_pil.size != (req.width, req.height):
+                            mask_pil = mask_pil.resize((req.width, req.height), Image.LANCZOS)
+                        m = (np.asarray(mask_pil, dtype=np.float32) / 255.0)[..., None]  # HxWx1
+                        cu8 = _decode_b64_to_numpy(req.image_b64)
+                        if cu8 is not None:
+                            cu8 = np.asarray(cu8)
+                            if cu8.ndim == 2:
+                                cu8 = np.stack([cu8, cu8, cu8], axis=-1)
+                            if cu8.ndim == 3 and cu8.shape[2] >= 3:
+                                cu8 = cu8[:, :, :3]
+                            cu8f = cu8.astype(np.float32) / 255.0
+                            if cu8f.shape[:2] != float_data.shape[:2]:
+                                # Resample canvas to float dims via PIL.
+                                pil_c = Image.fromarray(cu8, mode="RGB")
+                                pil_c = pil_c.resize((req.width, req.height), Image.LANCZOS)
+                                cu8f = np.asarray(pil_c, dtype=np.float32) / 255.0
+                            # Blend in sRGB-encoded space (both inputs
+                            # are sRGB-encoded — matches AD's composite).
+                            float_data = float_data * (1.0 - m) + cu8f * m
+                    except Exception as _me:
+                        # Composite is a best-effort enhancement; if it
+                        # fails, fall back to the raw float buffer.
+                        print(f"{TAG} EXR mask composite failed — falling back to raw float: {_me}")
             elif req.image_b64:
                 arr = _decode_b64_to_numpy(req.image_b64)
                 if arr is None:

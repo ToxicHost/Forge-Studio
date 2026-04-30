@@ -247,6 +247,7 @@ const State = {
   outputFilenames: [],     // array of original filenames (without ext), parallel to outputImages
   outputContentHashes: [], // SHA256 of decoded RGB pixels, parallel to outputImages; "" when not saved
   outputFloatPaths: [],    // High Precision sidecar paths, parallel to outputImages; "" when none
+  outputMaskPaths: [],     // High Precision V2 blend-mask sidecar paths, parallel to outputImages; "" when no AD/brush composite
   selectedOutputIdx: 0,
   embedMetadata: true,     // whether to embed generation params in saved images
   saveOutputs: true,       // auto-save generated images to disk
@@ -1277,6 +1278,7 @@ async function doGenerate() {
       const newInfotexts = result.infotexts || [];
       const newContentHashes = result.content_hashes || [];
       const newFloatPaths = result.float_paths || [];
+      const newMaskPaths = result.mask_paths || [];
       // Extract original filenames (without extension) from server paths
       const newFilenames = (result.image_paths || []).map(p => {
         const base = p.replace(/\\/g, "/").split("/").pop() || "";
@@ -1288,6 +1290,7 @@ async function doGenerate() {
       while (newInfotexts.length < newB64.length) newInfotexts.push("");
       while (newContentHashes.length < newB64.length) newContentHashes.push("");
       while (newFloatPaths.length < newB64.length) newFloatPaths.push("");
+      while (newMaskPaths.length < newB64.length) newMaskPaths.push("");
 
       State.outputImages = [...newFileUrls, ...State.outputImages].slice(0, MAX_GALLERY);
       State.outputImagesB64 = [...newB64, ...State.outputImagesB64].slice(0, MAX_GALLERY);
@@ -1295,6 +1298,7 @@ async function doGenerate() {
       State.outputFilenames = [...newFilenames, ...State.outputFilenames].slice(0, MAX_GALLERY);
       State.outputContentHashes = [...newContentHashes, ...State.outputContentHashes].slice(0, MAX_GALLERY);
       State.outputFloatPaths = [...newFloatPaths, ...State.outputFloatPaths].slice(0, MAX_GALLERY);
+      State.outputMaskPaths = [...newMaskPaths, ...State.outputMaskPaths].slice(0, MAX_GALLERY);
       State.selectedOutputIdx = 0;
       renderOutputGallery();
       addHistoryEntry(`Generate (seed ${result.seed})`);
@@ -1672,13 +1676,15 @@ function displayOnCanvas(imgSrc, opts) {
 
     // High Precision: bind/unbind the Develop module's float source to
     // match what we just put on the canvas. Sender passes opts.floatPath
-    // when the image came from a generation with a sidecar; otherwise
-    // we clear so a previously-bound float buffer doesn't leak across.
+    // when the image came from a generation with a sidecar; opts.maskPath
+    // is the optional V2 blend-mask sidecar (AD/brush composite). If we
+    // pass null we clear so a previously-bound buffer doesn't leak across.
     try {
       const SD = window.StudioDevelop;
       if (SD && typeof SD.setFloatSource === "function") {
         if (opts.floatPath) {
-          SD.setFloatSource(API.base + "/file=" + opts.floatPath, outW, outH);
+          const mUrl = opts.maskPath ? (API.base + "/file=" + opts.maskPath) : null;
+          SD.setFloatSource(API.base + "/file=" + opts.floatPath, mUrl, outW, outH);
         } else {
           SD.setFloatSource(null);
         }
@@ -2122,7 +2128,8 @@ function bindUI() {
     // Use data URL version for canvas drawing (file URLs can't be drawn to canvas due to CORS)
     const img = (State.outputImagesB64 || State.outputImages)[State.selectedOutputIdx];
     const fpath = State.outputFloatPaths[State.selectedOutputIdx] || "";
-    if (img) displayOnCanvas(img, { newLayer: true, layerName: "Output", undoLabel: "Send to canvas", floatPath: fpath });
+    const mpath = State.outputMaskPaths[State.selectedOutputIdx] || "";
+    if (img) displayOnCanvas(img, { newLayer: true, layerName: "Output", undoLabel: "Send to canvas", floatPath: fpath, maskPath: mpath });
   });
 
   // Gallery click = select, double-click = lightbox (event delegation, bound once)
@@ -2205,8 +2212,9 @@ function bindUI() {
         menu.remove();
         const imgSrc = (State.outputImagesB64 || State.outputImages)[idx];
         const fpath = State.outputFloatPaths[idx] || "";
+        const mpath = State.outputMaskPaths[idx] || "";
         if (action === "canvas" && imgSrc) {
-          displayOnCanvas(imgSrc, { newLayer: true, layerName: "Output", undoLabel: "Send to canvas", floatPath: fpath });
+          displayOnCanvas(imgSrc, { newLayer: true, layerName: "Output", undoLabel: "Send to canvas", floatPath: fpath, maskPath: mpath });
         } else if (action === "seed" && seed) {
           navigator.clipboard.writeText(seed).then(() => showToast(`Seed ${seed} copied`, "success"));
         } else if (action === "save-exr") {
@@ -2245,6 +2253,9 @@ function bindUI() {
       // High Precision sidecar — Gallery threads this through to Develop
       // via setFloatSource when the detail view opens.
       floatPath: State.outputFloatPaths[i] || "",
+      // V2: blend-mask sidecar (AD/brush composite). When present,
+      // Develop will composite canvas-uint8 over the float buffer.
+      maskPath: State.outputMaskPaths[i] || "",
     }));
   }
 
@@ -2279,7 +2290,8 @@ function bindUI() {
     if (canvasArea && canvasArea.contains(e.target)) {
       const img = (State.outputImagesB64 || State.outputImages)[idx];
       const fpath = State.outputFloatPaths[idx] || "";
-      if (img) displayOnCanvas(img, { newLayer: true, layerName: "Output", undoLabel: "Drag to canvas", floatPath: fpath });
+      const mpath = State.outputMaskPaths[idx] || "";
+      if (img) displayOnCanvas(img, { newLayer: true, layerName: "Output", undoLabel: "Drag to canvas", floatPath: fpath, maskPath: mpath });
     }
   });
 
@@ -2345,6 +2357,7 @@ function bindUI() {
   async function _exportEXR(idx, toGallery) {
     if (idx == null || idx < 0) return;
     const floatPath = State.outputFloatPaths[idx] || "";
+    const maskPath  = State.outputMaskPaths[idx]  || "";
     const imgSrc = (State.outputImagesB64 || State.outputImages)[idx];
     if (!floatPath && !imgSrc) return;
     // Float sidecar requires accurate dims so the backend can reshape it.
@@ -2366,7 +2379,11 @@ function bindUI() {
     const stem = (State.outputFilenames[idx] || "").trim();
     const body = {
       float_path: floatPath,
-      image_b64: floatPath ? "" : (imgSrc || ""),
+      // V2: when a mask sidecar exists, also send image_b64 so the
+      // backend can composite canvas-uint8 over the float buffer in
+      // AD/brush regions before writing the EXR.
+      mask_path: (floatPath && maskPath) ? maskPath : "",
+      image_b64: (floatPath && maskPath) ? (imgSrc || "") : (floatPath ? "" : (imgSrc || "")),
       width:  floatPath ? w : 0,
       height: floatPath ? h : 0,
       subfolder: subfolder,

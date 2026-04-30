@@ -3449,8 +3449,18 @@ if (window.StudioModules) {
 // ========================================================================
 function _updateHpBadge() {
     if (!_hpBadge) return;
-    var visible = !!(_floatSrc && _floatSrc.r);
-    _hpBadge.style.display = visible ? "" : "none";
+    if (!_floatSrc || !_floatSrc.r) {
+        _hpBadge.style.display = "none";
+        return;
+    }
+    _hpBadge.style.display = "";
+    if (_floatSrc.hasMask) {
+        _hpBadge.textContent = "HP+AD";
+        _hpBadge.title = "High Precision: float buffer composited with AD/brush canvas pixels";
+    } else {
+        _hpBadge.textContent = "HP";
+        _hpBadge.title = "High Precision: float32 source pixels active";
+    }
 }
 
 function _splitInterleavedRGB(buf, w, h) {
@@ -3473,32 +3483,115 @@ function _splitInterleavedRGB(buf, w, h) {
     return { r: R, g: G, b: B };
 }
 
-function setFloatSource(url, w, h) {
-    // Null url = clear. Same url = no-op. Otherwise fetch the sidecar
-    // and replace the cached planar buffers. Per-document switches and
-    // module deactivation must call this with null to release the ~12 MB
-    // backing memory.
-    if (!url) {
+function _decodeMaskPng(url, w, h) {
+    // Decode an 8-bit grayscale PNG via an off-DOM <img> + canvas. The
+    // canvas decode rasterises to RGBA so we read just the red channel.
+    return new Promise(function (resolve, reject) {
+        var im = new Image();
+        im.onload = function () {
+            try {
+                var c = document.createElement("canvas");
+                c.width = w; c.height = h;
+                var cx = c.getContext("2d");
+                cx.drawImage(im, 0, 0, w, h);
+                var d = cx.getImageData(0, 0, w, h).data;
+                var out = new Uint8ClampedArray(w * h);
+                for (var i = 0, j = 0; i < out.length; i++, j += 4) out[i] = d[j];
+                resolve(out);
+            } catch (e) { reject(e); }
+        };
+        im.onerror = function () { reject(new Error("mask image failed to load")); };
+        im.src = url;
+    });
+}
+
+function _compositeFloatWithMask(planes, mask, canvasUint8) {
+    // In-place composite: where mask = 1.0, replace float with the
+    // canvas-uint8 pixel (promoted to [0, 1] and treated as sRGB-encoded
+    // — same encoding as the float buffer, so the pipeline's gamma
+    // decode handles both uniformly afterwards). Where mask = 0.0,
+    // float is unchanged.
+    var R = planes.r, G = planes.g, B = planes.b;
+    var n = R.length;
+    for (var i = 0, j = 0; i < n; i++, j += 4) {
+        var a = mask[i] / 255;
+        if (a <= 0) continue;
+        var inv = 1 - a;
+        R[i] = R[i] * inv + (canvasUint8[j]     / 255) * a;
+        G[i] = G[i] * inv + (canvasUint8[j + 1] / 255) * a;
+        B[i] = B[i] * inv + (canvasUint8[j + 2] / 255) * a;
+    }
+}
+
+function setFloatSource(floatUrl, maskUrl, w, h) {
+    // Null floatUrl = clear. Same (float, mask) URL pair = no-op.
+    // Otherwise fetch float + (optional) mask, run the load-time
+    // composite over the canvas pixels read from StudioCore at the
+    // moment of the call, and stash the result. The pipeline's float
+    // branch reads from the same planar buffers as before.
+    if (!floatUrl) {
         _floatSrc = null;
         _floatSrcLoading = null;
         _updateHpBadge();
         _scheduleFullRedraw();
         return;
     }
-    if (_floatSrc && _floatSrc.url === url && _floatSrc.w === w && _floatSrc.h === h) {
+    if (_floatSrc
+            && _floatSrc.url === floatUrl
+            && _floatSrc.maskUrl === (maskUrl || "")
+            && _floatSrc.w === w && _floatSrc.h === h) {
         return;
     }
-    var token = { url: url, w: w, h: h };
+    var token = { url: floatUrl, maskUrl: maskUrl || "", w: w, h: h };
     _floatSrcLoading = token;
-    fetch(url).then(function (r) {
-        if (!r.ok) throw new Error("HTTP " + r.status);
+
+    var floatP = fetch(floatUrl).then(function (r) {
+        if (!r.ok) throw new Error("HTTP " + r.status + " on float sidecar");
         return r.arrayBuffer();
-    }).then(function (buf) {
-        // Discard if a newer setFloatSource superseded us.
-        if (_floatSrcLoading !== token) return;
+    });
+    // Mask is optional — when absent, resolve to null and skip composite.
+    var maskP = maskUrl
+        ? _decodeMaskPng(maskUrl, w, h).catch(function (e) {
+            // Mask fetch/decode failure is non-fatal: fall back to the
+            // V1 plain-float path so user still gets HP precision
+            // outside AD regions (face will be slightly off but most
+            // of the image still benefits).
+            console.warn(TAG, "blend-mask decode failed, falling back to plain HP:", e);
+            return null;
+        })
+        : Promise.resolve(null);
+
+    Promise.all([floatP, maskP]).then(function (results) {
+        if (_floatSrcLoading !== token) return;  // superseded
         try {
-            var planes = _splitInterleavedRGB(buf, w, h);
-            _floatSrc = { url: url, w: w, h: h, r: planes.r, g: planes.g, b: planes.b };
+            var planes = _splitInterleavedRGB(results[0], w, h);
+            var maskArr = results[1];
+            var hasMask = false;
+            if (maskArr) {
+                // NOTE: reads composited canvas (all visible layers).
+                // For V1 we treat that as authoritative for AD regions —
+                // if the user has painted layers on top, the composite
+                // mixes float-base with painted-canvas in the AD areas,
+                // which is a strictly better outcome than dropping float.
+                var S = _S();
+                if (S && S.canvas) {
+                    var ctx = S.canvas.getContext("2d");
+                    if (ctx && S.W === w && S.H === h) {
+                        var u8 = ctx.getImageData(0, 0, w, h).data;
+                        _compositeFloatWithMask(planes, maskArr, u8);
+                        hasMask = true;
+                    } else {
+                        console.warn(TAG, "skipping mask composite — canvas dims mismatch (", S && S.W, S && S.H, "vs", w, h, ")");
+                    }
+                }
+            }
+            _floatSrc = {
+                url: floatUrl,
+                maskUrl: maskUrl || "",
+                w: w, h: h,
+                r: planes.r, g: planes.g, b: planes.b,
+                hasMask: hasMask,
+            };
             _updateHpBadge();
             _scheduleFullRedraw();
         } catch (e) {
