@@ -2970,7 +2970,19 @@ function bindUI() {
   // At weightsGB === 0 the slider shows "Auto" and we send a reset.
   const _vramSlider = document.getElementById("vramReserveSlider");
   const _vramSliderVal = document.getElementById("vramReserveVal");
-  const _vramLabel = (v) => parseFloat(v) === 0 ? "Auto" : parseFloat(v).toFixed(1) + " GB";
+  // "Auto" is the only translatable token here — "GB" is a unit symbol
+  // and stays fixed across locales. We deliberately don't put data-i18n
+  // on the span: applyToDom() would clobber a "2.5 GB" reading with
+  // "Auto" on locale switch. Instead an i18n:change listener below
+  // re-renders the label only when the slider is actually at 0.
+  const _vramLabel = (v) => parseFloat(v) === 0
+    ? (window.I18N && window.I18N.t ? window.I18N.t("settings.vram.gpuWeights.auto", "Auto") : "Auto")
+    : parseFloat(v).toFixed(1) + " GB";
+  window.addEventListener("i18n:change", () => {
+    if (_vramSlider && _vramSliderVal && parseFloat(_vramSlider.value) === 0) {
+      _vramSliderVal.textContent = _vramLabel(0);
+    }
+  });
   const _vramSendWeights = async (weightsGB) => {
     if (weightsGB === 0) {
       return fetch(API.base + "/studio/vram_reserve", {

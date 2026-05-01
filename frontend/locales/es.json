@@ -36,6 +36,9 @@
   "settings.outputFormat.lossless": "Sin pérdida",
 
   "settings.vram.unloadModel": "Descargar modelo de la VRAM",
+  "settings.vram.gpuWeights": "Pesos GPU",
+  "settings.vram.gpuWeights.auto": "Auto",
+  "settings.vram.gpuWeights.description": "Cuánta VRAM usar para los pesos del modelo. 0 = predeterminado de Forge. Valores más altos mantienen más del modelo en VRAM para una generación más rápida; valores más bajos descargan los pesos a la RAM para liberar VRAM para la inferencia. El uso máximo durante la generación puede superar este valor — es un presupuesto de carga, no un límite estricto.",
   "settings.vram.autoUnload": "Descargar automáticamente al estar inactivo",
   "settings.vram.idleTimeout": "Tiempo de inactividad",
 
@@ -183,5 +186,10 @@
   "develop.cg.shadows": "Sombras",
   "develop.cg.midtones": "Medios tonos",
   "develop.cg.highlights": "Iluminaciones",
-  "develop.cg.global": "Global"
+  "develop.cg.global": "Global",
+
+  "panels.upscale.title": "Escalar",
+  "panels.upscale.refineAfter": "Refine tras escalar (paso img2img)",
+  "panels.upscale.runADetailer": "Ejecutar ADetailer",
+  "panels.upscale.hint": "Pipeline de una sola llamada. Refine y ADetailer son independientes: marca uno, ambos o ninguno. Steps/Denoise se aplican al paso Refine."
 }
