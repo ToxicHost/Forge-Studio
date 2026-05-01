@@ -276,18 +276,18 @@ SECTIONS.splice(3, 0, { id: "colorGrading", label: "Color Grading", open: false,
 SECTIONS.push({
     id: "calibration", label: "Calibration", open: false,
     rows: [
-        { heading: "Shadows" },
+        { heading: "Shadows", i18nKey: "develop.calibration.heading.shadows" },
         { key: "calShadowTint", label: "Tint", min: -100, max: 100, step: 1, def: 0, track: "shadowTint" },
         { divider: true },
-        { heading: "Red Primary",   color: "red" },
+        { heading: "Red Primary",   color: "red",   i18nKey: "develop.calibration.heading.redPrimary" },
         { key: "calRedHue",   label: "Hue",        min: -100, max: 100, step: 1, def: 0, track: "redHue" },
         { key: "calRedSat",   label: "Saturation", min: -100, max: 100, step: 1, def: 0, track: "redSat" },
         { divider: true },
-        { heading: "Green Primary", color: "green" },
+        { heading: "Green Primary", color: "green", i18nKey: "develop.calibration.heading.greenPrimary" },
         { key: "calGreenHue", label: "Hue",        min: -100, max: 100, step: 1, def: 0, track: "greenHue" },
         { key: "calGreenSat", label: "Saturation", min: -100, max: 100, step: 1, def: 0, track: "greenSat" },
         { divider: true },
-        { heading: "Blue Primary",  color: "blue" },
+        { heading: "Blue Primary",  color: "blue",  i18nKey: "develop.calibration.heading.bluePrimary" },
         { key: "calBlueHue",  label: "Hue",        min: -100, max: 100, step: 1, def: 0, track: "blueHue" },
         { key: "calBlueSat",  label: "Saturation", min: -100, max: 100, step: 1, def: 0, track: "blueSat" },
     ]
@@ -2404,11 +2404,14 @@ function _buildSection(sec) {
                 // Sub-section heading — small label that visually groups the
                 // following slider rows. Used by Color Calibration to label
                 // the Red/Green/Blue primary groups. data-color (optional)
-                // tints the heading in the primary's color.
+                // tints the heading in the primary's color. row.i18nKey is
+                // an explicit translation key so applyToDom() can re-translate
+                // on locale switches; markup English is the fallback.
                 var h = document.createElement("div");
                 h.className = "develop-section-heading";
                 if (row.color) h.dataset.color = row.color;
-                h.textContent = row.heading;
+                if (row.i18nKey) h.dataset.i18n = row.i18nKey;
+                h.textContent = row.i18nKey ? _t(row.i18nKey, row.heading) : row.heading;
                 body.appendChild(h);
             } else {
                 body.appendChild(_buildSliderRow(row));

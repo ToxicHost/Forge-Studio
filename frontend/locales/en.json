@@ -195,6 +195,11 @@
   "develop.hsl.sat": "Saturation",
   "develop.hsl.lum": "Luminance",
 
+  "develop.calibration.heading.shadows": "Shadows",
+  "develop.calibration.heading.redPrimary": "Red Primary",
+  "develop.calibration.heading.greenPrimary": "Green Primary",
+  "develop.calibration.heading.bluePrimary": "Blue Primary",
+
   "develop.calib.wb": "White Balance",
   "develop.calib.whitePoint": "White Point",
   "develop.calib.blackPoint": "Black Point",
@@ -228,5 +233,36 @@
   "tooltip.bigOutputWarning": "Output will exceed 2000px on one or both sides. This may cause significant VRAM usage and slow generation on most hardware.",
   "tooltip.histogramAutoStretch": "Stretch input black/white to histogram 0.1% / 99.9% percentile",
 
-  "panels.upscale.hint": "Single-call pipeline. Refine and ADetailer are independent: tick either, both, or neither. Steps/Denoise apply to the refine pass."
+  "panels.upscale.hint": "Single-call pipeline. Refine and ADetailer are independent: tick either, both, or neither. Steps/Denoise apply to the refine pass.",
+
+  "lora.search.placeholder": "Search LoRAs...",
+  "lora.sort.name": "Name",
+  "lora.sort.date": "Newest",
+  "lora.sort.size": "Largest",
+  "lora.weight": "Weight",
+  "lora.refresh.tooltip": "Refresh LoRA list",
+  "lora.close.tooltip": "Close (Esc)",
+  "lora.openFolder": "Open Folder",
+  "lora.openFolder.tooltip": "Open LoRA folder in file manager",
+  "lora.hint": "Click to insert · Right-click for options",
+  "lora.empty.none": "No LoRAs found in your models/Lora directory",
+  "lora.empty.noMatch": "No LoRAs match your search",
+  "lora.allFolder": "All LoRAs",
+  "lora.menu.previewFromFile": "Set preview from file…",
+  "lora.menu.previewFromCanvas": "Set preview from canvas",
+  "lora.menu.removePreview": "Remove preview",
+  "lora.tab.tooltip": "Browse LoRAs (Ctrl+L)",
+
+  "wildcard.allFolder": "All",
+  "wildcard.search.placeholder": "Search wildcards...",
+  "wildcard.refresh.tooltip": "Refresh wildcard list",
+  "wildcard.close.tooltip": "Close (Esc)",
+  "wildcard.unsorted": "Unsorted",
+  "wildcard.insert": "Insert",
+  "wildcard.insert.tooltip": "Insert into prompt",
+  "wildcard.editButton": "Edit in Wildcards",
+  "wildcard.edit.tooltip": "Open in Wildcards editor",
+  "wildcard.clickToCopy": "Click to copy",
+  "wildcard.failedToLoad": "Failed to load",
+  "wildcard.tab.tooltip": "Browse Wildcards (Ctrl+Shift+L)"
 }

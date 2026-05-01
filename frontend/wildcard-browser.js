@@ -18,6 +18,9 @@
 (function () {
   "use strict";
 
+  // i18n helper — see lora-browser.js for the same shape.
+  const _t = (key, fallback) => (window.I18N && window.I18N.t) ? window.I18N.t(key, fallback) : fallback;
+
   const TAG = "[Wildcard Browser]";
 
   // ── State ──────────────────────────────────────────────
@@ -343,9 +346,9 @@
       <div class="wc-modal">
         <div class="wc-header">
           <span class="wc-title">Wildcards</span>
-          <input class="wc-search" type="text" placeholder="Search wildcards..." spellcheck="false" autocomplete="off">
-          <button class="wc-header-btn wc-refresh-btn" title="Refresh wildcard list">${REFRESH_SVG}</button>
-          <button class="wc-close" title="Close (Esc)">&times;</button>
+          <input class="wc-search" type="text" data-i18n-placeholder="wildcard.search.placeholder" placeholder="${_t("wildcard.search.placeholder", "Search wildcards...")}" spellcheck="false" autocomplete="off">
+          <button class="wc-header-btn wc-refresh-btn" data-i18n-title="wildcard.refresh.tooltip" title="${_t("wildcard.refresh.tooltip", "Refresh wildcard list")}">${REFRESH_SVG}</button>
+          <button class="wc-close" data-i18n-title="wildcard.close.tooltip" title="${_t("wildcard.close.tooltip", "Close (Esc)")}">&times;</button>
         </div>
         <div class="wc-body">
           <div class="wc-folders"></div>
@@ -415,12 +418,12 @@
   function renderFolderTree() {
     const container = modal.querySelector(".wc-folders");
     container.innerHTML = "";
-    container.appendChild(makeFolderItem("", "All", allWildcards.length, false, 0));
+    container.appendChild(makeFolderItem("", _t("wildcard.allFolder", "All"), allWildcards.length, false, 0));
 
     // Count wildcards not in any folder ("Unsorted")
     const unsortedCount = allWildcards.filter(w => !w.name.includes("/")).length;
     if (unsortedCount > 0) {
-      container.appendChild(makeFolderItem("__unsorted__", "Unsorted", unsortedCount, false, 0));
+      container.appendChild(makeFolderItem("__unsorted__", _t("wildcard.unsorted", "Unsorted"), unsortedCount, false, 0));
     }
 
     for (const folder of folders) {
@@ -513,7 +516,7 @@
       row.className = "wc-item" + (previewName === wc.name ? " active" : "");
       row.innerHTML = `
         <span class="wc-item-name" title="${escHtml(wc.name)}">${escHtml(wc.name)}</span>
-        <button class="wc-item-insert" title="Insert into prompt">Insert</button>
+        <button class="wc-item-insert" data-i18n="wildcard.insert" data-i18n-title="wildcard.insert.tooltip" title="${_t("wildcard.insert.tooltip", "Insert into prompt")}">${_t("wildcard.insert", "Insert")}</button>
       `;
 
       // Click name area: show preview
@@ -568,8 +571,8 @@
     previewPane.classList.add("visible");
     previewPane.innerHTML = `
       <div class="wc-preview-title">__${escHtml(name)}__</div>
-      <button class="wc-preview-edit" title="Open in Wildcards editor">Edit in Wildcards</button>
-      <div class="wc-preview-count">Loading...</div>
+      <button class="wc-preview-edit" data-i18n="wildcard.editButton" data-i18n-title="wildcard.edit.tooltip" title="${_t("wildcard.edit.tooltip", "Open in Wildcards editor")}">${_t("wildcard.editButton", "Edit in Wildcards")}</button>
+      <div class="wc-preview-count" data-i18n="status.loading">${_t("status.loading", "Loading...")}</div>
       <div class="wc-preview-entries"></div>
     `;
 
@@ -592,7 +595,8 @@
         const el = document.createElement("div");
         el.className = "wc-preview-entry";
         el.textContent = line;
-        el.title = "Click to copy";
+        el.dataset.i18nTitle = "wildcard.clickToCopy";
+        el.title = _t("wildcard.clickToCopy", "Click to copy");
         el.addEventListener("click", () => {
           navigator.clipboard.writeText(line).then(() => {
             el.classList.add("copied");
@@ -611,7 +615,7 @@
     } catch (e) {
       console.error(`${TAG} Preview fetch failed:`, e);
       const countEl = previewPane.querySelector(".wc-preview-count");
-      if (countEl) countEl.textContent = "Failed to load";
+      if (countEl) countEl.textContent = _t("wildcard.failedToLoad", "Failed to load");
     }
   }
 
@@ -688,7 +692,8 @@
     const btn = document.createElement("button");
     btn.className = "prompt-browser-btn";
     btn.textContent = "Wildcard";
-    btn.title = "Browse Wildcards (Ctrl+Shift+L)";
+    btn.dataset.i18nTitle = "wildcard.tab.tooltip";
+    btn.title = _t("wildcard.tab.tooltip", "Browse Wildcards (Ctrl+Shift+L)");
     btn.addEventListener("click", e => { e.preventDefault(); e.stopPropagation(); openModal(); });
     return btn;
   }
