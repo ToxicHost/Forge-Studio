@@ -106,6 +106,7 @@
   "develop.section.colorGrading": "Color Grading",
   "develop.section.detail": "Detail",
   "develop.section.effects": "Effects",
+  "develop.section.calibration": "Calibration",
 
   "develop.slider.resetHint": "Double-click to reset",
 
@@ -141,6 +142,14 @@
 
   "develop.slider.cgBlending": "Blending",
   "develop.slider.cgBalance": "Balance",
+
+  "develop.slider.calShadowTint": "Tint",
+  "develop.slider.calRedHue": "Hue",
+  "develop.slider.calRedSat": "Saturation",
+  "develop.slider.calGreenHue": "Hue",
+  "develop.slider.calGreenSat": "Saturation",
+  "develop.slider.calBlueHue": "Hue",
+  "develop.slider.calBlueSat": "Saturation",
 
   "develop.hsl.hue": "Hue",
   "develop.hsl.sat": "Saturation",
