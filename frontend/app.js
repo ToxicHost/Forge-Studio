@@ -4687,6 +4687,24 @@ async function init() {
     }
   }
 
+  // Interface language (Phase 0 — picker is wired but no strings are
+  // instrumented yet, so switching only flips the stored locale and
+  // fires the i18n:change event. Phase 1 fills in translations.)
+  {
+    const localeSel = document.getElementById("settingLocale");
+    if (localeSel && window.I18N) {
+      // Reflect the current locale once i18n boot has finished honoring
+      // URL ?locale → localStorage → navigator detection. Until then
+      // the dropdown shows its HTML default (English).
+      Promise.resolve(window.I18N.ready).then(() => {
+        localeSel.value = window.I18N.getLocale();
+      });
+      localeSel.addEventListener("change", () => {
+        window.I18N.setLocale(localeSel.value);
+      });
+    }
+  }
+
   // Reduced motion
   {
     const motionSel = document.getElementById("settingMotion");

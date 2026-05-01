@@ -1,0 +1,8 @@
+{
+  "_meta": {
+    "name": "English",
+    "code": "en",
+    "status": "source",
+    "notes": "Phase 0 — infrastructure only. UI strings will be instrumented and added in Phase 1."
+  }
+}
