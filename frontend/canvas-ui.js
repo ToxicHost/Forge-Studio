@@ -3467,7 +3467,23 @@ function bindKeys() {
                 return;
             }
             switch (e.key.toLowerCase()) {
-                case "z": e.preventDefault(); e.shiftKey ? C.redo() : C.undo(); renderLayerPanel(); renderHistoryPanel(); _redraw(); return;
+                case "z": {
+                    e.preventDefault();
+                    // Develop module owns its own undo stack of developParams
+                    // snapshots. When the Develop panel is visible AND has
+                    // something to (un)do, consume the keystroke there and
+                    // skip the canvas/layer undo. Falls through otherwise.
+                    var D = window.StudioDevelop;
+                    if (D && D.isPanelVisible && D.isPanelVisible()) {
+                        var handled = e.shiftKey
+                            ? (D.canRedo && D.canRedo() && D.redo && D.redo())
+                            : (D.canUndo && D.canUndo() && D.undo && D.undo());
+                        if (handled) return;
+                    }
+                    e.shiftKey ? C.redo() : C.undo();
+                    renderLayerPanel(); renderHistoryPanel(); _redraw();
+                    return;
+                }
                 case "a": e.preventDefault(); C.selectionAll(); startMarchingAnts(); _redraw(); return;
                 case "d": e.preventDefault(); C.selectionClear(); stopMarchingAnts(); _redraw(); return;
                 case "c": if (S.selection.active) { e.preventDefault(); C.selectionCopy(); } return;
