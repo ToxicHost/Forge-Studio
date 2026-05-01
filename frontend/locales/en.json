@@ -87,5 +87,81 @@
   "toast.updateCheckFailed": "Update check failed: {error}",
   "toast.updating": "Updating...",
   "toast.updateFailed": "Update failed: {error}",
-  "toast.studioUpToDate": "Forge Studio is up to date"
+  "toast.studioUpToDate": "Forge Studio is up to date",
+
+  "develop.title": "Develop",
+  "develop.reset": "Reset",
+  "develop.reset.tooltip": "Reset all sliders",
+  "develop.enable.tooltip": "Enable Develop",
+  "develop.beforeAfter.tooltip": "Before / After split",
+  "develop.hpBadge.tooltip": "High Precision: float32 source pixels active",
+
+  "develop.split.before": "Before",
+  "develop.split.after": "After",
+
+  "develop.section.basic": "Calibrate",
+  "develop.section.toneCurve": "Tone Curve",
+  "develop.section.presence": "Presence",
+  "develop.section.hsl": "HSL / Color",
+  "develop.section.colorGrading": "Color Grading",
+  "develop.section.detail": "Detail",
+  "develop.section.effects": "Effects",
+
+  "develop.slider.resetHint": "Double-click to reset",
+
+  "develop.slider.temperature": "Temperature",
+  "develop.slider.tint": "Tint",
+  "develop.slider.exposure": "Exposure",
+  "develop.slider.contrast": "Contrast",
+  "develop.slider.highlights": "Highlights",
+  "develop.slider.shadows": "Shadows",
+  "develop.slider.whites": "Whites",
+  "develop.slider.blacks": "Blacks",
+  "develop.slider.vibrance": "Vibrance",
+  "develop.slider.saturation": "Saturation",
+
+  "develop.slider.texture": "Texture",
+  "develop.slider.clarity": "Clarity",
+  "develop.slider.dehaze": "Dehaze",
+
+  "develop.slider.sharpenAmount": "Sharpen Amt",
+  "develop.slider.sharpenRadius": "Sharpen Rad",
+  "develop.slider.sharpenThreshold": "Threshold",
+  "develop.slider.nrLuminance": "NR Luma",
+  "develop.slider.nrColor": "NR Color",
+
+  "develop.slider.vignetteAmount": "Vignette",
+  "develop.slider.grainAmount": "Grain Amount",
+  "develop.slider.grainSize": "Grain Size",
+
+  "develop.slider.tcHighlights": "Highlights",
+  "develop.slider.tcLights": "Lights",
+  "develop.slider.tcDarks": "Darks",
+  "develop.slider.tcShadows": "Shadows",
+
+  "develop.slider.cgBlending": "Blending",
+  "develop.slider.cgBalance": "Balance",
+
+  "develop.toneCurve.parametric": "Parametric",
+  "develop.toneCurve.point": "Point",
+
+  "develop.hsl.hue": "Hue",
+  "develop.hsl.sat": "Saturation",
+  "develop.hsl.lum": "Luminance",
+
+  "develop.calib.wb": "White Balance",
+  "develop.calib.whitePoint": "White Point",
+  "develop.calib.blackPoint": "Black Point",
+  "develop.calib.statusNone": "No calibration set",
+  "develop.calib.wb.clear": "Clear white balance calibration",
+  "develop.calib.whitePoint.clear": "Clear white point calibration",
+  "develop.calib.blackPoint.clear": "Clear black point calibration",
+
+  "develop.pick.suffix": "\nClick to pick, then click the image. Shift-click to clear.",
+  "develop.pick.wb.tooltip": "White balance — pick a neutral pixel that should render as gray",
+  "develop.pick.whitePoint.tooltip": "White point — pick the brightest pixel that should render as pure white",
+  "develop.pick.blackPoint.tooltip": "Black point — pick the darkest pixel that should render as pure black",
+
+  "develop.presets.title": "Presets",
+  "develop.presets.save": "Save…"
 }
