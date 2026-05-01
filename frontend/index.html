@@ -292,9 +292,9 @@
     <!-- Right panel -->
     <div class="panel-right" id="panelRight">
       <div class="panel-tabs" id="panelTabs">
-        <button class="panel-tab active" data-panel="generate">Generate</button>
-        <button class="panel-tab" data-panel="extensions">Extensions</button>
-        <button class="panel-tab" data-panel="settings">Settings</button>
+        <button class="panel-tab active" data-panel="generate" data-i18n="panels.generate">Generate</button>
+        <button class="panel-tab" data-panel="extensions" data-i18n="panels.extensions">Extensions</button>
+        <button class="panel-tab" data-panel="settings" data-i18n="panels.settings">Settings</button>
       </div>
 
       <div class="panel-content">
@@ -314,25 +314,25 @@
               <textarea class="prompt-text prompt-neg" id="paramNeg" rows="2" placeholder="Negative prompt..."></textarea>
             </div>
             <div class="gen-row">
-              <button class="gen-btn" id="genBtn"><span class="gen-shine"></span>Generate</button>
+              <button class="gen-btn" id="genBtn"><span class="gen-shine"></span><span data-i18n="actions.generate">Generate</span></button>
               <button class="live-btn" id="liveToggleBtn" title="Start Live Painting">▶ Live</button>
             </div>
             <div class="gen-actions">
-              <button id="interruptBtn">Interrupt</button>
-              <button id="skipBtn">Skip</button>
+              <button id="interruptBtn" data-i18n="actions.interrupt">Interrupt</button>
+              <button id="skipBtn" data-i18n="actions.skip">Skip</button>
             </div>
 
             <div class="ar-row canvas-load-reset-row">
-              <button class="ar-btn" id="loadImageBtn" title="Load image to canvas">&#x1f4c2; Load Image</button>
+              <button class="ar-btn" id="loadImageBtn" title="Load image to canvas">&#x1f4c2; <span data-i18n="actions.loadImage">Load Image</span></button>
               <input type="file" id="loadImageInput" accept="image/*" style="display:none;">
               <span style="flex:1;"></span>
-              <button class="ar-btn ar-clear canvas-reset-accent" id="clearCanvas" title="Clear canvas">Reset Canvas</button>
+              <button class="ar-btn ar-clear canvas-reset-accent" id="clearCanvas" title="Clear canvas" data-i18n="actions.resetCanvas">Reset Canvas</button>
             </div>
 
             <!-- Live Painting Panel — visible when Live is active -->
             <div class="live-panel" id="livePanel" style="display:none;">
               <div class="live-panel-row">
-                <label>Strength</label>
+                <label data-i18n="live.strength">Strength</label>
                 <input type="range" id="liveStrength" min="0.05" max="1.0" step="0.05" value="0.3">
                 <span id="liveStrengthVal">0.3</span>
               </div>
@@ -341,7 +341,7 @@
                 <span id="liveSeed" class="live-seed-display">—</span>
                 <button id="liveRerollBtn" title="Re-roll seed">🎲</button>
               </div>
-              <button class="live-apply-btn" id="liveApplyBtn" disabled>Apply to Layer</button>
+              <button class="live-apply-btn" id="liveApplyBtn" disabled data-i18n="actions.applyToLayer">Apply to Layer</button>
             </div>
           </div>
 
@@ -649,7 +649,7 @@
                 <div class="param-cell"><label>Steps</label><input class="param-val" id="paramUpscaleSteps" value="20"></div>
                 <div class="param-cell"><label>Denoise</label><input class="param-val" id="paramUpscaleDenoise" value="0.3"></div>
               </div>
-              <button class="gen-btn" id="upscaleBtn" style="margin-top:8px;background:var(--bg-raised);border:1px solid var(--border);color:var(--text-2);font-size:11px;height:30px;">UPSCALE CANVAS</button>
+              <button class="gen-btn" id="upscaleBtn" style="margin-top:8px;background:var(--bg-raised);border:1px solid var(--border);color:var(--text-2);font-size:11px;height:30px;" data-i18n="actions.upscaleCanvas">UPSCALE CANVAS</button>
               <div class="param-hint" style="margin-top:4px;font-size:9px;color:var(--text-4);">Single-call pipeline. Refine and ADetailer are independent: tick either, both, or neither. Steps/Denoise apply to the refine pass.</div>
             </div>
           </div>
@@ -801,16 +801,16 @@
         <div class="panel-page" id="page-settings">
           <div class="settings-content">
             <div class="setting-group">
-              <div class="setting-group-title">Canvas</div>
-              <div class="setting-row"><span class="setting-label">Show grid</span><div class="toggle-track" id="toggleGrid"><div class="toggle-knob"></div></div></div>
+              <div class="setting-group-title" data-i18n="settings.canvas.title">Canvas</div>
+              <div class="setting-row"><span class="setting-label" data-i18n="settings.canvas.showGrid">Show grid</span><div class="toggle-track" id="toggleGrid"><div class="toggle-knob"></div></div></div>
               <!-- Pen pressure is now on the brush context bar -->
             </div>
             <div class="setting-group">
-              <div class="setting-group-title">Generation</div>
-              <div class="setting-row"><span class="setting-label">Save outputs</span><div class="toggle-track on" id="toggleSaveOutputs"><div class="toggle-knob"></div></div></div>
-              <div class="setting-row" title="Saves high-precision float data alongside each image. Eliminates banding and gives the Develop module ~0.5 stops of highlight headroom. Adds ~0.5–3s and ~12 MB per image. Best with fp32 VAE."><span class="setting-label">High precision</span><div class="toggle-track" id="toggleHighPrecision"><div class="toggle-knob"></div></div></div>
-              <div class="setting-row"><span class="setting-label">Live preview</span><div class="toggle-track on" id="toggleLivePreview"><div class="toggle-knob"></div></div></div>
-              <div class="setting-row"><span class="setting-label">Remember last session</span><div class="toggle-track" id="toggleRememberSession"><div class="toggle-knob"></div></div></div>
+              <div class="setting-group-title" data-i18n="settings.generation.title">Generation</div>
+              <div class="setting-row"><span class="setting-label" data-i18n="settings.generation.saveOutputs">Save outputs</span><div class="toggle-track on" id="toggleSaveOutputs"><div class="toggle-knob"></div></div></div>
+              <div class="setting-row" title="Saves high-precision float data alongside each image. Eliminates banding and gives the Develop module ~0.5 stops of highlight headroom. Adds ~0.5–3s and ~12 MB per image. Best with fp32 VAE."><span class="setting-label" data-i18n="settings.generation.highPrecision">High precision</span><div class="toggle-track" id="toggleHighPrecision"><div class="toggle-knob"></div></div></div>
+              <div class="setting-row"><span class="setting-label" data-i18n="settings.generation.livePreview">Live preview</span><div class="toggle-track on" id="toggleLivePreview"><div class="toggle-knob"></div></div></div>
+              <div class="setting-row"><span class="setting-label" data-i18n="settings.generation.rememberSession">Remember last session</span><div class="toggle-track" id="toggleRememberSession"><div class="toggle-knob"></div></div></div>
               <div id="sessionCategories" style="display:none;">
                 <div class="session-accordion" id="sessionAccordionHeader">
                   <span style="font-size:10px;color:var(--text-3);cursor:pointer;user-select:none;display:flex;align-items:center;gap:4px;padding:4px 0 2px 8px;">
@@ -850,19 +850,19 @@
               </div>
             </div>
             <div class="setting-group">
-              <div class="setting-group-title">Output Format</div>
+              <div class="setting-group-title" data-i18n="settings.outputFormat.title">Output Format</div>
               <div class="setting-row">
-                <span class="setting-label">Format</span>
+                <span class="setting-label" data-i18n="settings.outputFormat.format">Format</span>
                 <select class="param-select" id="settingSaveFormat" style="width:90px;padding:4px 8px;">
                   <option value="png" selected>PNG</option>
                   <option value="jpeg">JPEG</option>
                   <option value="webp">WebP</option>
                 </select>
               </div>
-              <div class="setting-row"><span class="setting-label">Embed metadata</span><div class="toggle-track on" id="toggleMetadata"><div class="toggle-knob"></div></div></div>
+              <div class="setting-row"><span class="setting-label" data-i18n="settings.outputFormat.embedMetadata">Embed metadata</span><div class="toggle-track on" id="toggleMetadata"><div class="toggle-knob"></div></div></div>
               <div id="fmtJpegOpts" style="display:none;">
                 <div class="setting-row">
-                  <span class="setting-label">Quality</span>
+                  <span class="setting-label" data-i18n="settings.outputFormat.quality">Quality</span>
                   <div style="display:flex;align-items:center;gap:6px;">
                     <input type="range" id="settingJpegQuality" min="1" max="100" value="80" style="width:90px;">
                     <span id="settingJpegQualityVal" style="font-size:11px;color:var(--text-3);min-width:28px;">80%</span>
@@ -870,9 +870,9 @@
                 </div>
               </div>
               <div id="fmtWebpOpts" style="display:none;">
-                <div class="setting-row"><span class="setting-label">Lossless</span><div class="toggle-track" id="toggleWebpLossless"><div class="toggle-knob"></div></div></div>
+                <div class="setting-row"><span class="setting-label" data-i18n="settings.outputFormat.lossless">Lossless</span><div class="toggle-track" id="toggleWebpLossless"><div class="toggle-knob"></div></div></div>
                 <div class="setting-row" id="webpQualityRow">
-                  <span class="setting-label">Quality</span>
+                  <span class="setting-label" data-i18n="settings.outputFormat.quality">Quality</span>
                   <div style="display:flex;align-items:center;gap:6px;">
                     <input type="range" id="settingWebpQuality" min="1" max="100" value="75" style="width:90px;">
                     <span id="settingWebpQualityVal" style="font-size:11px;color:var(--text-3);min-width:28px;">75%</span>
@@ -883,7 +883,7 @@
             <div class="setting-group">
               <div class="setting-group-title">VRAM</div>
               <div style="margin-bottom:8px;">
-                <button class="defaults-btn" id="unloadModelBtn" style="width:100%;">Unload Model from VRAM</button>
+                <button class="defaults-btn" id="unloadModelBtn" style="width:100%;" data-i18n="settings.vram.unloadModel">Unload Model from VRAM</button>
               </div>
               <div class="setting-row">
                 <span class="setting-label">GPU Weights</span>
@@ -893,9 +893,9 @@
                 </div>
               </div>
               <div style="font-size:9px;color:var(--text-4);padding:2px 0 6px 0;">How much VRAM to use for model weights. 0 = Forge default. Higher values keep more of the model in VRAM for faster generation; lower values offload weights to RAM to free VRAM for inference. Peak usage during generation may still exceed this — it's a loading budget, not a hard cap.</div>
-              <div class="setting-row"><span class="setting-label">Auto-unload when idle</span><div class="toggle-track" id="toggleAutoUnload"><div class="toggle-knob"></div></div></div>
+              <div class="setting-row"><span class="setting-label" data-i18n="settings.vram.autoUnload">Auto-unload when idle</span><div class="toggle-track" id="toggleAutoUnload"><div class="toggle-knob"></div></div></div>
               <div class="setting-row" id="autoUnloadMinutesRow" style="display:none;">
-                <span class="setting-label">Idle timeout</span>
+                <span class="setting-label" data-i18n="settings.vram.idleTimeout">Idle timeout</span>
                 <div style="display:flex;align-items:center;gap:6px;">
                   <input type="range" id="autoUnloadMinutes" min="5" max="30" step="5" value="10" style="width:80px;">
                   <span id="autoUnloadMinutesVal" style="font-size:11px;color:var(--text-3);min-width:32px;">10 min</span>
@@ -903,12 +903,12 @@
               </div>
             </div>
             <div class="setting-group">
-              <div class="setting-group-title">Extensions</div>
-              <p style="font-size:10px;color:var(--text-4);margin:0 0 8px 0;">Toggle which extensions appear in the Extensions tab.</p>
+              <div class="setting-group-title" data-i18n="settings.extensions.title">Extensions</div>
+              <p style="font-size:10px;color:var(--text-4);margin:0 0 8px 0;" data-i18n="settings.extensions.description">Toggle which extensions appear in the Extensions tab.</p>
               <div id="extToggles"></div>
             </div>
             <div class="setting-group">
-              <div class="setting-group-title">Theme</div>
+              <div class="setting-group-title" data-i18n="settings.theme.title">Theme</div>
               <div class="theme-selector" id="themeSelector">
                 <button class="theme-btn active" data-theme="">Studio</button>
                 <button class="theme-btn" data-theme="liam">Liam</button>
@@ -919,9 +919,9 @@
               </div>
             </div>
             <div class="setting-group">
-              <div class="setting-group-title">Language</div>
+              <div class="setting-group-title" data-i18n="settings.language.title">Language</div>
               <div class="setting-row">
-                <span class="setting-label">Interface language</span>
+                <span class="setting-label" data-i18n="settings.language.label">Interface language</span>
                 <select class="param-select" id="settingLocale" style="width:160px;padding:4px 8px;">
                   <option value="en">English</option>
                   <option value="de">Deutsch</option>
@@ -929,43 +929,43 @@
                   <option value="es">Español</option>
                 </select>
               </div>
-              <p style="font-size:10px;color:var(--text-4);margin:6px 0 0 0;">
+              <p style="font-size:10px;color:var(--text-4);margin:6px 0 0 0;" data-i18n="settings.language.note">
                 AI generation parameters (Steps, Sampler, CFG Scale, etc.) stay in English to match the terminology in tutorials and guides.
               </p>
             </div>
             <div class="setting-group">
-              <div class="setting-group-title">Accessibility</div>
+              <div class="setting-group-title" data-i18n="settings.accessibility.title">Accessibility</div>
               <div class="setting-row">
-                <span class="setting-label">Colorblind mode</span>
+                <span class="setting-label" data-i18n="settings.accessibility.colorblind">Colorblind mode</span>
                 <select class="param-select" id="settingColorblind" style="width:140px;padding:4px 8px;">
-                  <option value="">None</option>
+                  <option value="" data-i18n="common.none">None</option>
                   <option value="deutan">Deuteranopia (red-green)</option>
                   <option value="protan">Protanopia (red-green)</option>
                   <option value="tritan">Tritanopia (blue-yellow)</option>
                 </select>
               </div>
               <div class="setting-row">
-                <span class="setting-label">Reduced motion</span>
+                <span class="setting-label" data-i18n="settings.accessibility.reducedMotion">Reduced motion</span>
                 <select class="param-select" id="settingMotion" style="width:140px;padding:4px 8px;">
-                  <option value="">System default</option>
-                  <option value="reduced">Reduced</option>
-                  <option value="full">Full</option>
+                  <option value="" data-i18n="settings.accessibility.systemDefault">System default</option>
+                  <option value="reduced" data-i18n="settings.accessibility.reduced">Reduced</option>
+                  <option value="full" data-i18n="settings.accessibility.full">Full</option>
                 </select>
               </div>
             </div>
             <div class="setting-group">
-              <div class="setting-group-title">Updates</div>
+              <div class="setting-group-title" data-i18n="settings.updates.title">Updates</div>
               <div style="display:flex;gap:6px;align-items:center;">
-                <button class="defaults-btn" id="checkUpdateBtn">Check for Updates</button>
+                <button class="defaults-btn" id="checkUpdateBtn" data-i18n="settings.updates.checkButton">Check for Updates</button>
                 <span id="updateCheckStatus" style="font-size:10px;color:var(--text-4);"></span>
               </div>
             </div>
             <div class="setting-group">
-              <div class="setting-group-title">Defaults</div>
-              <p style="font-size:10px;color:var(--text-4);margin:0 0 8px 0;">Save current workflow settings as defaults for future sessions.</p>
+              <div class="setting-group-title" data-i18n="settings.defaults.title">Defaults</div>
+              <p style="font-size:10px;color:var(--text-4);margin:0 0 8px 0;" data-i18n="settings.defaults.description">Save current workflow settings as defaults for future sessions.</p>
               <div style="display:flex;gap:6px;">
-                <button class="defaults-btn" id="saveDefaults">Save Current as Defaults</button>
-                <button class="defaults-btn defaults-btn-reset" id="resetDefaults">Reset</button>
+                <button class="defaults-btn" id="saveDefaults" data-i18n="settings.defaults.saveButton">Save Current as Defaults</button>
+                <button class="defaults-btn defaults-btn-reset" id="resetDefaults" data-i18n="settings.defaults.resetButton">Reset</button>
               </div>
             </div>
             <!-- FR-001: Credits -->
@@ -998,8 +998,8 @@
   <span id="statusDims">768 &times; 768</span>
   <span class="spacer"></span>
   <span id="statusVRAM" class="vram-readout" title="GPU VRAM usage"></span>
-  <span id="statusModel">Loading...</span>
-  <span><span class="status-dot status-ready" id="statusDot"></span><span id="statusText">Ready</span></span>
+  <span id="statusModel" data-i18n="status.loading">Loading...</span>
+  <span><span class="status-dot status-ready" id="statusDot"></span><span id="statusText" data-i18n="status.ready">Ready</span></span>
 </div>
 
 <script>
