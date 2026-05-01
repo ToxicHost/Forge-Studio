@@ -3234,10 +3234,10 @@ function _onPickMove(e) {
             _pickTooltip.style.display = "none";
             return;
         }
-        // Sample 5x5 average to match what the click handler will see —
-        // keeps the readout consistent with the value that actually ends
-        // up calibrated.
-        var px = _samplePreDevelopRegion(docX, docY, 2);
+        // Single-pixel sample (radius 0) to match what the click handler
+        // commits and to match what the OS eyedropper / browser devtools
+        // would read at the same screen location.
+        var px = _samplePreDevelopRegion(docX, docY, 0);
         if (!px) { _pickTooltip.style.display = "none"; return; }
         var r = Math.max(0, Math.min(255, Math.round(px.r * 255)));
         var g = Math.max(0, Math.min(255, Math.round(px.g * 255)));
@@ -3275,8 +3275,14 @@ function _onPickClick(e) {
         _exitPickMode(); return;
     }
 
-    // Sample a 5x5 region around the click and average — reduces noise / single-pixel artifacts.
-    var px = _samplePreDevelopRegion(docX, docY, 2);
+    // Sample the single pixel under the cursor (radius 0). Earlier this
+    // averaged a 5x5 neighborhood "to reduce noise", but the averaging
+    // made the picker disagree with what the user actually sees: a click
+    // on a 255,255,255 pixel next to anything darker would commit a value
+    // like 252,253,254 because of the neighbors. Single-pixel matches
+    // the live-readout tooltip and matches every other color picker
+    // (Photoshop, Windows eyedropper, browser devtools).
+    var px = _samplePreDevelopRegion(docX, docY, 0);
     if (!px) { _exitPickMode(); return; }
 
     var mode = _pickMode;
