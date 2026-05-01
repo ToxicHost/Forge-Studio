@@ -307,51 +307,30 @@ function _linearToSrgb01(v) {
     return v <= 0.0031308 ? v * 12.92 : 1.055 * Math.pow(v, 1 / 2.4) - 0.055;
 }
 
-// Linear-Float → sRGB-U8 LUT. Spans input range 0..2 in 4096 steps so
-// exposure-boosted floats above 1.0 map through a soft filmic shoulder
-// instead of hard-clipping to 255. Without this, an exposure boost that
-// pushes any pixel past linear 1.0 immediately blows it to pure white;
-// the shoulder lets HDR-ish values asymptote toward sRGB 1.0 smoothly.
-//
-// Curve: identity below 0.85 linear, then a Reinhard-style asymptote
-// shoulder + (1 - shoulder) * t / (t + tightness)  with t = (v - shoulder).
-// At v=2 the output sits at ~0.99 in linear, encoded to ~253 sRGB.
+// Linear-Float → sRGB-U8 LUT. Spans input range 0..1 — values at or above
+// linear 1.0 hard-clip to sRGB 255, values below encode faithfully via the
+// sRGB curve. The earlier version of this LUT applied a Reinhard soft
+// shoulder starting at v=0.85 to roll exposure-boosted floats >1.0 into
+// the [241..255] range; the price was that any in-range pixel above ~218
+// sRGB also got compressed, so any non-zero slider squashed the bright
+// end of the histogram by ~14 levels. The shoulder cost was much higher
+// than its benefit (most images don't have meaningful >1.0 data), so we
+// removed it. HDR-headroom preservation now belongs to the EXR export
+// path, not the on-screen pipeline.
 //
 // Collapses ~6 Math.pow calls per pixel in Phase C into 6 array lookups.
 var _LIN_TO_SRGB_U8 = (function () {
-    var lut = new Uint8Array(4097);
-    var shoulder = 0.85;
-    var tightness = 0.6;
-    for (var i = 0; i <= 4096; i++) {
-        var v = i / 2048; // 0..2
-        if (v < 0) v = 0;
-        var lin;
-        if (v <= shoulder) {
-            lin = v;
-        } else {
-            var t = v - shoulder;
-            lin = shoulder + (1 - shoulder) * t / (t + tightness);
-        }
-        lut[i] = (_linearToSrgb01(lin) * 255 + 0.5) | 0;
+    var lut = new Uint8Array(2049);
+    for (var i = 0; i <= 2048; i++) {
+        var v = i / 2048; // 0..1
+        lut[i] = (_linearToSrgb01(v) * 255 + 0.5) | 0;
     }
     return lut;
 })();
 function _lin2u8(v) {
     if (v <= 0) return 0;
-    if (v < 2) return _LIN_TO_SRGB_U8[(v * 2048) | 0];
-    // v >= 2: continue the Reinhard shoulder beyond the LUT's range so
-    // values asymptote toward sRGB 255 instead of hard-clipping at v=2.
-    // White-point calibration combined with HP-mode float sources or
-    // strong exposure gain can easily push pixels above 2.0; without
-    // this fallback those would all flatten to 255 and reappear as a
-    // histogram spike. Inputs above ~v=8 round to exactly 255 anyway,
-    // so only a small handful of pixels per image take this slow path.
-    var t = v - 0.85;
-    var lin = 0.85 + 0.15 * t / (t + 0.6);
-    if (lin >= 1) return 255;
-    var srgb = lin <= 0.0031308 ? lin * 12.92 : 1.055 * Math.pow(lin, 1 / 2.4) - 0.055;
-    var u = (srgb * 255 + 0.5) | 0;
-    return u > 255 ? 255 : u;
+    if (v >= 1) return 255;
+    return _LIN_TO_SRGB_U8[(v * 2048) | 0];
 }
 
 // xorshift32 — deterministic per-document grain seed
