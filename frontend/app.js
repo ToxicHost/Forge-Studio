@@ -964,28 +964,72 @@ async function populateDropdowns() {
       delete hrCheckpoint.dataset.pendingValue;
     }
 
-    // Status bar — fetch actual loaded model
+    // Sync the searchable-select trigger label after a programmatic
+    // value-set. The MutationObserver inside the searchable-select only
+    // catches HTML attribute changes; setting select.value is a property
+    // change so the trigger displays a stale label otherwise.
+    const _syncSearchable = (sel) => {
+      try { window.StudioSearchableSelect?.attach(sel)?.refresh?.(); } catch (_) {}
+    };
+
+    // Status bar — fetch actual loaded model. At Studio boot Forge may
+    // not have finished loading the actual model yet (FakeInitialModel
+    // placeholder), so /studio/current_model returns an empty title.
+    // We do a fast first attempt + a few delayed retries; whichever
+    // attempt first sees a real title wins, and only updates the
+    // dropdown if the user hasn't manually changed it in between.
+    const _initialModelValue = modelSelect ? modelSelect.value : "";
+    const _applyCurrentModel = (currentTitle) => {
+      if (!currentTitle) return false;
+      StatusBar.setModel(currentTitle.split("[")[0].trim());
+      if (modelSelect && modelSelect.value !== currentTitle
+          && [...modelSelect.options].some(o => o.value === currentTitle)) {
+        // Only override the dropdown if the user hasn't changed it
+        // since boot. Comparing against _initialModelValue guards
+        // against clobbering a manual selection during a slow retry.
+        if (modelSelect.value === _initialModelValue) {
+          modelSelect.value = currentTitle;
+          _syncSearchable(modelSelect);
+        }
+      } else if (modelSelect && modelSelect.value === currentTitle) {
+        _syncSearchable(modelSelect);  // value already right, just refresh label
+      }
+      return true;
+    };
+    let _gotCurrentModel = false;
     try {
       const current = await fetch(API.base + "/studio/current_model").then(r => r.json());
-      const currentTitle = current.title || "";
-      if (currentTitle) {
-        StatusBar.setModel(currentTitle.split("[")[0].trim());
-        if (modelSelect) modelSelect.value = currentTitle;
-      } else if (models.length) {
+      _gotCurrentModel = _applyCurrentModel(current.title || "");
+      if (!_gotCurrentModel && models.length) {
         StatusBar.setModel(models[0].title.split("[")[0].trim());
       }
     } catch (_) {
       // Fallback to sdapi options
       try {
         const opts = await fetch(API.base + "/sdapi/v1/options").then(r => r.json());
-        const currentTitle = opts.sd_model_checkpoint || "";
-        if (currentTitle) {
-          StatusBar.setModel(currentTitle.split("[")[0].trim());
-          if (modelSelect) modelSelect.value = currentTitle;
-        }
+        _gotCurrentModel = _applyCurrentModel(opts.sd_model_checkpoint || "");
       } catch (__) {
         if (models.length) StatusBar.setModel(models[0].title.split("[")[0].trim());
       }
+    }
+    // Retry loop for boot-time race: Forge finishes loading the model
+    // after Studio's initial fetch. Up to ~12s of polling at 1s intervals.
+    if (!_gotCurrentModel && modelSelect) {
+      let _attempts = 0;
+      const _tick = () => {
+        if (++_attempts > 12) return;
+        // Stop retrying if the user has manually picked a model.
+        if (modelSelect.value !== _initialModelValue) return;
+        fetch(API.base + "/studio/current_model")
+          .then(r => r.json())
+          .then(c => {
+            if (!_applyCurrentModel(c.title || "")) {
+              setTimeout(_tick, 1000);
+            }
+          })
+          .catch(() => setTimeout(_tick, 1000));
+      };
+      setTimeout(_tick, 1000);
     }
 
     console.log(`[Studio] Loaded ${models.length} models, ${samplers.length} samplers, ${upscalers.length} upscalers`);
@@ -3727,6 +3771,11 @@ function bindUI() {
     }
     // Clear mask
     if (S.mask?.ctx) S.mask.ctx.clearRect(0, 0, S.W, S.H);
+    // Bump the developed-buffer cache version so the next composite() picks up
+    // the cleared layers instead of returning the stale post-develop buffer
+    // (which would keep displaying the previous image until something else
+    // mutates state — paint stroke, slider drag, etc. — and bumps the version).
+    window.StudioCore.markCompositeDirty?.();
     window.StudioCore.composite();
     showToast("Canvas cleared", "info");
   });
