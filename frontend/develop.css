@@ -407,6 +407,24 @@ body.develop-active #canvasArea canvas {
   border-color: var(--accent);
 }
 
+/* Live RGB readout shown next to the cursor while a calibration pick is
+   armed. Lets the user verify which pixel they're about to commit
+   before clicking. */
+.develop-pick-tooltip {
+  position: fixed;
+  z-index: 99999;
+  pointer-events: none;
+  background: rgba(20, 20, 20, 0.92);
+  color: #f0f0f0;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font: 11px/1.2 var(--mono, ui-monospace, monospace);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
+}
+
 /* Gradient slider tracks for Temperature (blue→yellow) and Tint
    (green→magenta) — visual cue matching Lightroom / Camera Raw, so the
    slider direction is obvious without reading the label. */

@@ -3163,7 +3163,29 @@ function _undoReset() {
 // ========================================================================
 var _pickMode = null;          // null | "wb" | "whites" | "blacks"
 var _pickArmedBtn = null;      // currently-active button element
-var _pickPrevCursor = "";      // saved cursor while picking
+var _pickPrevCursor = "";      // saved body cursor while picking
+var _pickPrevCanvasCursor = null;  // saved canvas inline cursor while picking
+var _pickTooltip = null;       // floating div with live RGB readout
+
+// Eyedropper cursor SVG (Material "colorize" icon) — shown on the canvas
+// while a calibration pick is armed. Setting cursor on body alone wasn't
+// enough: body.develop-active sets its own cursor on the canvas with
+// higher specificity than inherited body cursor, so the canvas tool's
+// arrow leaked through. Inline style on the canvas wins over both.
+var _PICK_CURSOR = "url(\"data:image/svg+xml;utf8,"
+  + "%3Csvg xmlns='http://www.w3.org/2000/svg' width='24' height='24' viewBox='0 0 24 24'%3E"
+  + "%3Cpath d='M17.66 5.41l.92.92-2.69 2.69-.92-.92zm.01-2.41c-.26 0-.51.1-.71.29l-3.12 3.12-1.93-1.91-1.41 1.41 1.42 1.42L3 16.59V21h4.41l8.62-8.62 1.42 1.42 1.41-1.41-1.92-1.92 3.12-3.12c.4-.4.4-1.03.01-1.42l-2.34-2.34c-.2-.2-.45-.29-.71-.29z'"
+  + " fill='%23ffffff' stroke='%23000000' stroke-width='1' stroke-linejoin='round'/%3E"
+  + "%3C/svg%3E\") 3 21, crosshair";
+
+function _ensurePickTooltip() {
+    if (_pickTooltip) return _pickTooltip;
+    _pickTooltip = document.createElement("div");
+    _pickTooltip.className = "develop-pick-tooltip";
+    _pickTooltip.style.display = "none";
+    document.body.appendChild(_pickTooltip);
+    return _pickTooltip;
+}
 
 function _enterPickMode(mode, btn) {
     if (_pickMode === mode) { _exitPickMode(); return; }    // toggle off
@@ -3172,19 +3194,82 @@ function _enterPickMode(mode, btn) {
     _pickArmedBtn = btn || null;
     if (_pickArmedBtn) _pickArmedBtn.classList.add("armed");
     _pickPrevCursor = document.body.style.cursor || "";
-    document.body.style.cursor = "crosshair";
+    document.body.style.cursor = _PICK_CURSOR;
+    var S = _S();
+    if (S && S.canvas) {
+        _pickPrevCanvasCursor = S.canvas.style.cursor;
+        S.canvas.style.cursor = _PICK_CURSOR;
+    }
+    _ensurePickTooltip();
     document.addEventListener("pointerdown", _onPickClick, true);   // capture
+    document.addEventListener("pointermove", _onPickMove, true);
     document.addEventListener("keydown", _onPickKey, true);
 }
 
 function _exitPickMode() {
     if (_pickMode === null) return;
     document.removeEventListener("pointerdown", _onPickClick, true);
+    document.removeEventListener("pointermove", _onPickMove, true);
     document.removeEventListener("keydown", _onPickKey, true);
     if (_pickArmedBtn) _pickArmedBtn.classList.remove("armed");
     _pickArmedBtn = null;
     _pickMode = null;
     document.body.style.cursor = _pickPrevCursor;
+    var S = _S();
+    if (S && S.canvas && _pickPrevCanvasCursor !== null) {
+        S.canvas.style.cursor = _pickPrevCanvasCursor;
+    }
+    _pickPrevCanvasCursor = null;
+    if (_pickTooltip) _pickTooltip.style.display = "none";
+}
+
+// Live RGB readout: while a pick is armed, show a small floating tooltip
+// near the cursor with the sampled sRGB value. Confirms which pixel is
+// about to be picked and surfaces the RGB so the user can verify the
+// calibration target before committing the click.
+//
+// Throttled to one sample per animation frame: _samplePreDevelopRegion
+// rebuilds the layer composite each call, which can be costly on a
+// multi-megapixel doc and pointermove can fire well above 60Hz on
+// high-DPI mice.
+var _pickMoveRaf = 0;
+var _pickMoveLast = null;
+function _onPickMove(e) {
+    if (_pickMode === null) return;
+    _pickMoveLast = { x: e.clientX, y: e.clientY, target: e.target };
+    if (_pickMoveRaf) return;
+    _pickMoveRaf = requestAnimationFrame(function () {
+        _pickMoveRaf = 0;
+        var ev = _pickMoveLast;
+        if (_pickMode === null || !ev || !_pickTooltip) return;
+        var S = _S(); if (!S || !S.canvas) return;
+        if (ev.target !== S.canvas) {
+            _pickTooltip.style.display = "none";
+            return;
+        }
+        var rect = S.canvas.getBoundingClientRect();
+        var z = S.zoom;
+        var docX = Math.floor((ev.x - rect.left - z.ox) / z.scale);
+        var docY = Math.floor((ev.y - rect.top  - z.oy) / z.scale);
+        if (docX < 0 || docY < 0 || docX >= S.W || docY >= S.H) {
+            _pickTooltip.style.display = "none";
+            return;
+        }
+        // Sample 5x5 average to match what the click handler will see —
+        // keeps the readout consistent with the value that actually ends
+        // up calibrated.
+        var px = _samplePreDevelopRegion(docX, docY, 2);
+        if (!px) { _pickTooltip.style.display = "none"; return; }
+        var r = Math.max(0, Math.min(255, Math.round(px.r * 255)));
+        var g = Math.max(0, Math.min(255, Math.round(px.g * 255)));
+        var b = Math.max(0, Math.min(255, Math.round(px.b * 255)));
+        _pickTooltip.textContent = "rgb(" + r + ", " + g + ", " + b + ")";
+        _pickTooltip.style.display = "block";
+        // Position to the lower-right of the cursor, away from the eyedropper
+        // tip (which sits at the bottom-left of the cursor sprite).
+        _pickTooltip.style.left = (ev.x + 18) + "px";
+        _pickTooltip.style.top  = (ev.y + 18) + "px";
+    });
 }
 
 function _onPickKey(e) {
