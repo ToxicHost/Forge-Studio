@@ -2299,6 +2299,139 @@ function _buildSection(sec) {
 var _customSyncs = [];
 function _registerCustomSync(fn) { _customSyncs.push(fn); }
 
+// ========================================================================
+// UNDO / REDO — Develop-owned stack
+//
+// Develop maintains its own undo/redo stack rather than integrating with
+// StudioCore's canvas undo because the core stack is hard-coded to layer
+// ImageData snapshots (entries dispatch on type === "pixel" / "region" /
+// "structural"). Develop's state is non-destructive params, not pixel
+// data, so the cleanest pattern is a parallel stack with hotkey routing
+// in canvas-ui (when Develop is the active module, Ctrl+Z hits this
+// stack first; falls through to canvas undo otherwise).
+//
+// Granularity: one entry per commit (slider mouseup, picker pick, curve
+// point edit, color grading wheel commit, reset). Drag-time updates
+// don't push entries — only the final committed value does. Matches
+// Lightroom's behavior.
+//
+// Snapshot scope: full developParams deep clone. Simple and robust —
+// one slider change to a 100-key params object is still cheap to
+// snapshot, and downstream sync (syncPanel + custom-widget rebuilds)
+// has a single, complete source of truth.
+// ========================================================================
+var _developUndoStack = [];
+var _developRedoStack = [];
+var _lastCommittedParams = null;  // baseline for the next recordUndo() call
+var DEVELOP_MAX_UNDO = 100;
+
+function _snapshotParams() {
+    var p = _S() && _S().developParams;
+    return p ? JSON.parse(JSON.stringify(p)) : null;
+}
+
+function _paramsEqual(a, b) {
+    // JSON-stringify equality is fine — params is a flat-ish object of
+    // numbers, short arrays, and booleans. ~100 keys; cost is negligible
+    // and only runs on commit, never per-pixel.
+    if (a === b) return true;
+    if (!a || !b) return false;
+    return JSON.stringify(a) === JSON.stringify(b);
+}
+
+// recordUndo(label) — call AFTER a commit-level mutation to developParams.
+// Diff against the last recorded baseline; if changed, push a new undo
+// entry and clear redo. No-op if nothing actually changed (handles the
+// "user clicked slider thumb without dragging" case cleanly).
+function recordUndo(label) {
+    var current = _snapshotParams();
+    if (!current) return;
+    if (_lastCommittedParams === null) {
+        // First call — establish baseline. No undo entry yet (there's
+        // no "before" to roll back to).
+        _lastCommittedParams = current;
+        return;
+    }
+    if (_paramsEqual(_lastCommittedParams, current)) return;
+    _developUndoStack.push({
+        before: _lastCommittedParams,
+        after:  current,
+        label:  label || "Develop"
+    });
+    if (_developUndoStack.length > DEVELOP_MAX_UNDO) _developUndoStack.shift();
+    _developRedoStack = [];
+    _lastCommittedParams = current;
+}
+
+function canDevelopUndo() { return _developUndoStack.length > 0; }
+function canDevelopRedo() { return _developRedoStack.length > 0; }
+
+function developUndo() {
+    if (!_developUndoStack.length) return false;
+    var entry = _developUndoStack.pop();
+    _developRedoStack.push(entry);
+    _applyParamsSnapshot(entry.before);
+    _lastCommittedParams = _snapshotParams();
+    return true;
+}
+
+function developRedo() {
+    if (!_developRedoStack.length) return false;
+    var entry = _developRedoStack.pop();
+    _developUndoStack.push(entry);
+    _applyParamsSnapshot(entry.after);
+    _lastCommittedParams = _snapshotParams();
+    return true;
+}
+
+// Restore developParams from a snapshot, refresh all slider / curve /
+// color-wheel UI from the new state, and trigger a full-resolution
+// redraw. syncPanel() handles the DOM sync (covers basic sliders via
+// _rowEls plus the V2 custom widgets via _customSyncs).
+function _applyParamsSnapshot(snapshot) {
+    var S = _S(); if (!S || !snapshot) return;
+    S.developParams = JSON.parse(JSON.stringify(snapshot));
+    syncPanel();
+    _scheduleFullRedraw();
+}
+
+function isDevelopPanelVisible() {
+    return !!(_panel && _panel.classList.contains("visible"));
+}
+
+// Helper: derive a human-readable label for a developParams key. Used
+// when commit sites pass undefined and we still want a useful entry
+// title in case we later expose history. Keeps labels English for now;
+// when Phase 1+ i18n covers this surface we can route through I18N.
+function _undoLabelForKey(key) {
+    if (!key) return "Develop";
+    // Group prefixes: hsl* / cg* / cal* / calib* / tc*
+    if (key.indexOf("calib") === 0) return "Develop: Calibration";
+    if (key.indexOf("cal") === 0)   return "Develop: Color Calibration";
+    if (key.indexOf("hsl") === 0)   return "Develop: HSL";
+    if (key.indexOf("cg") === 0)    return "Develop: Color Grading";
+    if (key.indexOf("tc") === 0)    return "Develop: Tone Curve";
+    if (key === "temperature" || key === "tint")     return "Develop: White Balance";
+    if (key === "exposure" || key === "contrast")    return "Develop: " + key[0].toUpperCase() + key.slice(1);
+    if (key === "highlights" || key === "shadows" || key === "whites" || key === "blacks")
+        return "Develop: Tone";
+    if (key === "vibrance" || key === "saturation")  return "Develop: Color";
+    if (key === "texture" || key === "clarity" || key === "dehaze") return "Develop: Presence";
+    if (key.indexOf("sharpen") === 0 || key.indexOf("nr") === 0)    return "Develop: Detail";
+    if (key.indexOf("vignette") === 0 || key.indexOf("grain") === 0) return "Develop: Effects";
+    return "Develop: " + key;
+}
+
+// Helper: seed the baseline from the current state. Call this once at
+// boot (after defaults / migration) and after any external state load
+// (preset apply, defaults restore). Without this, the first recordUndo
+// after boot wouldn't have a "before" reference.
+function _initDevelopUndoBaseline() {
+    _lastCommittedParams = _snapshotParams();
+    _developUndoStack = [];
+    _developRedoStack = [];
+}
+
 // Helper: safely set a develop param + bump enabled + schedule a redraw.
 // `live=true` schedules proxy (during slider/canvas drag);
 // `live=false` schedules full-resolution redraw.
@@ -2310,7 +2443,12 @@ function _commitParam(key, value, live) {
         S.developParams.enabled = true;
         if (_enableToggleEl) _enableToggleEl.classList.add("on");
     }
-    if (live) _scheduleProxyRedraw(); else _scheduleFullRedraw();
+    if (live) {
+        _scheduleProxyRedraw();
+    } else {
+        recordUndo(_undoLabelForKey(key));
+        _scheduleFullRedraw();
+    }
 }
 
 // ────────────────────────────────────────────────────────────────────────
@@ -2550,6 +2688,7 @@ function _tcAttachCurveHandlers() {
             _tcSetActivePoints(pts);
             _tcSelectedIdx = null;
             _tcRedrawCurve();
+            recordUndo("Develop: Tone Curve");
             _scheduleFullRedraw();
         } else if (!_tcDragging && _tcHitIdx !== null) {
             // Click (no drag) on existing point → select if interior, else clear
@@ -2568,6 +2707,7 @@ function _tcAttachCurveHandlers() {
                 _tcSelectedIdx = null;
                 _tcRedrawCurve();
             }
+            recordUndo("Develop: Tone Curve");
             _scheduleFullRedraw();
         }
         _tcResetDrag();
@@ -2583,6 +2723,7 @@ function _tcAttachCurveHandlers() {
         if (_tcSelectedIdx === idx) _tcSelectedIdx = null;
         else if (_tcSelectedIdx !== null && _tcSelectedIdx > idx) _tcSelectedIdx -= 1;
         _tcRedrawCurve();
+        recordUndo("Develop: Tone Curve");
         _scheduleFullRedraw();
     });
     c.addEventListener("keydown", function (e) {
@@ -2596,6 +2737,7 @@ function _tcAttachCurveHandlers() {
         _tcSetActivePoints(newPts);
         _tcSelectedIdx = null;
         _tcRedrawCurve();
+        recordUndo("Develop: Tone Curve");
         _scheduleFullRedraw();
         e.preventDefault();
     });
@@ -2736,7 +2878,12 @@ function _buildHSLSection(body) {
                         S.developParams.enabled = true;
                         if (_enableToggleEl) _enableToggleEl.classList.add("on");
                     }
-                    if (live) _scheduleProxyRedraw(); else _scheduleFullRedraw();
+                    if (live) {
+                        _scheduleProxyRedraw();
+                    } else {
+                        recordUndo("Develop: HSL");
+                        _scheduleFullRedraw();
+                    }
                 }
                 rangeEl.addEventListener("input",  function () { commit(rangeEl.value, true); });
                 rangeEl.addEventListener("change", function () { commit(rangeEl.value, false); });
@@ -2856,7 +3003,11 @@ function _buildColorWheel(container, regionPrefix, label) {
     });
     canvas.addEventListener("pointerup", function (e) {
         try { canvas.releasePointerCapture(e.pointerId); } catch (_) {}
-        if (dragging) { dragging = false; _scheduleFullRedraw(); }
+        if (dragging) {
+            dragging = false;
+            recordUndo("Develop: Color Grading");
+            _scheduleFullRedraw();
+        }
     });
     canvas.addEventListener("dblclick", function () {
         commit(0, 0, false); _scheduleFullRedraw();
@@ -3017,6 +3168,7 @@ function _clearCalib(mode) {
     if (changed) {
         syncPanel();
         _bumpCompositeCache();
+        recordUndo("Develop: Clear " + mode);
         _scheduleFullRedraw();
     }
     return changed;
@@ -3067,7 +3219,12 @@ function _buildSliderRow(field) {
         if (field.key === "temperature" || field.key === "tint") {
             _syncCalibrationBlock(S.developParams);
         }
-        if (isDrag) _scheduleProxyRedraw(); else _scheduleFullRedraw();
+        if (isDrag) {
+            _scheduleProxyRedraw();
+        } else {
+            recordUndo(_undoLabelForKey(field.key));
+            _scheduleFullRedraw();
+        }
     }
 
     range.addEventListener("input",  function () { commit(range.value, true); });
@@ -3262,6 +3419,7 @@ function _resetAll() {
     _resetUndoBuf = JSON.parse(JSON.stringify(p));
     Object.keys(blank).forEach(function (k) { p[k] = blank[k]; });
     syncPanel();
+    recordUndo("Develop: Reset all");
     _scheduleFullRedraw();
     if (window.showToast) window.showToast("Develop reset (click again to undo)", "info");
     // The button itself doesn't change; second click within ~5s undoes it.
@@ -3514,6 +3672,7 @@ function _applyWBPick(px) {
     p.enabled = true;
     syncPanel();
     _bumpCompositeCache();
+    recordUndo("Develop: White Balance");
     _scheduleFullRedraw();
 }
 
@@ -3534,6 +3693,7 @@ function _applyBlackPick(px) {
     p.enabled = true;
     syncPanel();
     _bumpCompositeCache();
+    recordUndo("Develop: Black Point");
     _scheduleFullRedraw();
 }
 
@@ -3554,6 +3714,7 @@ function _applyWhitePick(px) {
     p.enabled = true;
     syncPanel();
     _bumpCompositeCache();
+    recordUndo("Develop: White Point");
     _scheduleFullRedraw();
 }
 
@@ -3859,6 +4020,9 @@ if (window.StudioModules) {
             document.body.classList.add("develop-active");
             _showPanel();
             syncPanel();
+            // Seed undo baseline from current params now that the panel
+            // is visible — Ctrl+Z routing only fires while visible.
+            _initDevelopUndoBaseline();
             // CSS just freed the 42-px toolstrip column + the right panel —
             // resync the canvas element to the new viewport so it actually
             // fills the available width, then refit zoom and redraw.
@@ -4097,6 +4261,15 @@ window.StudioDevelop = {
     clearFloatSource: clearFloatSource,
     hasFloatSource: hasFloatSource,
     _isIdentity: _isIdentity,
+    // Undo/redo (Ctrl+Z) — Develop owns its own stack of developParams
+    // snapshots; canvas-ui.js routes Ctrl+Z through here first when the
+    // Develop panel is visible, falling back to canvas undo otherwise.
+    canUndo: canDevelopUndo,
+    canRedo: canDevelopRedo,
+    undo: developUndo,
+    redo: developRedo,
+    recordUndo: recordUndo,
+    isPanelVisible: isDevelopPanelVisible,
 };
 
 console.log(TAG, "Develop module loaded v" + VERSION);
