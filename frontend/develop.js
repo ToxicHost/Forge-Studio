@@ -521,90 +521,197 @@ function _applyWhiteBalance(rLin, gLin, bLin, n, p) {
 // restyles the primaries; downstream tools (highlights, contrast, HSL,
 // color grading) all see the calibration-shifted colors.
 //
-// Matrix construction:
+// Matrix construction (CIE xy chromaticity-space rotation):
 //
-//   For each primary i (red, green, blue), we build a NEW primary by:
-//     1. Decomposing the original primary into a luminance-gray part
-//        and a chromaticity part perpendicular to the achromatic axis.
-//     2. Rotating the chromaticity part around the achromatic axis
-//        ((1,1,1)/√3) by the slider's hue angle, via Rodrigues.
-//     3. Scaling the rotated chromaticity by the saturation factor.
-//     4. Adding the luminance-gray back.
+//   The standard sRGB primaries sit at known chromaticities in CIE xy:
+//     R: (0.640, 0.330)   G: (0.300, 0.600)   B: (0.150, 0.060)
+//     White (D65): (0.3127, 0.3290)
 //
-//   The new primaries become the COLUMNS of the matrix (not rows).
-//   Column i is what the matrix outputs when input is the i-th primary
-//   — that's the definition of "rotating the red primary."
+//   Each primary's slider rotates that primary in xy space around the
+//   white point. Purity (saturation) scales the radius from white. The
+//   rotated primaries define a *new* RGB color space; the calibration
+//   matrix re-interprets the input pixel values as if they were already
+//   in the new space, then converts back to the working sRGB primaries.
 //
-//   ±100 on a Hue slider maps to ±60° rotation, calibrated against
-//   Lightroom's visual response at slider extremes.
+//   M = sRGB_RGB_to_XYZ_inv × new_primaries_RGB_to_XYZ
+//
+//   This matches darktable's RGB Primaries module (GPL-3.0). Their
+//   approach is to operate in a perceptual chromaticity space instead
+//   of doing rotations in 3D RGB around the achromatic axis — the
+//   former is roughly perceptually uniform across primaries, while
+//   the latter is asymmetric (red feels right, blue feels weak in
+//   3D-rotation models because BT.709's luminance weights aren't
+//   symmetric).
+//
+//   Slider mapping:
+//     Hue ±100  → ±30° rotation in xy space
+//     Purity ±100 → multiplicative factor 0.01..5.0 (default 1.0 at 0)
+//
+//   At all sliders zero the new primaries == standard primaries, the
+//   matrix is exact identity, and the per-pixel matmul is a no-op.
 //
 // Identity early-out: if all 7 calibration params are zero, the function
 // returns immediately without touching the buffer. _isIdentity() also
 // covers these so the whole _applyDevelopFull bypasses on a clean doc.
 // ========================================================================
 
-// Rodrigues rotation of a primary's chromaticity component around the
-// achromatic axis (1,1,1)/√3. Returns the new primary as [R, G, B] in
-// linear RGB. At theta=0 and S=1, returns the original primary intact.
-//
-//   primary i (0=R, 1=G, 2=B) → standard basis vector e_i in RGB
-//   luminance L_i = BT.709 weight of that primary
-//   Lum-gray = (L_i, L_i, L_i)
-//   Chroma   = e_i − Lum-gray
-//   Rotate Chroma by θ around k = (1,1,1)/√3:
-//     v cos θ + (k × v) sin θ + k (k · v) (1 − cos θ)
-//   New primary = Lum-gray + S · Chroma_rotated
-function _rotateCalibrationPrimary(i, theta, S, Lr, Lg, Lb) {
-    var L = i === 0 ? Lr : i === 1 ? Lg : Lb;
-    // Original primary minus its luminance-equivalent gray.
-    var cx = (i === 0 ? 1 : 0) - L;
-    var cy = (i === 1 ? 1 : 0) - L;
-    var cz = (i === 2 ? 1 : 0) - L;
+// Standard sRGB / Rec.709 primaries in CIE xy. Working profile is linear
+// sRGB throughout the Develop pipeline (LUT-A inputs are sRGB-decoded
+// canvas pixels), so these are the right anchor points.
+var _CAL_PRIMARIES_XY = [
+    [0.640, 0.330], // R
+    [0.300, 0.600], // G
+    [0.150, 0.060], // B
+];
+// D65 white point in xy.
+var _CAL_WHITE_XY = [0.3127, 0.3290];
 
-    var cosT = Math.cos(theta);
-    var sinT = Math.sin(theta);
-    var INV_SQRT3 = 0.5773502691896258; // 1/√3
-    var kx = INV_SQRT3, ky = INV_SQRT3, kz = INV_SQRT3;
+var _CAL_MAX_HUE_RAD = 30 * Math.PI / 180;  // Slider ±100 ⇒ ±30°.
 
-    // k × chroma (cross product)
-    var crossX = ky * cz - kz * cy;
-    var crossY = kz * cx - kx * cz;
-    var crossZ = kx * cy - ky * cx;
-    // k · chroma (dot product)
-    var kdot = kx * cx + ky * cy + kz * cz;
-    var oneMinusCos = 1 - cosT;
+// Slider value (-100..+100) → multiplicative purity factor.
+//   slider 0    → 1.0 (identity)
+//   slider -100 → 0.01 (essentially desaturated)
+//   slider +100 → 5.0 (super-saturated, may exit gamut at extremes)
+// Two-piece linear so 0 stays exactly identity. Matches darktable's
+// hard parameter range while keeping Studio's symmetric slider feel.
+function _calSliderToPurity(s) {
+    if (!s) return 1.0;
+    var t = s / 100;
+    if (t >= 0) return 1.0 + t * 4.0;        // 0..+100 → 1.0..5.0
+    return 1.0 + t * 0.99;                   // -100..0 → 0.01..1.0
+}
 
-    // Rotated chroma (Rodrigues formula)
-    var rx = cx * cosT + crossX * sinT + kx * kdot * oneMinusCos;
-    var ry = cy * cosT + crossY * sinT + ky * kdot * oneMinusCos;
-    var rz = cz * cosT + crossZ * sinT + kz * kdot * oneMinusCos;
+function _calSliderToHueRad(s) {
+    return (s || 0) / 100 * _CAL_MAX_HUE_RAD;
+}
 
-    // Scale by saturation factor and re-add luminance gray
-    return [L + S * rx, L + S * ry, L + S * rz];
+// Rotate a primary in CIE xy space around the white point, then scale
+// its radius by the purity factor. Returns new [x, y].
+function _rotatePrimaryInXY(primaryXY, whiteXY, rotationRad, purity) {
+    var dx = primaryXY[0] - whiteXY[0];
+    var dy = primaryXY[1] - whiteXY[1];
+    var radius = Math.sqrt(dx * dx + dy * dy);
+    var theta = Math.atan2(dy, dx) + rotationRad;
+    var rNew = radius * purity;
+    return [
+        whiteXY[0] + rNew * Math.cos(theta),
+        whiteXY[1] + rNew * Math.sin(theta),
+    ];
+}
+
+// Convert chromaticity (x, y) at unit luminance Y=1 to XYZ.
+function _xyToXYZ(xy) {
+    var x = xy[0], y = xy[1];
+    if (y < 1e-10) return [0, 0, 0];
+    return [x / y, 1.0, (1 - x - y) / y];
+}
+
+// 3×3 matrix-vector multiply. Matrix is row-major flat [9].
+function _mat3MulVec(m, v) {
+    return [
+        m[0] * v[0] + m[1] * v[1] + m[2] * v[2],
+        m[3] * v[0] + m[4] * v[1] + m[5] * v[2],
+        m[6] * v[0] + m[7] * v[1] + m[8] * v[2],
+    ];
+}
+
+// 3×3 matrix-matrix multiply (row-major flat [9] × row-major flat [9]).
+function _mat3Mul(a, b) {
+    var r = new Array(9);
+    for (var i = 0; i < 3; i++) {
+        for (var j = 0; j < 3; j++) {
+            r[i * 3 + j] =
+                a[i * 3 + 0] * b[0 * 3 + j] +
+                a[i * 3 + 1] * b[1 * 3 + j] +
+                a[i * 3 + 2] * b[2 * 3 + j];
+        }
+    }
+    return r;
+}
+
+// 3×3 matrix inverse via cofactors. Returns null on singular matrix.
+function _mat3Inverse(m) {
+    var a = m[0], b = m[1], c = m[2];
+    var d = m[3], e = m[4], f = m[5];
+    var g = m[6], h = m[7], i = m[8];
+    var det = a * (e * i - f * h) - b * (d * i - f * g) + c * (d * h - e * g);
+    if (Math.abs(det) < 1e-12) return null;
+    var inv = 1 / det;
+    return [
+         (e * i - f * h) * inv, -(b * i - c * h) * inv,  (b * f - c * e) * inv,
+        -(d * i - f * g) * inv,  (a * i - c * g) * inv, -(a * f - c * d) * inv,
+         (d * h - e * g) * inv, -(a * h - b * g) * inv,  (a * e - b * d) * inv,
+    ];
+}
+
+// Build the RGB→XYZ matrix for a color space defined by primaries
+// (3 chromaticity coordinates) and a white point (1 chromaticity).
+// Standard Bruce Lindbloom construction:
+//   1. Each primary at unit luminance has XYZ = (x/y, 1, (1-x-y)/y).
+//   2. Form M_unscaled with these primaries as columns.
+//   3. Solve M_unscaled × S = white_XYZ for the per-primary scale vector S.
+//   4. Final RGB→XYZ = M_unscaled with each column multiplied by S[i].
+function _buildRgbToXyzMatrix(primariesXY, whiteXY) {
+    var rXYZ = _xyToXYZ(primariesXY[0]);
+    var gXYZ = _xyToXYZ(primariesXY[1]);
+    var bXYZ = _xyToXYZ(primariesXY[2]);
+    var whiteXYZ = _xyToXYZ(whiteXY);
+
+    // M_unscaled with primaries as columns, row-major flat:
+    //   [ Xr Xg Xb ]
+    //   [ Yr Yg Yb ]    Yr=Yg=Yb=1
+    //   [ Zr Zg Zb ]
+    var Munsc = [
+        rXYZ[0], gXYZ[0], bXYZ[0],
+        rXYZ[1], gXYZ[1], bXYZ[1],
+        rXYZ[2], gXYZ[2], bXYZ[2],
+    ];
+    var MunscInv = _mat3Inverse(Munsc);
+    if (!MunscInv) return null;
+    var S = _mat3MulVec(MunscInv, whiteXYZ);
+
+    // Scale columns of Munsc by S
+    return [
+        Munsc[0] * S[0], Munsc[1] * S[1], Munsc[2] * S[2],
+        Munsc[3] * S[0], Munsc[4] * S[1], Munsc[5] * S[2],
+        Munsc[6] * S[0], Munsc[7] * S[1], Munsc[8] * S[2],
+    ];
 }
 
 function _buildCalibrationMatrix(p) {
-    var Lr = 0.2126, Lg = 0.7152, Lb = 0.0722;
-    var DEG_TO_RAD = Math.PI / 180;
-    var MAX_HUE_DEG = 60;  // Slider ±100 ⇒ ±60° rotation around achromatic axis.
+    // Rotate each primary in xy chromaticity around the white point.
+    var rHue = _calSliderToHueRad(p.calRedHue);
+    var gHue = _calSliderToHueRad(p.calGreenHue);
+    var bHue = _calSliderToHueRad(p.calBlueHue);
+    var rPur = _calSliderToPurity(p.calRedSat);
+    var gPur = _calSliderToPurity(p.calGreenSat);
+    var bPur = _calSliderToPurity(p.calBlueSat);
 
-    var rHue = (p.calRedHue   || 0) / 100 * MAX_HUE_DEG * DEG_TO_RAD;
-    var gHue = (p.calGreenHue || 0) / 100 * MAX_HUE_DEG * DEG_TO_RAD;
-    var bHue = (p.calBlueHue  || 0) / 100 * MAX_HUE_DEG * DEG_TO_RAD;
-    var rSat = 1 + (p.calRedSat   || 0) / 100;
-    var gSat = 1 + (p.calGreenSat || 0) / 100;
-    var bSat = 1 + (p.calBlueSat  || 0) / 100;
-
-    // Each new primary becomes a COLUMN of the matrix. Layout: m[row*3 + col]
-    var nR = _rotateCalibrationPrimary(0, rHue, rSat, Lr, Lg, Lb);
-    var nG = _rotateCalibrationPrimary(1, gHue, gSat, Lr, Lg, Lb);
-    var nB = _rotateCalibrationPrimary(2, bHue, bSat, Lr, Lg, Lb);
-
-    return [
-        nR[0], nG[0], nB[0],   // R-output row
-        nR[1], nG[1], nB[1],   // G-output row
-        nR[2], nG[2], nB[2],   // B-output row
+    var newPrimaries = [
+        _rotatePrimaryInXY(_CAL_PRIMARIES_XY[0], _CAL_WHITE_XY, rHue, rPur),
+        _rotatePrimaryInXY(_CAL_PRIMARIES_XY[1], _CAL_WHITE_XY, gHue, gPur),
+        _rotatePrimaryInXY(_CAL_PRIMARIES_XY[2], _CAL_WHITE_XY, bHue, bPur),
     ];
+
+    // Standard input → XYZ (computed once, could be cached if it shows up
+    // hot in profiles — but it's just a few multiplies and runs once per
+    // _applyDevelopFull call, way under measurement noise).
+    var stdToXYZ = _buildRgbToXyzMatrix(_CAL_PRIMARIES_XY, _CAL_WHITE_XY);
+    // Output (new primaries) → XYZ, then inverted to give XYZ → output RGB.
+    var newToXYZ = _buildRgbToXyzMatrix(newPrimaries, _CAL_WHITE_XY);
+    if (!stdToXYZ || !newToXYZ) {
+        // Singular matrix — degenerate primaries. Fall back to identity.
+        return [1, 0, 0, 0, 1, 0, 0, 0, 1];
+    }
+    var newFromXYZ = _mat3Inverse(newToXYZ);
+    if (!newFromXYZ) return [1, 0, 0, 0, 1, 0, 0, 0, 1];
+
+    // Reinterpret the input as if its (R,G,B) values were in the NEW
+    // primary basis: convert "as new primaries" → XYZ → standard sRGB.
+    // M × input = newToXYZ_then_back_through_std_inv = stdToXYZ⁻¹ × newToXYZ.
+    var stdFromXYZ = _mat3Inverse(stdToXYZ);
+    if (!stdFromXYZ) return [1, 0, 0, 0, 1, 0, 0, 0, 1];
+    return _mat3Mul(stdFromXYZ, newToXYZ);
 }
 
 function _applyCalibration(rLin, gLin, bLin, n, p) {
