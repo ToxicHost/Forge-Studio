@@ -37,8 +37,6 @@
   "settings.outputFormat.lossless": "Sans perte",
 
   "settings.vram.unloadModel": "Décharger le modèle de la VRAM",
-  "settings.vram.gpuWeights": "Poids GPU",
-  "settings.vram.gpuWeights.auto": "Auto",
   "settings.vram.gpuWeights.description": "Quantité de VRAM à utiliser pour les poids du modèle. 0 = par défaut Forge. Des valeurs élevées gardent plus de modèle en VRAM pour une génération plus rapide ; des valeurs plus basses déchargent les poids vers la RAM pour libérer la VRAM destinée à l'inférence. L'utilisation maximale pendant la génération peut dépasser cette valeur — c'est un budget de chargement, pas un plafond strict.",
   "settings.vram.autoUnload": "Décharger automatiquement en veille",
   "settings.vram.idleTimeout": "Délai d'inactivité",
@@ -230,8 +228,5 @@
   "tooltip.bigOutputWarning": "La sortie dépassera 2000 px sur un ou deux côtés. Cela peut entraîner une utilisation VRAM importante et une génération lente sur la plupart des configurations.",
   "tooltip.histogramAutoStretch": "Étirer l'entrée noir/blanc aux percentiles 0,1 % / 99,9 % de l'histogramme",
 
-  "panels.upscale.title": "Agrandir",
-  "panels.upscale.refineAfter": "Refine après agrandissement (passe img2img)",
-  "panels.upscale.runADetailer": "Exécuter ADetailer",
   "panels.upscale.hint": "Pipeline en un seul appel. Refine et ADetailer sont indépendants : coche l'un, l'autre, les deux, ou aucun. Steps/Denoise s'appliquent à la passe Refine."
 }

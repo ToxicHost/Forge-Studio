@@ -37,8 +37,6 @@
   "settings.outputFormat.lossless": "Lossless",
 
   "settings.vram.unloadModel": "Unload Model from VRAM",
-  "settings.vram.gpuWeights": "GPU Weights",
-  "settings.vram.gpuWeights.auto": "Auto",
   "settings.vram.gpuWeights.description": "How much VRAM to use for model weights. 0 = Forge default. Higher values keep more of the model in VRAM for faster generation; lower values offload weights to RAM to free VRAM for inference. Peak usage during generation may still exceed this — it's a loading budget, not a hard cap.",
   "settings.vram.autoUnload": "Auto-unload when idle",
   "settings.vram.idleTimeout": "Idle timeout",
@@ -230,8 +228,5 @@
   "tooltip.bigOutputWarning": "Output will exceed 2000px on one or both sides. This may cause significant VRAM usage and slow generation on most hardware.",
   "tooltip.histogramAutoStretch": "Stretch input black/white to histogram 0.1% / 99.9% percentile",
 
-  "panels.upscale.title": "Upscale",
-  "panels.upscale.refineAfter": "Refine after upscale (img2img pass)",
-  "panels.upscale.runADetailer": "Run ADetailer",
   "panels.upscale.hint": "Single-call pipeline. Refine and ADetailer are independent: tick either, both, or neither. Steps/Denoise apply to the refine pass."
 }

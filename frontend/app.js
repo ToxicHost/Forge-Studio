@@ -1215,7 +1215,10 @@ async function doGenerate() {
 
   const btn = document.getElementById("genBtn");
   const fill = document.getElementById("progressFill");
-  if (btn) { btn.textContent = "Generating..."; btn.classList.add("generating"); }
+  if (btn) {
+    btn.textContent = (window.I18N && window.I18N.t) ? window.I18N.t("status.generating", "Generating...") : "Generating...";
+    btn.classList.add("generating");
+  }
   if (fill) fill.style.width = "0%";
   StatusBar.setStatus("generating");
   Progress.startPolling();
@@ -1226,11 +1229,14 @@ async function doGenerate() {
     const elapsed = ((Date.now() - State._genStartTime) / 1000).toFixed(1);
     // During inter-pass gaps (no progress for >2s), show elapsed time
     // instead of stale step counts from the previous pass
+    // Build "Generating... 3.5s" — the localized verb + suffix. The
+    // numeric elapsed time and "s" unit are locale-neutral.
+    const genTxt = (window.I18N && window.I18N.t) ? window.I18N.t("status.generating", "Generating...") : "Generating...";
     if (State._lastProgressTime && Date.now() - State._lastProgressTime > 2000) {
-      if (btn) btn.textContent = `Generating... ${elapsed}s`;
+      if (btn) btn.textContent = `${genTxt} ${elapsed}s`;
     } else if (!State._lastProgressTime) {
       // No progress received yet — show elapsed time
-      if (btn) btn.textContent = `Generating... ${elapsed}s`;
+      if (btn) btn.textContent = `${genTxt} ${elapsed}s`;
     }
   }, 200);
 
@@ -1440,7 +1446,14 @@ async function doGenerate() {
   State.generating = false;
   clearInterval(State._genTimerInterval);
   Progress.stopPolling();
-  if (btn) { btn.innerHTML = '<span class="gen-shine"></span>Generate'; btn.classList.remove("generating"); }
+  if (btn) {
+    // Reset to translated "Generate" while preserving the gen-shine
+    // span structure AND the data-i18n attribute so applyToDom() can
+    // re-translate this button on later locale switches.
+    const lbl = (window.I18N && window.I18N.t) ? window.I18N.t("actions.generate", "Generate") : "Generate";
+    btn.innerHTML = '<span class="gen-shine"></span><span data-i18n="actions.generate">' + lbl + '</span>';
+    btn.classList.remove("generating");
+  }
   if (fill) fill.style.width = "0%";
   StatusBar.setStatus("ready");
 
@@ -3028,19 +3041,7 @@ function bindUI() {
   // At weightsGB === 0 the slider shows "Auto" and we send a reset.
   const _vramSlider = document.getElementById("vramReserveSlider");
   const _vramSliderVal = document.getElementById("vramReserveVal");
-  // "Auto" is the only translatable token here — "GB" is a unit symbol
-  // and stays fixed across locales. We deliberately don't put data-i18n
-  // on the span: applyToDom() would clobber a "2.5 GB" reading with
-  // "Auto" on locale switch. Instead an i18n:change listener below
-  // re-renders the label only when the slider is actually at 0.
-  const _vramLabel = (v) => parseFloat(v) === 0
-    ? (window.I18N && window.I18N.t ? window.I18N.t("settings.vram.gpuWeights.auto", "Auto") : "Auto")
-    : parseFloat(v).toFixed(1) + " GB";
-  window.addEventListener("i18n:change", () => {
-    if (_vramSlider && _vramSliderVal && parseFloat(_vramSlider.value) === 0) {
-      _vramSliderVal.textContent = _vramLabel(0);
-    }
-  });
+  const _vramLabel = (v) => parseFloat(v) === 0 ? "Auto" : parseFloat(v).toFixed(1) + " GB";
   const _vramSendWeights = async (weightsGB) => {
     if (weightsGB === 0) {
       return fetch(API.base + "/studio/vram_reserve", {
