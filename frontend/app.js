@@ -3295,8 +3295,18 @@ function bindUI() {
         el.value = data[id];
         // Stash intended value for async-populated dropdowns (AD models, etc.)
         el.dataset.pendingValue = data[id];
-        if (el.tagName === 'SELECT' && el.value !== String(data[id])) {
-          console.warn(`[Studio Defaults] "${id}": saved value "${data[id]}" not in dropdown — option may not exist`);
+        if (el.tagName === 'SELECT') {
+          if (el.value !== String(data[id])) {
+            console.warn(`[Studio Defaults] "${id}": saved value "${data[id]}" not in dropdown — option may not exist`);
+          }
+          // Refresh searchable-select trigger label. Setting select.value
+          // is a property write, which the wrapper's MutationObserver
+          // doesn't catch (it only sees attribute mutations) — so without
+          // this the trigger keeps displaying whichever option's HTML
+          // `selected` attribute lit it up (e.g. paramSampler always
+          // showing "DPM++ 2M SDE" even when the underlying value is
+          // correctly the user's saved choice).
+          try { window.StudioSearchableSelect?.attach(el)?.refresh?.(); } catch (_) {}
         }
       }
     }
