@@ -1,0 +1,8 @@
+{
+  "_meta": {
+    "name": "Deutsch",
+    "code": "de",
+    "status": "draft",
+    "notes": "Phase 0 — empty file, fallback to English. Phase 1 will fill in translated strings."
+  }
+}

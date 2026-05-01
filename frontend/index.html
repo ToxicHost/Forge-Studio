@@ -919,6 +919,21 @@
               </div>
             </div>
             <div class="setting-group">
+              <div class="setting-group-title">Language</div>
+              <div class="setting-row">
+                <span class="setting-label">Interface language</span>
+                <select class="param-select" id="settingLocale" style="width:160px;padding:4px 8px;">
+                  <option value="en">English</option>
+                  <option value="de">Deutsch</option>
+                  <option value="fr">Français</option>
+                  <option value="es">Español</option>
+                </select>
+              </div>
+              <p style="font-size:10px;color:var(--text-4);margin:6px 0 0 0;">
+                AI generation parameters (Steps, Sampler, CFG Scale, etc.) stay in English to match the terminology in tutorials and guides.
+              </p>
+            </div>
+            <div class="setting-group">
               <div class="setting-group-title">Accessibility</div>
               <div class="setting-row">
                 <span class="setting-label">Colorblind mode</span>
@@ -991,7 +1006,7 @@
 // Auto cache-bust: load scripts in order with timestamp
 (async () => {
   const scripts = [
-    "ag-psd.js", "png-metadata.js", "searchable-select.js", "canvas-core.js",
+    "ag-psd.js", "png-metadata.js", "i18n.js", "searchable-select.js", "canvas-core.js",
     "canvas-ui.js", "app.js", "module-system.js", "studio-tour.js", "studio-docs.js", "tag-complete.js",
     "lora-browser.js", "wildcard-browser.js"
   ];
