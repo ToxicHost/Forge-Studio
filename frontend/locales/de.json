@@ -26,6 +26,7 @@
   "settings.generation.title": "Generierung",
   "settings.generation.saveOutputs": "Ergebnisse speichern",
   "settings.generation.highPrecision": "Hohe Präzision",
+  "settings.generation.highPrecision.tooltip": "Speichert hochpräzise Float-Daten neben jedem Bild. Verhindert Bänderbildung und gibt dem Entwickeln-Modul ~0,5 Blendenstufen Lichter-Spielraum. Erzeugt ~0,5–3 s zusätzliche Zeit und ~12 MB pro Bild. Am besten mit fp32-VAE.",
   "settings.generation.livePreview": "Live-Vorschau",
   "settings.generation.rememberSession": "Letzte Sitzung merken",
 
@@ -36,6 +37,9 @@
   "settings.outputFormat.lossless": "Verlustfrei",
 
   "settings.vram.unloadModel": "Modell aus VRAM entladen",
+  "settings.vram.gpuWeights": "GPU-Gewichte",
+  "settings.vram.gpuWeights.auto": "Auto",
+  "settings.vram.gpuWeights.description": "Wie viel VRAM für Modellgewichte verwendet werden soll. 0 = Forge-Standard. Höhere Werte halten mehr vom Modell im VRAM für schnellere Generierung; niedrigere Werte lagern Gewichte in den RAM aus, um VRAM für die Inferenz freizugeben. Die Spitzenauslastung während der Generierung kann diesen Wert überschreiten — es ist ein Lade-Budget, keine harte Grenze.",
   "settings.vram.autoUnload": "Bei Inaktivität automatisch entladen",
   "settings.vram.idleTimeout": "Leerlauf-Zeitlimit",
 
@@ -68,6 +72,43 @@
   "status.loading": "Lädt...",
   "status.ready": "Bereit",
   "status.upToDate": "Aktuell",
+  "status.generating": "Generiert...",
+  "status.disconnected": "Verbindung getrennt",
+  "status.noModel": "Kein Modell",
+  "status.modelUnloaded": "Modell entladen",
+
+  "tabs.develop": "Entwickeln",
+  "tabs.workshop": "Werkstatt",
+  "tabs.gallery": "Galerie",
+  "tabs.lexicon": "Wildcards",
+  "tabs.video": "Video-Lab",
+  "tabs.codex": "Codex",
+
+  "update.available.one": "Update verfügbar — {count} neuer Commit",
+  "update.available.other": "Update verfügbar — {count} neue Commits",
+  "update.details": "Details",
+  "update.apply": "Jetzt aktualisieren",
+  "update.dismiss": "Schließen",
+
+  "tools.brush": "Pinsel (B)",
+  "tools.eraser": "Radierer (E)",
+  "tools.eyedropper": "Pipette (I)",
+  "tools.fill": "Füllen (G — erneut drücken für Verlauf)",
+  "tools.gradient": "Verlauf (G — erneut drücken für Füllen)",
+  "tools.shape": "Form (U)",
+  "tools.text": "Text (T)",
+  "tools.smudge": "Verwischen (S)",
+  "tools.blur": "Weichzeichnen (R)",
+  "tools.dodgeBurn": "Abwedeln/Nachbelichten (J)",
+  "tools.cloneStamp": "Kopierstempel (K)",
+  "tools.liquify": "Verflüssigen (Y)",
+  "tools.pixelate": "Pixelieren (P)",
+  "tools.select": "Auswählen (M)",
+  "tools.ellipse": "Elliptische Auswahl (O)",
+  "tools.lasso": "Lasso (L)",
+  "tools.wand": "Zauberstab (W)",
+  "tools.crop": "Zuschneiden (C)",
+  "tools.transform": "Transformieren (V)",
 
   "toast.canvasCleared": "Leinwand geleert",
   "toast.maskCleared": "Maske geleert",
@@ -95,6 +136,7 @@
   "develop.enable.tooltip": "Entwickeln aktivieren",
   "develop.beforeAfter.tooltip": "Vorher/Nachher-Vergleich",
   "develop.hpBadge.tooltip": "Hohe Präzision: float32-Quellpixel aktiv",
+  "develop.hpBadge.composited": "Hohe Präzision: Float-Puffer mit AD-/Pinsel-Pixeln auf der Leinwand zusammengeführt",
 
   "develop.split.before": "Vorher",
   "develop.split.after": "Nachher",
@@ -183,5 +225,13 @@
   "develop.cg.shadows": "Tiefen",
   "develop.cg.midtones": "Mitten",
   "develop.cg.highlights": "Lichter",
-  "develop.cg.global": "Global"
+  "develop.cg.global": "Global",
+
+  "tooltip.bigOutputWarning": "Die Ausgabe überschreitet auf einer oder beiden Seiten 2000 px. Das kann auf den meisten Geräten erheblichen VRAM-Verbrauch und eine langsame Generierung verursachen.",
+  "tooltip.histogramAutoStretch": "Eingabe-Schwarz/Weiß auf Histogramm-Perzentile 0,1 % / 99,9 % strecken",
+
+  "panels.upscale.title": "Hochskalieren",
+  "panels.upscale.refineAfter": "Refine nach dem Hochskalieren (img2img-Durchgang)",
+  "panels.upscale.runADetailer": "ADetailer ausführen",
+  "panels.upscale.hint": "Single-Call-Pipeline. Refine und ADetailer sind unabhängig: aktiviere eines, beides oder keines. Steps/Denoise gelten für den Refine-Pass."
 }

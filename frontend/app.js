@@ -648,24 +648,37 @@ window.Live = Live;
 // STATUS BAR
 // ═══════════════════════════════════════════
 
+// Translate helper for runtime-built strings. Re-exposed locally so the
+// status bar / update banner / error icons read clearly without ?: chains
+// at every call site.
+const _i18n = (key, fallback, params) =>
+  (window.I18N && window.I18N.t) ? window.I18N.t(key, fallback, params) : fallback;
+
 const StatusBar = {
+  // Track the most recent abstract status so we can re-render after a
+  // locale change without the caller having to remember.
+  _lastStatus: null,
+  _lastModel: null,
+  _lastModelMode: null, // "name" | "unloaded"
+
   setStatus(status) {
     const dot = document.getElementById("statusDot");
     const text = document.getElementById("statusText");
     if (!dot || !text) return;
+    this._lastStatus = status;
     dot.className = "status-dot";
     switch (status) {
       case "ready":
         dot.classList.add("status-ready");
-        text.textContent = "Ready";
+        text.textContent = _i18n("status.ready", "Ready");
         break;
       case "generating":
         dot.classList.add("status-generating");
-        text.textContent = "Generating...";
+        text.textContent = _i18n("status.generating", "Generating...");
         break;
       case "error":
         dot.classList.add("status-error");
-        text.textContent = "Disconnected";
+        text.textContent = _i18n("status.disconnected", "Disconnected");
         break;
     }
   },
@@ -673,7 +686,9 @@ const StatusBar = {
   setModel(name) {
     const el = document.getElementById("statusModel");
     if (el) {
-      el.textContent = name || "No model";
+      this._lastModel = name || null;
+      this._lastModelMode = "name";
+      el.textContent = name || _i18n("status.noModel", "No model");
       el.classList.remove("model-unloaded");
     }
   },
@@ -681,7 +696,8 @@ const StatusBar = {
   setModelUnloaded() {
     const el = document.getElementById("statusModel");
     if (el) {
-      el.textContent = "Model unloaded";
+      this._lastModelMode = "unloaded";
+      el.textContent = _i18n("status.modelUnloaded", "Model unloaded");
       el.classList.add("model-unloaded");
     }
   },
@@ -704,6 +720,15 @@ const StatusBar = {
     if (el) el.textContent = `${w} × ${h}`;
   },
 };
+
+// Re-render dynamic status-bar text on locale switch. The setStatus /
+// setModel etc. methods cache their last call so we can replay them
+// against the new locale without the page knowing what status it's in.
+window.addEventListener("i18n:change", () => {
+  if (StatusBar._lastStatus) StatusBar.setStatus(StatusBar._lastStatus);
+  if (StatusBar._lastModelMode === "name") StatusBar.setModel(StatusBar._lastModel);
+  else if (StatusBar._lastModelMode === "unloaded") StatusBar.setModelUnloaded();
+});
 
 
 // ═══════════════════════════════════════════
@@ -733,15 +758,23 @@ const UpdateBanner = {
     this._data = data;
     if (this._el) this._el.remove();
 
+    // i18n: pluralized banner text + button labels translate via I18N.t.
+    // Plural rules differ across locales (DE/EN agree on 1 vs >1; FR
+    // treats 0 as singular; etc.) \u2014 t.plural handles the lookup, with
+    // English fallbacks as the second arg.
+    const tp = (window.I18N && window.I18N.t && window.I18N.t.plural) ? window.I18N.t.plural : null;
+    const fallback = "Update available \u2014 " + data.commits_behind +
+      " new commit" + (data.commits_behind > 1 ? "s" : "");
+    const bannerText = tp ? tp("update.available", data.commits_behind) : null;
+    const finalText = (bannerText && bannerText !== "update.available") ? bannerText : fallback;
+
     const el = document.createElement("div");
     el.className = "update-banner";
     el.innerHTML = `
-      <span class="update-banner-text">
-        Update available \u2014 ${data.commits_behind} new commit${data.commits_behind > 1 ? "s" : ""}
-      </span>
-      <button class="update-banner-btn update-details-btn">Details</button>
-      <button class="update-banner-btn update-apply-btn">Update Now</button>
-      <button class="update-banner-dismiss" title="Dismiss">&times;</button>
+      <span class="update-banner-text">${finalText}</span>
+      <button class="update-banner-btn update-details-btn" data-i18n="update.details">${_i18n("update.details", "Details")}</button>
+      <button class="update-banner-btn update-apply-btn" data-i18n="update.apply">${_i18n("update.apply", "Update Now")}</button>
+      <button class="update-banner-dismiss" data-i18n-title="update.dismiss" title="${_i18n("update.dismiss", "Dismiss")}">&times;</button>
     `;
 
     el.querySelector(".update-details-btn").onclick = () => this._showDetails();
@@ -750,6 +783,21 @@ const UpdateBanner = {
 
     document.body.appendChild(el);
     this._el = el;
+
+    // Re-render the pluralized banner text on locale switch. The button
+    // labels are picked up automatically via data-i18n on applyToDom().
+    this._localeListener = () => {
+      if (!this._el || !this._data) return;
+      const span = this._el.querySelector(".update-banner-text");
+      if (span) {
+        const tp2 = (window.I18N && window.I18N.t && window.I18N.t.plural) ? window.I18N.t.plural : null;
+        const fb = "Update available \u2014 " + this._data.commits_behind +
+          " new commit" + (this._data.commits_behind > 1 ? "s" : "");
+        const bt = tp2 ? tp2("update.available", this._data.commits_behind) : null;
+        span.textContent = (bt && bt !== "update.available") ? bt : fb;
+      }
+    };
+    window.addEventListener("i18n:change", this._localeListener);
 
     // Also light up status bar indicator
     const ind = document.getElementById("statusUpdate");
@@ -1499,7 +1547,11 @@ function _updateHiresWarning() {
     icon = document.createElement("span");
     icon.id = "hiresWarnIcon";
     icon.innerHTML = "&#x26A0;";
-    icon.title = "Output will exceed 2000px on one or both sides. This may cause significant VRAM usage and slow generation on most hardware.";
+    icon.dataset.i18nTitle = "tooltip.bigOutputWarning";
+    icon.title = (window.I18N && window.I18N.t)
+        ? window.I18N.t("tooltip.bigOutputWarning",
+            "Output will exceed 2000px on one or both sides. This may cause significant VRAM usage and slow generation on most hardware.")
+        : "Output will exceed 2000px on one or both sides. This may cause significant VRAM usage and slow generation on most hardware.";
     icon.style.cssText = "display:none;color:var(--accent);font-size:12px;margin-left:6px;cursor:help;";
     // Insert after the title text
     var title = header.querySelector(".collapse-title");
@@ -2672,7 +2724,10 @@ function bindUI() {
       console.error("[Studio] Model load error:", err);
       showToast("Model load error: " + err.message, "error");
     }
-    if (btn) { btn.textContent = "Generate"; btn.classList.remove("generating"); }
+    if (btn) {
+      btn.textContent = (window.I18N && window.I18N.t) ? window.I18N.t("actions.generate", "Generate") : "Generate";
+      btn.classList.remove("generating");
+    }
     if (fill) { fill.style.width = "0%"; fill.classList.remove("indeterminate"); }
     StatusBar.setStatus("ready");
   });
@@ -2750,7 +2805,10 @@ function bindUI() {
     } catch (err) {
       showToast("Load error: " + err.message, "error");
     }
-    if (btn) { btn.textContent = "Generate"; btn.classList.remove("generating"); }
+    if (btn) {
+      btn.textContent = (window.I18N && window.I18N.t) ? window.I18N.t("actions.generate", "Generate") : "Generate";
+      btn.classList.remove("generating");
+    }
     if (fill) { fill.style.width = "0%"; fill.classList.remove("indeterminate"); }
     StatusBar.setStatus("ready");
   });
@@ -2970,7 +3028,19 @@ function bindUI() {
   // At weightsGB === 0 the slider shows "Auto" and we send a reset.
   const _vramSlider = document.getElementById("vramReserveSlider");
   const _vramSliderVal = document.getElementById("vramReserveVal");
-  const _vramLabel = (v) => parseFloat(v) === 0 ? "Auto" : parseFloat(v).toFixed(1) + " GB";
+  // "Auto" is the only translatable token here — "GB" is a unit symbol
+  // and stays fixed across locales. We deliberately don't put data-i18n
+  // on the span: applyToDom() would clobber a "2.5 GB" reading with
+  // "Auto" on locale switch. Instead an i18n:change listener below
+  // re-renders the label only when the slider is actually at 0.
+  const _vramLabel = (v) => parseFloat(v) === 0
+    ? (window.I18N && window.I18N.t ? window.I18N.t("settings.vram.gpuWeights.auto", "Auto") : "Auto")
+    : parseFloat(v).toFixed(1) + " GB";
+  window.addEventListener("i18n:change", () => {
+    if (_vramSlider && _vramSliderVal && parseFloat(_vramSlider.value) === 0) {
+      _vramSliderVal.textContent = _vramLabel(0);
+    }
+  });
   const _vramSendWeights = async (weightsGB) => {
     if (weightsGB === 0) {
       return fetch(API.base + "/studio/vram_reserve", {

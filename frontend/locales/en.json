@@ -26,6 +26,7 @@
   "settings.generation.title": "Generation",
   "settings.generation.saveOutputs": "Save outputs",
   "settings.generation.highPrecision": "High precision",
+  "settings.generation.highPrecision.tooltip": "Saves high-precision float data alongside each image. Eliminates banding and gives the Develop module ~0.5 stops of highlight headroom. Adds ~0.5–3s and ~12 MB per image. Best with fp32 VAE.",
   "settings.generation.livePreview": "Live preview",
   "settings.generation.rememberSession": "Remember last session",
 
@@ -36,6 +37,9 @@
   "settings.outputFormat.lossless": "Lossless",
 
   "settings.vram.unloadModel": "Unload Model from VRAM",
+  "settings.vram.gpuWeights": "GPU Weights",
+  "settings.vram.gpuWeights.auto": "Auto",
+  "settings.vram.gpuWeights.description": "How much VRAM to use for model weights. 0 = Forge default. Higher values keep more of the model in VRAM for faster generation; lower values offload weights to RAM to free VRAM for inference. Peak usage during generation may still exceed this — it's a loading budget, not a hard cap.",
   "settings.vram.autoUnload": "Auto-unload when idle",
   "settings.vram.idleTimeout": "Idle timeout",
 
@@ -68,6 +72,43 @@
   "status.loading": "Loading...",
   "status.ready": "Ready",
   "status.upToDate": "Up to date",
+  "status.generating": "Generating...",
+  "status.disconnected": "Disconnected",
+  "status.noModel": "No model",
+  "status.modelUnloaded": "Model unloaded",
+
+  "tabs.develop": "Develop",
+  "tabs.workshop": "Workshop",
+  "tabs.gallery": "Gallery",
+  "tabs.lexicon": "Wildcards",
+  "tabs.video": "Video Lab",
+  "tabs.codex": "Codex",
+
+  "update.available.one": "Update available — {count} new commit",
+  "update.available.other": "Update available — {count} new commits",
+  "update.details": "Details",
+  "update.apply": "Update Now",
+  "update.dismiss": "Dismiss",
+
+  "tools.brush": "Brush (B)",
+  "tools.eraser": "Eraser (E)",
+  "tools.eyedropper": "Eyedropper (I)",
+  "tools.fill": "Fill (G — press again for Gradient)",
+  "tools.gradient": "Gradient (G — press again for Fill)",
+  "tools.shape": "Shape (U)",
+  "tools.text": "Text (T)",
+  "tools.smudge": "Smudge (S)",
+  "tools.blur": "Blur (R)",
+  "tools.dodgeBurn": "Dodge/Burn (J)",
+  "tools.cloneStamp": "Clone Stamp (K)",
+  "tools.liquify": "Liquify (Y)",
+  "tools.pixelate": "Pixelate (P)",
+  "tools.select": "Select (M)",
+  "tools.ellipse": "Ellipse Select (O)",
+  "tools.lasso": "Lasso (L)",
+  "tools.wand": "Magic Wand (W)",
+  "tools.crop": "Crop (C)",
+  "tools.transform": "Transform (V)",
 
   "toast.canvasCleared": "Canvas cleared",
   "toast.maskCleared": "Mask cleared",
@@ -95,6 +136,7 @@
   "develop.enable.tooltip": "Enable Develop",
   "develop.beforeAfter.tooltip": "Before / After split",
   "develop.hpBadge.tooltip": "High Precision: float32 source pixels active",
+  "develop.hpBadge.composited": "High Precision: float buffer composited with AD/brush canvas pixels",
 
   "develop.split.before": "Before",
   "develop.split.after": "After",
@@ -183,5 +225,13 @@
   "develop.cg.shadows": "Shadows",
   "develop.cg.midtones": "Midtones",
   "develop.cg.highlights": "Highlights",
-  "develop.cg.global": "Global"
+  "develop.cg.global": "Global",
+
+  "tooltip.bigOutputWarning": "Output will exceed 2000px on one or both sides. This may cause significant VRAM usage and slow generation on most hardware.",
+  "tooltip.histogramAutoStretch": "Stretch input black/white to histogram 0.1% / 99.9% percentile",
+
+  "panels.upscale.title": "Upscale",
+  "panels.upscale.refineAfter": "Refine after upscale (img2img pass)",
+  "panels.upscale.runADetailer": "Run ADetailer",
+  "panels.upscale.hint": "Single-call pipeline. Refine and ADetailer are independent: tick either, both, or neither. Steps/Denoise apply to the refine pass."
 }

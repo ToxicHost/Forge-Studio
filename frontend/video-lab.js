@@ -73,7 +73,10 @@ StudioModules.register("video", {
             })
             .catch(() => {})
             .finally(() => {
-                if (btn) { btn.textContent = "Generate"; btn.classList.remove("generating"); }
+                if (btn) {
+                    btn.textContent = (window.I18N && window.I18N.t) ? window.I18N.t("actions.generate", "Generate") : "Generate";
+                    btn.classList.remove("generating");
+                }
                 if (fill) { fill.style.width = "0%"; fill.classList.remove("indeterminate"); }
                 if (window.StatusBar) window.StatusBar.setStatus("ready");
             });

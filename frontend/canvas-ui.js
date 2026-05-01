@@ -2782,7 +2782,11 @@ function _buildAdjEditor(L, redraw) {
 
         const autoBtn = document.createElement("button"); autoBtn.type = "button"; autoBtn.className = "adj-button";
         autoBtn.textContent = "Auto";
-        autoBtn.title = "Stretch input black/white to histogram 0.1% / 99.9% percentile";
+        autoBtn.dataset.i18nTitle = "tooltip.histogramAutoStretch";
+        autoBtn.title = (window.I18N && window.I18N.t)
+            ? window.I18N.t("tooltip.histogramAutoStretch",
+                "Stretch input black/white to histogram 0.1% / 99.9% percentile")
+            : "Stretch input black/white to histogram 0.1% / 99.9% percentile";
         autoBtn.addEventListener("click", e => {
             e.stopPropagation();
             if (!sourceImgData) return;
