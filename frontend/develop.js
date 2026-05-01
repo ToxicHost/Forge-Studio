@@ -428,7 +428,19 @@ function applyToContext(ctx, w, h, params) {
     // Centralised here so any path that reaches the pipeline is migrated:
     // doc tab switch, undo/redo restore, freshly-constructed state, etc.
     _migrateParams(params);
-    if (_isIdentity(params)) return;
+    // [CAL-DIAG] Temporary diagnostic — see why Color Calibration sliders
+    // appear to have no effect. Remove once root cause identified.
+    var _calIdent = _isIdentity(params);
+    console.log("[CAL] apply: version=" + params._version
+        + " identity=" + _calIdent
+        + " redHue=" + (params.calRedHue|0)
+        + " redSat=" + (params.calRedSat|0)
+        + " greenHue=" + (params.calGreenHue|0)
+        + " greenSat=" + (params.calGreenSat|0)
+        + " blueHue=" + (params.calBlueHue|0)
+        + " blueSat=" + (params.calBlueSat|0)
+        + " shadowTint=" + (params.calShadowTint|0));
+    if (_calIdent) return;
     if (typeof _applyDevelopFull !== "function") return; // skeleton-only mode
     if (params._dragging) {
         _applyDevelopProxy(ctx, w, h, params);
@@ -742,18 +754,23 @@ function _buildCalibrationMatrix(p) {
 }
 
 function _applyCalibration(rLin, gLin, bLin, n, p) {
+    // [CAL-DIAG] Temporary diagnostic — remove once root cause identified.
+    console.log("[CAL] _applyCalibration entry, version=" + p._version);
     if ((p._version | 0) < 2) return;
+    console.log("[CAL] passed version gate");
 
     var rH = p.calRedHue   | 0, rS = p.calRedSat   | 0;
     var gH = p.calGreenHue | 0, gS = p.calGreenSat | 0;
     var bH = p.calBlueHue  | 0, bS = p.calBlueSat  | 0;
     var st = p.calShadowTint | 0;
     if (rH === 0 && rS === 0 && gH === 0 && gS === 0 && bH === 0 && bS === 0 && st === 0) {
+        console.log("[CAL] all-zero early-out");
         return;
     }
 
     var matrixActive = (rH !== 0 || rS !== 0 || gH !== 0 || gS !== 0 || bH !== 0 || bS !== 0);
     var m = matrixActive ? _buildCalibrationMatrix(p) : null;
+    if (m) console.log("[CAL] matrix=" + JSON.stringify(Array.from(m)));
     var m0, m1, m2, m3, m4, m5, m6, m7, m8;
     if (m) {
         m0 = m[0]; m1 = m[1]; m2 = m[2];
@@ -969,6 +986,14 @@ function _applyDevelopFull(ctx, w, h, p) {
     // are touched.
     _applyCalibration(rLin, gLin, bLin, n, p);
 
+    // ---- Phase A.7: tone curve (linear-light Float32, 4096-entry LUT) ----
+    // Moved out of post-Phase-C (where it ran on U8 and banded badly even on
+    // small adjustments) into linear-light float space. HP headroom (>1.0)
+    // passes through to the LUT's last entry; lerp between bins gives
+    // effectively-infinite output precision. Identity / version-gate
+    // early-out inside the function — free when curves are flat.
+    _applyToneCurve(rLin, gLin, bLin, n, p);
+
     // ---- Phase B: highlights/shadows ----
     var hlAmt = p.highlights | 0;
     var shAmt = p.shadows | 0;
@@ -1053,8 +1078,8 @@ function _applyDevelopFull(ctx, w, h, p) {
         }
     }
 
-    // ---- V2: Tone Curve (parametric or point), gated on _version >= 2 ----
-    _applyToneCurve(d, n, p);
+    // (Tone curve moved upstream to Phase A.7 — runs in linear-light
+    // float before HL/SH, eliminating U8-LUT banding.)
 
     // ---- Phase D: vibrance, then saturation ----
     var vibAmt = (p.vibrance || 0) / 100;
@@ -1231,11 +1256,21 @@ function _applySaturation(d, n, amount) {
 // Fritsch-Carlson monotone cubic interpolation. Point set must contain
 // at least the two endpoints (0,0) and (255,255). Sorts on x. Returns a
 // 256-entry U8 LUT.
+// Produces a 4096-entry Float32 LUT covering input x ∈ [0, 255] mapped
+// to output y ∈ [0, 1]. Used by the linear-domain tone curve pass: 16x
+// finer resolution than the old 256-entry U8 LUT eliminates output
+// banding on small adjustments, and storing as float skips the per-bin
+// integer rounding that was the dominant source of staircase artifacts.
 function _buildPointCurveLut(points) {
+    var LUT_N = 4096;
+    var LUT_LAST = LUT_N - 1;
+    var inv255 = 1 / 255;
+    var xStep = 255 / LUT_LAST;
     if (!points || points.length < 2) {
-        // identity
-        var idLut = new Uint8Array(256);
-        for (var i = 0; i < 256; i++) idLut[i] = i;
+        // identity: y == x/255 across the LUT (lookup of v*4095 returns v)
+        var idLut = new Float32Array(LUT_N);
+        var idStep = 1 / LUT_LAST;
+        for (var i = 0; i < LUT_N; i++) idLut[i] = i * idStep;
         return idLut;
     }
     // Copy + sort on x; deduplicate same-x entries (keep the last)
@@ -1275,15 +1310,24 @@ function _buildPointCurveLut(points) {
             }
         }
     }
-    // Evaluate to 256-entry LUT
-    var lut = new Uint8Array(256);
+    // Evaluate to LUT_N-entry float LUT at evenly spaced x in [0, 255]
+    var lut = new Float32Array(LUT_N);
     var seg = 0;
-    for (var t = 0; t < 256; t++) {
+    for (var ti = 0; ti < LUT_N; ti++) {
+        var t = ti * xStep;
         // Advance segment so x[seg] <= t < x[seg+1]
         while (seg < n - 2 && t >= x[seg + 1]) seg++;
         var x0 = x[seg], x1 = x[seg + 1];
-        if (t <= x0) { lut[t] = y[0] < 0 ? 0 : (y[0] > 255 ? 255 : (y[0] + 0.5) | 0); continue; }
-        if (t >= x[n - 1]) { lut[t] = y[n - 1] < 0 ? 0 : (y[n - 1] > 255 ? 255 : (y[n - 1] + 0.5) | 0); continue; }
+        if (t <= x0) {
+            var y0 = y[0] * inv255;
+            lut[ti] = y0 < 0 ? 0 : (y0 > 1 ? 1 : y0);
+            continue;
+        }
+        if (t >= x[n - 1]) {
+            var yL = y[n - 1] * inv255;
+            lut[ti] = yL < 0 ? 0 : (yL > 1 ? 1 : yL);
+            continue;
+        }
         var hh = x1 - x0;
         var ss = (t - x0) / hh;
         var ss2 = ss * ss, ss3 = ss2 * ss;
@@ -1291,8 +1335,8 @@ function _buildPointCurveLut(points) {
         var h10 = ss3 - 2 * ss2 + ss;
         var h01 = -2 * ss3 + 3 * ss2;
         var h11 = ss3 - ss2;
-        var v = h00 * y[seg] + h10 * hh * m[seg] + h01 * y[seg + 1] + h11 * hh * m[seg + 1];
-        lut[t] = v < 0 ? 0 : (v > 255 ? 255 : (v + 0.5) | 0);
+        var v = (h00 * y[seg] + h10 * hh * m[seg] + h01 * y[seg + 1] + h11 * hh * m[seg + 1]) * inv255;
+        lut[ti] = v < 0 ? 0 : (v > 1 ? 1 : v);
     }
     return lut;
 }
@@ -1335,25 +1379,51 @@ function _toneCurveIsIdentity(p) {
         && _pointsAreIdentity(p.tcPointsB);
 }
 
-// Apply tone curve to the U8 buffer. Pipeline position: between Phase C
-// re-encode and vibrance/saturation. Operates on R, G, B (not alpha).
-function _applyToneCurve(d, n, p) {
+// Apply tone curve to the linear-light Float32 buffers. Pipeline
+// position: Phase A.7 — after exposure gain (Phase A), white balance
+// (A.5) and color calibration (A.6), before highlights/shadows (Phase
+// B). Operating on float values in linear space (with HP headroom > 1.0
+// passing through to the LUT's last entry) eliminates output banding
+// that the previous U8-LUT pass produced; values stay float through
+// every downstream phase until Phase C re-encodes to U8 once at the
+// end. Linear interpolation between LUT bins gives effectively-infinite
+// output precision.
+function _applyToneCurve(rLin, gLin, bLin, n, p) {
     if ((p._version | 0) < 2) return;
     if (_toneCurveIsIdentity(p)) return;
     var c = _getToneCurveLuts(p);
+    var LAST = 4095;
     if (c.mode === "point-perchan") {
         var lR = c.lutR, lG = c.lutG, lB = c.lutB;
-        for (var i = 0, m = n * 4; i < m; i += 4) {
-            d[i]     = lR[d[i]];
-            d[i + 1] = lG[d[i + 1]];
-            d[i + 2] = lB[d[i + 2]];
+        for (var i = 0; i < n; i++) {
+            var r = rLin[i]; if (r < 0) r = 0;
+            var g = gLin[i]; if (g < 0) g = 0;
+            var b = bLin[i]; if (b < 0) b = 0;
+            var ri = r * 4095; if (ri > LAST) ri = LAST;
+            var gi = g * 4095; if (gi > LAST) gi = LAST;
+            var bi = b * 4095; if (bi > LAST) bi = LAST;
+            var r0 = ri | 0, r1 = r0 < LAST ? r0 + 1 : LAST;
+            var g0 = gi | 0, g1 = g0 < LAST ? g0 + 1 : LAST;
+            var b0 = bi | 0, b1 = b0 < LAST ? b0 + 1 : LAST;
+            rLin[i] = lR[r0] + (lR[r1] - lR[r0]) * (ri - r0);
+            gLin[i] = lG[g0] + (lG[g1] - lG[g0]) * (gi - g0);
+            bLin[i] = lB[b0] + (lB[b1] - lB[b0]) * (bi - b0);
         }
     } else {
         var lut = c.lut;
-        for (var j = 0, mj = n * 4; j < mj; j += 4) {
-            d[j]     = lut[d[j]];
-            d[j + 1] = lut[d[j + 1]];
-            d[j + 2] = lut[d[j + 2]];
+        for (var j = 0; j < n; j++) {
+            var rr = rLin[j]; if (rr < 0) rr = 0;
+            var gg = gLin[j]; if (gg < 0) gg = 0;
+            var bb = bLin[j]; if (bb < 0) bb = 0;
+            var rri = rr * 4095; if (rri > LAST) rri = LAST;
+            var ggi = gg * 4095; if (ggi > LAST) ggi = LAST;
+            var bbi = bb * 4095; if (bbi > LAST) bbi = LAST;
+            var rr0 = rri | 0, rr1 = rr0 < LAST ? rr0 + 1 : LAST;
+            var gg0 = ggi | 0, gg1 = gg0 < LAST ? gg0 + 1 : LAST;
+            var bb0 = bbi | 0, bb1 = bb0 < LAST ? bb0 + 1 : LAST;
+            rLin[j] = lut[rr0] + (lut[rr1] - lut[rr0]) * (rri - rr0);
+            gLin[j] = lut[gg0] + (lut[gg1] - lut[gg0]) * (ggi - gg0);
+            bLin[j] = lut[bb0] + (lut[bb1] - lut[bb0]) * (bbi - bb0);
         }
     }
 }
@@ -2784,12 +2854,21 @@ function _tcRedrawCurve() {
         }
         p.toneCurveMode = savedMode; p.tcChannel = savedCh;
     }
-    if (!lut) { var idLut = new Uint8Array(256); for (var ii = 0; ii < 256; ii++) idLut[ii] = ii; lut = idLut; }
+    if (!lut) {
+        var idLut = new Float32Array(4096);
+        for (var ii = 0; ii < 4096; ii++) idLut[ii] = ii / 4095;
+        lut = idLut;
+    }
     ctx.strokeStyle = ch === "r" ? "#e24b4a" : ch === "g" ? "#5dca85" : ch === "b" ? "#5da3e2" : "#fff";
     ctx.lineWidth = 1.5;
     ctx.beginPath();
+    // LUT now stores 4096 float entries in [0, 1] indexed across input
+    // x ∈ [0, 255]. Sample 256 evenly spaced points and rescale y to U8
+    // for canvas drawing.
     for (var x = 0; x < 256; x++) {
-        var pos = _tcCurveToCanvas(x, lut[x]);
+        var idx = ((x * 4095) / 255 + 0.5) | 0;
+        if (idx > 4095) idx = 4095;
+        var pos = _tcCurveToCanvas(x, lut[idx] * 255);
         if (x === 0) ctx.moveTo(pos.cx, pos.cy);
         else ctx.lineTo(pos.cx, pos.cy);
     }
