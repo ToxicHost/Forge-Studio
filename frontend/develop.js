@@ -90,7 +90,7 @@ function defaultParams() {
         grainSize: 25,
 
         // === V2: Tone Curve ===
-        toneCurveMode: "parametric",   // "parametric" | "point"
+        toneCurveMode: "point",        // "point" only — Parametric mode retired
         tcHighlights: 0,               // -100..100
         tcLights: 0,                   // -100..100
         tcDarks: 0,                    // -100..100
@@ -168,6 +168,26 @@ function _migrateParams(p) {
         var k = v2NewKeys[i];
         if (!(k in p)) p[k] = defaults[k];
     }
+    // V2 cleanup: Parametric tone curve mode was retired in favor of
+    // Point mode only.
+    //
+    // INTENTIONAL DATA LOSS: Legacy docs saved with
+    // toneCurveMode="parametric" are migrated to Point with their
+    // Parametric slider values cleared. Anyone who saved tone-curve
+    // work in Parametric mode loses that work on next load — the
+    // resulting image will render as if no tone curve were applied.
+    // This is a deliberate trade-off (Parametric is removed from the
+    // UI; rather than carry orphan data forward and have it silently
+    // not influence anything, we zero it so _isIdentity / cache
+    // signatures behave cleanly). Affected users would need to redo
+    // their work using Point mode.
+    if (p.toneCurveMode === "parametric") {
+        p.toneCurveMode = "point";
+        p.tcShadows = 0;
+        p.tcDarks = 0;
+        p.tcLights = 0;
+        p.tcHighlights = 0;
+    }
 }
 
 // ========================================================================
@@ -201,15 +221,6 @@ var SECTIONS = [
         ]
     },
     {
-        id: "presence", label: "Presence", open: true,
-        rows: [
-            { key: "texture",    label: "Texture",    min: -100, max: 100, step: 1, def: 0 },
-            { key: "clarity",    label: "Clarity",    min: -100, max: 100, step: 1, def: 0 },
-            // V2: Dehaze inserted between Clarity and Vibrance per spec
-            { key: "dehaze",     label: "Dehaze",     min: -100, max: 100, step: 1, def: 0, heavyOp: true },
-        ]
-    },
-    {
         id: "detail", label: "Detail", open: false,
         rows: [
             { key: "sharpenAmount",    label: "Sharpen Amt", min: 0,   max: 150, step: 1,   def: 0   },
@@ -221,8 +232,18 @@ var SECTIONS = [
         ]
     },
     {
+        // Presence (Texture/Clarity/Dehaze) was previously a separate
+        // section; merged into Effects since the conceptual line between
+        // them was fuzzy and most users expected one place for "image
+        // character" controls. Order: detail-amplification controls
+        // first (Texture/Clarity/Dehaze), then visual treatments
+        // (Vignette/Grain).
         id: "effects", label: "Effects", open: false,
         rows: [
+            { key: "texture",    label: "Texture",    min: -100, max: 100, step: 1, def: 0 },
+            { key: "clarity",    label: "Clarity",    min: -100, max: 100, step: 1, def: 0 },
+            { key: "dehaze",     label: "Dehaze",     min: -100, max: 100, step: 1, def: 0, heavyOp: true },
+            { divider: true },
             { key: "vignetteAmount", label: "Vignette",    min: -100, max: 100, step: 1, def: 0  },
             { key: "grainAmount",    label: "Grain Amount", min: 0,    max: 100, step: 1, def: 0  },
             { key: "grainSize",      label: "Grain Size",   min: 10,   max: 100, step: 1, def: 25 },
@@ -231,10 +252,10 @@ var SECTIONS = [
 ];
 
 // V2: insert custom-widget sections at the correct positions:
-//   basic → toneCurve → presence(+dehaze) → hsl → colorGrading → detail(+nr) → effects
+//   basic → toneCurve → hsl → colorGrading → detail(+nr) → effects(+presence)
 SECTIONS.splice(1, 0, { id: "toneCurve",    label: "Tone Curve",    open: false, customBuild: _buildToneCurveSection });
-SECTIONS.splice(3, 0, { id: "hsl",          label: "HSL / Color",   open: false, customBuild: _buildHSLSection });
-SECTIONS.splice(4, 0, { id: "colorGrading", label: "Color Grading", open: false, customBuild: _buildColorGradingSection });
+SECTIONS.splice(2, 0, { id: "hsl",          label: "HSL / Color",   open: false, customBuild: _buildHSLSection });
+SECTIONS.splice(3, 0, { id: "colorGrading", label: "Color Grading", open: false, customBuild: _buildColorGradingSection });
 
 // Color Calibration sits at the very bottom of the Develop panel as an
 // "advanced" tool — same convention as Lightroom. Collapsed by default.
@@ -275,11 +296,19 @@ function _arrayAllZero(a) {
     for (var i = 0; i < a.length; i++) { if ((a[i] | 0) !== 0) return false; }
     return true;
 }
+// Returns true when the curve is the identity straight line — exactly
+// two endpoints at (0,0) and (255,255), or a missing / empty array
+// (no curve data at all is treated as the identity curve).
+// PRIOR BUG: the chain of `||` returned true precisely when ANY of the
+// non-identity conditions held, i.e. when the curve was NOT identity.
+// _toneCurveIsIdentity / _isIdentity then early-outed on every modified
+// curve, which is why dragging points appeared to do nothing — the
+// pipeline skipped the curve LUT entirely. Inverted to match the name.
 function _pointsAreIdentity(pts) {
-    return !pts
-        || pts.length !== 2
-        || pts[0][0] !== 0   || pts[0][1] !== 0
-        || pts[1][0] !== 255 || pts[1][1] !== 255;
+    if (!pts || pts.length === 0) return true;
+    return pts.length === 2
+        && pts[0][0] === 0   && pts[0][1] === 0
+        && pts[1][0] === 255 && pts[1][1] === 255;
 }
 function _isIdentity(p) {
     if (!p) return true;
@@ -297,16 +326,14 @@ function _isIdentity(p) {
     if ((p.vignetteAmount | 0) !== 0 || (p.grainAmount | 0) !== 0) return false;
     // V2 — short-circuit for v1 docs (gate at version)
     if ((p._version | 0) < 2) return true;
-    // Tone curve
-    if ((p.tcShadows | 0) !== 0 || (p.tcDarks | 0) !== 0
-     || (p.tcLights | 0) !== 0 || (p.tcHighlights | 0) !== 0) return false;
-    if (p.toneCurveMode === "point") {
-        // Identity only when ALL relevant point sets are flat.
-        if (!_pointsAreIdentity(p.tcPoints)) return false;
-        if (!_pointsAreIdentity(p.tcPointsR)) return false;
-        if (!_pointsAreIdentity(p.tcPointsG)) return false;
-        if (!_pointsAreIdentity(p.tcPointsB)) return false;
-    }
+    // Tone curve — Point mode only. Identity when all relevant point
+    // sets are flat. (Legacy parametric tcShadows/tcDarks/tcLights/
+    // tcHighlights values are cleared during _migrateParams so they
+    // can't influence identity here.)
+    if (!_pointsAreIdentity(p.tcPoints)) return false;
+    if (!_pointsAreIdentity(p.tcPointsR)) return false;
+    if (!_pointsAreIdentity(p.tcPointsG)) return false;
+    if (!_pointsAreIdentity(p.tcPointsB)) return false;
     // HSL — any non-zero entry across hue/sat/lum
     if (!_arrayAllZero(p.hslHue) || !_arrayAllZero(p.hslSat) || !_arrayAllZero(p.hslLum)) return false;
     // Color grading — any region's saturation or luminance non-zero
@@ -1200,57 +1227,6 @@ function _applySaturation(d, n, amount) {
 // applied per-pixel. Caches keyed on stringified params.
 // ========================================================================
 
-// Parametric LUT: each of {Shadows, Darks, Lights, Highlights} produces a
-// raised-cosine bump centered in its tonal region. Bumps sum, scaled by
-// slider amount. A slider at +100 shifts pixels in its region by ±64 U8
-// units at the bump peak, falling off smoothly to the adjacent splits.
-function _buildParametricCurveLut(p) {
-    var lut = new Uint8Array(256);
-    var s1 = (p.tcSplit1 || 25) * 2.55;     // 0..255
-    var s2 = (p.tcSplit2 || 50) * 2.55;
-    var s3 = (p.tcSplit3 || 75) * 2.55;
-    if (s1 < 1) s1 = 1; if (s1 > 254) s1 = 254;
-    if (s2 < s1 + 1) s2 = s1 + 1; if (s2 > 254) s2 = 254;
-    if (s3 < s2 + 1) s3 = s2 + 1; if (s3 > 254) s3 = 254;
-
-    // Region centers (midpoints between splits / endpoints)
-    var cShadow    = s1 * 0.5;
-    var cDark      = (s1 + s2) * 0.5;
-    var cLight     = (s2 + s3) * 0.5;
-    var cHighlight = (s3 + 255) * 0.5;
-    // Half-widths reach to the adjacent boundary so the bump tapers to 0 there
-    var hShadow    = s1;
-    var hDark      = Math.max(s2 - s1, s1) * 0.5 + Math.max(s2 - s1, s1) * 0.5;
-    var hLight     = Math.max(s3 - s2, s2 - s1) * 0.5 + Math.max(s3 - s2, s2 - s1) * 0.5;
-    var hHighlight = (255 - s3);
-    // Use the wider of the adjacent gaps for the "interior" bumps so they
-    // taper smoothly from one boundary to the other.
-    hDark      = Math.max(s1, (s2 - s1));
-    hLight     = Math.max((s3 - s2), (255 - s3));
-
-    var aSh = (p.tcShadows    || 0) / 100;
-    var aDk = (p.tcDarks      || 0) / 100;
-    var aLt = (p.tcLights     || 0) / 100;
-    var aHl = (p.tcHighlights || 0) / 100;
-    var bumpScale = 64;   // peak ±64 U8 units at slider extremes
-
-    function bump(t, center, halfWidth) {
-        if (halfWidth <= 0) return 0;
-        var x = (t - center) / halfWidth;
-        if (x < -1) x = -1; else if (x > 1) x = 1;
-        return 0.5 * (1 + Math.cos(Math.PI * x));
-    }
-
-    for (var t = 0; t < 256; t++) {
-        var off = aSh * bump(t, cShadow,    hShadow)
-                + aDk * bump(t, cDark,      hDark)
-                + aLt * bump(t, cLight,     hLight)
-                + aHl * bump(t, cHighlight, hHighlight);
-        var v = t + off * bumpScale;
-        lut[t] = v < 0 ? 0 : (v > 255 ? 255 : (v + 0.5) | 0);
-    }
-    return lut;
-}
 
 // Fritsch-Carlson monotone cubic interpolation. Point set must contain
 // at least the two endpoints (0,0) and (255,255). Sorts on x. Returns a
@@ -1321,51 +1297,42 @@ function _buildPointCurveLut(points) {
     return lut;
 }
 
-// LUT cache. Sig keys: parametric uses the 7 numeric params; point uses
-// JSON.stringify of the relevant points array. Per-channel point mode
-// builds three separate LUTs.
+// LUT cache. Sig key is JSON.stringify of the relevant points array.
+// Per-channel mode builds three separate LUTs (one per R/G/B).
 function _getToneCurveLuts(p) {
     var S = _S();
     var cache = (S && S._developToneCurveCache) || null;
-    if (p.toneCurveMode === "point") {
-        if (p.tcChannel === "rgb") {
-            var sig = "P|" + JSON.stringify(p.tcPoints);
-            if (cache && cache.sig === sig) return cache;
-            var lut = _buildPointCurveLut(p.tcPoints);
-            cache = { sig: sig, mode: "point-rgb", lut: lut };
-        } else {
-            var sigR = "PR|" + JSON.stringify(p.tcPointsR);
-            var sigG = "PG|" + JSON.stringify(p.tcPointsG);
-            var sigB = "PB|" + JSON.stringify(p.tcPointsB);
-            var sigPC = sigR + "|" + sigG + "|" + sigB;
-            if (cache && cache.sig === sigPC) return cache;
-            cache = {
-                sig: sigPC, mode: "point-perchan",
-                lutR: _buildPointCurveLut(p.tcPointsR),
-                lutG: _buildPointCurveLut(p.tcPointsG),
-                lutB: _buildPointCurveLut(p.tcPointsB)
-            };
-        }
+    if (p.tcChannel === "rgb") {
+        var sig = "P|" + JSON.stringify(p.tcPoints);
+        if (cache && cache.sig === sig) return cache;
+        var lut = _buildPointCurveLut(p.tcPoints);
+        cache = { sig: sig, mode: "point-rgb", lut: lut };
     } else {
-        var sigPa = "PA|" + (p.tcShadows | 0) + "|" + (p.tcDarks | 0)
-                  + "|" + (p.tcLights | 0) + "|" + (p.tcHighlights | 0)
-                  + "|" + (p.tcSplit1 | 0) + "|" + (p.tcSplit2 | 0) + "|" + (p.tcSplit3 | 0);
-        if (cache && cache.sig === sigPa) return cache;
-        cache = { sig: sigPa, mode: "parametric", lut: _buildParametricCurveLut(p) };
+        var sigR = "PR|" + JSON.stringify(p.tcPointsR);
+        var sigG = "PG|" + JSON.stringify(p.tcPointsG);
+        var sigB = "PB|" + JSON.stringify(p.tcPointsB);
+        var sigPC = sigR + "|" + sigG + "|" + sigB;
+        if (cache && cache.sig === sigPC) return cache;
+        cache = {
+            sig: sigPC, mode: "point-perchan",
+            lutR: _buildPointCurveLut(p.tcPointsR),
+            lutG: _buildPointCurveLut(p.tcPointsG),
+            lutB: _buildPointCurveLut(p.tcPointsB)
+        };
     }
     if (S) S._developToneCurveCache = cache;
     return cache;
 }
 
 function _toneCurveIsIdentity(p) {
-    if (p.toneCurveMode === "point") {
-        if (p.tcChannel === "rgb") return _pointsAreIdentity(p.tcPoints);
-        return _pointsAreIdentity(p.tcPointsR)
-            && _pointsAreIdentity(p.tcPointsG)
-            && _pointsAreIdentity(p.tcPointsB);
-    }
-    return (p.tcShadows | 0) === 0 && (p.tcDarks | 0) === 0
-        && (p.tcLights | 0) === 0 && (p.tcHighlights | 0) === 0;
+    // Point mode only — Parametric was retired. Active-channel curve
+    // determines whether the LUT pass runs at all; non-active channels
+    // are stored in the doc but only contribute when their channel is
+    // selected.
+    if (p.tcChannel === "rgb") return _pointsAreIdentity(p.tcPoints);
+    return _pointsAreIdentity(p.tcPointsR)
+        && _pointsAreIdentity(p.tcPointsG)
+        && _pointsAreIdentity(p.tcPointsB);
 }
 
 // Apply tone curve to the U8 buffer. Pipeline position: between Phase C
@@ -2349,17 +2316,14 @@ function _commitParam(key, value, live) {
 // ────────────────────────────────────────────────────────────────────────
 // V2 — TONE CURVE UI
 //
-// Mode toggle (Parametric / Point); when Parametric, four region sliders
-// + a tonal-strip with three draggable split markers; when Point, an
-// interactive curve editor canvas with per-channel selector below.
+// Point mode only — interactive curve editor canvas with per-channel
+// (RGB / R / G / B) selector below. Parametric mode (region sliders +
+// split markers) was retired; legacy parametric docs are migrated to
+// Point on load.
 // ────────────────────────────────────────────────────────────────────────
-var _tcModeBtns = null;
-var _tcParamWrap = null;
 var _tcPointWrap = null;
 var _tcCurveCanvas = null;
 var _tcChannelBtns = null;
-var _tcSplitStripCanvas = null;
-var _tcParamRows = {};   // {tcShadows: {range, num}, ...}
 
 // Curve canvas pointer-state for the debounced add/move/remove pattern.
 var _tcDragging = false;
@@ -2413,49 +2377,11 @@ function _tcSetActivePoints(pts) {
 }
 
 function _buildToneCurveSection(body) {
-    // Mode toggle
-    var modeRow = document.createElement("div");
-    modeRow.className = "develop-tc-mode-tabs";
-    var btnPara = document.createElement("button");
-    btnPara.type = "button"; btnPara.textContent = "Parametric"; btnPara.dataset.mode = "parametric";
-    var btnPoint = document.createElement("button");
-    btnPoint.type = "button"; btnPoint.textContent = "Point"; btnPoint.dataset.mode = "point";
-    modeRow.appendChild(btnPara); modeRow.appendChild(btnPoint);
-    _tcModeBtns = { parametric: btnPara, point: btnPoint };
-    body.appendChild(modeRow);
-    function applyMode(mode) {
-        _commitParam("toneCurveMode", mode, false);
-        _tcSelectedIdx = null;
-        _tcSyncModeUI(mode);
-    }
-    btnPara.addEventListener("click", function () { applyMode("parametric"); });
-    btnPoint.addEventListener("click", function () { applyMode("point"); });
-
-    // === Parametric body ===
-    _tcParamWrap = document.createElement("div");
-    _tcParamWrap.className = "develop-tc-param-wrap";
-    var tcRows = [
-        { key: "tcHighlights", label: "Highlights" },
-        { key: "tcLights",     label: "Lights"     },
-        { key: "tcDarks",      label: "Darks"      },
-        { key: "tcShadows",    label: "Shadows"    },
-    ];
-    tcRows.forEach(function (cfg) {
-        var row = _buildSliderRow({
-            key: cfg.key, label: cfg.label, min: -100, max: 100, step: 1, def: 0
-        });
-        _tcParamWrap.appendChild(row);
-    });
-    // Split strip below the four sliders
-    _tcSplitStripCanvas = document.createElement("canvas");
-    _tcSplitStripCanvas.className = "develop-tc-split-strip";
-    _tcSplitStripCanvas.width = 296; _tcSplitStripCanvas.height = 22;
-    _tcSplitStripCanvas.title = "Drag the markers to adjust where shadows end and highlights begin";
-    _tcParamWrap.appendChild(_tcSplitStripCanvas);
-    _tcAttachSplitStripHandlers();
-    body.appendChild(_tcParamWrap);
-
-    // === Point body ===
+    // Point mode only — Parametric was retired in favor of the
+    // single, more direct "drag points on the graph" interaction.
+    // Legacy docs with toneCurveMode="parametric" get migrated in
+    // _migrateParams; the parametric data fields stay in the schema
+    // for backwards compatibility but are no longer surfaced or read.
     _tcPointWrap = document.createElement("div");
     _tcPointWrap.className = "develop-tc-point-wrap";
     _tcCurveCanvas = document.createElement("canvas");
@@ -2484,20 +2410,11 @@ function _buildToneCurveSection(body) {
     body.appendChild(_tcPointWrap);
 
     _registerCustomSync(function (p) {
-        _tcSyncModeUI(p.toneCurveMode || "parametric");
         _tcSyncChannelUI(p.tcChannel || "rgb");
-        _tcRedrawSplitStrip();
         _tcRedrawCurve();
     });
 }
 
-function _tcSyncModeUI(mode) {
-    if (!_tcModeBtns) return;
-    _tcModeBtns.parametric.classList.toggle("active", mode === "parametric");
-    _tcModeBtns.point.classList.toggle("active",     mode === "point");
-    if (_tcParamWrap) _tcParamWrap.style.display = mode === "point" ? "none" : "";
-    if (_tcPointWrap) _tcPointWrap.style.display = mode === "point" ? "" : "none";
-}
 function _tcSyncChannelUI(ch) {
     if (!_tcChannelBtns) return;
     Object.keys(_tcChannelBtns).forEach(function (k) {
@@ -2749,84 +2666,6 @@ function _tcRedrawCurve() {
         ctx.lineWidth = isSel ? 1.5 : 1;
         ctx.fill(); ctx.stroke();
     }
-}
-
-// ── Split strip (parametric mode) ───────────────────────────────────────
-var _tcSplitDrag = null;   // "tcSplit1" | "tcSplit2" | "tcSplit3" | null
-
-function _tcAttachSplitStripHandlers() {
-    var c = _tcSplitStripCanvas;
-    c.addEventListener("pointerdown", function (e) {
-        var rect = c.getBoundingClientRect();
-        var x = e.clientX - rect.left;
-        var p = _S() && _S().developParams; if (!p) return;
-        var s1 = (p.tcSplit1 || 25) / 100 * rect.width;
-        var s2 = (p.tcSplit2 || 50) / 100 * rect.width;
-        var s3 = (p.tcSplit3 || 75) / 100 * rect.width;
-        // Always grab the nearest marker — clicking anywhere on the strip
-        // jumps that marker to the click position. (Previously gated on a
-        // 12px proximity check, which made the strip feel dead.)
-        var nearest = "tcSplit1", best = Math.abs(x - s1);
-        if (Math.abs(x - s2) < best) { nearest = "tcSplit2"; best = Math.abs(x - s2); }
-        if (Math.abs(x - s3) < best) { nearest = "tcSplit3"; best = Math.abs(x - s3); }
-        _tcSplitDrag = nearest;
-        c.setPointerCapture(e.pointerId);
-        // Fire the move logic on the initial click so the marker snaps to
-        // the cursor immediately, not only after the first move.
-        var pct = Math.round((x / rect.width) * 100);
-        if (pct < 1) pct = 1; else if (pct > 99) pct = 99;
-        if (nearest === "tcSplit1" && pct >= (p.tcSplit2 || 50)) pct = (p.tcSplit2 || 50) - 1;
-        if (nearest === "tcSplit2") {
-            if (pct <= (p.tcSplit1 || 25)) pct = (p.tcSplit1 || 25) + 1;
-            if (pct >= (p.tcSplit3 || 75)) pct = (p.tcSplit3 || 75) - 1;
-        }
-        if (nearest === "tcSplit3" && pct <= (p.tcSplit2 || 50)) pct = (p.tcSplit2 || 50) + 1;
-        _commitParam(nearest, pct, true);
-        _tcRedrawSplitStrip();
-    });
-    c.addEventListener("pointermove", function (e) {
-        if (!_tcSplitDrag) return;
-        var rect = c.getBoundingClientRect();
-        var pct = Math.round(((e.clientX - rect.left) / rect.width) * 100);
-        if (pct < 1) pct = 1; else if (pct > 99) pct = 99;
-        var p = _S() && _S().developParams;
-        // Maintain ordering
-        if (_tcSplitDrag === "tcSplit1" && pct >= (p.tcSplit2 || 50)) pct = (p.tcSplit2 || 50) - 1;
-        if (_tcSplitDrag === "tcSplit2") {
-            if (pct <= (p.tcSplit1 || 25)) pct = (p.tcSplit1 || 25) + 1;
-            if (pct >= (p.tcSplit3 || 75)) pct = (p.tcSplit3 || 75) - 1;
-        }
-        if (_tcSplitDrag === "tcSplit3" && pct <= (p.tcSplit2 || 50)) pct = (p.tcSplit2 || 50) + 1;
-        _commitParam(_tcSplitDrag, pct, true);
-        _tcRedrawSplitStrip();
-    });
-    c.addEventListener("pointerup", function (e) {
-        try { c.releasePointerCapture(e.pointerId); } catch (_) {}
-        if (_tcSplitDrag) { _tcSplitDrag = null; _scheduleFullRedraw(); }
-    });
-}
-
-function _tcRedrawSplitStrip() {
-    if (!_tcSplitStripCanvas) return;
-    var ctx = _tcSplitStripCanvas.getContext("2d");
-    var w = _tcSplitStripCanvas.width, h = _tcSplitStripCanvas.height;
-    ctx.clearRect(0, 0, w, h);
-    // Tonal gradient black → white
-    var grad = ctx.createLinearGradient(0, 0, w, 0);
-    grad.addColorStop(0, "#000"); grad.addColorStop(1, "#fff");
-    ctx.fillStyle = grad;
-    ctx.fillRect(0, 0, w, h - 8);
-    // Markers
-    var p = _S() && _S().developParams; if (!p) return;
-    var splits = [p.tcSplit1 || 25, p.tcSplit2 || 50, p.tcSplit3 || 75];
-    var accent = (getComputedStyle(document.documentElement).getPropertyValue("--accent") || "#7c3aed").trim();
-    splits.forEach(function (s) {
-        var x = s / 100 * w;
-        ctx.fillStyle = accent;
-        ctx.beginPath();
-        ctx.moveTo(x, h - 8); ctx.lineTo(x - 5, h); ctx.lineTo(x + 5, h);
-        ctx.closePath(); ctx.fill();
-    });
 }
 
 // ────────────────────────────────────────────────────────────────────────
