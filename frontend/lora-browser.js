@@ -18,6 +18,12 @@
 (function () {
   "use strict";
 
+  // i18n helper — every dynamically-built string passes its English source
+  // through _t() so the locale-aware text shows on first render. Elements
+  // also get data-i18n attributes so applyToDom() keeps them in sync on
+  // locale switches.
+  const _t = (key, fallback) => (window.I18N && window.I18N.t) ? window.I18N.t(key, fallback) : fallback;
+
   const TAG = "[LoRA Browser]";
 
   // ── State ──────────────────────────────────────────────
@@ -393,18 +399,18 @@
       <div class="lora-modal">
         <div class="lora-header">
           <span class="lora-title">LoRAs</span>
-          <input class="lora-search" type="text" placeholder="Search LoRAs..." spellcheck="false" autocomplete="off">
+          <input class="lora-search" type="text" data-i18n-placeholder="lora.search.placeholder" placeholder="${_t("lora.search.placeholder", "Search LoRAs...")}" spellcheck="false" autocomplete="off">
           <select class="lora-sort">
-            <option value="name">Name</option>
-            <option value="date">Newest</option>
-            <option value="size">Largest</option>
+            <option value="name" data-i18n="lora.sort.name">${_t("lora.sort.name", "Name")}</option>
+            <option value="date" data-i18n="lora.sort.date">${_t("lora.sort.date", "Newest")}</option>
+            <option value="size" data-i18n="lora.sort.size">${_t("lora.sort.size", "Largest")}</option>
           </select>
           <div class="lora-weight-wrap">
-            <span class="lora-weight-label">Weight</span>
+            <span class="lora-weight-label" data-i18n="lora.weight">${_t("lora.weight", "Weight")}</span>
             <input class="lora-weight-input" type="number" min="0" max="2" step="0.05" value="1">
           </div>
-          <button class="lora-header-btn lora-refresh-btn" title="Refresh LoRA list">${REFRESH_SVG}</button>
-          <button class="lora-close" title="Close (Esc)">&times;</button>
+          <button class="lora-header-btn lora-refresh-btn" data-i18n-title="lora.refresh.tooltip" title="${_t("lora.refresh.tooltip", "Refresh LoRA list")}">${REFRESH_SVG}</button>
+          <button class="lora-close" data-i18n-title="lora.close.tooltip" title="${_t("lora.close.tooltip", "Close (Esc)")}">&times;</button>
         </div>
         <div class="lora-body">
           <div class="lora-folders"></div>
@@ -412,8 +418,8 @@
         </div>
         <div class="lora-footer">
           <span class="lora-status"></span>
-          <button class="lora-open-folder" title="Open LoRA folder in file manager">Open Folder</button>
-          <span class="lora-hint">Click to insert &middot; Right-click for options</span>
+          <button class="lora-open-folder" data-i18n="lora.openFolder" data-i18n-title="lora.openFolder.tooltip" title="${_t("lora.openFolder.tooltip", "Open LoRA folder in file manager")}">${_t("lora.openFolder", "Open Folder")}</button>
+          <span class="lora-hint" data-i18n="lora.hint">${_t("lora.hint", "Click to insert · Right-click for options")}</span>
         </div>
       </div>
     `;
@@ -482,7 +488,7 @@
 
     item.innerHTML = `
       <span class="lora-folder-icon${hasChildren ? " lora-folder-toggle" : ""}">${icon}</span>
-      <span class="lora-folder-name" title="${folderPath || "All LoRAs"}">${displayName}</span>
+      <span class="lora-folder-name" title="${folderPath || _t("lora.allFolder", "All LoRAs")}">${displayName}</span>
       <span class="lora-folder-count">${count}</span>
     `;
 
@@ -520,7 +526,7 @@
       grid.innerHTML = "";
       const empty = document.createElement("div");
       empty.className = "lora-empty";
-      empty.innerHTML = `<span class="lora-empty-text">${allLoras.length === 0 ? "No LoRAs found in your models/Lora directory" : "No LoRAs match your search"}</span>`;
+      empty.innerHTML = `<span class="lora-empty-text">${allLoras.length === 0 ? _t("lora.empty.none", "No LoRAs found in your models/Lora directory") : _t("lora.empty.noMatch", "No LoRAs match your search")}</span>`;
       wrap.appendChild(empty);
       return;
     }
@@ -576,13 +582,15 @@
 
     const btnUpload = document.createElement("button");
     btnUpload.className = "lora-card-menu-item";
-    btnUpload.textContent = "Set preview from file\u2026";
+    btnUpload.dataset.i18n = "lora.menu.previewFromFile";
+    btnUpload.textContent = _t("lora.menu.previewFromFile", "Set preview from file\u2026");
     btnUpload.addEventListener("click", () => { dismissContextMenu(); pickPreviewFile(lora); });
     menu.appendChild(btnUpload);
 
     const btnCanvas = document.createElement("button");
     btnCanvas.className = "lora-card-menu-item";
-    btnCanvas.textContent = "Set preview from canvas";
+    btnCanvas.dataset.i18n = "lora.menu.previewFromCanvas";
+    btnCanvas.textContent = _t("lora.menu.previewFromCanvas", "Set preview from canvas");
     btnCanvas.addEventListener("click", () => { dismissContextMenu(); captureCanvasPreview(lora); });
     menu.appendChild(btnCanvas);
 
@@ -591,7 +599,8 @@
       menu.appendChild(sep);
       const btnRm = document.createElement("button");
       btnRm.className = "lora-card-menu-item";
-      btnRm.textContent = "Remove preview";
+      btnRm.dataset.i18n = "lora.menu.removePreview";
+      btnRm.textContent = _t("lora.menu.removePreview", "Remove preview");
       btnRm.style.color = "var(--red)";
       btnRm.addEventListener("click", () => { dismissContextMenu(); removePreview(lora); });
       menu.appendChild(btnRm);
@@ -720,7 +729,8 @@
     const btn = document.createElement("button");
     btn.className = "prompt-browser-btn";
     btn.textContent = "LoRA";
-    btn.title = "Browse LoRAs (Ctrl+L)";
+    btn.dataset.i18nTitle = "lora.tab.tooltip";
+    btn.title = _t("lora.tab.tooltip", "Browse LoRAs (Ctrl+L)");
     btn.addEventListener("click", e => { e.preventDefault(); e.stopPropagation(); openModal(); });
     return btn;
   }

@@ -195,6 +195,11 @@
   "develop.hsl.sat": "Saturation",
   "develop.hsl.lum": "Luminance",
 
+  "develop.calibration.heading.shadows": "Ombres",
+  "develop.calibration.heading.redPrimary": "Primaire rouge",
+  "develop.calibration.heading.greenPrimary": "Primaire vert",
+  "develop.calibration.heading.bluePrimary": "Primaire bleu",
+
   "develop.calib.wb": "Balance des blancs",
   "develop.calib.whitePoint": "Point blanc",
   "develop.calib.blackPoint": "Point noir",
@@ -228,5 +233,36 @@
   "tooltip.bigOutputWarning": "La sortie dépassera 2000 px sur un ou deux côtés. Cela peut entraîner une utilisation VRAM importante et une génération lente sur la plupart des configurations.",
   "tooltip.histogramAutoStretch": "Étirer l'entrée noir/blanc aux percentiles 0,1 % / 99,9 % de l'histogramme",
 
-  "panels.upscale.hint": "Pipeline en un seul appel. Refine et ADetailer sont indépendants : coche l'un, l'autre, les deux, ou aucun. Steps/Denoise s'appliquent à la passe Refine."
+  "panels.upscale.hint": "Pipeline en un seul appel. Refine et ADetailer sont indépendants : coche l'un, l'autre, les deux, ou aucun. Steps/Denoise s'appliquent à la passe Refine.",
+
+  "lora.search.placeholder": "Rechercher des LoRAs...",
+  "lora.sort.name": "Nom",
+  "lora.sort.date": "Plus récents",
+  "lora.sort.size": "Plus grands",
+  "lora.weight": "Poids",
+  "lora.refresh.tooltip": "Actualiser la liste des LoRAs",
+  "lora.close.tooltip": "Fermer (Esc)",
+  "lora.openFolder": "Ouvrir le dossier",
+  "lora.openFolder.tooltip": "Ouvrir le dossier des LoRAs dans le gestionnaire de fichiers",
+  "lora.hint": "Cliquer pour insérer · Clic droit pour les options",
+  "lora.empty.none": "Aucun LoRA trouvé dans le dossier models/Lora",
+  "lora.empty.noMatch": "Aucun LoRA ne correspond à ta recherche",
+  "lora.allFolder": "Tous les LoRAs",
+  "lora.menu.previewFromFile": "Aperçu depuis un fichier…",
+  "lora.menu.previewFromCanvas": "Aperçu depuis le canevas",
+  "lora.menu.removePreview": "Supprimer l'aperçu",
+  "lora.tab.tooltip": "Parcourir les LoRAs (Ctrl+L)",
+
+  "wildcard.allFolder": "Tous",
+  "wildcard.search.placeholder": "Rechercher des wildcards...",
+  "wildcard.refresh.tooltip": "Actualiser la liste des wildcards",
+  "wildcard.close.tooltip": "Fermer (Esc)",
+  "wildcard.unsorted": "Non triés",
+  "wildcard.insert": "Insérer",
+  "wildcard.insert.tooltip": "Insérer dans le prompt",
+  "wildcard.editButton": "Modifier dans Wildcards",
+  "wildcard.edit.tooltip": "Ouvrir dans l'éditeur Wildcards",
+  "wildcard.clickToCopy": "Cliquer pour copier",
+  "wildcard.failedToLoad": "Échec du chargement",
+  "wildcard.tab.tooltip": "Parcourir les Wildcards (Ctrl+Shift+L)"
 }

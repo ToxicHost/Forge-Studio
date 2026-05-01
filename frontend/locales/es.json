@@ -195,6 +195,11 @@
   "develop.hsl.sat": "Saturación",
   "develop.hsl.lum": "Luminancia",
 
+  "develop.calibration.heading.shadows": "Sombras",
+  "develop.calibration.heading.redPrimary": "Primario rojo",
+  "develop.calibration.heading.greenPrimary": "Primario verde",
+  "develop.calibration.heading.bluePrimary": "Primario azul",
+
   "develop.calib.wb": "Balance de blancos",
   "develop.calib.whitePoint": "Punto blanco",
   "develop.calib.blackPoint": "Punto negro",
@@ -228,5 +233,36 @@
   "tooltip.bigOutputWarning": "La salida superará los 2000 px en uno o ambos lados. Esto puede provocar un uso elevado de VRAM y generación lenta en la mayoría del hardware.",
   "tooltip.histogramAutoStretch": "Estirar negro/blanco de entrada a los percentiles 0,1 % / 99,9 % del histograma",
 
-  "panels.upscale.hint": "Pipeline de una sola llamada. Refine y ADetailer son independientes: marca uno, ambos o ninguno. Steps/Denoise se aplican al paso Refine."
+  "panels.upscale.hint": "Pipeline de una sola llamada. Refine y ADetailer son independientes: marca uno, ambos o ninguno. Steps/Denoise se aplican al paso Refine.",
+
+  "lora.search.placeholder": "Buscar LoRAs...",
+  "lora.sort.name": "Nombre",
+  "lora.sort.date": "Más recientes",
+  "lora.sort.size": "Más grandes",
+  "lora.weight": "Peso",
+  "lora.refresh.tooltip": "Actualizar lista de LoRAs",
+  "lora.close.tooltip": "Cerrar (Esc)",
+  "lora.openFolder": "Abrir carpeta",
+  "lora.openFolder.tooltip": "Abrir carpeta de LoRAs en el explorador de archivos",
+  "lora.hint": "Clic para insertar · Clic derecho para opciones",
+  "lora.empty.none": "No se encontraron LoRAs en el directorio models/Lora",
+  "lora.empty.noMatch": "Ningún LoRA coincide con tu búsqueda",
+  "lora.allFolder": "Todos los LoRAs",
+  "lora.menu.previewFromFile": "Vista previa desde archivo…",
+  "lora.menu.previewFromCanvas": "Vista previa desde lienzo",
+  "lora.menu.removePreview": "Quitar vista previa",
+  "lora.tab.tooltip": "Examinar LoRAs (Ctrl+L)",
+
+  "wildcard.allFolder": "Todos",
+  "wildcard.search.placeholder": "Buscar wildcards...",
+  "wildcard.refresh.tooltip": "Actualizar lista de wildcards",
+  "wildcard.close.tooltip": "Cerrar (Esc)",
+  "wildcard.unsorted": "Sin clasificar",
+  "wildcard.insert": "Insertar",
+  "wildcard.insert.tooltip": "Insertar en el prompt",
+  "wildcard.editButton": "Editar en Wildcards",
+  "wildcard.edit.tooltip": "Abrir en el editor de Wildcards",
+  "wildcard.clickToCopy": "Clic para copiar",
+  "wildcard.failedToLoad": "Error al cargar",
+  "wildcard.tab.tooltip": "Examinar Wildcards (Ctrl+Shift+L)"
 }
