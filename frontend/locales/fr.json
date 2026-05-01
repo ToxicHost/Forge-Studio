@@ -163,5 +163,19 @@
   "develop.pick.blackPoint.tooltip": "Point noir — choisis le pixel le plus sombre qui devrait apparaître en noir pur",
 
   "develop.presets.title": "Préréglages",
-  "develop.presets.save": "Enregistrer…"
+  "develop.presets.save": "Enregistrer…",
+
+  "develop.hsl.band.red": "Rouge",
+  "develop.hsl.band.orange": "Orange",
+  "develop.hsl.band.yellow": "Jaune",
+  "develop.hsl.band.green": "Vert",
+  "develop.hsl.band.aqua": "Turquoise",
+  "develop.hsl.band.blue": "Bleu",
+  "develop.hsl.band.purple": "Violet",
+  "develop.hsl.band.magenta": "Magenta",
+
+  "develop.cg.shadows": "Ombres",
+  "develop.cg.midtones": "Tons moyens",
+  "develop.cg.highlights": "Hautes lumières",
+  "develop.cg.global": "Global"
 }

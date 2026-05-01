@@ -163,5 +163,19 @@
   "develop.pick.blackPoint.tooltip": "Punto negro — elige el píxel más oscuro que debería verse negro puro",
 
   "develop.presets.title": "Ajustes preestablecidos",
-  "develop.presets.save": "Guardar…"
+  "develop.presets.save": "Guardar…",
+
+  "develop.hsl.band.red": "Rojo",
+  "develop.hsl.band.orange": "Naranja",
+  "develop.hsl.band.yellow": "Amarillo",
+  "develop.hsl.band.green": "Verde",
+  "develop.hsl.band.aqua": "Turquesa",
+  "develop.hsl.band.blue": "Azul",
+  "develop.hsl.band.purple": "Morado",
+  "develop.hsl.band.magenta": "Magenta",
+
+  "develop.cg.shadows": "Sombras",
+  "develop.cg.midtones": "Medios tonos",
+  "develop.cg.highlights": "Iluminaciones",
+  "develop.cg.global": "Global"
 }
