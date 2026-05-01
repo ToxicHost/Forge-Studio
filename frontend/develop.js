@@ -428,19 +428,7 @@ function applyToContext(ctx, w, h, params) {
     // Centralised here so any path that reaches the pipeline is migrated:
     // doc tab switch, undo/redo restore, freshly-constructed state, etc.
     _migrateParams(params);
-    // [CAL-DIAG] Temporary diagnostic — see why Color Calibration sliders
-    // appear to have no effect. Remove once root cause identified.
-    var _calIdent = _isIdentity(params);
-    console.log("[CAL] apply: version=" + params._version
-        + " identity=" + _calIdent
-        + " redHue=" + (params.calRedHue|0)
-        + " redSat=" + (params.calRedSat|0)
-        + " greenHue=" + (params.calGreenHue|0)
-        + " greenSat=" + (params.calGreenSat|0)
-        + " blueHue=" + (params.calBlueHue|0)
-        + " blueSat=" + (params.calBlueSat|0)
-        + " shadowTint=" + (params.calShadowTint|0));
-    if (_calIdent) return;
+    if (_isIdentity(params)) return;
     if (typeof _applyDevelopFull !== "function") return; // skeleton-only mode
     if (params._dragging) {
         _applyDevelopProxy(ctx, w, h, params);
@@ -605,33 +593,88 @@ var _CAL_PRIMARIES_XY = [
 // D65 white point in xy.
 var _CAL_WHITE_XY = [0.3127, 0.3290];
 
-var _CAL_MAX_HUE_RAD = 30 * Math.PI / 180;  // Slider ±100 ⇒ ±30°.
+// Slider ±100 → ±45° rotation. darktable's stock soft-range is ±20°
+// (hard range goes to ±π); ours sits between the two so a full slider
+// sweep produces a Lightroom-Calibration-strength shift on the primary
+// chromaticity, not a faint scientific tweak. Wider angles than ±45°
+// push primaries close enough to other primaries that the resulting
+// 3×3 becomes near-singular and crushes complementary colors to black
+// in linear-light, which looks broken on real images.
+var _CAL_MAX_HUE_RAD = 45 * Math.PI / 180;
 
-// Slider value (-100..+100) → multiplicative purity factor.
-//   slider 0    → 1.0 (identity)
-//   slider -100 → 0.01 (essentially desaturated)
-//   slider +100 → 5.0 (super-saturated, may exit gamut at extremes)
-// Two-piece linear so 0 stays exactly identity. Matches darktable's
-// hard parameter range while keeping Studio's symmetric slider feel.
+// Slider (-100..+100) → multiplicative purity factor anchored to the
+// **sRGB gamut edge** along the rotated direction (cf. darktable's
+// `_find_distance_to_edge` in custom_primaries.c). At purity = 1.0 the
+// primary lies exactly on the sRGB triangle edge — matching the
+// untouched primaries when no rotation is applied. At purity > 1.0 it
+// pokes outside the gamut (super-saturated); at purity < 1.0 it pulls
+// in toward the white point (desaturated).
+//
+// Range mapping:
+//   slider  0   → 1.0  (identity, primary stays at gamut edge)
+//   slider +100 → 1.8  (significantly more saturated than sRGB primary)
+//   slider -100 → 0.2  (heavily pulled toward neutral)
+// Two-piece linear so slider 0 stays exactly identity.
 function _calSliderToPurity(s) {
     if (!s) return 1.0;
     var t = s / 100;
-    if (t >= 0) return 1.0 + t * 4.0;        // 0..+100 → 1.0..5.0
-    return 1.0 + t * 0.99;                   // -100..0 → 0.01..1.0
+    if (t >= 0) return 1.0 + t * 0.8;   // 0..+100 → 1.0..1.8
+    return 1.0 + t * 0.8;                // -100..0 → 0.2..1.0
 }
 
 function _calSliderToHueRad(s) {
     return (s || 0) / 100 * _CAL_MAX_HUE_RAD;
 }
 
-// Rotate a primary in CIE xy space around the white point, then scale
-// its radius by the purity factor. Returns new [x, y].
-function _rotatePrimaryInXY(primaryXY, whiteXY, rotationRad, purity) {
+// 2D ray–segment intersection. Ray starts at W=(wx,wy) in direction
+// D=(dx,dy); segment runs from P1 to P2. Returns the ray distance s ≥ 0
+// where the intersection occurs, or -1 if no intersection in the ray's
+// forward half-line and within the segment. Used by _findDistanceToEdge.
+function _rayIntersectSegment(wx, wy, dx, dy, p1x, p1y, p2x, p2y) {
+    var v2x = p2x - p1x, v2y = p2y - p1y;
+    var denom = dx * v2y - dy * v2x;
+    if (Math.abs(denom) < 1e-12) return -1;  // ray parallel to segment
+    var qx = p1x - wx, qy = p1y - wy;
+    var s = (qx * v2y - qy * v2x) / denom;   // ray parameter
+    var t = (qx * dy  - qy * dx)  / denom;   // segment parameter
+    if (s < 0) return -1;
+    if (t < -1e-9 || t > 1 + 1e-9) return -1;
+    return s;
+}
+
+// Distance from white point to the sRGB chromaticity-triangle edge,
+// along direction theta (radians, measured CCW from +x in xy plane).
+// The white point lies inside the triangle, so a forward ray hits
+// exactly one edge. Used to anchor primary purity to the gamut boundary
+// — see darktable's _find_distance_to_edge (custom_primaries.c).
+function _findDistanceToEdge(theta, whiteXY, primariesXY) {
+    var dx = Math.cos(theta), dy = Math.sin(theta);
+    var minS = Infinity;
+    for (var i = 0; i < 3; i++) {
+        var p1 = primariesXY[i];
+        var p2 = primariesXY[(i + 1) % 3];
+        var s = _rayIntersectSegment(whiteXY[0], whiteXY[1], dx, dy,
+                                     p1[0], p1[1], p2[0], p2[1]);
+        if (s >= 0 && s < minS) minS = s;
+    }
+    // Fallback: ray didn't hit any segment (shouldn't happen for white
+    // inside the triangle). Use the original primary radius so we
+    // degrade gracefully.
+    return minS === Infinity ? 0.25 : minS;
+}
+
+// Rotate a primary around the white point in xy chromaticity, then
+// place its radius at `purity × edgeDistance(rotated direction)`. The
+// resulting xy coord is fed into _buildRgbToXyzMatrix to construct the
+// new RGB→XYZ basis. Mirrors darktable's dt_rotate_and_scale_primary
+// adapted to anchor on the sRGB triangle (Studio's working gamut)
+// rather than the visible-spectrum locus.
+function _rotatePrimaryInXY(primaryXY, whiteXY, allPrimariesXY, rotationRad, purity) {
     var dx = primaryXY[0] - whiteXY[0];
     var dy = primaryXY[1] - whiteXY[1];
-    var radius = Math.sqrt(dx * dx + dy * dy);
     var theta = Math.atan2(dy, dx) + rotationRad;
-    var rNew = radius * purity;
+    var edgeDist = _findDistanceToEdge(theta, whiteXY, allPrimariesXY);
+    var rNew = edgeDist * purity;
     return [
         whiteXY[0] + rNew * Math.cos(theta),
         whiteXY[1] + rNew * Math.sin(theta),
@@ -727,50 +770,47 @@ function _buildCalibrationMatrix(p) {
     var bPur = _calSliderToPurity(p.calBlueSat);
 
     var newPrimaries = [
-        _rotatePrimaryInXY(_CAL_PRIMARIES_XY[0], _CAL_WHITE_XY, rHue, rPur),
-        _rotatePrimaryInXY(_CAL_PRIMARIES_XY[1], _CAL_WHITE_XY, gHue, gPur),
-        _rotatePrimaryInXY(_CAL_PRIMARIES_XY[2], _CAL_WHITE_XY, bHue, bPur),
+        _rotatePrimaryInXY(_CAL_PRIMARIES_XY[0], _CAL_WHITE_XY, _CAL_PRIMARIES_XY, rHue, rPur),
+        _rotatePrimaryInXY(_CAL_PRIMARIES_XY[1], _CAL_WHITE_XY, _CAL_PRIMARIES_XY, gHue, gPur),
+        _rotatePrimaryInXY(_CAL_PRIMARIES_XY[2], _CAL_WHITE_XY, _CAL_PRIMARIES_XY, bHue, bPur),
     ];
 
-    // Standard input → XYZ (computed once, could be cached if it shows up
-    // hot in profiles — but it's just a few multiplies and runs once per
-    // _applyDevelopFull call, way under measurement noise).
+    // Build matrix per darktable's `_calculate_adjustment_matrix`:
+    //   1. NEW primaries → XYZ
+    //   2. compose with XYZ → STANDARD primaries (the inverse of the
+    //      working profile's RGB→XYZ matrix)
+    //   3. result M reinterprets the input pixel as if it had been
+    //      authored against the new primaries, then re-encodes it back
+    //      into the standard working space.
+    //
+    // M × stdRGB = stdFromXYZ × newToXYZ × stdRGB, i.e.: take the input
+    // RGB, treat it as RGB in the NEW primary basis, project to XYZ,
+    // and re-express in the standard basis. White is preserved by
+    // construction because both bases share the same white point.
     var stdToXYZ = _buildRgbToXyzMatrix(_CAL_PRIMARIES_XY, _CAL_WHITE_XY);
-    // Output (new primaries) → XYZ, then inverted to give XYZ → output RGB.
     var newToXYZ = _buildRgbToXyzMatrix(newPrimaries, _CAL_WHITE_XY);
     if (!stdToXYZ || !newToXYZ) {
-        // Singular matrix — degenerate primaries. Fall back to identity.
+        // Degenerate primaries (e.g., purity ≈ 0 collapsing onto white).
         return [1, 0, 0, 0, 1, 0, 0, 0, 1];
     }
-    var newFromXYZ = _mat3Inverse(newToXYZ);
-    if (!newFromXYZ) return [1, 0, 0, 0, 1, 0, 0, 0, 1];
-
-    // Reinterpret the input as if its (R,G,B) values were in the NEW
-    // primary basis: convert "as new primaries" → XYZ → standard sRGB.
-    // M × input = newToXYZ_then_back_through_std_inv = stdToXYZ⁻¹ × newToXYZ.
     var stdFromXYZ = _mat3Inverse(stdToXYZ);
     if (!stdFromXYZ) return [1, 0, 0, 0, 1, 0, 0, 0, 1];
     return _mat3Mul(stdFromXYZ, newToXYZ);
 }
 
 function _applyCalibration(rLin, gLin, bLin, n, p) {
-    // [CAL-DIAG] Temporary diagnostic — remove once root cause identified.
-    console.log("[CAL] _applyCalibration entry, version=" + p._version);
     if ((p._version | 0) < 2) return;
-    console.log("[CAL] passed version gate");
 
     var rH = p.calRedHue   | 0, rS = p.calRedSat   | 0;
     var gH = p.calGreenHue | 0, gS = p.calGreenSat | 0;
     var bH = p.calBlueHue  | 0, bS = p.calBlueSat  | 0;
     var st = p.calShadowTint | 0;
     if (rH === 0 && rS === 0 && gH === 0 && gS === 0 && bH === 0 && bS === 0 && st === 0) {
-        console.log("[CAL] all-zero early-out");
         return;
     }
 
     var matrixActive = (rH !== 0 || rS !== 0 || gH !== 0 || gS !== 0 || bH !== 0 || bS !== 0);
     var m = matrixActive ? _buildCalibrationMatrix(p) : null;
-    if (m) console.log("[CAL] matrix=" + JSON.stringify(Array.from(m)));
     var m0, m1, m2, m3, m4, m5, m6, m7, m8;
     if (m) {
         m0 = m[0]; m1 = m[1]; m2 = m[2];
