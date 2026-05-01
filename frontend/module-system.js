@@ -92,8 +92,27 @@ function _getTabBar() {
 function _createTabButton(id, config) {
     const btn = document.createElement("button");
     btn.dataset.module = id;
-    btn.textContent = config.icon ? config.icon + " " + config.label : config.label;
-    btn.title = config.label;
+    // Tab labels translate via tabs.<id>; the markup English is the
+    // fallback. Both the textContent (with leading icon) and title
+    // attribute re-translate on locale switch via applyToDom().
+    const tr = (window.I18N && window.I18N.t) ? window.I18N.t : null;
+    const label = tr ? tr("tabs." + id, config.label) : config.label;
+    btn.dataset.i18n = "tabs." + id;
+    btn.dataset.i18nTitle = "tabs." + id;
+    btn.textContent = config.icon ? config.icon + " " + label : label;
+    btn.title = label;
+    // applyToDom would clobber the icon-prefixed textContent on locale
+    // switch, so keep the icon by re-rendering on i18n:change.
+    if (config.icon) {
+        const renderIcon = () => {
+            const newLabel = (window.I18N && window.I18N.t)
+                ? window.I18N.t("tabs." + id, config.label)
+                : config.label;
+            btn.textContent = config.icon + " " + newLabel;
+            btn.title = newLabel;
+        };
+        window.addEventListener("i18n:change", renderIcon);
+    }
     return btn;
 }
 
