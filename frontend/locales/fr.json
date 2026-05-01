@@ -87,5 +87,95 @@
   "toast.updateCheckFailed": "Échec de la vérification des mises à jour : {error}",
   "toast.updating": "Mise à jour...",
   "toast.updateFailed": "Échec de la mise à jour : {error}",
-  "toast.studioUpToDate": "Forge Studio est à jour"
+  "toast.studioUpToDate": "Forge Studio est à jour",
+
+  "develop.title": "Développer",
+  "develop.reset": "Réinitialiser",
+  "develop.reset.tooltip": "Réinitialiser tous les curseurs",
+  "develop.enable.tooltip": "Activer Développer",
+  "develop.beforeAfter.tooltip": "Comparaison avant/après",
+  "develop.hpBadge.tooltip": "Haute précision : pixels source float32 actifs",
+
+  "develop.split.before": "Avant",
+  "develop.split.after": "Après",
+
+  "develop.section.basic": "Étalonnage",
+  "develop.section.toneCurve": "Courbe des tonalités",
+  "develop.section.presence": "Présence",
+  "develop.section.hsl": "TSL / Couleur",
+  "develop.section.colorGrading": "Étalonnage couleur",
+  "develop.section.detail": "Détails",
+  "develop.section.effects": "Effets",
+
+  "develop.slider.resetHint": "Double-cliquer pour réinitialiser",
+
+  "develop.slider.temperature": "Température",
+  "develop.slider.tint": "Teinte",
+  "develop.slider.exposure": "Exposition",
+  "develop.slider.contrast": "Contraste",
+  "develop.slider.highlights": "Hautes lumières",
+  "develop.slider.shadows": "Ombres",
+  "develop.slider.whites": "Blancs",
+  "develop.slider.blacks": "Noirs",
+  "develop.slider.vibrance": "Vibrance",
+  "develop.slider.saturation": "Saturation",
+
+  "develop.slider.texture": "Texture",
+  "develop.slider.clarity": "Clarté",
+  "develop.slider.dehaze": "Voile",
+
+  "develop.slider.sharpenAmount": "Netteté",
+  "develop.slider.sharpenRadius": "Rayon",
+  "develop.slider.sharpenThreshold": "Seuil",
+  "develop.slider.nrLuminance": "Bruit lum.",
+  "develop.slider.nrColor": "Bruit couleur",
+
+  "develop.slider.vignetteAmount": "Vignettage",
+  "develop.slider.grainAmount": "Quantité de grain",
+  "develop.slider.grainSize": "Taille du grain",
+
+  "develop.slider.tcHighlights": "Hautes lumières",
+  "develop.slider.tcLights": "Tons clairs",
+  "develop.slider.tcDarks": "Tons foncés",
+  "develop.slider.tcShadows": "Ombres",
+
+  "develop.slider.cgBlending": "Fusion",
+  "develop.slider.cgBalance": "Balance",
+
+  "develop.toneCurve.parametric": "Paramétrique",
+  "develop.toneCurve.point": "Point",
+
+  "develop.hsl.hue": "Teinte",
+  "develop.hsl.sat": "Saturation",
+  "develop.hsl.lum": "Luminance",
+
+  "develop.calib.wb": "Balance des blancs",
+  "develop.calib.whitePoint": "Point blanc",
+  "develop.calib.blackPoint": "Point noir",
+  "develop.calib.statusNone": "Aucun étalonnage défini",
+  "develop.calib.wb.clear": "Effacer l'étalonnage de la balance des blancs",
+  "develop.calib.whitePoint.clear": "Effacer l'étalonnage du point blanc",
+  "develop.calib.blackPoint.clear": "Effacer l'étalonnage du point noir",
+
+  "develop.pick.suffix": "\nClique pour activer, puis sur l'image. Maj-clic pour effacer.",
+  "develop.pick.wb.tooltip": "Balance des blancs — choisis un pixel neutre qui devrait apparaître en gris",
+  "develop.pick.whitePoint.tooltip": "Point blanc — choisis le pixel le plus clair qui devrait apparaître en blanc pur",
+  "develop.pick.blackPoint.tooltip": "Point noir — choisis le pixel le plus sombre qui devrait apparaître en noir pur",
+
+  "develop.presets.title": "Préréglages",
+  "develop.presets.save": "Enregistrer…",
+
+  "develop.hsl.band.red": "Rouge",
+  "develop.hsl.band.orange": "Orange",
+  "develop.hsl.band.yellow": "Jaune",
+  "develop.hsl.band.green": "Vert",
+  "develop.hsl.band.aqua": "Turquoise",
+  "develop.hsl.band.blue": "Bleu",
+  "develop.hsl.band.purple": "Violet",
+  "develop.hsl.band.magenta": "Magenta",
+
+  "develop.cg.shadows": "Ombres",
+  "develop.cg.midtones": "Tons moyens",
+  "develop.cg.highlights": "Hautes lumières",
+  "develop.cg.global": "Global"
 }
