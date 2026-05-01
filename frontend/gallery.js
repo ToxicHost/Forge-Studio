@@ -9,6 +9,23 @@
 (function () {
 "use strict";
 
+// i18n helper — runtime-built strings pass their English source through
+// _t() so the locale-aware text shows on first paint. Elements get
+// data-i18n* attributes so applyToDom() keeps them in sync on locale
+// switch. _tp() is the plural-aware variant; it forwards to
+// I18N.t.plural and falls back to the literal English on miss.
+function _t(key, fallback, params) {
+  return (window.I18N && window.I18N.t) ? window.I18N.t(key, fallback, params) : fallback;
+}
+function _tp(key, count, fallback, params) {
+  if (window.I18N && window.I18N.t && window.I18N.t.plural) {
+    var p = Object.assign({}, params || {}, { count: count });
+    var out = window.I18N.t.plural(key, count, p);
+    if (out !== key) return out;
+  }
+  return fallback;
+}
+
 const TAG = "[Gallery]";
 const API_BASE = "/studio/gallery";
 const VERSION = "1.1";
@@ -1368,24 +1385,24 @@ async function openDuplicatesModal() {
     document.getElementById("gal-dup-bg")?.remove();
     const bg = document.createElement("div");
     bg.className = "gal-move-bg"; bg.id = "gal-dup-bg";
-    bg.innerHTML = '<div class="gal-dup-modal"><h3>Find duplicates</h3>'
-        + '<div class="gal-dup-status" id="gal-dup-status">Checking...</div>'
+    bg.innerHTML = '<div class="gal-dup-modal"><h3 data-i18n="gallery.dup.title">' + _t("gallery.dup.title", "Find duplicates") + '</h3>'
+        + '<div class="gal-dup-status" id="gal-dup-status" data-i18n="gallery.dup.checking">' + _t("gallery.dup.checking", "Checking...") + '</div>'
         + '<div class="gal-dup-controls">'
-        +   '<label class="gal-dup-threshold-lbl">Similarity threshold: '
+        +   '<label class="gal-dup-threshold-lbl"><span data-i18n="gallery.dup.threshLabel">' + _t("gallery.dup.threshLabel", "Similarity threshold:") + '</span> '
         +     '<span id="gal-dup-thresh-val">95%</span>'
         +   '</label>'
         +   '<input type="range" id="gal-dup-thresh" min="0" max="64" value="12" step="1" />'
-        +   '<div class="gal-dup-hint">Stricter = only near-identical. Looser = minor edits count as duplicates. Max 25% difference.</div>'
+        +   '<div class="gal-dup-hint" data-i18n="gallery.dup.hint">' + _t("gallery.dup.hint", "Stricter = only near-identical. Looser = minor edits count as duplicates. Max 25% difference.") + '</div>'
         + '</div>'
         + '<div class="gal-dup-actions">'
-        +   '<button class="gal-btn" id="gal-dup-hash-btn" style="display:none">Compute hashes</button>'
-        +   '<button class="gal-btn accent" id="gal-dup-scan-btn" disabled>Scan for duplicates</button>'
+        +   '<button class="gal-btn" id="gal-dup-hash-btn" data-i18n="gallery.dup.computeHashes" style="display:none">' + _t("gallery.dup.computeHashes", "Compute hashes") + '</button>'
+        +   '<button class="gal-btn accent" id="gal-dup-scan-btn" data-i18n="gallery.dup.scanBtn" disabled>' + _t("gallery.dup.scanBtn", "Scan for duplicates") + '</button>'
         + '</div>'
         + '<div class="gal-dup-results" id="gal-dup-results"></div>'
         + '<div class="mm-footer">'
-        +   '<button class="gal-btn danger" id="gal-dup-del-sel" disabled>Delete selected</button>'
+        +   '<button class="gal-btn danger" id="gal-dup-del-sel" data-i18n="gallery.dup.deleteSelected" disabled>' + _t("gallery.dup.deleteSelected", "Delete selected") + '</button>'
         +   '<div style="flex:1"></div>'
-        +   '<button class="gal-btn" id="gal-dup-cancel">Close</button>'
+        +   '<button class="gal-btn" id="gal-dup-cancel" data-i18n="gallery.dup.close">' + _t("gallery.dup.close", "Close") + '</button>'
         + '</div></div>';
     bg.addEventListener("click", e => {
         if (e.target === bg || e.target.id === "gal-dup-cancel") { bg.remove(); return; }
@@ -1421,25 +1438,40 @@ async function refreshDupStatus() {
     const s = await api("/hash-status");
     if (s.error) { statusEl.textContent = "Error: " + s.error; return; }
     if (!s.available) {
-        statusEl.innerHTML = '<span style="color:var(--danger)">imagehash library not installed. Restart Studio to install, or run <code>pip install imagehash</code> in your venv.</span>';
+        statusEl.innerHTML = '<span style="color:var(--danger)">'
+            + _t("gallery.dup.libraryMissing",
+                'imagehash library not installed. Restart Studio to install, or run <code>pip install imagehash</code> in your venv.')
+            + '</span>';
         if (hashBtn) hashBtn.style.display = "none";
         if (scanBtn) scanBtn.disabled = true;
         return;
     }
     if (s.hashing) {
-        statusEl.textContent = "Hashing " + s.hash_current + " / " + s.hash_total + "...";
-        if (hashBtn) { hashBtn.style.display = ""; hashBtn.disabled = true; hashBtn.textContent = "Hashing..."; }
+        statusEl.textContent = _t("gallery.dup.hashing",
+            "Hashing " + s.hash_current + " / " + s.hash_total + "...",
+            { current: s.hash_current, total: s.hash_total });
+        if (hashBtn) { hashBtn.style.display = ""; hashBtn.disabled = true; hashBtn.textContent = _t("gallery.dup.hashingBtn", "Hashing..."); }
         if (scanBtn) scanBtn.disabled = true;
         setTimeout(refreshDupStatus, 500);
         return;
     }
     const missing = s.total - s.hashed;
     if (missing > 0) {
-        statusEl.textContent = s.hashed + " / " + s.total + " images hashed. " + missing + " need hashing before scanning.";
-        if (hashBtn) { hashBtn.style.display = ""; hashBtn.disabled = false; hashBtn.textContent = "Compute " + missing + " hash" + (missing > 1 ? "es" : ""); }
+        statusEl.textContent = _t("gallery.dup.needHashing",
+            s.hashed + " / " + s.total + " images hashed. " + missing + " need hashing before scanning.",
+            { hashed: s.hashed, total: s.total, missing: missing });
+        if (hashBtn) {
+            hashBtn.style.display = "";
+            hashBtn.disabled = false;
+            hashBtn.textContent = _tp("gallery.dup.computeBtn", missing,
+                "Compute " + missing + " hash" + (missing > 1 ? "es" : ""),
+                { missing: missing });
+        }
         if (scanBtn) scanBtn.disabled = true;
     } else {
-        statusEl.textContent = "All " + s.total + " images hashed. Ready to scan.";
+        statusEl.textContent = _t("gallery.dup.readyTotal",
+            "All " + s.total + " images hashed. Ready to scan.",
+            { total: s.total });
         if (hashBtn) hashBtn.style.display = "none";
         if (scanBtn) scanBtn.disabled = s.total === 0;
     }
@@ -1447,7 +1479,7 @@ async function refreshDupStatus() {
 
 async function startHashing() {
     const hashBtn = document.getElementById("gal-dup-hash-btn");
-    if (hashBtn) { hashBtn.disabled = true; hashBtn.textContent = "Starting..."; }
+    if (hashBtn) { hashBtn.disabled = true; hashBtn.textContent = _t("gallery.dup.starting", "Starting..."); }
     const r = await api("/compute-hashes", { method: "POST" });
     if (r.error) { toast("Error: " + r.error); return; }
     // Poll — SSE fires on completion too but polling gives live progress numbers
@@ -1459,14 +1491,14 @@ async function scanDuplicates() {
     const resultsEl = document.getElementById("gal-dup-results");
     const threshInput = document.getElementById("gal-dup-thresh");
     if (!resultsEl || !scanBtn) return;
-    scanBtn.disabled = true; scanBtn.textContent = "Scanning...";
-    resultsEl.innerHTML = '<div class="gal-dup-empty">Scanning...</div>';
+    scanBtn.disabled = true; scanBtn.textContent = _t("gallery.dup.scanning", "Scanning...");
+    resultsEl.innerHTML = '<div class="gal-dup-empty">' + _t("gallery.dup.scanning", "Scanning...") + '</div>';
     const thresh = threshInput ? parseInt(threshInput.value) : 12;
     const r = await api("/duplicates?threshold=" + thresh);
-    scanBtn.disabled = false; scanBtn.textContent = "Scan for duplicates";
+    scanBtn.disabled = false; scanBtn.textContent = _t("gallery.dup.scanBtn", "Scan for duplicates");
     if (r.error) { resultsEl.innerHTML = '<div class="gal-dup-empty">Error: ' + esc(r.error) + '</div>'; return; }
     if (!r.groups || r.groups.length === 0) {
-        resultsEl.innerHTML = '<div class="gal-dup-empty">No duplicates found at this threshold.</div>';
+        resultsEl.innerHTML = '<div class="gal-dup-empty">' + _t("gallery.dup.noDuplicates", "No duplicates found at this threshold.") + '</div>';
         updateDupSelectionCount();
         return;
     }

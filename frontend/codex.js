@@ -23,20 +23,32 @@ var TAG = "[Codex]", VERSION = "2.1.5";
 // CATEGORIES
 // ══════════════════════════════════════════════════════════════════
 
+// i18n helper — every dynamically-built string passes its English source
+// through _t() so the locale-aware text shows on first paint.
+function _t(key, fallback) {
+  return (window.I18N && window.I18N.t) ? window.I18N.t(key, fallback) : fallback;
+}
+
 var CATEGORIES = [
-  { id: "getting_started",  label: "Getting Started" },
-  { id: "how_studio_works", label: "How Studio Works" },
-  { id: "canvas_tools",     label: "Canvas Tools" },
-  { id: "generation",       label: "Generation" },
-  { id: "inpainting",       label: "Inpainting" },
-  { id: "advanced",         label: "Advanced Features" },
-  { id: "layers",           label: "Layers & Export" },
-  { id: "gallery",          label: "Gallery" },
-  { id: "video_lab",        label: "Video Lab" },
-  { id: "workshop",         label: "Workshop" },
-  { id: "troubleshooting",  label: "Troubleshooting" },
-  { id: "shortcuts",        label: "Keyboard Shortcuts" },
+  { id: "getting_started",  label: "Getting Started",     i18nKey: "codex.category.gettingStarted" },
+  { id: "how_studio_works", label: "How Studio Works",    i18nKey: "codex.category.howStudioWorks" },
+  { id: "canvas_tools",     label: "Canvas Tools",        i18nKey: "codex.category.canvasTools" },
+  { id: "generation",       label: "Generation",          i18nKey: "codex.category.generation" },
+  { id: "inpainting",       label: "Inpainting",          i18nKey: "codex.category.inpainting" },
+  { id: "advanced",         label: "Advanced Features",   i18nKey: "codex.category.advancedFeatures" },
+  { id: "layers",           label: "Layers & Export",     i18nKey: "codex.category.layersExport" },
+  { id: "gallery",          label: "Gallery",             i18nKey: "codex.category.gallery" },
+  { id: "video_lab",        label: "Video Lab",           i18nKey: "codex.category.videoLab" },
+  { id: "workshop",         label: "Workshop",            i18nKey: "codex.category.workshop" },
+  { id: "troubleshooting",  label: "Troubleshooting",     i18nKey: "codex.category.troubleshooting" },
+  { id: "shortcuts",        label: "Keyboard Shortcuts",  i18nKey: "codex.category.keyboardShortcuts" },
 ];
+
+// Translate a category label via its i18nKey, falling back to the
+// English label embedded in the CATEGORIES table.
+function _catLabel(cat) {
+  return cat ? _t(cat.i18nKey || "", cat.label) : "";
+}
 
 // ══════════════════════════════════════════════════════════════════
 // ENTRIES
@@ -449,7 +461,7 @@ function _search(q) {
 }
 
 function _buildUI(c) {
-  c.innerHTML = '<div class="cx-layout"><div class="cx-nav"><div class="cx-search-wrap"><input type="text" class="cx-search" id="cxSearch" placeholder="Search docs..." autocomplete="off"></div><div class="cx-tree" id="cxTree"></div></div><div class="cx-content" id="cxContent"></div></div>';
+  c.innerHTML = '<div class="cx-layout"><div class="cx-nav"><div class="cx-search-wrap"><input type="text" class="cx-search" id="cxSearch" data-i18n-placeholder="codex.search.placeholder" placeholder="' + _t("codex.search.placeholder", "Search docs...") + '" autocomplete="off"></div><div class="cx-tree" id="cxTree"></div></div><div class="cx-content" id="cxContent"></div></div>';
   _els.search = c.querySelector("#cxSearch");
   _els.tree = c.querySelector("#cxTree");
   _els.content = c.querySelector("#cxContent");
@@ -470,7 +482,9 @@ function _renderTree(entries, forceOpen) {
     var hasActive = _selectedEntry && ce.some(function (e) { return e.id === _selectedEntry.id; });
     var open = isSearch || hasActive;
     html += '<div class="cx-category' + (open ? ' open' : '') + '" data-cat="' + cat.id + '">';
-    html += '<div class="cx-cat-title" data-cat-toggle="' + cat.id + '"><span class="cx-cat-arrow">\u25b6</span>' + cat.label + '</div>';
+    // Label gets its own span so applyToDom() can re-translate just the
+    // text without clobbering the leading arrow span on locale switch.
+    html += '<div class="cx-cat-title" data-cat-toggle="' + cat.id + '"><span class="cx-cat-arrow">\u25b6</span><span data-i18n="' + (cat.i18nKey || "") + '">' + _catLabel(cat) + '</span></div>';
     html += '<div class="cx-cat-entries">';
     ce.forEach(function (e) {
       var a = (_selectedEntry && _selectedEntry.id === e.id) ? " active" : "";
@@ -523,7 +537,7 @@ function _selectEntry(e) {
     showMeHtml += '</div>';
   }
 
-  _els.content.innerHTML = '<div class="cx-article"><div class="cx-article-category">' + (cat ? cat.label : "") + '</div><div class="cx-article-title">' + e.title + '</div>' + sc + showMeHtml + '<div class="cx-article-body">' + content + '</div>' + deepHtml + '</div>';
+  _els.content.innerHTML = '<div class="cx-article"><div class="cx-article-category">' + _catLabel(cat) + '</div><div class="cx-article-title">' + e.title + '</div>' + sc + showMeHtml + '<div class="cx-article-body">' + content + '</div>' + deepHtml + '</div>';
 
   // Wire Show Me buttons
   _els.content.querySelectorAll("[data-showme]").forEach(function (btn) {
@@ -582,7 +596,8 @@ function _buildPopover() {
     var btn = document.createElement("button");
     btn.className = "tool-btn cx-pop-toggle";
     btn.id = "cxPopToggle";
-    btn.title = "Quick Reference (?)";
+    btn.dataset.i18nTitle = "codex.popover.tooltip";
+    btn.title = _t("codex.popover.tooltip", "Quick Reference (?)");
     btn.innerHTML = "?";
     btn.addEventListener("click", function (ev) { ev.preventDefault(); _togglePopover(); });
     if (spacer) toolstrip.insertBefore(btn, spacer);
@@ -595,8 +610,8 @@ function _buildPopover() {
   _popover.className = "cx-popover";
   _popover.innerHTML =
     '<div class="cx-pop-header">' +
-      '<input type="text" class="cx-pop-search" id="cxPopSearch" placeholder="Search the Codex..." autocomplete="off">' +
-      '<button class="cx-pop-close" id="cxPopClose" title="Close">\u00d7</button>' +
+      '<input type="text" class="cx-pop-search" id="cxPopSearch" data-i18n-placeholder="codex.popover.search.placeholder" placeholder="' + _t("codex.popover.search.placeholder", "Search the Codex...") + '" autocomplete="off">' +
+      '<button class="cx-pop-close" id="cxPopClose" data-i18n-title="codex.popover.close" title="' + _t("codex.popover.close", "Close") + '">\u00d7</button>' +
     '</div>' +
     '<div class="cx-pop-body">' +
       '<div class="cx-pop-results" id="cxPopResults" style="display:none;"></div>' +
@@ -658,9 +673,9 @@ function _popRenderHome() {
   var cats = [];
   CATEGORIES.forEach(function (cat) {
     var count = ENTRIES.filter(function (e) { return e.category === cat.id; }).length;
-    if (count) cats.push('<button class="cx-pop-cat" data-cat="' + cat.id + '">' + cat.label + ' <span class="cx-pop-cat-count">' + count + '</span></button>');
+    if (count) cats.push('<button class="cx-pop-cat" data-cat="' + cat.id + '"><span data-i18n="' + (cat.i18nKey || "") + '">' + _catLabel(cat) + '</span> <span class="cx-pop-cat-count">' + count + '</span></button>');
   });
-  _popEls.article.innerHTML = '<div class="cx-pop-home"><div class="cx-pop-home-title">Quick Reference</div><div class="cx-pop-home-text">Search above or browse by category.</div><div class="cx-pop-cats">' + cats.join("") + '</div></div>';
+  _popEls.article.innerHTML = '<div class="cx-pop-home"><div class="cx-pop-home-title" data-i18n="codex.popover.home.title">' + _t("codex.popover.home.title", "Quick Reference") + '</div><div class="cx-pop-home-text" data-i18n="codex.popover.home.text">' + _t("codex.popover.home.text", "Search above or browse by category.") + '</div><div class="cx-pop-cats">' + cats.join("") + '</div></div>';
   _popEls.article.style.display = "block";
   _popEls.results.style.display = "none";
 
@@ -676,13 +691,13 @@ function _popRenderHome() {
 
 function _popRenderResults(entries) {
   if (!entries.length) {
-    _popEls.results.innerHTML = '<div class="cx-pop-empty">No matching entries</div>';
+    _popEls.results.innerHTML = '<div class="cx-pop-empty" data-i18n="codex.popover.empty">' + _t("codex.popover.empty", "No matching entries") + '</div>';
     return;
   }
   var html = "";
   entries.forEach(function (e) {
     var cat = CATEGORIES.find(function (c) { return c.id === e.category; });
-    html += '<button class="cx-pop-result" data-id="' + e.id + '"><span class="cx-pop-result-title">' + e.title + '</span><span class="cx-pop-result-cat">' + (cat ? cat.label : "") + '</span></button>';
+    html += '<button class="cx-pop-result" data-id="' + e.id + '"><span class="cx-pop-result-title">' + e.title + '</span><span class="cx-pop-result-cat">' + _catLabel(cat) + '</span></button>';
   });
   _popEls.results.innerHTML = html;
   _popEls.results.querySelectorAll(".cx-pop-result").forEach(function (btn) {
@@ -709,8 +724,8 @@ function _popSelectEntry(e) {
     });
     showMeHtml += '</div>';
   }
-  _popEls.article.innerHTML = '<div class="cx-pop-back-wrap"><button class="cx-pop-back">\u2190 Back</button></div>' +
-    '<div class="cx-article"><div class="cx-article-category">' + (cat ? cat.label : "") + '</div><div class="cx-article-title">' + e.title + '</div>' + sc + showMeHtml + '<div class="cx-article-body">' + e.content + '</div>' + deepHtml + '</div>';
+  _popEls.article.innerHTML = '<div class="cx-pop-back-wrap"><button class="cx-pop-back" data-i18n="codex.popover.back">' + _t("codex.popover.back", "\u2190 Back") + '</button></div>' +
+    '<div class="cx-article"><div class="cx-article-category">' + _catLabel(cat) + '</div><div class="cx-article-title">' + e.title + '</div>' + sc + showMeHtml + '<div class="cx-article-body">' + e.content + '</div>' + deepHtml + '</div>';
   _popEls.results.style.display = "none";
   _popEls.article.style.display = "block";
   _popEls.article.scrollTop = 0;
