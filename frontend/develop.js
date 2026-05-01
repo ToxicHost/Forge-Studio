@@ -521,61 +521,90 @@ function _applyWhiteBalance(rLin, gLin, bLin, n, p) {
 // restyles the primaries; downstream tools (highlights, contrast, HSL,
 // color grading) all see the calibration-shifted colors.
 //
-// The matrix construction rotates each primary's chromaticity around the
-// luminance axis (BT.709 weights) and scales the primary's distance from
-// neutral by a per-primary saturation factor. ±100 on a Hue slider maps
-// to ±30° rotation — same visual range as Lightroom's ±100 Calibration
-// sliders, calibrated against same-input test images.
+// Matrix construction:
+//
+//   For each primary i (red, green, blue), we build a NEW primary by:
+//     1. Decomposing the original primary into a luminance-gray part
+//        and a chromaticity part perpendicular to the achromatic axis.
+//     2. Rotating the chromaticity part around the achromatic axis
+//        ((1,1,1)/√3) by the slider's hue angle, via Rodrigues.
+//     3. Scaling the rotated chromaticity by the saturation factor.
+//     4. Adding the luminance-gray back.
+//
+//   The new primaries become the COLUMNS of the matrix (not rows).
+//   Column i is what the matrix outputs when input is the i-th primary
+//   — that's the definition of "rotating the red primary."
+//
+//   ±100 on a Hue slider maps to ±60° rotation, calibrated against
+//   Lightroom's visual response at slider extremes.
 //
 // Identity early-out: if all 7 calibration params are zero, the function
 // returns immediately without touching the buffer. _isIdentity() also
 // covers these so the whole _applyDevelopFull bypasses on a clean doc.
 // ========================================================================
+
+// Rodrigues rotation of a primary's chromaticity component around the
+// achromatic axis (1,1,1)/√3. Returns the new primary as [R, G, B] in
+// linear RGB. At theta=0 and S=1, returns the original primary intact.
+//
+//   primary i (0=R, 1=G, 2=B) → standard basis vector e_i in RGB
+//   luminance L_i = BT.709 weight of that primary
+//   Lum-gray = (L_i, L_i, L_i)
+//   Chroma   = e_i − Lum-gray
+//   Rotate Chroma by θ around k = (1,1,1)/√3:
+//     v cos θ + (k × v) sin θ + k (k · v) (1 − cos θ)
+//   New primary = Lum-gray + S · Chroma_rotated
+function _rotateCalibrationPrimary(i, theta, S, Lr, Lg, Lb) {
+    var L = i === 0 ? Lr : i === 1 ? Lg : Lb;
+    // Original primary minus its luminance-equivalent gray.
+    var cx = (i === 0 ? 1 : 0) - L;
+    var cy = (i === 1 ? 1 : 0) - L;
+    var cz = (i === 2 ? 1 : 0) - L;
+
+    var cosT = Math.cos(theta);
+    var sinT = Math.sin(theta);
+    var INV_SQRT3 = 0.5773502691896258; // 1/√3
+    var kx = INV_SQRT3, ky = INV_SQRT3, kz = INV_SQRT3;
+
+    // k × chroma (cross product)
+    var crossX = ky * cz - kz * cy;
+    var crossY = kz * cx - kx * cz;
+    var crossZ = kx * cy - ky * cx;
+    // k · chroma (dot product)
+    var kdot = kx * cx + ky * cy + kz * cz;
+    var oneMinusCos = 1 - cosT;
+
+    // Rotated chroma (Rodrigues formula)
+    var rx = cx * cosT + crossX * sinT + kx * kdot * oneMinusCos;
+    var ry = cy * cosT + crossY * sinT + ky * kdot * oneMinusCos;
+    var rz = cz * cosT + crossZ * sinT + kz * kdot * oneMinusCos;
+
+    // Scale by saturation factor and re-add luminance gray
+    return [L + S * rx, L + S * ry, L + S * rz];
+}
+
 function _buildCalibrationMatrix(p) {
-    // BT.709 luminance weights — same convention as the rest of the module.
     var Lr = 0.2126, Lg = 0.7152, Lb = 0.0722;
+    var DEG_TO_RAD = Math.PI / 180;
+    var MAX_HUE_DEG = 60;  // Slider ±100 ⇒ ±60° rotation around achromatic axis.
 
-    // Identity matrix; rows are R/G/B output, columns are R/G/B input.
-    var m = [
-        1, 0, 0,
-        0, 1, 0,
-        0, 0, 1
+    var rHue = (p.calRedHue   || 0) / 100 * MAX_HUE_DEG * DEG_TO_RAD;
+    var gHue = (p.calGreenHue || 0) / 100 * MAX_HUE_DEG * DEG_TO_RAD;
+    var bHue = (p.calBlueHue  || 0) / 100 * MAX_HUE_DEG * DEG_TO_RAD;
+    var rSat = 1 + (p.calRedSat   || 0) / 100;
+    var gSat = 1 + (p.calGreenSat || 0) / 100;
+    var bSat = 1 + (p.calBlueSat  || 0) / 100;
+
+    // Each new primary becomes a COLUMN of the matrix. Layout: m[row*3 + col]
+    var nR = _rotateCalibrationPrimary(0, rHue, rSat, Lr, Lg, Lb);
+    var nG = _rotateCalibrationPrimary(1, gHue, gSat, Lr, Lg, Lb);
+    var nB = _rotateCalibrationPrimary(2, bHue, bSat, Lr, Lg, Lb);
+
+    return [
+        nR[0], nG[0], nB[0],   // R-output row
+        nR[1], nG[1], nB[1],   // G-output row
+        nR[2], nG[2], nB[2],   // B-output row
     ];
-
-    // Each primary contributes one row. The slider maps -100..+100 to
-    // ±30° hue rotation and 0..2× saturation scale; identity at slider 0.
-
-    // --- Red primary (row 0) ---
-    var rHue = (p.calRedHue || 0) * 0.3 * Math.PI / 180;
-    var rSat = 1.0 + (p.calRedSat || 0) / 100;
-    if (rHue !== 0 || rSat !== 1) {
-        var cosR = Math.cos(rHue), sinR = Math.sin(rHue);
-        m[0] = Lr + (1 - Lr) * cosR * rSat;
-        m[1] = Lg - Lg * cosR * rSat - Lg * sinR;
-        m[2] = Lb - Lb * cosR * rSat + (1 - Lb) * sinR;
-    }
-
-    // --- Green primary (row 1) ---
-    var gHue = (p.calGreenHue || 0) * 0.3 * Math.PI / 180;
-    var gSat = 1.0 + (p.calGreenSat || 0) / 100;
-    if (gHue !== 0 || gSat !== 1) {
-        var cosG = Math.cos(gHue), sinG = Math.sin(gHue);
-        m[3] = Lr - Lr * cosG + Lr * sinG;
-        m[4] = Lg + (1 - Lg) * cosG * gSat;
-        m[5] = Lb - Lb * cosG - (1 - Lb) * sinG;
-    }
-
-    // --- Blue primary (row 2) ---
-    var bHue = (p.calBlueHue || 0) * 0.3 * Math.PI / 180;
-    var bSat = 1.0 + (p.calBlueSat || 0) / 100;
-    if (bHue !== 0 || bSat !== 1) {
-        var cosB = Math.cos(bHue), sinB = Math.sin(bHue);
-        m[6] = Lr - Lr * cosB - Lr * sinB;
-        m[7] = Lg - Lg * cosB + Lg * sinB;
-        m[8] = Lb + (1 - Lb) * cosB * bSat;
-    }
-
-    return m;
 }
 
 function _applyCalibration(rLin, gLin, bLin, n, p) {
