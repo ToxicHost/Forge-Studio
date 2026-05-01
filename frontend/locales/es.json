@@ -26,6 +26,7 @@
   "settings.generation.title": "Generación",
   "settings.generation.saveOutputs": "Guardar resultados",
   "settings.generation.highPrecision": "Alta precisión",
+  "settings.generation.highPrecision.tooltip": "Guarda datos flotantes de alta precisión junto a cada imagen. Elimina el banding y proporciona al módulo Revelar ~0,5 pasos de margen en las luces. Añade ~0,5–3 s y ~12 MB por imagen. Mejor con VAE fp32.",
   "settings.generation.livePreview": "Vista previa en directo",
   "settings.generation.rememberSession": "Recordar última sesión",
 
@@ -98,6 +99,7 @@
   "develop.enable.tooltip": "Activar Revelar",
   "develop.beforeAfter.tooltip": "Comparación antes/después",
   "develop.hpBadge.tooltip": "Alta precisión: píxeles de origen float32 activos",
+  "develop.hpBadge.composited": "Alta precisión: búfer flotante compuesto con los píxeles del lienzo de AD/pincel",
 
   "develop.split.before": "Antes",
   "develop.split.after": "Después",
@@ -187,6 +189,9 @@
   "develop.cg.midtones": "Medios tonos",
   "develop.cg.highlights": "Iluminaciones",
   "develop.cg.global": "Global",
+
+  "tooltip.bigOutputWarning": "La salida superará los 2000 px en uno o ambos lados. Esto puede provocar un uso elevado de VRAM y generación lenta en la mayoría del hardware.",
+  "tooltip.histogramAutoStretch": "Estirar negro/blanco de entrada a los percentiles 0,1 % / 99,9 % del histograma",
 
   "panels.upscale.title": "Escalar",
   "panels.upscale.refineAfter": "Refine tras escalar (paso img2img)",

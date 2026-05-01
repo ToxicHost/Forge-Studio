@@ -1499,7 +1499,11 @@ function _updateHiresWarning() {
     icon = document.createElement("span");
     icon.id = "hiresWarnIcon";
     icon.innerHTML = "&#x26A0;";
-    icon.title = "Output will exceed 2000px on one or both sides. This may cause significant VRAM usage and slow generation on most hardware.";
+    icon.dataset.i18nTitle = "tooltip.bigOutputWarning";
+    icon.title = (window.I18N && window.I18N.t)
+        ? window.I18N.t("tooltip.bigOutputWarning",
+            "Output will exceed 2000px on one or both sides. This may cause significant VRAM usage and slow generation on most hardware.")
+        : "Output will exceed 2000px on one or both sides. This may cause significant VRAM usage and slow generation on most hardware.";
     icon.style.cssText = "display:none;color:var(--accent);font-size:12px;margin-left:6px;cursor:help;";
     // Insert after the title text
     var title = header.querySelector(".collapse-title");

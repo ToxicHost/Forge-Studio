@@ -26,6 +26,7 @@
   "settings.generation.title": "Génération",
   "settings.generation.saveOutputs": "Enregistrer les résultats",
   "settings.generation.highPrecision": "Haute précision",
+  "settings.generation.highPrecision.tooltip": "Enregistre des données flottantes haute précision en parallèle de chaque image. Élimine les bandes et offre au module Développer environ 0,5 IL de marge dans les hautes lumières. Ajoute environ 0,5–3 s et 12 Mo par image. Idéal avec un VAE fp32.",
   "settings.generation.livePreview": "Aperçu en direct",
   "settings.generation.rememberSession": "Mémoriser la dernière session",
 
@@ -98,6 +99,7 @@
   "develop.enable.tooltip": "Activer Développer",
   "develop.beforeAfter.tooltip": "Comparaison avant/après",
   "develop.hpBadge.tooltip": "Haute précision : pixels source float32 actifs",
+  "develop.hpBadge.composited": "Haute précision : tampon flottant composité avec les pixels AD/pinceau du canevas",
 
   "develop.split.before": "Avant",
   "develop.split.after": "Après",
@@ -187,6 +189,9 @@
   "develop.cg.midtones": "Tons moyens",
   "develop.cg.highlights": "Hautes lumières",
   "develop.cg.global": "Global",
+
+  "tooltip.bigOutputWarning": "La sortie dépassera 2000 px sur un ou deux côtés. Cela peut entraîner une utilisation VRAM importante et une génération lente sur la plupart des configurations.",
+  "tooltip.histogramAutoStretch": "Étirer l'entrée noir/blanc aux percentiles 0,1 % / 99,9 % de l'histogramme",
 
   "panels.upscale.title": "Agrandir",
   "panels.upscale.refineAfter": "Refine après agrandissement (passe img2img)",

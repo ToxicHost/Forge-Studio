@@ -26,6 +26,7 @@
   "settings.generation.title": "Generierung",
   "settings.generation.saveOutputs": "Ergebnisse speichern",
   "settings.generation.highPrecision": "Hohe Präzision",
+  "settings.generation.highPrecision.tooltip": "Speichert hochpräzise Float-Daten neben jedem Bild. Verhindert Bänderbildung und gibt dem Entwickeln-Modul ~0,5 Blendenstufen Lichter-Spielraum. Erzeugt ~0,5–3 s zusätzliche Zeit und ~12 MB pro Bild. Am besten mit fp32-VAE.",
   "settings.generation.livePreview": "Live-Vorschau",
   "settings.generation.rememberSession": "Letzte Sitzung merken",
 
@@ -98,6 +99,7 @@
   "develop.enable.tooltip": "Entwickeln aktivieren",
   "develop.beforeAfter.tooltip": "Vorher/Nachher-Vergleich",
   "develop.hpBadge.tooltip": "Hohe Präzision: float32-Quellpixel aktiv",
+  "develop.hpBadge.composited": "Hohe Präzision: Float-Puffer mit AD-/Pinsel-Pixeln auf der Leinwand zusammengeführt",
 
   "develop.split.before": "Vorher",
   "develop.split.after": "Nachher",
@@ -187,6 +189,9 @@
   "develop.cg.midtones": "Mitten",
   "develop.cg.highlights": "Lichter",
   "develop.cg.global": "Global",
+
+  "tooltip.bigOutputWarning": "Die Ausgabe überschreitet auf einer oder beiden Seiten 2000 px. Das kann auf den meisten Geräten erheblichen VRAM-Verbrauch und eine langsame Generierung verursachen.",
+  "tooltip.histogramAutoStretch": "Eingabe-Schwarz/Weiß auf Histogramm-Perzentile 0,1 % / 99,9 % strecken",
 
   "panels.upscale.title": "Hochskalieren",
   "panels.upscale.refineAfter": "Refine nach dem Hochskalieren (img2img-Durchgang)",

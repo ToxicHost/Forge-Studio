@@ -4249,10 +4249,14 @@ function _updateHpBadge() {
     _hpBadge.style.display = "";
     if (_floatSrc.hasMask) {
         _hpBadge.textContent = "HP+AD";
-        _hpBadge.title = "High Precision: float buffer composited with AD/brush canvas pixels";
+        _hpBadge.dataset.i18nTitle = "develop.hpBadge.composited";
+        _hpBadge.title = _t("develop.hpBadge.composited",
+            "High Precision: float buffer composited with AD/brush canvas pixels");
     } else {
         _hpBadge.textContent = "HP";
-        _hpBadge.title = "High Precision: float32 source pixels active";
+        _hpBadge.dataset.i18nTitle = "develop.hpBadge.tooltip";
+        _hpBadge.title = _t("develop.hpBadge.tooltip",
+            "High Precision: float32 source pixels active");
     }
 }
 

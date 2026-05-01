@@ -26,6 +26,7 @@
   "settings.generation.title": "Generation",
   "settings.generation.saveOutputs": "Save outputs",
   "settings.generation.highPrecision": "High precision",
+  "settings.generation.highPrecision.tooltip": "Saves high-precision float data alongside each image. Eliminates banding and gives the Develop module ~0.5 stops of highlight headroom. Adds ~0.5–3s and ~12 MB per image. Best with fp32 VAE.",
   "settings.generation.livePreview": "Live preview",
   "settings.generation.rememberSession": "Remember last session",
 
@@ -98,6 +99,7 @@
   "develop.enable.tooltip": "Enable Develop",
   "develop.beforeAfter.tooltip": "Before / After split",
   "develop.hpBadge.tooltip": "High Precision: float32 source pixels active",
+  "develop.hpBadge.composited": "High Precision: float buffer composited with AD/brush canvas pixels",
 
   "develop.split.before": "Before",
   "develop.split.after": "After",
@@ -187,6 +189,9 @@
   "develop.cg.midtones": "Midtones",
   "develop.cg.highlights": "Highlights",
   "develop.cg.global": "Global",
+
+  "tooltip.bigOutputWarning": "Output will exceed 2000px on one or both sides. This may cause significant VRAM usage and slow generation on most hardware.",
+  "tooltip.histogramAutoStretch": "Stretch input black/white to histogram 0.1% / 99.9% percentile",
 
   "panels.upscale.title": "Upscale",
   "panels.upscale.refineAfter": "Refine after upscale (img2img pass)",
