@@ -593,14 +593,11 @@ var _CAL_PRIMARIES_XY = [
 // D65 white point in xy.
 var _CAL_WHITE_XY = [0.3127, 0.3290];
 
-// Slider ±100 → ±45° rotation. darktable's stock soft-range is ±20°
-// (hard range goes to ±π); ours sits between the two so a full slider
-// sweep produces a Lightroom-Calibration-strength shift on the primary
-// chromaticity, not a faint scientific tweak. Wider angles than ±45°
-// push primaries close enough to other primaries that the resulting
-// 3×3 becomes near-singular and crushes complementary colors to black
-// in linear-light, which looks broken on real images.
-var _CAL_MAX_HUE_RAD = 45 * Math.PI / 180;
+// Slider ±100 → ±20° rotation, matching darktable's stock soft range
+// for `red_hue` / `green_hue` / `blue_hue` in dt_iop_primaries_params_t
+// (hard range goes to ±π but the UI surfaces ±20° as the working
+// envelope).
+var _CAL_MAX_HUE_RAD = 20 * Math.PI / 180;
 
 // Slider (-100..+100) → multiplicative purity factor anchored to the
 // **sRGB gamut edge** along the rotated direction (cf. darktable's
@@ -610,16 +607,14 @@ var _CAL_MAX_HUE_RAD = 45 * Math.PI / 180;
 // pokes outside the gamut (super-saturated); at purity < 1.0 it pulls
 // in toward the white point (desaturated).
 //
-// Range mapping:
-//   slider  0   → 1.0  (identity, primary stays at gamut edge)
-//   slider +100 → 1.8  (significantly more saturated than sRGB primary)
-//   slider -100 → 0.2  (heavily pulled toward neutral)
-// Two-piece linear so slider 0 stays exactly identity.
+// Range matches darktable's stock soft range for `*_purity` fields in
+// dt_iop_primaries_params_t (50%..150%, displayed as percentage):
+//   slider  0   → 1.0   (identity, primary stays at gamut edge)
+//   slider +100 → 1.5
+//   slider -100 → 0.5
 function _calSliderToPurity(s) {
     if (!s) return 1.0;
-    var t = s / 100;
-    if (t >= 0) return 1.0 + t * 0.8;   // 0..+100 → 1.0..1.8
-    return 1.0 + t * 0.8;                // -100..0 → 0.2..1.0
+    return 1.0 + (s / 100) * 0.5;
 }
 
 function _calSliderToHueRad(s) {
