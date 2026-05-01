@@ -87,5 +87,101 @@
   "toast.updateCheckFailed": "Update-Prüfung fehlgeschlagen: {error}",
   "toast.updating": "Wird aktualisiert...",
   "toast.updateFailed": "Update fehlgeschlagen: {error}",
-  "toast.studioUpToDate": "Forge Studio ist aktuell"
+  "toast.studioUpToDate": "Forge Studio ist aktuell",
+
+  "develop.title": "Entwickeln",
+  "develop.reset": "Zurücksetzen",
+  "develop.reset.tooltip": "Alle Regler zurücksetzen",
+  "develop.enable.tooltip": "Entwickeln aktivieren",
+  "develop.beforeAfter.tooltip": "Vorher/Nachher-Vergleich",
+  "develop.hpBadge.tooltip": "Hohe Präzision: float32-Quellpixel aktiv",
+
+  "develop.split.before": "Vorher",
+  "develop.split.after": "Nachher",
+
+  "develop.section.basic": "Kalibrierung",
+  "develop.section.toneCurve": "Gradationskurve",
+  "develop.section.presence": "Präsenz",
+  "develop.section.hsl": "HSL / Farbe",
+  "develop.section.colorGrading": "Farbgradierung",
+  "develop.section.detail": "Details",
+  "develop.section.effects": "Effekte",
+  "develop.section.calibration": "Farbkalibrierung",
+
+  "develop.slider.resetHint": "Doppelklick zum Zurücksetzen",
+
+  "develop.slider.temperature": "Temperatur",
+  "develop.slider.tint": "Tönung",
+  "develop.slider.exposure": "Belichtung",
+  "develop.slider.contrast": "Kontrast",
+  "develop.slider.highlights": "Lichter",
+  "develop.slider.shadows": "Tiefen",
+  "develop.slider.whites": "Weiß",
+  "develop.slider.blacks": "Schwarz",
+  "develop.slider.vibrance": "Dynamik",
+  "develop.slider.saturation": "Sättigung",
+
+  "develop.slider.texture": "Textur",
+  "develop.slider.clarity": "Klarheit",
+  "develop.slider.dehaze": "Dunst entfernen",
+
+  "develop.slider.sharpenAmount": "Schärfen",
+  "develop.slider.sharpenRadius": "Radius",
+  "develop.slider.sharpenThreshold": "Schwellenwert",
+  "develop.slider.nrLuminance": "Lum.-Rauschen",
+  "develop.slider.nrColor": "Farbrauschen",
+
+  "develop.slider.vignetteAmount": "Vignette",
+  "develop.slider.grainAmount": "Korn-Stärke",
+  "develop.slider.grainSize": "Korn-Größe",
+
+  "develop.slider.tcHighlights": "Lichter",
+  "develop.slider.tcLights": "Helle Töne",
+  "develop.slider.tcDarks": "Dunkle Töne",
+  "develop.slider.tcShadows": "Tiefen",
+
+  "develop.slider.cgBlending": "Mischung",
+  "develop.slider.cgBalance": "Balance",
+
+  "develop.slider.calShadowTint": "Tönung",
+  "develop.slider.calRedHue": "Farbton",
+  "develop.slider.calRedSat": "Sättigung",
+  "develop.slider.calGreenHue": "Farbton",
+  "develop.slider.calGreenSat": "Sättigung",
+  "develop.slider.calBlueHue": "Farbton",
+  "develop.slider.calBlueSat": "Sättigung",
+
+  "develop.hsl.hue": "Farbton",
+  "develop.hsl.sat": "Sättigung",
+  "develop.hsl.lum": "Luminanz",
+
+  "develop.calib.wb": "Weißabgleich",
+  "develop.calib.whitePoint": "Weißpunkt",
+  "develop.calib.blackPoint": "Schwarzpunkt",
+  "develop.calib.statusNone": "Keine Kalibrierung gesetzt",
+  "develop.calib.wb.clear": "Weißabgleich-Kalibrierung löschen",
+  "develop.calib.whitePoint.clear": "Weißpunkt-Kalibrierung löschen",
+  "develop.calib.blackPoint.clear": "Schwarzpunkt-Kalibrierung löschen",
+
+  "develop.pick.suffix": "\nKlicke zum Auswählen, dann auf das Bild. Shift-Klick zum Löschen.",
+  "develop.pick.wb.tooltip": "Weißabgleich — wähle einen neutralen Pixel, der als Grau dargestellt werden soll",
+  "develop.pick.whitePoint.tooltip": "Weißpunkt — wähle den hellsten Pixel, der als reines Weiß dargestellt werden soll",
+  "develop.pick.blackPoint.tooltip": "Schwarzpunkt — wähle den dunkelsten Pixel, der als reines Schwarz dargestellt werden soll",
+
+  "develop.presets.title": "Vorgaben",
+  "develop.presets.save": "Speichern…",
+
+  "develop.hsl.band.red": "Rot",
+  "develop.hsl.band.orange": "Orange",
+  "develop.hsl.band.yellow": "Gelb",
+  "develop.hsl.band.green": "Grün",
+  "develop.hsl.band.aqua": "Türkis",
+  "develop.hsl.band.blue": "Blau",
+  "develop.hsl.band.purple": "Violett",
+  "develop.hsl.band.magenta": "Magenta",
+
+  "develop.cg.shadows": "Tiefen",
+  "develop.cg.midtones": "Mitten",
+  "develop.cg.highlights": "Lichter",
+  "develop.cg.global": "Global"
 }

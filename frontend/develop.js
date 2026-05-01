@@ -33,6 +33,18 @@ var TAG = "[Develop]";
 var VERSION = "1.0.0";
 
 // ========================================================================
+// i18n helper — every dynamically-built label/tooltip in this module
+// passes its English source through _t() so the locale-aware text shows
+// on first paint. Elements that get inserted into the DOM also receive a
+// data-i18n* attribute so the global applyToDom() walker keeps them in
+// sync when the user switches locales without us needing per-site
+// re-render logic.
+// ========================================================================
+function _t(key, fallback) {
+    return (window.I18N && window.I18N.t) ? window.I18N.t(key, fallback) : fallback;
+}
+
+// ========================================================================
 // CSS injection (matches lexicon.js#1228 pattern)
 // ========================================================================
 if (!document.querySelector('link[href*="develop.css"]')) {
@@ -2268,21 +2280,26 @@ function _buildPanel() {
 
     var title = document.createElement("div");
     title.className = "develop-panel-title";
-    title.textContent = "Develop";
+    title.dataset.i18n = "develop.title";
+    title.textContent = _t("develop.title", "Develop");
     header.appendChild(title);
 
     // High Precision badge — shown when a float32 sidecar is loaded
-    // and matches the current canvas dims. Hidden by default.
+    // and matches the current canvas dims. Hidden by default. "HP" stays
+    // English (technical abbreviation referenced in guides); the tooltip
+    // gets translated.
     _hpBadge = document.createElement("span");
     _hpBadge.className = "develop-hp-badge";
     _hpBadge.textContent = "HP";
-    _hpBadge.title = "High Precision: float32 source pixels active";
+    _hpBadge.dataset.i18nTitle = "develop.hpBadge.tooltip";
+    _hpBadge.title = _t("develop.hpBadge.tooltip", "High Precision: float32 source pixels active");
     _hpBadge.style.display = "none";
     header.appendChild(_hpBadge);
 
     _enableToggleEl = document.createElement("button");
     _enableToggleEl.className = "develop-toggle";
-    _enableToggleEl.title = "Enable Develop";
+    _enableToggleEl.dataset.i18nTitle = "develop.enable.tooltip";
+    _enableToggleEl.title = _t("develop.enable.tooltip", "Enable Develop");
     _enableToggleEl.addEventListener("click", function () {
         var S = _S(); if (!S || !S.developParams) return;
         S.developParams.enabled = !S.developParams.enabled;
@@ -2291,17 +2308,22 @@ function _buildPanel() {
     });
     header.appendChild(_enableToggleEl);
 
+    // "B/A" button label stays English — it's a UI shorthand like B/W,
+    // not a translatable phrase. Tooltip translates.
     _beforeAfterBtn = document.createElement("button");
     _beforeAfterBtn.className = "develop-header-btn";
     _beforeAfterBtn.textContent = "B/A";
-    _beforeAfterBtn.title = "Before / After split";
+    _beforeAfterBtn.dataset.i18nTitle = "develop.beforeAfter.tooltip";
+    _beforeAfterBtn.title = _t("develop.beforeAfter.tooltip", "Before / After split");
     _beforeAfterBtn.addEventListener("click", _toggleBeforeAfter);
     header.appendChild(_beforeAfterBtn);
 
     var resetBtn = document.createElement("button");
     resetBtn.className = "develop-header-btn";
-    resetBtn.textContent = "Reset";
-    resetBtn.title = "Reset all sliders";
+    resetBtn.dataset.i18n = "develop.reset";
+    resetBtn.textContent = _t("develop.reset", "Reset");
+    resetBtn.dataset.i18nTitle = "develop.reset.tooltip";
+    resetBtn.title = _t("develop.reset.tooltip", "Reset all sliders");
     resetBtn.addEventListener("click", _resetAll);
     header.appendChild(resetBtn);
 
@@ -2358,7 +2380,11 @@ function _buildSection(sec) {
     var arrow = document.createElement("span");
     arrow.className = "develop-section-arrow"; arrow.textContent = "▾";
     head.appendChild(arrow);
-    var name = document.createElement("span"); name.textContent = sec.label; head.appendChild(name);
+    var name = document.createElement("span");
+    var secKey = "develop.section." + sec.id;
+    name.dataset.i18n = secKey;
+    name.textContent = _t(secKey, sec.label);
+    head.appendChild(name);
     head.addEventListener("click", function () { s.classList.toggle("collapsed"); });
     s.appendChild(head);
     var body = document.createElement("div");
@@ -2940,7 +2966,10 @@ function _buildHSLSection(body) {
     ["hue", "sat", "lum"].forEach(function (mode) {
         var b = document.createElement("button");
         b.type = "button";
-        b.textContent = mode === "hue" ? "Hue" : mode === "sat" ? "Saturation" : "Luminance";
+        var enLabel = mode === "hue" ? "Hue" : mode === "sat" ? "Saturation" : "Luminance";
+        var key = "develop.hsl." + mode;
+        b.dataset.i18n = key;
+        b.textContent = _t(key, enLabel);
         b.dataset.mode = mode;
         b.addEventListener("click", function () {
             _commitParam("hslMode", mode, false);
@@ -2967,8 +2996,13 @@ function _buildHSLSection(body) {
             row.appendChild(swatch);
             var lbl = document.createElement("span");
             lbl.className = "develop-row-label";
-            lbl.textContent = _HSL_BAND_NAMES[k];
-            lbl.title = "Double-click to reset";
+            // i18n: each band gets its own key (develop.hsl.band.red etc.)
+            // so applyToDom can translate on locale switch.
+            var bandKey = "develop.hsl.band." + _HSL_BAND_NAMES[k].toLowerCase();
+            lbl.dataset.i18n = bandKey;
+            lbl.textContent = _t(bandKey, _HSL_BAND_NAMES[k]);
+            lbl.dataset.i18nTitle = "develop.slider.resetHint";
+            lbl.title = _t("develop.slider.resetHint", "Double-click to reset");
             row.appendChild(lbl);
             var range = document.createElement("input");
             range.type = "range"; range.min = min; range.max = max; range.step = 1; range.value = 0;
@@ -3041,12 +3075,17 @@ function _hslSyncModeUI(mode) {
 var _cgWheels = {};
 var _cgLumRows = {};
 
-function _buildColorWheel(container, regionPrefix, label) {
+function _buildColorWheel(container, regionPrefix, label, i18nKey) {
     var wrap = document.createElement("div");
     wrap.className = "develop-cg-wheel-wrap";
     var caption = document.createElement("div");
     caption.className = "develop-cg-wheel-label";
-    caption.textContent = label;
+    if (i18nKey) {
+        caption.dataset.i18n = i18nKey;
+        caption.textContent = _t(i18nKey, label);
+    } else {
+        caption.textContent = label;
+    }
     wrap.appendChild(caption);
     var canvas = document.createElement("canvas");
     canvas.className = "develop-cg-wheel";
@@ -3145,10 +3184,10 @@ function _buildColorGradingSection(body) {
     var grid = document.createElement("div");
     grid.className = "develop-cg-grid";
     body.appendChild(grid);
-    _buildColorWheel(grid, "cgShadow",    "Shadows");
-    _buildColorWheel(grid, "cgMidtone",   "Midtones");
-    _buildColorWheel(grid, "cgHighlight", "Highlights");
-    _buildColorWheel(grid, "cgGlobal",    "Global");
+    _buildColorWheel(grid, "cgShadow",    "Shadows",    "develop.cg.shadows");
+    _buildColorWheel(grid, "cgMidtone",   "Midtones",   "develop.cg.midtones");
+    _buildColorWheel(grid, "cgHighlight", "Highlights", "develop.cg.highlights");
+    _buildColorWheel(grid, "cgGlobal",    "Global",     "develop.cg.global");
     body.appendChild(_buildSliderRow({ key: "cgBlending", label: "Blending", min: 0,    max: 100, step: 1, def: 50 }));
     body.appendChild(_buildSliderRow({ key: "cgBalance",  label: "Balance",  min: -100, max: 100, step: 1, def: 0  }));
 
@@ -3188,7 +3227,7 @@ function _buildCalibrationBlock(body) {
     wrap.className = "develop-calib-block";
     body.appendChild(wrap);
 
-    function row(mode, label, title) {
+    function row(mode, labelKey, labelEn, tooltipKey, tooltipEn, clearKey, clearEn) {
         var r = document.createElement("div");
         r.className = "develop-calib-row";
         r.dataset.mode = mode;
@@ -3196,7 +3235,13 @@ function _buildCalibrationBlock(body) {
         var pick = document.createElement("button");
         pick.type = "button";
         pick.className = "develop-eyedrop develop-calib-pick";
-        pick.title = title + "\nClick to pick, then click the image. Shift-click to clear.";
+        // Compose pick-tooltip: per-row description + the "Click to pick…"
+        // suffix. Keep them as separate keys so the suffix translates once
+        // and reads naturally instead of being duplicated three times.
+        pick.dataset.i18nTitle = tooltipKey;
+        var pickSuffix = _t("develop.pick.suffix",
+            "\nClick to pick, then click the image. Shift-click to clear.");
+        pick.title = _t(tooltipKey, tooltipEn) + pickSuffix;
         pick.innerHTML =
             '<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor"' +
             ' stroke-width="2" stroke-linecap="round" stroke-linejoin="round">' +
@@ -3217,19 +3262,22 @@ function _buildCalibrationBlock(body) {
 
         var lbl = document.createElement("span");
         lbl.className = "develop-calib-label";
-        lbl.textContent = label;
+        lbl.dataset.i18n = labelKey;
+        lbl.textContent = _t(labelKey, labelEn);
         r.appendChild(lbl);
 
         var status = document.createElement("span");
         status.className = "develop-calib-status";
         status.textContent = "—";
-        status.title = "No calibration set";
+        status.dataset.i18nTitle = "develop.calib.statusNone";
+        status.title = _t("develop.calib.statusNone", "No calibration set");
         r.appendChild(status);
 
         var clear = document.createElement("button");
         clear.type = "button";
         clear.className = "develop-calib-clear";
-        clear.title = "Clear " + label.toLowerCase() + " calibration";
+        clear.dataset.i18nTitle = clearKey;
+        clear.title = _t(clearKey, clearEn);
         clear.textContent = "×";
         clear.addEventListener("click", function (e) {
             e.preventDefault(); e.stopPropagation();
@@ -3241,9 +3289,18 @@ function _buildCalibrationBlock(body) {
         _calibBlockEls[mode] = { row: r, pick: pick, status: status, clear: clear };
     }
 
-    row("wb",     "White Balance", "White balance — pick a neutral pixel that should render as gray");
-    row("whites", "White Point",   "White point — pick the brightest pixel that should render as pure white");
-    row("blacks", "Black Point",   "Black point — pick the darkest pixel that should render as pure black");
+    row("wb",
+        "develop.calib.wb",          "White Balance",
+        "develop.pick.wb.tooltip",   "White balance — pick a neutral pixel that should render as gray",
+        "develop.calib.wb.clear",    "Clear white balance calibration");
+    row("whites",
+        "develop.calib.whitePoint",         "White Point",
+        "develop.pick.whitePoint.tooltip",  "White point — pick the brightest pixel that should render as pure white",
+        "develop.calib.whitePoint.clear",   "Clear white point calibration");
+    row("blacks",
+        "develop.calib.blackPoint",         "Black Point",
+        "develop.pick.blackPoint.tooltip",  "Black point — pick the darkest pixel that should render as pure black",
+        "develop.calib.blackPoint.clear",   "Clear black point calibration");
 
     _registerCustomSync(_syncCalibrationBlock);
 }
@@ -3296,8 +3353,11 @@ function _buildSliderRow(field) {
 
     var lbl = document.createElement("span");
     lbl.className = "develop-row-label";
-    lbl.textContent = field.label;
-    lbl.title = "Double-click to reset";
+    var labelKey = "develop.slider." + field.key;
+    lbl.dataset.i18n = labelKey;
+    lbl.textContent = _t(labelKey, field.label);
+    lbl.dataset.i18nTitle = "develop.slider.resetHint";
+    lbl.title = _t("develop.slider.resetHint", "Double-click to reset");
     row.appendChild(lbl);
 
     var range = document.createElement("input");
@@ -3849,7 +3909,10 @@ function _buildPresetSection() {
     var arrow = document.createElement("span");
     arrow.className = "develop-section-arrow"; arrow.textContent = "▾";
     head.appendChild(arrow);
-    var name = document.createElement("span"); name.textContent = "Presets"; head.appendChild(name);
+    var name = document.createElement("span");
+    name.dataset.i18n = "develop.presets.title";
+    name.textContent = _t("develop.presets.title", "Presets");
+    head.appendChild(name);
     head.addEventListener("click", function () { s.classList.toggle("collapsed"); });
     s.appendChild(head);
 
@@ -3874,7 +3937,8 @@ function _buildPresetSection() {
 
     var saveBtn = document.createElement("button");
     saveBtn.className = "develop-preset-save";
-    saveBtn.textContent = "Save…";
+    saveBtn.dataset.i18n = "develop.presets.save";
+    saveBtn.textContent = _t("develop.presets.save", "Save…");
     saveBtn.title = "Save current settings as a preset";
     saveBtn.addEventListener("click", _savePreset);
     row.appendChild(saveBtn);
@@ -4012,13 +4076,15 @@ function _ensureSplitElements() {
     if (!_splitLabelL) {
         _splitLabelL = document.createElement("div");
         _splitLabelL.className = "develop-split-label";
-        _splitLabelL.textContent = "Before";
+        _splitLabelL.dataset.i18n = "develop.split.before";
+        _splitLabelL.textContent = _t("develop.split.before", "Before");
         document.body.appendChild(_splitLabelL);
     }
     if (!_splitLabelR) {
         _splitLabelR = document.createElement("div");
         _splitLabelR.className = "develop-split-label";
-        _splitLabelR.textContent = "After";
+        _splitLabelR.dataset.i18n = "develop.split.after";
+        _splitLabelR.textContent = _t("develop.split.after", "After");
         document.body.appendChild(_splitLabelR);
     }
 }

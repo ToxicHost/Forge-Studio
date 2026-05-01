@@ -87,5 +87,101 @@
   "toast.updateCheckFailed": "Error al buscar actualizaciones: {error}",
   "toast.updating": "Actualizando...",
   "toast.updateFailed": "Error de actualización: {error}",
-  "toast.studioUpToDate": "Forge Studio está actualizado"
+  "toast.studioUpToDate": "Forge Studio está actualizado",
+
+  "develop.title": "Revelar",
+  "develop.reset": "Restablecer",
+  "develop.reset.tooltip": "Restablecer todos los controles",
+  "develop.enable.tooltip": "Activar Revelar",
+  "develop.beforeAfter.tooltip": "Comparación antes/después",
+  "develop.hpBadge.tooltip": "Alta precisión: píxeles de origen float32 activos",
+
+  "develop.split.before": "Antes",
+  "develop.split.after": "Después",
+
+  "develop.section.basic": "Calibrar",
+  "develop.section.toneCurve": "Curva de tonos",
+  "develop.section.presence": "Presencia",
+  "develop.section.hsl": "HSL / Color",
+  "develop.section.colorGrading": "Gradación de color",
+  "develop.section.detail": "Detalle",
+  "develop.section.effects": "Efectos",
+  "develop.section.calibration": "Calibración",
+
+  "develop.slider.resetHint": "Doble clic para restablecer",
+
+  "develop.slider.temperature": "Temperatura",
+  "develop.slider.tint": "Matiz",
+  "develop.slider.exposure": "Exposición",
+  "develop.slider.contrast": "Contraste",
+  "develop.slider.highlights": "Iluminaciones",
+  "develop.slider.shadows": "Sombras",
+  "develop.slider.whites": "Blancos",
+  "develop.slider.blacks": "Negros",
+  "develop.slider.vibrance": "Intensidad",
+  "develop.slider.saturation": "Saturación",
+
+  "develop.slider.texture": "Textura",
+  "develop.slider.clarity": "Claridad",
+  "develop.slider.dehaze": "Eliminar neblina",
+
+  "develop.slider.sharpenAmount": "Enfoque",
+  "develop.slider.sharpenRadius": "Radio",
+  "develop.slider.sharpenThreshold": "Umbral",
+  "develop.slider.nrLuminance": "Ruido lum.",
+  "develop.slider.nrColor": "Ruido color",
+
+  "develop.slider.vignetteAmount": "Viñeta",
+  "develop.slider.grainAmount": "Cantidad de grano",
+  "develop.slider.grainSize": "Tamaño de grano",
+
+  "develop.slider.tcHighlights": "Iluminaciones",
+  "develop.slider.tcLights": "Tonos claros",
+  "develop.slider.tcDarks": "Tonos oscuros",
+  "develop.slider.tcShadows": "Sombras",
+
+  "develop.slider.cgBlending": "Fusión",
+  "develop.slider.cgBalance": "Balance",
+
+  "develop.slider.calShadowTint": "Matiz",
+  "develop.slider.calRedHue": "Tono",
+  "develop.slider.calRedSat": "Saturación",
+  "develop.slider.calGreenHue": "Tono",
+  "develop.slider.calGreenSat": "Saturación",
+  "develop.slider.calBlueHue": "Tono",
+  "develop.slider.calBlueSat": "Saturación",
+
+  "develop.hsl.hue": "Tono",
+  "develop.hsl.sat": "Saturación",
+  "develop.hsl.lum": "Luminancia",
+
+  "develop.calib.wb": "Balance de blancos",
+  "develop.calib.whitePoint": "Punto blanco",
+  "develop.calib.blackPoint": "Punto negro",
+  "develop.calib.statusNone": "Sin calibración",
+  "develop.calib.wb.clear": "Borrar calibración de balance de blancos",
+  "develop.calib.whitePoint.clear": "Borrar calibración del punto blanco",
+  "develop.calib.blackPoint.clear": "Borrar calibración del punto negro",
+
+  "develop.pick.suffix": "\nHaz clic para activar, luego sobre la imagen. Mayús+clic para borrar.",
+  "develop.pick.wb.tooltip": "Balance de blancos — elige un píxel neutro que debería verse gris",
+  "develop.pick.whitePoint.tooltip": "Punto blanco — elige el píxel más claro que debería verse blanco puro",
+  "develop.pick.blackPoint.tooltip": "Punto negro — elige el píxel más oscuro que debería verse negro puro",
+
+  "develop.presets.title": "Ajustes preestablecidos",
+  "develop.presets.save": "Guardar…",
+
+  "develop.hsl.band.red": "Rojo",
+  "develop.hsl.band.orange": "Naranja",
+  "develop.hsl.band.yellow": "Amarillo",
+  "develop.hsl.band.green": "Verde",
+  "develop.hsl.band.aqua": "Turquesa",
+  "develop.hsl.band.blue": "Azul",
+  "develop.hsl.band.purple": "Morado",
+  "develop.hsl.band.magenta": "Magenta",
+
+  "develop.cg.shadows": "Sombras",
+  "develop.cg.midtones": "Medios tonos",
+  "develop.cg.highlights": "Iluminaciones",
+  "develop.cg.global": "Global"
 }
