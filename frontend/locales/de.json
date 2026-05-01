@@ -115,8 +115,8 @@
   "develop.slider.contrast": "Kontrast",
   "develop.slider.highlights": "Lichter",
   "develop.slider.shadows": "Tiefen",
-  "develop.slider.whites": "Weißwerte",
-  "develop.slider.blacks": "Schwarzwerte",
+  "develop.slider.whites": "Weiß",
+  "develop.slider.blacks": "Schwarz",
   "develop.slider.vibrance": "Dynamik",
   "develop.slider.saturation": "Sättigung",
 
@@ -160,5 +160,19 @@
   "develop.pick.blackPoint.tooltip": "Schwarzpunkt — wähle den dunkelsten Pixel, der als reines Schwarz dargestellt werden soll",
 
   "develop.presets.title": "Vorgaben",
-  "develop.presets.save": "Speichern…"
+  "develop.presets.save": "Speichern…",
+
+  "develop.hsl.band.red": "Rot",
+  "develop.hsl.band.orange": "Orange",
+  "develop.hsl.band.yellow": "Gelb",
+  "develop.hsl.band.green": "Grün",
+  "develop.hsl.band.aqua": "Türkis",
+  "develop.hsl.band.blue": "Blau",
+  "develop.hsl.band.purple": "Violett",
+  "develop.hsl.band.magenta": "Magenta",
+
+  "develop.cg.shadows": "Tiefen",
+  "develop.cg.midtones": "Mitten",
+  "develop.cg.highlights": "Lichter",
+  "develop.cg.global": "Global"
 }

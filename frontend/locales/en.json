@@ -160,5 +160,19 @@
   "develop.pick.blackPoint.tooltip": "Black point — pick the darkest pixel that should render as pure black",
 
   "develop.presets.title": "Presets",
-  "develop.presets.save": "Save…"
+  "develop.presets.save": "Save…",
+
+  "develop.hsl.band.red": "Red",
+  "develop.hsl.band.orange": "Orange",
+  "develop.hsl.band.yellow": "Yellow",
+  "develop.hsl.band.green": "Green",
+  "develop.hsl.band.aqua": "Aqua",
+  "develop.hsl.band.blue": "Blue",
+  "develop.hsl.band.purple": "Purple",
+  "develop.hsl.band.magenta": "Magenta",
+
+  "develop.cg.shadows": "Shadows",
+  "develop.cg.midtones": "Midtones",
+  "develop.cg.highlights": "Highlights",
+  "develop.cg.global": "Global"
 }

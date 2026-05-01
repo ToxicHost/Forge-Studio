@@ -2996,8 +2996,13 @@ function _buildHSLSection(body) {
             row.appendChild(swatch);
             var lbl = document.createElement("span");
             lbl.className = "develop-row-label";
-            lbl.textContent = _HSL_BAND_NAMES[k];
-            lbl.title = "Double-click to reset";
+            // i18n: each band gets its own key (develop.hsl.band.red etc.)
+            // so applyToDom can translate on locale switch.
+            var bandKey = "develop.hsl.band." + _HSL_BAND_NAMES[k].toLowerCase();
+            lbl.dataset.i18n = bandKey;
+            lbl.textContent = _t(bandKey, _HSL_BAND_NAMES[k]);
+            lbl.dataset.i18nTitle = "develop.slider.resetHint";
+            lbl.title = _t("develop.slider.resetHint", "Double-click to reset");
             row.appendChild(lbl);
             var range = document.createElement("input");
             range.type = "range"; range.min = min; range.max = max; range.step = 1; range.value = 0;
@@ -3070,12 +3075,17 @@ function _hslSyncModeUI(mode) {
 var _cgWheels = {};
 var _cgLumRows = {};
 
-function _buildColorWheel(container, regionPrefix, label) {
+function _buildColorWheel(container, regionPrefix, label, i18nKey) {
     var wrap = document.createElement("div");
     wrap.className = "develop-cg-wheel-wrap";
     var caption = document.createElement("div");
     caption.className = "develop-cg-wheel-label";
-    caption.textContent = label;
+    if (i18nKey) {
+        caption.dataset.i18n = i18nKey;
+        caption.textContent = _t(i18nKey, label);
+    } else {
+        caption.textContent = label;
+    }
     wrap.appendChild(caption);
     var canvas = document.createElement("canvas");
     canvas.className = "develop-cg-wheel";
@@ -3174,10 +3184,10 @@ function _buildColorGradingSection(body) {
     var grid = document.createElement("div");
     grid.className = "develop-cg-grid";
     body.appendChild(grid);
-    _buildColorWheel(grid, "cgShadow",    "Shadows");
-    _buildColorWheel(grid, "cgMidtone",   "Midtones");
-    _buildColorWheel(grid, "cgHighlight", "Highlights");
-    _buildColorWheel(grid, "cgGlobal",    "Global");
+    _buildColorWheel(grid, "cgShadow",    "Shadows",    "develop.cg.shadows");
+    _buildColorWheel(grid, "cgMidtone",   "Midtones",   "develop.cg.midtones");
+    _buildColorWheel(grid, "cgHighlight", "Highlights", "develop.cg.highlights");
+    _buildColorWheel(grid, "cgGlobal",    "Global",     "develop.cg.global");
     body.appendChild(_buildSliderRow({ key: "cgBlending", label: "Blending", min: 0,    max: 100, step: 1, def: 50 }));
     body.appendChild(_buildSliderRow({ key: "cgBalance",  label: "Balance",  min: -100, max: 100, step: 1, def: 0  }));
 
