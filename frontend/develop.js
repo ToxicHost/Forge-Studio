@@ -169,10 +169,18 @@ function _migrateParams(p) {
         if (!(k in p)) p[k] = defaults[k];
     }
     // V2 cleanup: Parametric tone curve mode was retired in favor of
-    // Point mode only. Legacy docs saved with toneCurveMode="parametric"
-    // are migrated to Point with their Parametric slider values cleared
-    // so the now-orphan tcShadows/tcDarks/tcLights/tcHighlights fields
-    // don't trip _isIdentity's parametric-era checks.
+    // Point mode only.
+    //
+    // INTENTIONAL DATA LOSS: Legacy docs saved with
+    // toneCurveMode="parametric" are migrated to Point with their
+    // Parametric slider values cleared. Anyone who saved tone-curve
+    // work in Parametric mode loses that work on next load — the
+    // resulting image will render as if no tone curve were applied.
+    // This is a deliberate trade-off (Parametric is removed from the
+    // UI; rather than carry orphan data forward and have it silently
+    // not influence anything, we zero it so _isIdentity / cache
+    // signatures behave cleanly). Affected users would need to redo
+    // their work using Point mode.
     if (p.toneCurveMode === "parametric") {
         p.toneCurveMode = "point";
         p.tcShadows = 0;
@@ -289,17 +297,18 @@ function _arrayAllZero(a) {
     return true;
 }
 // Returns true when the curve is the identity straight line — exactly
-// two endpoints at (0,0) and (255,255), or a missing/empty array.
+// two endpoints at (0,0) and (255,255), or a missing / empty array
+// (no curve data at all is treated as the identity curve).
 // PRIOR BUG: the chain of `||` returned true precisely when ANY of the
 // non-identity conditions held, i.e. when the curve was NOT identity.
 // _toneCurveIsIdentity / _isIdentity then early-outed on every modified
 // curve, which is why dragging points appeared to do nothing — the
 // pipeline skipped the curve LUT entirely. Inverted to match the name.
 function _pointsAreIdentity(pts) {
-    return !pts
-        || (pts.length === 2
-            && pts[0][0] === 0   && pts[0][1] === 0
-            && pts[1][0] === 255 && pts[1][1] === 255);
+    if (!pts || pts.length === 0) return true;
+    return pts.length === 2
+        && pts[0][0] === 0   && pts[0][1] === 0
+        && pts[1][0] === 255 && pts[1][1] === 255;
 }
 function _isIdentity(p) {
     if (!p) return true;
