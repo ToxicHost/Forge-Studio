@@ -586,11 +586,22 @@ function _rotateCalibrationPrimary(i, theta, S, Lr, Lg, Lb) {
 function _buildCalibrationMatrix(p) {
     var Lr = 0.2126, Lg = 0.7152, Lb = 0.0722;
     var DEG_TO_RAD = Math.PI / 180;
-    var MAX_HUE_DEG = 60;  // Slider ±100 ⇒ ±60° rotation around achromatic axis.
+    // Per-primary slider±100 ⇒ rotation in degrees around the achromatic
+    // axis. Tuned against Lightroom's visual response: red and green at 60°
+    // produce a strong, recognizable shift; blue's response felt subdued at
+    // the same angle (blue's chromaticity contributes less perceptual
+    // change per unit rotation in BT.709 because pure blue's luminance is
+    // tiny — the visible shift in mixed pixels under a blue rotation is
+    // muted compared to red/green). Bumping blue to 90° brings it back in
+    // line with the dramatic Lightroom-style response on skies and other
+    // blue-dominant content.
+    var MAX_HUE_R = 60;
+    var MAX_HUE_G = 60;
+    var MAX_HUE_B = 90;
 
-    var rHue = (p.calRedHue   || 0) / 100 * MAX_HUE_DEG * DEG_TO_RAD;
-    var gHue = (p.calGreenHue || 0) / 100 * MAX_HUE_DEG * DEG_TO_RAD;
-    var bHue = (p.calBlueHue  || 0) / 100 * MAX_HUE_DEG * DEG_TO_RAD;
+    var rHue = (p.calRedHue   || 0) / 100 * MAX_HUE_R * DEG_TO_RAD;
+    var gHue = (p.calGreenHue || 0) / 100 * MAX_HUE_G * DEG_TO_RAD;
+    var bHue = (p.calBlueHue  || 0) / 100 * MAX_HUE_B * DEG_TO_RAD;
     var rSat = 1 + (p.calRedSat   || 0) / 100;
     var gSat = 1 + (p.calGreenSat || 0) / 100;
     var bSat = 1 + (p.calBlueSat  || 0) / 100;
