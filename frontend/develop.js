@@ -3234,10 +3234,12 @@ function _onPickMove(e) {
             _pickTooltip.style.display = "none";
             return;
         }
-        // Sample 5x5 average to match what the click handler will see —
-        // keeps the readout consistent with the value that actually ends
-        // up calibrated.
-        var px = _samplePreDevelopRegion(docX, docY, 2);
+        // Sample 3x3 average to match what the click handler commits.
+        // Larger neighborhoods (the previous 5x5) bled across sharp edges
+        // — common in AI-generated content — and pulled the calibration
+        // away from the intended pixel. 3x3 still smooths single-pixel
+        // anomalies without spanning a visibly-large area at high zoom.
+        var px = _samplePreDevelopRegion(docX, docY, 1);
         if (!px) { _pickTooltip.style.display = "none"; return; }
         var r = Math.max(0, Math.min(255, Math.round(px.r * 255)));
         var g = Math.max(0, Math.min(255, Math.round(px.g * 255)));
@@ -3275,8 +3277,13 @@ function _onPickClick(e) {
         _exitPickMode(); return;
     }
 
-    // Sample a 5x5 region around the click and average — reduces noise / single-pixel artifacts.
-    var px = _samplePreDevelopRegion(docX, docY, 2);
+    // Sample a 3x3 region around the click and average. 5x5 (the prior
+    // value) bled across sharp edges — common on AI-generated content —
+    // and pulled the calibration off-target relative to where the user
+    // clicked. 3x3 still smooths single-pixel anomalies but stays close
+    // enough to the click point that the committed value matches what
+    // the user can verify in the tooltip and in external color tools.
+    var px = _samplePreDevelopRegion(docX, docY, 1);
     if (!px) { _exitPickMode(); return; }
 
     var mode = _pickMode;
