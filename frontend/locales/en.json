@@ -3,6 +3,89 @@
     "name": "English",
     "code": "en",
     "status": "source",
-    "notes": "Phase 0 — infrastructure only. UI strings will be instrumented and added in Phase 1."
-  }
+    "notes": "Phase 1a — first wave of UI chrome. Adds Settings panel, panel tabs, generation action buttons, status bar, and ~15 most-common toast messages. Per the bucketing decision, AI generation parameters (Steps, Sampler, CFG Scale, etc.), sampler/scheduler names, and feature names like ADetailer, ControlNet, LoRA stay English in every locale and are not instrumented at all."
+  },
+
+  "panels.generate": "Generate",
+  "panels.extensions": "Extensions",
+  "panels.settings": "Settings",
+
+  "actions.generate": "Generate",
+  "actions.interrupt": "Interrupt",
+  "actions.skip": "Skip",
+  "actions.loadImage": "Load Image",
+  "actions.resetCanvas": "Reset Canvas",
+  "actions.applyToLayer": "Apply to Layer",
+  "actions.upscaleCanvas": "UPSCALE CANVAS",
+
+  "live.strength": "Strength",
+
+  "settings.canvas.title": "Canvas",
+  "settings.canvas.showGrid": "Show grid",
+
+  "settings.generation.title": "Generation",
+  "settings.generation.saveOutputs": "Save outputs",
+  "settings.generation.highPrecision": "High precision",
+  "settings.generation.livePreview": "Live preview",
+  "settings.generation.rememberSession": "Remember last session",
+
+  "settings.outputFormat.title": "Output Format",
+  "settings.outputFormat.format": "Format",
+  "settings.outputFormat.embedMetadata": "Embed metadata",
+  "settings.outputFormat.quality": "Quality",
+  "settings.outputFormat.lossless": "Lossless",
+
+  "settings.vram.unloadModel": "Unload Model from VRAM",
+  "settings.vram.autoUnload": "Auto-unload when idle",
+  "settings.vram.idleTimeout": "Idle timeout",
+
+  "settings.extensions.title": "Extensions",
+  "settings.extensions.description": "Toggle which extensions appear in the Extensions tab.",
+
+  "settings.theme.title": "Theme",
+
+  "settings.language.title": "Language",
+  "settings.language.label": "Interface language",
+  "settings.language.note": "AI generation parameters (Steps, Sampler, CFG Scale, etc.) stay in English to match the terminology in tutorials and guides.",
+
+  "settings.accessibility.title": "Accessibility",
+  "settings.accessibility.colorblind": "Colorblind mode",
+  "settings.accessibility.reducedMotion": "Reduced motion",
+  "settings.accessibility.systemDefault": "System default",
+  "settings.accessibility.reduced": "Reduced",
+  "settings.accessibility.full": "Full",
+
+  "settings.updates.title": "Updates",
+  "settings.updates.checkButton": "Check for Updates",
+
+  "settings.defaults.title": "Defaults",
+  "settings.defaults.description": "Save current workflow settings as defaults for future sessions.",
+  "settings.defaults.saveButton": "Save Current as Defaults",
+  "settings.defaults.resetButton": "Reset",
+
+  "common.none": "None",
+
+  "status.loading": "Loading...",
+  "status.ready": "Ready",
+  "status.upToDate": "Up to date",
+
+  "toast.canvasCleared": "Canvas cleared",
+  "toast.maskCleared": "Mask cleared",
+  "toast.canvasNotReady": "Canvas not ready",
+  "toast.interrupting": "Interrupting...",
+  "toast.skipping": "Skipping to next image...",
+  "toast.modelSwitchPending": "Model will switch after generation completes",
+  "toast.vaeSwitchPending": "VAE will switch after generation completes",
+  "toast.switchingVae": "Switching VAE...",
+  "toast.refreshingModels": "Refreshing models...",
+  "toast.modelsRefreshed": "Models refreshed",
+  "toast.refreshFailed": "Refresh failed: {error}",
+  "toast.refreshingVaes": "Refreshing VAEs...",
+  "toast.vaeRefreshFailed": "VAE refresh failed: {error}",
+  "toast.connectionFailed": "Failed to connect to Forge backend",
+  "toast.alreadyUpToDate": "Already up to date",
+  "toast.updateCheckFailed": "Update check failed: {error}",
+  "toast.updating": "Updating...",
+  "toast.updateFailed": "Update failed: {error}",
+  "toast.studioUpToDate": "Forge Studio is up to date"
 }

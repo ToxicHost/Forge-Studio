@@ -3,6 +3,89 @@
     "name": "Français",
     "code": "fr",
     "status": "draft",
-    "notes": "Phase 0 — empty file, fallback to English. Phase 1 will fill in translated strings."
-  }
+    "notes": "Phase 1a draft — first-pass translations by Claude, awaiting native-speaker review. Tone: informal tu form (matches Lightroom/Capture One FR convention). NBSPs before colons are not enforced — reviewer can add if wanted. AI-gen technical terms (Sampler, CFG Scale, ADetailer, etc.) stay English by design — see settings.language.note."
+  },
+
+  "panels.generate": "Générer",
+  "panels.extensions": "Extensions",
+  "panels.settings": "Paramètres",
+
+  "actions.generate": "Générer",
+  "actions.interrupt": "Annuler",
+  "actions.skip": "Passer",
+  "actions.loadImage": "Charger une image",
+  "actions.resetCanvas": "Réinitialiser le canevas",
+  "actions.applyToLayer": "Appliquer au calque",
+  "actions.upscaleCanvas": "AGRANDIR LE CANEVAS",
+
+  "live.strength": "Force",
+
+  "settings.canvas.title": "Canevas",
+  "settings.canvas.showGrid": "Afficher la grille",
+
+  "settings.generation.title": "Génération",
+  "settings.generation.saveOutputs": "Enregistrer les résultats",
+  "settings.generation.highPrecision": "Haute précision",
+  "settings.generation.livePreview": "Aperçu en direct",
+  "settings.generation.rememberSession": "Mémoriser la dernière session",
+
+  "settings.outputFormat.title": "Format de sortie",
+  "settings.outputFormat.format": "Format",
+  "settings.outputFormat.embedMetadata": "Intégrer les métadonnées",
+  "settings.outputFormat.quality": "Qualité",
+  "settings.outputFormat.lossless": "Sans perte",
+
+  "settings.vram.unloadModel": "Décharger le modèle de la VRAM",
+  "settings.vram.autoUnload": "Décharger automatiquement en veille",
+  "settings.vram.idleTimeout": "Délai d'inactivité",
+
+  "settings.extensions.title": "Extensions",
+  "settings.extensions.description": "Choisir quelles extensions apparaissent dans l'onglet Extensions.",
+
+  "settings.theme.title": "Thème",
+
+  "settings.language.title": "Langue",
+  "settings.language.label": "Langue de l'interface",
+  "settings.language.note": "Les paramètres de génération IA (Steps, Sampler, CFG Scale, etc.) restent en anglais pour correspondre à la terminologie utilisée dans les tutoriels et guides.",
+
+  "settings.accessibility.title": "Accessibilité",
+  "settings.accessibility.colorblind": "Mode daltonien",
+  "settings.accessibility.reducedMotion": "Animation réduite",
+  "settings.accessibility.systemDefault": "Réglage système",
+  "settings.accessibility.reduced": "Réduit",
+  "settings.accessibility.full": "Complet",
+
+  "settings.updates.title": "Mises à jour",
+  "settings.updates.checkButton": "Rechercher des mises à jour",
+
+  "settings.defaults.title": "Valeurs par défaut",
+  "settings.defaults.description": "Enregistrer les réglages actuels comme valeurs par défaut pour les sessions futures.",
+  "settings.defaults.saveButton": "Enregistrer comme valeurs par défaut",
+  "settings.defaults.resetButton": "Réinitialiser",
+
+  "common.none": "Aucun",
+
+  "status.loading": "Chargement...",
+  "status.ready": "Prêt",
+  "status.upToDate": "À jour",
+
+  "toast.canvasCleared": "Canevas effacé",
+  "toast.maskCleared": "Masque effacé",
+  "toast.canvasNotReady": "Canevas pas prêt",
+  "toast.interrupting": "Annulation...",
+  "toast.skipping": "Passage à l'image suivante...",
+  "toast.modelSwitchPending": "Le modèle changera à la fin de la génération",
+  "toast.vaeSwitchPending": "Le VAE changera à la fin de la génération",
+  "toast.switchingVae": "Changement de VAE...",
+  "toast.refreshingModels": "Actualisation des modèles...",
+  "toast.modelsRefreshed": "Modèles actualisés",
+  "toast.refreshFailed": "Échec de l'actualisation : {error}",
+  "toast.refreshingVaes": "Actualisation des VAEs...",
+  "toast.vaeRefreshFailed": "Échec de l'actualisation du VAE : {error}",
+  "toast.connectionFailed": "Connexion au backend Forge échouée",
+  "toast.alreadyUpToDate": "Déjà à jour",
+  "toast.updateCheckFailed": "Échec de la vérification des mises à jour : {error}",
+  "toast.updating": "Mise à jour...",
+  "toast.updateFailed": "Échec de la mise à jour : {error}",
+  "toast.studioUpToDate": "Forge Studio est à jour"
 }

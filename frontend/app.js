@@ -767,9 +767,9 @@ const UpdateBanner = {
       try {
         data = await API.checkUpdate();
         if (data.error) { showToast(data.error, "error"); return; }
-        if (!data.update_available) { showToast("Already up to date", "success"); this.hide(); return; }
+        if (!data.update_available) { showToast(I18N.t("toast.alreadyUpToDate", "Already up to date"), "success"); this.hide(); return; }
         this._data = data;
-      } catch (e) { showToast("Update check failed: " + e.message, "error"); return; }
+      } catch (e) { showToast(I18N.t("toast.updateCheckFailed", "Update check failed: {error}", {error: e.message}), "error"); return; }
     }
 
     // Build overlay
@@ -804,7 +804,7 @@ const UpdateBanner = {
   },
 
   async _applyUpdate() {
-    showToast("Updating...", "info");
+    showToast(I18N.t("toast.updating", "Updating..."), "info");
     try {
       const res = await API.applyUpdate();
       if (!res.ok) {
@@ -825,7 +825,7 @@ const UpdateBanner = {
       document.body.appendChild(banner);
       this._el = banner;
     } catch (e) {
-      showToast("Update failed: " + e.message, "error");
+      showToast(I18N.t("toast.updateFailed", "Update failed: {error}", {error: e.message}), "error");
     }
   },
 
@@ -846,9 +846,9 @@ const UpdateBanner = {
       if (data.update_available) {
         this.show(data);
       } else {
-        showToast("Forge Studio is up to date", "success");
+        showToast(I18N.t("toast.studioUpToDate", "Forge Studio is up to date"), "success");
       }
-    } catch (e) { showToast("Update check failed: " + e.message, "error"); }
+    } catch (e) { showToast(I18N.t("toast.updateCheckFailed", "Update check failed: {error}", {error: e.message}), "error"); }
   },
 };
 
@@ -1135,7 +1135,7 @@ async function populateDropdowns() {
     }).catch(() => {});
   } catch (e) {
     console.error("[Studio] Failed to load resources:", e);
-    showToast("Failed to connect to Forge backend", "error");
+    showToast(I18N.t("toast.connectionFailed", "Failed to connect to Forge backend"), "error");
   }
 }
 
@@ -2013,7 +2013,7 @@ function bindUI() {
     if (S.mask?.ctx) {
       S.mask.ctx.clearRect(0, 0, S.W, S.H);
       window.StudioCore.composite();
-      showToast("Mask cleared", "info");
+      showToast(I18N.t("toast.maskCleared", "Mask cleared"), "info");
     }
   });
 
@@ -2024,12 +2024,12 @@ function bindUI() {
     API.interrupt();
     const btn = document.getElementById("genBtn");
     if (btn) btn.textContent = "Interrupting...";
-    showToast("Interrupting...", "info");
+    showToast(I18N.t("toast.interrupting", "Interrupting..."), "info");
   });
   document.getElementById("skipBtn")?.addEventListener("click", () => {
     if (!State.generating) return;
     API.skip();
-    showToast("Skipping to next image...", "info");
+    showToast(I18N.t("toast.skipping", "Skipping to next image..."), "info");
   });
 
   // Live Painting
@@ -2073,7 +2073,7 @@ function bindUI() {
   // AD checkboxes are truly independent — AD can run standalone on the
   // ESRGAN output.
   document.getElementById("upscaleBtn")?.addEventListener("click", async () => {
-    if (!window.StudioCore) { showToast("Canvas not ready", "error"); return; }
+    if (!window.StudioCore) { showToast(I18N.t("toast.canvasNotReady", "Canvas not ready"), "error"); return; }
     const Core = window.StudioCore;
     const S = Core.state;
 
@@ -2608,7 +2608,7 @@ function bindUI() {
     // shared.sd_model out from under process_images().
     if (State.generating) {
       State._pendingModelSwitch = title;
-      showToast("Model will switch after generation completes", "info");
+      showToast(I18N.t("toast.modelSwitchPending", "Model will switch after generation completes"), "info");
       return;
     }
     // FR-002: Show progress bar during model load
@@ -2686,10 +2686,10 @@ function bindUI() {
     // shared.sd_model out from under process_images().
     if (State.generating) {
       State._pendingVAESwitch = name;
-      showToast("VAE will switch after generation completes", "info");
+      showToast(I18N.t("toast.vaeSwitchPending", "VAE will switch after generation completes"), "info");
       return;
     }
-    showToast("Switching VAE...", "info");
+    showToast(I18N.t("toast.switchingVae", "Switching VAE..."), "info");
     try {
       const r = await fetch(API.base + "/studio/load_vae", {
         method: "POST",
@@ -2762,18 +2762,18 @@ function bindUI() {
 
   // ===== REFRESH BUTTONS =====
   document.getElementById("refreshModelsBtn")?.addEventListener("click", async () => {
-    showToast("Refreshing models...", "info");
+    showToast(I18N.t("toast.refreshingModels", "Refreshing models..."), "info");
     try {
       await API.refreshModels();
       await populateDropdowns();
-      showToast("Models refreshed", "success");
+      showToast(I18N.t("toast.modelsRefreshed", "Models refreshed"), "success");
     } catch (e) {
-      showToast("Refresh failed: " + e.message, "error");
+      showToast(I18N.t("toast.refreshFailed", "Refresh failed: {error}", {error: e.message}), "error");
     }
   });
 
   document.getElementById("refreshVAEBtn")?.addEventListener("click", async () => {
-    showToast("Refreshing VAEs...", "info");
+    showToast(I18N.t("toast.refreshingVaes", "Refreshing VAEs..."), "info");
     try {
       const vaes = await fetch(API.base + "/studio/vaes").then(r => r.json());
       const vaeSelect = document.getElementById("paramVAE");
@@ -2786,7 +2786,7 @@ function bindUI() {
       }
       showToast(`VAEs refreshed (${vaes.length} found)`, "success");
     } catch (e) {
-      showToast("VAE refresh failed: " + e.message, "error");
+      showToast(I18N.t("toast.vaeRefreshFailed", "VAE refresh failed: {error}", {error: e.message}), "error");
     }
   });
 
@@ -3412,8 +3412,8 @@ function bindUI() {
       const data = await API.checkUpdate();
       if (data.error) { showToast(data.offline ? "Offline — cannot check for updates" : data.error, "error"); if (status) status.textContent = ""; }
       else if (data.update_available) { UpdateBanner.show(data); if (status) status.textContent = ""; }
-      else { showToast("Forge Studio is up to date", "success"); if (status) status.textContent = "Up to date"; }
-    } catch (e) { showToast("Update check failed: " + e.message, "error"); if (status) status.textContent = ""; }
+      else { showToast(I18N.t("toast.studioUpToDate", "Forge Studio is up to date"), "success"); if (status) status.textContent = I18N.t("status.upToDate", "Up to date"); }
+    } catch (e) { showToast(I18N.t("toast.updateCheckFailed", "Update check failed: {error}", {error: e.message}), "error"); if (status) status.textContent = ""; }
     if (btn) btn.disabled = false;
   });
   document.getElementById("saveDefaults")?.addEventListener("click", () => {
@@ -3787,7 +3787,7 @@ function bindUI() {
     // mutates state — paint stroke, slider drag, etc. — and bumps the version).
     window.StudioCore.markCompositeDirty?.();
     window.StudioCore.composite();
-    showToast("Canvas cleared", "info");
+    showToast(I18N.t("toast.canvasCleared", "Canvas cleared"), "info");
   });
 
   // --- Load Image button ---

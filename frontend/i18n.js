@@ -79,10 +79,29 @@
         return null;
     }
 
-    function t(key, params) {
+    // Three overloads:
+    //   t("key")                      → translation, or "key" on miss
+    //   t("key", { name: "foo" })     → translation with interpolation
+    //   t("key", "English fallback")  → translation, or fallback on miss
+    //   t("key", "English {n}", {n})  → translation, or interpolated fallback
+    //
+    // Sites without a markup fallback (toasts, runtime-built strings) pass
+    // the English source as the second arg so they don't show "key" during
+    // the boot window before en.json finishes loading.
+    function t(key, fallbackOrParams, paramsIfFallback) {
         if (_keysMode) return key;
+        var fallback = null;
+        var params = null;
+        if (typeof fallbackOrParams === "string") {
+            fallback = fallbackOrParams;
+            params = paramsIfFallback || null;
+        } else {
+            params = fallbackOrParams || null;
+        }
         var str = _lookup(key);
-        if (str == null) return key;     // caller can detect this and use existing markup as fallback
+        if (str == null) {
+            return fallback != null ? _interp(fallback, params) : key;
+        }
         return _interp(str, params);
     }
 
