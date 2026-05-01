@@ -441,6 +441,72 @@ body.develop-active #canvasArea canvas {
   background: linear-gradient(to right, #50c878 0%, #888 50%, #c850a0 100%);
 }
 
+/* Color Calibration tracks. Hue sliders show direction-of-rotation in the
+   primary's local color neighborhood; Saturation sliders show gray→vivid
+   in the primary's color. Same desaturated palette as Temperature / Tint
+   above so the panel reads coherently. */
+.develop-row[data-track="shadowTint"] input[type="range"]::-webkit-slider-runnable-track {
+  background: linear-gradient(to right, #50c878 0%, #888 50%, #c850a0 100%);
+}
+.develop-row[data-track="shadowTint"] input[type="range"]::-moz-range-track {
+  background: linear-gradient(to right, #50c878 0%, #888 50%, #c850a0 100%);
+}
+.develop-row[data-track="redHue"] input[type="range"]::-webkit-slider-runnable-track {
+  background: linear-gradient(to right, #c850a0 0%, #d24747 50%, #d68a3a 100%);
+}
+.develop-row[data-track="redHue"] input[type="range"]::-moz-range-track {
+  background: linear-gradient(to right, #c850a0 0%, #d24747 50%, #d68a3a 100%);
+}
+.develop-row[data-track="redSat"] input[type="range"]::-webkit-slider-runnable-track {
+  background: linear-gradient(to right, #888 0%, #b06a6a 50%, #d92020 100%);
+}
+.develop-row[data-track="redSat"] input[type="range"]::-moz-range-track {
+  background: linear-gradient(to right, #888 0%, #b06a6a 50%, #d92020 100%);
+}
+.develop-row[data-track="greenHue"] input[type="range"]::-webkit-slider-runnable-track {
+  background: linear-gradient(to right, #3aa8a8 0%, #50c878 50%, #c8c050 100%);
+}
+.develop-row[data-track="greenHue"] input[type="range"]::-moz-range-track {
+  background: linear-gradient(to right, #3aa8a8 0%, #50c878 50%, #c8c050 100%);
+}
+.develop-row[data-track="greenSat"] input[type="range"]::-webkit-slider-runnable-track {
+  background: linear-gradient(to right, #888 0%, #6da06d 50%, #20c020 100%);
+}
+.develop-row[data-track="greenSat"] input[type="range"]::-moz-range-track {
+  background: linear-gradient(to right, #888 0%, #6da06d 50%, #20c020 100%);
+}
+.develop-row[data-track="blueHue"] input[type="range"]::-webkit-slider-runnable-track {
+  background: linear-gradient(to right, #3ac8c8 0%, #4a90e2 50%, #8050c0 100%);
+}
+.develop-row[data-track="blueHue"] input[type="range"]::-moz-range-track {
+  background: linear-gradient(to right, #3ac8c8 0%, #4a90e2 50%, #8050c0 100%);
+}
+.develop-row[data-track="blueSat"] input[type="range"]::-webkit-slider-runnable-track {
+  background: linear-gradient(to right, #888 0%, #6a85b0 50%, #2050d9 100%);
+}
+.develop-row[data-track="blueSat"] input[type="range"]::-moz-range-track {
+  background: linear-gradient(to right, #888 0%, #6a85b0 50%, #2050d9 100%);
+}
+
+/* Sub-section heading inside a section body — used by Color Calibration to
+   group its seven sliders into "Shadows" / "Red Primary" / "Green Primary"
+   / "Blue Primary". The optional data-color attribute tints the heading
+   text in the primary's color so each group is visually self-identifying.
+   Reuses develop-section-divider's spacing logic above and below. */
+.develop-section-heading {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  padding: 6px 0 2px 0;
+  margin-top: 2px;
+  user-select: none;
+}
+.develop-section-heading[data-color="red"]   { color: #d24747; }
+.develop-section-heading[data-color="green"] { color: #50c878; }
+.develop-section-heading[data-color="blue"]  { color: #4a90e2; }
+
 /* ═══════════════════════════════════════════
    V2 — TONE CURVE
    ═══════════════════════════════════════════ */

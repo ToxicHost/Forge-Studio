@@ -123,6 +123,22 @@ function defaultParams() {
         // === V2: Noise Reduction ===
         nrLuminance: 0,                // 0..100
         nrColor: 0,                    // 0..100
+
+        // === V2: Color Calibration ===
+        // Per-primary hue rotation + saturation scaling, plus a green↔magenta
+        // tint that's weighted toward shadows. Operates as a 3×3 matrix on
+        // the linear-RGB buffer right after WB — see _applyCalibration. The
+        // hue sliders rotate each primary in chroma-space relative to the
+        // luminance axis (Lightroom convention); saturation sliders scale
+        // the primary's distance from the luminance neutral. All zero =
+        // identity, pipeline bypasses entirely.
+        calRedHue: 0,                  // -100..100, ±30° at extremes
+        calRedSat: 0,                  // -100..100, 0..2× at extremes
+        calGreenHue: 0,                // -100..100
+        calGreenSat: 0,                // -100..100
+        calBlueHue: 0,                 // -100..100
+        calBlueSat: 0,                 // -100..100
+        calShadowTint: 0,              // -100..100, green↔magenta in shadows only
     };
 }
 
@@ -220,6 +236,30 @@ SECTIONS.splice(1, 0, { id: "toneCurve",    label: "Tone Curve",    open: false,
 SECTIONS.splice(3, 0, { id: "hsl",          label: "HSL / Color",   open: false, customBuild: _buildHSLSection });
 SECTIONS.splice(4, 0, { id: "colorGrading", label: "Color Grading", open: false, customBuild: _buildColorGradingSection });
 
+// Color Calibration sits at the very bottom of the Develop panel as an
+// "advanced" tool — same convention as Lightroom. Collapsed by default.
+// Visually grouped via {heading: ...} rows so the seven sliders read as
+// "Shadows", "Red Primary", "Green Primary", "Blue Primary".
+SECTIONS.push({
+    id: "calibration", label: "Calibration", open: false,
+    rows: [
+        { heading: "Shadows" },
+        { key: "calShadowTint", label: "Tint", min: -100, max: 100, step: 1, def: 0, track: "shadowTint" },
+        { divider: true },
+        { heading: "Red Primary",   color: "red" },
+        { key: "calRedHue",   label: "Hue",        min: -100, max: 100, step: 1, def: 0, track: "redHue" },
+        { key: "calRedSat",   label: "Saturation", min: -100, max: 100, step: 1, def: 0, track: "redSat" },
+        { divider: true },
+        { heading: "Green Primary", color: "green" },
+        { key: "calGreenHue", label: "Hue",        min: -100, max: 100, step: 1, def: 0, track: "greenHue" },
+        { key: "calGreenSat", label: "Saturation", min: -100, max: 100, step: 1, def: 0, track: "greenSat" },
+        { divider: true },
+        { heading: "Blue Primary",  color: "blue" },
+        { key: "calBlueHue",  label: "Hue",        min: -100, max: 100, step: 1, def: 0, track: "blueHue" },
+        { key: "calBlueSat",  label: "Saturation", min: -100, max: 100, step: 1, def: 0, track: "blueSat" },
+    ]
+});
+
 // ========================================================================
 // IDENTITY CHECK — early-out before any getImageData
 // All sliders that contribute when their amount is non-zero are listed.
@@ -277,6 +317,11 @@ function _isIdentity(p) {
     // Dehaze + NR
     if ((p.dehaze | 0) !== 0) return false;
     if ((p.nrLuminance | 0) !== 0 || (p.nrColor | 0) !== 0) return false;
+    // Color Calibration — any non-zero per-primary hue/sat or shadow tint
+    if ((p.calRedHue   | 0) !== 0 || (p.calRedSat   | 0) !== 0) return false;
+    if ((p.calGreenHue | 0) !== 0 || (p.calGreenSat | 0) !== 0) return false;
+    if ((p.calBlueHue  | 0) !== 0 || (p.calBlueSat  | 0) !== 0) return false;
+    if ((p.calShadowTint | 0) !== 0) return false;
     return true;
 }
 
@@ -468,6 +513,131 @@ function _applyWhiteBalance(rLin, gLin, bLin, n, p) {
 }
 
 // ========================================================================
+// PHASE A.6 — Color Calibration (V2 only)
+//
+// Applies a 3×3 matrix to the linear-RGB buffer, plus a shadow-tint pass
+// that biases dark regions toward green or magenta. Operates after WB and
+// before highlights/shadows: WB neutralizes the scene, then Calibration
+// restyles the primaries; downstream tools (highlights, contrast, HSL,
+// color grading) all see the calibration-shifted colors.
+//
+// The matrix construction rotates each primary's chromaticity around the
+// luminance axis (BT.709 weights) and scales the primary's distance from
+// neutral by a per-primary saturation factor. ±100 on a Hue slider maps
+// to ±30° rotation — same visual range as Lightroom's ±100 Calibration
+// sliders, calibrated against same-input test images.
+//
+// Identity early-out: if all 7 calibration params are zero, the function
+// returns immediately without touching the buffer. _isIdentity() also
+// covers these so the whole _applyDevelopFull bypasses on a clean doc.
+// ========================================================================
+function _buildCalibrationMatrix(p) {
+    // BT.709 luminance weights — same convention as the rest of the module.
+    var Lr = 0.2126, Lg = 0.7152, Lb = 0.0722;
+
+    // Identity matrix; rows are R/G/B output, columns are R/G/B input.
+    var m = [
+        1, 0, 0,
+        0, 1, 0,
+        0, 0, 1
+    ];
+
+    // Each primary contributes one row. The slider maps -100..+100 to
+    // ±30° hue rotation and 0..2× saturation scale; identity at slider 0.
+
+    // --- Red primary (row 0) ---
+    var rHue = (p.calRedHue || 0) * 0.3 * Math.PI / 180;
+    var rSat = 1.0 + (p.calRedSat || 0) / 100;
+    if (rHue !== 0 || rSat !== 1) {
+        var cosR = Math.cos(rHue), sinR = Math.sin(rHue);
+        m[0] = Lr + (1 - Lr) * cosR * rSat;
+        m[1] = Lg - Lg * cosR * rSat - Lg * sinR;
+        m[2] = Lb - Lb * cosR * rSat + (1 - Lb) * sinR;
+    }
+
+    // --- Green primary (row 1) ---
+    var gHue = (p.calGreenHue || 0) * 0.3 * Math.PI / 180;
+    var gSat = 1.0 + (p.calGreenSat || 0) / 100;
+    if (gHue !== 0 || gSat !== 1) {
+        var cosG = Math.cos(gHue), sinG = Math.sin(gHue);
+        m[3] = Lr - Lr * cosG + Lr * sinG;
+        m[4] = Lg + (1 - Lg) * cosG * gSat;
+        m[5] = Lb - Lb * cosG - (1 - Lb) * sinG;
+    }
+
+    // --- Blue primary (row 2) ---
+    var bHue = (p.calBlueHue || 0) * 0.3 * Math.PI / 180;
+    var bSat = 1.0 + (p.calBlueSat || 0) / 100;
+    if (bHue !== 0 || bSat !== 1) {
+        var cosB = Math.cos(bHue), sinB = Math.sin(bHue);
+        m[6] = Lr - Lr * cosB - Lr * sinB;
+        m[7] = Lg - Lg * cosB + Lg * sinB;
+        m[8] = Lb + (1 - Lb) * cosB * bSat;
+    }
+
+    return m;
+}
+
+function _applyCalibration(rLin, gLin, bLin, n, p) {
+    if ((p._version | 0) < 2) return;
+
+    var rH = p.calRedHue   | 0, rS = p.calRedSat   | 0;
+    var gH = p.calGreenHue | 0, gS = p.calGreenSat | 0;
+    var bH = p.calBlueHue  | 0, bS = p.calBlueSat  | 0;
+    var st = p.calShadowTint | 0;
+    if (rH === 0 && rS === 0 && gH === 0 && gS === 0 && bH === 0 && bS === 0 && st === 0) {
+        return;
+    }
+
+    var matrixActive = (rH !== 0 || rS !== 0 || gH !== 0 || gS !== 0 || bH !== 0 || bS !== 0);
+    var m = matrixActive ? _buildCalibrationMatrix(p) : null;
+    var m0, m1, m2, m3, m4, m5, m6, m7, m8;
+    if (m) {
+        m0 = m[0]; m1 = m[1]; m2 = m[2];
+        m3 = m[3]; m4 = m[4]; m5 = m[5];
+        m6 = m[6]; m7 = m[7]; m8 = m[8];
+    }
+
+    // Shadow-tint amount in linear units. The 0.15 scale matches the
+    // perceptual weight of the existing WB tint slider — at shadowTint=±100
+    // the effect is visible on shadows without crushing midtone detail.
+    var stAmt = st / 100 * 0.15;
+    var stActive = stAmt !== 0;
+
+    for (var i = 0; i < n; i++) {
+        var r = rLin[i], g = gLin[i], b = bLin[i];
+
+        if (matrixActive) {
+            var rN = m0 * r + m1 * g + m2 * b;
+            var gN = m3 * r + m4 * g + m5 * b;
+            var bN = m6 * r + m7 * g + m8 * b;
+            r = rN; g = gN; b = bN;
+        }
+
+        if (stActive) {
+            // Luminance-weighted shadow tint. 1.0 at black, 0 above lum≈0.33.
+            // Squared falloff keeps midtones clean while still reaching dark
+            // areas smoothly.
+            var lum = 0.2126 * r + 0.7152 * g + 0.0722 * b;
+            var w = 1.0 - lum * 3.0;
+            if (w > 0) {
+                if (w > 1) w = 1;
+                w *= w;
+                // Positive stAmt = magenta (push G down, R+B up); negative = green.
+                var shift = stAmt * w;
+                g -= shift;
+                r += shift * 0.5;
+                b += shift * 0.5;
+            }
+        }
+
+        rLin[i] = r;
+        gLin[i] = g;
+        bLin[i] = b;
+    }
+}
+
+// ========================================================================
 // PHASE B — highlights/shadows lift/pull
 //
 // Computes a luminance buffer from the post-LUT-A pixels, blurs it heavily
@@ -628,6 +798,13 @@ function _applyDevelopFull(ctx, w, h, p) {
 
     // ---- Phase A.5: white balance (Lab-space at full res, RGB on drag) ----
     _applyWhiteBalance(rLin, gLin, bLin, n, p);
+
+    // ---- Phase A.6: color calibration (3×3 matrix on linear RGB + shadow tint) ----
+    // Runs AFTER WB (which neutralizes the scene) and BEFORE highlights/shadows
+    // (so all downstream tools see the calibration-shifted primaries). Identity
+    // early-out inside the function so this is free when no calibration sliders
+    // are touched.
+    _applyCalibration(rLin, gLin, bLin, n, p);
 
     // ---- Phase B: highlights/shadows ----
     var hlAmt = p.highlights | 0;
@@ -1989,6 +2166,16 @@ function _buildSection(sec) {
             if (row.divider) {
                 var d = document.createElement("div"); d.className = "develop-section-divider";
                 body.appendChild(d);
+            } else if (row.heading) {
+                // Sub-section heading — small label that visually groups the
+                // following slider rows. Used by Color Calibration to label
+                // the Red/Green/Blue primary groups. data-color (optional)
+                // tints the heading in the primary's color.
+                var h = document.createElement("div");
+                h.className = "develop-section-heading";
+                if (row.color) h.dataset.color = row.color;
+                h.textContent = row.heading;
+                body.appendChild(h);
             } else {
                 body.appendChild(_buildSliderRow(row));
             }
