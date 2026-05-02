@@ -589,19 +589,26 @@ function _buildPopover() {
     l.href = "/studio/static/codex.css?v=" + VERSION; document.head.appendChild(l);
   }
 
-  // Toggle button — inject into toolstrip before the spacer
+  // Toggle button — inject into toolstrip before the spacer.
+  // Defensive ordering: bind the click handler IMMEDIATELY after
+  // creating the element, before any other attribute or i18n work, so
+  // a runtime failure later in this function can't leave us with a
+  // dead toolbar button. Also guard against double-build by checking
+  // for an existing #cxPopToggle.
   var toolstrip = document.getElementById("toolstrip");
-  if (toolstrip) {
+  if (toolstrip && !document.getElementById("cxPopToggle")) {
     var spacer = toolstrip.querySelector(".tool-spacer");
     var btn = document.createElement("button");
     btn.className = "tool-btn cx-pop-toggle";
     btn.id = "cxPopToggle";
-    btn.dataset.i18nTitle = "codex.popover.tooltip";
-    btn.title = _t("codex.popover.tooltip", "Quick Reference (?)");
-    btn.innerHTML = "?";
+    btn.textContent = "?";
     btn.addEventListener("click", function (ev) { ev.preventDefault(); _togglePopover(); });
     if (spacer) toolstrip.insertBefore(btn, spacer);
     else toolstrip.appendChild(btn);
+    btn.dataset.i18nTitle = "codex.popover.tooltip";
+    try {
+      btn.title = _t("codex.popover.tooltip", "Quick Reference (?)");
+    } catch (_) { btn.title = "Quick Reference (?)"; }
   }
 
   // Popover container
@@ -634,6 +641,16 @@ function _buildPopover() {
       _popEls.results.style.display = "block";
       _popEls.article.style.display = "none";
     }
+  });
+
+  // Re-translate the toolbar button's title on locale switch.
+  // applyToDom() handles this via data-i18n-title, but this is a
+  // belt-and-suspenders pass that also re-binds the click handler if
+  // anything ever stripped it.
+  window.addEventListener("i18n:change", function () {
+    var btn = document.getElementById("cxPopToggle");
+    if (!btn) return;
+    try { btn.title = _t("codex.popover.tooltip", "Quick Reference (?)"); } catch (_) {}
   });
 
   // ? key toggles popover (when not in an input)
