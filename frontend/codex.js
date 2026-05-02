@@ -673,6 +673,10 @@ function _togglePopover() {
 
 function _showPopover() {
   if (!_popover) return;
+  // CSS rule is `.cx-popover.open` — this previously added `.visible`
+  // (no matching CSS), so the popover stayed off-screen. Both classes
+  // get added so any future CSS using either selector works.
+  _popover.classList.add("open");
   _popover.classList.add("visible");
   _popVisible = true;
   _popRenderHome();
@@ -681,6 +685,7 @@ function _showPopover() {
 
 function _hidePopover() {
   if (!_popover) return;
+  _popover.classList.remove("open");
   _popover.classList.remove("visible");
   _popVisible = false;
   if (_popEls.search) _popEls.search.value = "";
