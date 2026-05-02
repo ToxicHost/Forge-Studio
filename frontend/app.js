@@ -604,7 +604,7 @@ const Live = {
   // --- Apply (commit preview to layer) ---
 
   apply() {
-    if (!this._lastResult) { showToast("No Live result to apply", "info"); return; }
+    if (!this._lastResult) { showToast(_i18n("live.toast.noResult", "No Live result to apply"), "info"); return; }
     console.log("[Live] Applying result to canvas");
     displayOnCanvas(this._lastResult, { newLayer: true, layerName: "[Live]", undoLabel: "Live apply" });
     // Re-roll seed after apply
@@ -617,15 +617,25 @@ const Live = {
     const btn = document.getElementById("liveToggleBtn");
     if (btn) {
       btn.classList.toggle("active", this.active);
+      // _i18n falls back to literal English if I18N hasn't loaded yet.
+      // The data-i18n / data-i18n-title attrs on the markup let
+      // applyToDom() keep the labels in sync on locale switch — but
+      // since we mutate the button directly here, we update them too.
       if (!this.active) {
-        btn.textContent = "▶ Live";
-        btn.title = "Start Live Painting";
+        btn.textContent = _i18n("live.toggle.start", "▶ Live");
+        btn.title = _i18n("live.toggle.start.tooltip", "Start Live Painting");
+        btn.dataset.i18n = "live.toggle.start";
+        btn.dataset.i18nTitle = "live.toggle.start.tooltip";
       } else if (this.generating) {
-        btn.textContent = "◉ Live";
-        btn.title = "Generating...";
+        btn.textContent = _i18n("live.toggle.generating", "◉ Live");
+        btn.title = _i18n("live.toggle.generating.tooltip", "Generating...");
+        btn.dataset.i18n = "live.toggle.generating";
+        btn.dataset.i18nTitle = "live.toggle.generating.tooltip";
       } else {
-        btn.textContent = "■ Live";
-        btn.title = "Stop Live Painting";
+        btn.textContent = _i18n("live.toggle.stop", "■ Live");
+        btn.title = _i18n("live.toggle.stop.tooltip", "Stop Live Painting");
+        btn.dataset.i18n = "live.toggle.stop";
+        btn.dataset.i18nTitle = "live.toggle.stop.tooltip";
       }
     }
     const applyBtn = document.getElementById("liveApplyBtn");

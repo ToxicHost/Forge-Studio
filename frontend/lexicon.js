@@ -13,6 +13,13 @@
 (function () {
 "use strict";
 
+// i18n helper — runtime-built strings pass their English source
+// through _t(). Markup also gets data-i18n* attrs so applyToDom()
+// keeps things in sync on locale switch.
+function _t(key, fallback) {
+  return (window.I18N && window.I18N.t) ? window.I18N.t(key, fallback) : fallback;
+}
+
 const TAG = "[Wildcards]";
 const API = "/studio/lexicon";
 const VERSION = "1.0.0";
@@ -185,7 +192,7 @@ function _renderTree() {
         const matches = [];
         _collectMatches(LX.tree, q, matches);
         if (matches.length === 0) {
-            list.innerHTML = '<div class="lex-tree-item" style="color:var(--text-4);pointer-events:none;">No matches</div>';
+            list.innerHTML = '<div class="lex-tree-item" style="color:var(--text-4);pointer-events:none;" data-i18n="lexicon.empty.noMatches">' + _t("lexicon.empty.noMatches", "No matches") + '</div>';
             return;
         }
         for (const node of matches) list.appendChild(_createFileItem(node, 0));
@@ -554,7 +561,7 @@ async function saveFile() {
         LX.openFile.size = res.size;
         LX.dirty = false;
         _updateEditorState();
-        _toast("Saved");
+        _toast(_t("lexicon.toast.saved", "Saved"));
         await loadTree();
     } catch (e) {
         console.error(TAG, "Save failed:", e);
@@ -765,7 +772,7 @@ function _renderContentResults() {
     list.innerHTML = "";
 
     if (LX.contentResults.length === 0) {
-        list.innerHTML = '<div class="lex-tree-item" style="color:var(--text-4);pointer-events:none;">No matches</div>';
+        list.innerHTML = '<div class="lex-tree-item" style="color:var(--text-4);pointer-events:none;" data-i18n="lexicon.empty.noMatches">' + _t("lexicon.empty.noMatches", "No matches") + '</div>';
         return;
     }
 
@@ -923,20 +930,20 @@ function _showContextMenu(e, path, type) {
 
     const items = [];
     if (type === "folder") {
-        items.push({ label: "New File Here", action: () => createFile(path) });
-        items.push({ label: "New Folder Here", action: () => createFolder(path) });
+        items.push({ label: _t("lexicon.menu.newFileHere", "New File Here"), action: () => createFile(path) });
+        items.push({ label: _t("lexicon.menu.newFolderHere", "New Folder Here"), action: () => createFolder(path) });
         items.push(null);
-        items.push({ label: "Rename", action: () => renameItem(path, "folder") });
-        items.push({ label: "Delete Folder", action: () => deleteItem(path), cls: "danger" });
+        items.push({ label: _t("lexicon.menu.rename", "Rename"), action: () => renameItem(path, "folder") });
+        items.push({ label: _t("lexicon.menu.deleteFolder", "Delete Folder"), action: () => deleteItem(path), cls: "danger" });
     } else {
         const parentPath = path.split("/").slice(0, -1).join("/");
-        items.push({ label: "New File Here", action: () => createFile(parentPath) });
-        items.push({ label: "New Folder Here", action: () => createFolder(parentPath) });
+        items.push({ label: _t("lexicon.menu.newFileHere", "New File Here"), action: () => createFile(parentPath) });
+        items.push({ label: _t("lexicon.menu.newFolderHere", "New Folder Here"), action: () => createFolder(parentPath) });
         items.push(null);
-        items.push({ label: "Rename", action: () => renameItem(path, "file") });
-        items.push({ label: "Duplicate", action: () => duplicateFile(path) });
+        items.push({ label: _t("lexicon.menu.rename", "Rename"), action: () => renameItem(path, "file") });
+        items.push({ label: _t("lexicon.menu.duplicate", "Duplicate"), action: () => duplicateFile(path) });
         items.push(null);
-        items.push({ label: "Delete", action: () => deleteItem(path), cls: "danger" });
+        items.push({ label: _t("lexicon.menu.delete", "Delete"), action: () => deleteItem(path), cls: "danger" });
     }
 
     for (const item of items) {
@@ -1064,19 +1071,19 @@ function _buildUI(container) {
       +   '<div class="lex-error-banner"></div>'
       +   '<div class="lex-tree-panel">'
       +     '<div class="lex-tree-header">'
-      +       '<div class="lex-tree-title">Wildcards</div>'
+      +       '<div class="lex-tree-title" data-i18n="lexicon.title">' + _t("lexicon.title", "Wildcards") + '</div>'
       +       '<div class="lex-tree-actions">'
-      +         '<button data-action="new-file">+ File</button>'
-      +         '<button data-action="new-folder">+ Folder</button>'
-      +         '<button data-action="refresh" title="Refresh file tree">&#x21bb;</button>'
+      +         '<button data-action="new-file" data-i18n="lexicon.newFile">' + _t("lexicon.newFile", "+ File") + '</button>'
+      +         '<button data-action="new-folder" data-i18n="lexicon.newFolder">' + _t("lexicon.newFolder", "+ Folder") + '</button>'
+      +         '<button data-action="refresh" data-i18n-title="lexicon.refresh.tooltip" title="' + _t("lexicon.refresh.tooltip", "Refresh file tree") + '">&#x21bb;</button>'
       +       '</div>'
       +       '<div class="lex-tree-actions">'
-      +         '<button data-action="import" title="Import wildcards from .zip">\u2B07 Import</button>'
-      +         '<button data-action="export" title="Export wildcards as .zip">\u2B06 Export</button>'
+      +         '<button data-action="import" data-i18n="lexicon.import" data-i18n-title="lexicon.import.tooltip" title="' + _t("lexicon.import.tooltip", "Import wildcards from .zip") + '">' + _t("lexicon.import", "\u2B07 Import") + '</button>'
+      +         '<button data-action="export" data-i18n="lexicon.export" data-i18n-title="lexicon.export.tooltip" title="' + _t("lexicon.export.tooltip", "Export wildcards as .zip") + '">' + _t("lexicon.export", "\u2B06 Export") + '</button>'
       +       '</div>'
       +       '<div class="lex-search-row">'
-      +         '<input type="text" class="lex-tree-search" placeholder="Filter files\u2026">'
-      +         '<button class="lex-search-toggle" title="Searching filenames (click for contents)">Aa</button>'
+      +         '<input type="text" class="lex-tree-search" data-i18n-placeholder="lexicon.search.filenames.placeholder" placeholder="' + _t("lexicon.search.filenames.placeholder", "Filter files\u2026") + '">'
+      +         '<button class="lex-search-toggle" data-i18n-title="lexicon.search.modeFilenames.tooltip" title="' + _t("lexicon.search.modeFilenames.tooltip", "Searching filenames (click for contents)") + '">Aa</button>'
       +       '</div>'
       +     '</div>'
       +     '<div class="lex-tree-list"></div>'
@@ -1085,35 +1092,35 @@ function _buildUI(container) {
       +   '<div class="lex-editor-panel">'
       +     '<div class="lex-empty">'
       +       '<div class="lex-empty-icon">\uD83D\uDCDD</div>'
-      +       '<div>Select a wildcard file to edit</div>'
+      +       '<div data-i18n="lexicon.empty.selectFile">' + _t("lexicon.empty.selectFile", "Select a wildcard file to edit") + '</div>'
       +     '</div>'
       +     '<div class="lex-editor-wrap" style="display:none">'
       +       '<div class="lex-editor-header">'
       +         '<span class="lex-file-name"></span>'
       +         '<span class="lex-dirty-dot"></span>'
-      +         '<button class="lex-save-btn">Save</button>'
-      +         '<button class="lex-autosave-toggle" title="Autosave OFF (click to enable)">Autosave</button>'
-      +         '<button class="lex-preview-toggle" title="Toggle preview panel">Preview</button>'
-      +         '<button class="lex-sort-btn" data-sort="az" title="Sort entries (click to cycle: A→Z, Z→A, Shuffle)">A\u2193Z</button>'
-      +         '<button class="lex-dedup-btn" title="Remove duplicate entries">Dedup</button>'
-      +         '<button class="lex-delete-btn">Delete</button>'
+      +         '<button class="lex-save-btn" data-i18n="lexicon.save">' + _t("lexicon.save", "Save") + '</button>'
+      +         '<button class="lex-autosave-toggle" data-i18n="lexicon.autosave" data-i18n-title="lexicon.autosave.off.tooltip" title="' + _t("lexicon.autosave.off.tooltip", "Autosave OFF (click to enable)") + '">' + _t("lexicon.autosave", "Autosave") + '</button>'
+      +         '<button class="lex-preview-toggle" data-i18n="lexicon.previewToggle" data-i18n-title="lexicon.previewToggle.tooltip" title="' + _t("lexicon.previewToggle.tooltip", "Toggle preview panel") + '">' + _t("lexicon.previewToggle", "Preview") + '</button>'
+      +         '<button class="lex-sort-btn" data-sort="az" data-i18n-title="lexicon.sort.tooltip" title="' + _t("lexicon.sort.tooltip", "Sort entries (click to cycle: A→Z, Z→A, Shuffle)") + '">A\u2193Z</button>'
+      +         '<button class="lex-dedup-btn" data-i18n="lexicon.dedup" data-i18n-title="lexicon.dedup.tooltip" title="' + _t("lexicon.dedup.tooltip", "Remove duplicate entries") + '">' + _t("lexicon.dedup", "Dedup") + '</button>'
+      +         '<button class="lex-delete-btn" data-i18n="lexicon.delete">' + _t("lexicon.delete", "Delete") + '</button>'
       +       '</div>'
       +       '<div class="lex-editor-body">'
       +         '<div class="lex-gutter"><div class="lex-gutter-inner"></div></div>'
       +         '<div class="lex-editor-area">'
       +           '<pre class="lex-highlight" aria-hidden="true"></pre>'
-      +           '<textarea class="lex-textarea" spellcheck="false" placeholder="One entry per line\u2026"></textarea>'
+      +           '<textarea class="lex-textarea" spellcheck="false" data-i18n-placeholder="lexicon.empty.entries" placeholder="' + _t("lexicon.empty.entries", "One entry per line\u2026") + '"></textarea>'
       +         '</div>'
       +       '</div>'
       +       '<div class="lex-preview-panel">'
       +         '<div class="lex-preview-header">'
-      +           '<span class="lex-preview-title">Preview</span>'
-      +           '<button class="lex-preview-roll">\uD83C\uDFB2 Roll</button>'
+      +           '<span class="lex-preview-title" data-i18n="lexicon.previewTitle">' + _t("lexicon.previewTitle", "Preview") + '</span>'
+      +           '<button class="lex-preview-roll" data-i18n="lexicon.roll">' + _t("lexicon.roll", "\uD83C\uDFB2 Roll") + '</button>'
       +         '</div>'
       +         '<div class="lex-preview-body">'
-      +           '<div class="lex-preview-label">Picked:</div>'
+      +           '<div class="lex-preview-label" data-i18n="lexicon.preview.picked">' + _t("lexicon.preview.picked", "Picked:") + '</div>'
       +           '<div class="lex-preview-raw"></div>'
-      +           '<div class="lex-preview-label">Resolved:</div>'
+      +           '<div class="lex-preview-label" data-i18n="lexicon.preview.resolved">' + _t("lexicon.preview.resolved", "Resolved:") + '</div>'
       +           '<div class="lex-preview-result"></div>'
       +         '</div>'
       +       '</div>'
@@ -1168,7 +1175,7 @@ function _buildUI(container) {
 
     root.querySelector('[data-action="new-file"]').addEventListener("click", () => createFile());
     root.querySelector('[data-action="new-folder"]').addEventListener("click", () => createFolder());
-    root.querySelector('[data-action="refresh"]').addEventListener("click", () => { loadTree(); loadInfo(); _toast("Refreshed"); });
+    root.querySelector('[data-action="refresh"]').addEventListener("click", () => { loadTree(); loadInfo(); _toast(_t("lexicon.toast.refreshed", "Refreshed")); });
     root.querySelector('[data-action="export"]').addEventListener("click", exportZip);
     root.querySelector('[data-action="import"]').addEventListener("click", importZip);
 
