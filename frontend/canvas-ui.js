@@ -2910,7 +2910,9 @@ function renderLayerPanel() {
             blendSel.className = "layer-blend-select";
             for (const [val, label] of C.ALL_BLEND_MODES) {
                 const opt = document.createElement("option");
-                opt.value = val; opt.textContent = label;
+                const blendKey = "blendMode." + label.replace(/\s+(.)/g, (_, c) => c.toUpperCase()).replace(/^(.)/, (_, c) => c.toLowerCase());
+                opt.value = val;
+                opt.textContent = (window.I18N && window.I18N.t) ? window.I18N.t(blendKey, label) : label;
                 if (val === L.blendMode) opt.selected = true;
                 blendSel.appendChild(opt);
             }
@@ -2939,9 +2941,13 @@ function renderLayerPanel() {
             const meta = document.createElement("div");
             meta.className = "layer-meta";
             if (L.type === "adjustment") {
-                meta.textContent = "⚙ Adjustment";
+                meta.textContent = (window.I18N && window.I18N.t) ? window.I18N.t("layer.adjustment", "⚙ Adjustment") : "⚙ Adjustment";
             } else {
-                const blendLabel = C.ALL_BLEND_MODES.find(b => b[0] === L.blendMode)?.[1] || "Normal";
+                const englishBlend = C.ALL_BLEND_MODES.find(b => b[0] === L.blendMode)?.[1] || "Normal";
+                // Map blend-mode display string → i18n key. The first
+                // word is the canonical name; multi-word ones use camelCase.
+                const blendKey = "blendMode." + englishBlend.replace(/\s+(.)/g, (_, c) => c.toUpperCase()).replace(/^(.)/, (_, c) => c.toLowerCase());
+                const blendLabel = (window.I18N && window.I18N.t) ? window.I18N.t(blendKey, englishBlend) : englishBlend;
                 meta.textContent = blendLabel + " · " + Math.round(L.opacity * 100) + "%";
             }
             info.appendChild(nameEl); info.appendChild(meta);
@@ -3705,10 +3711,14 @@ function _syncCtxBar() {
     document.querySelectorAll("#contextBar .ctx-scrub, #inpaintBar .ctx-scrub").forEach(_scrubDisplay);
 }
 
-// Re-render scrub labels on locale switch — applyToDom() handles
-// data-i18n* attributes but the scrub textContent is computed at sync
-// time from data-key, so we re-run _syncCtxBar on i18n:change.
-window.addEventListener("i18n:change", _syncCtxBar);
+// Re-render scrub labels and the layer panel on locale switch.
+// applyToDom() handles markup data-i18n* attributes, but the scrub
+// textContent (computed from data-key) and layer-panel blend-mode
+// labels (looked up at render time) need to be re-rendered manually.
+window.addEventListener("i18n:change", () => {
+    _syncCtxBar();
+    if (typeof renderLayerPanel === "function") renderLayerPanel();
+});
 
 function _syncDynamicsPanel() {
     const d = S.brushDynamics;
