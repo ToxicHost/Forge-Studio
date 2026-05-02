@@ -17,6 +17,12 @@
 "use strict";
 
 var Education = (function () {
+  // i18n helper — chrome strings translate. Long-form step content is
+  // intentionally NOT routed through _t in this PR (deferred to Phase 3B).
+  function _t(key, fallback, params) {
+    return (window.I18N && window.I18N.t) ? window.I18N.t(key, fallback, params) : fallback;
+  }
+
   var STORAGE_PREFIX = "studio-edu-";
   var _state = {
     tier: null, enabled: true, guidedStep: 0, guidedActive: false,
@@ -270,24 +276,24 @@ var Education = (function () {
     var overlay = document.createElement("div"); overlay.className = "edu-modal-overlay";
     overlay.innerHTML = '<div class="edu-modal">' +
       '<div class="edu-modal-brand"><em>FORGE</em>&ensp;<span class="edu-brand-studio">STUDIO</span></div>' +
-      '<div class="edu-modal-subtitle">How would you like to get started?</div>' +
+      '<div class="edu-modal-subtitle" data-i18n="education.pathPicker.title">' + _t("education.pathPicker.title", "How would you like to get started?") + '</div>' +
       '<div class="edu-cards">' +
         '<div class="edu-card" data-tier="beginner">' +
           '<div class="edu-card-icon">\u2726</div>' +
           '<div class="edu-card-body">' +
-            '<div class="edu-card-title">I\u2019m new to AI image generation</div>' +
-            '<div class="edu-card-desc">Walk me through making my first image and show me the tools.</div>' +
+            '<div class="edu-card-title" data-i18n="education.pathPicker.beginner.title">' + _t("education.pathPicker.beginner.title", "I\u2019m new to AI image generation") + '</div>' +
+            '<div class="edu-card-desc" data-i18n="education.pathPicker.beginner.desc">' + _t("education.pathPicker.beginner.desc", "Walk me through making my first image and show me the tools.") + '</div>' +
           '</div>' +
         '</div>' +
         '<div class="edu-card" data-tier="experienced">' +
           '<div class="edu-card-icon">\u26a1</div>' +
           '<div class="edu-card-body">' +
-            '<div class="edu-card-title">I\u2019ve used Stable Diffusion, Photoshop, or similar tools</div>' +
-            '<div class="edu-card-desc">Show me where things are and what\u2019s different here.</div>' +
+            '<div class="edu-card-title" data-i18n="education.pathPicker.experienced.title">' + _t("education.pathPicker.experienced.title", "I\u2019ve used Stable Diffusion, Photoshop, or similar tools") + '</div>' +
+            '<div class="edu-card-desc" data-i18n="education.pathPicker.experienced.desc">' + _t("education.pathPicker.experienced.desc", "Show me where things are and what\u2019s different here.") + '</div>' +
           '</div>' +
         '</div>' +
       '</div>' +
-      '<button class="edu-skip-link" data-tier="skip_quiet">I\u2019ll figure it out on my own</button>' +
+      '<button class="edu-skip-link" data-tier="skip_quiet" data-i18n="education.pathPicker.skip">' + _t("education.pathPicker.skip", "I\u2019ll figure it out on my own") + '</button>' +
     '</div>';
     overlay.querySelectorAll(".edu-card").forEach(function (c) {
       c.addEventListener("click", function () { _selectTier(c.dataset.tier); overlay.remove(); });
@@ -338,7 +344,7 @@ var Education = (function () {
       persist: true,
       bodyClass: "edu-guided",
       confirmCancel: true,
-      cancelPrompt: "End the walkthrough? You can restart it anytime from Settings.",
+      cancelPrompt: _t("education.cancelConfirm.walkthrough", "End the walkthrough? You can restart it anytime from Settings."),
       onComplete: _completeWalkthrough,
       onCancel: _completeWalkthrough,
     });
@@ -419,7 +425,7 @@ var Education = (function () {
       persist: false,
       bodyClass: null,
       confirmCancel: true,
-      cancelPrompt: "End the tour? You can restart it anytime from Settings.",
+      cancelPrompt: _t("tour.endConfirm", "End the tour? You can restart it anytime from Settings."),
       onComplete: function () { _clearCodexHighlight(); _tour = null; console.log("[Education] Experienced tour complete"); },
       onCancel: function () { _clearCodexHighlight(); _tour = null; },
     });
@@ -437,17 +443,17 @@ var Education = (function () {
     var ib = ag ? ag.closest(".setting-group") : null;
 
     var g = document.createElement("div"); g.className = "setting-group";
-    g.innerHTML = '<div class="setting-group-title">Education</div>' +
-      '<div class="edu-settings-row"><span class="setting-label">Current path</span>' +
+    g.innerHTML = '<div class="setting-group-title" data-i18n="education.settings.title">' + _t("education.settings.title", "Education") + '</div>' +
+      '<div class="edu-settings-row"><span class="setting-label" data-i18n="education.settings.currentPath">' + _t("education.settings.currentPath", "Current path") + '</span>' +
       '<span style="font-size:10px;color:var(--text-3);font-family:var(--mono);" id="eduCurrentTier">' + _tierLabel(_state.tier) + '</span></div>' +
       '<div style="display:flex;gap:6px;margin-top:6px;">' +
-      '<button class="edu-reset-btn" id="eduRestartTour">Restart Tour</button>' +
-      '<button class="edu-reset-btn" id="eduChangePath">Change Path</button></div>';
+      '<button class="edu-reset-btn" id="eduRestartTour" data-i18n="education.settings.restartTour">' + _t("education.settings.restartTour", "Restart Tour") + '</button>' +
+      '<button class="edu-reset-btn" id="eduChangePath" data-i18n="education.settings.changePath">' + _t("education.settings.changePath", "Change Path") + '</button></div>';
     if (ib) sc.insertBefore(g, ib); else sc.appendChild(g);
 
     g.querySelector("#eduRestartTour").addEventListener("click", function () {
       if (!_state.tier || _state.tier === "skip") {
-        if (window.showToast) window.showToast("Select a path first", "info");
+        if (window.showToast) window.showToast(_t("education.toast.selectPath", "Select a path first"), "info");
         return;
       }
       if (_tour && _tour.isActive) _tour._forceCancel();

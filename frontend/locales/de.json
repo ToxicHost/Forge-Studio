@@ -785,5 +785,18 @@
 
   "lexicon.confirm.discardUnsaved": "Ungespeicherte Änderungen in {path}. Verwerfen?",
   "lexicon.confirm.deleteFile": "\"{name}\" löschen?",
-  "lexicon.confirm.deleteFolder": "\"{name}\" enthält {count} Wildcard-Datei(en). Ordner und gesamten Inhalt löschen?"
+  "lexicon.confirm.deleteFolder": "\"{name}\" enthält {count} Wildcard-Datei(en). Ordner und gesamten Inhalt löschen?",
+
+  "education.pathPicker.title": "Wie möchtest du beginnen?",
+  "education.pathPicker.beginner.title": "Ich bin neu bei KI-Bildgenerierung",
+  "education.pathPicker.beginner.desc": "Führe mich durch das erste Bild und zeige mir die Werkzeuge.",
+  "education.pathPicker.experienced.title": "Ich habe Stable Diffusion, Photoshop oder ähnliche Tools benutzt",
+  "education.pathPicker.experienced.desc": "Zeig mir, wo die Dinge sind und was hier anders ist.",
+  "education.pathPicker.skip": "Ich finde mich selbst zurecht",
+  "education.cancelConfirm.walkthrough": "Walkthrough beenden? Du kannst ihn jederzeit aus den Einstellungen erneut starten.",
+  "education.settings.title": "Lernen",
+  "education.settings.currentPath": "Aktueller Pfad",
+  "education.settings.restartTour": "Tour neu starten",
+  "education.settings.changePath": "Pfad ändern",
+  "education.toast.selectPath": "Wähle zuerst einen Pfad"
 }

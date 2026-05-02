@@ -785,5 +785,18 @@
 
   "lexicon.confirm.discardUnsaved": "Unsaved changes in {path}. Discard?",
   "lexicon.confirm.deleteFile": "Delete \"{name}\"?",
-  "lexicon.confirm.deleteFolder": "\"{name}\" contains {count} wildcard file(s). Delete folder and all contents?"
+  "lexicon.confirm.deleteFolder": "\"{name}\" contains {count} wildcard file(s). Delete folder and all contents?",
+
+  "education.pathPicker.title": "How would you like to get started?",
+  "education.pathPicker.beginner.title": "I'm new to AI image generation",
+  "education.pathPicker.beginner.desc": "Walk me through making my first image and show me the tools.",
+  "education.pathPicker.experienced.title": "I've used Stable Diffusion, Photoshop, or similar tools",
+  "education.pathPicker.experienced.desc": "Show me where things are and what's different here.",
+  "education.pathPicker.skip": "I'll figure it out on my own",
+  "education.cancelConfirm.walkthrough": "End the walkthrough? You can restart it anytime from Settings.",
+  "education.settings.title": "Education",
+  "education.settings.currentPath": "Current path",
+  "education.settings.restartTour": "Restart Tour",
+  "education.settings.changePath": "Change Path",
+  "education.toast.selectPath": "Select a path first"
 }

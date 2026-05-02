@@ -2256,7 +2256,7 @@ function _showTextOverlay(p, e) {
                 <input id="textItalic" type="checkbox"> <em>I</em>
             </label>
         </div>
-        <textarea id="textInput" rows="3" data-i18n-placeholder="canvas.text.placeholder" placeholder="Type text..." style="background:var(--bg-raised);color:var(--text-1);border:1px solid var(--border);border-radius:4px;padding:6px;font-size:14px;resize:vertical;min-width:200px;font-family:var(--font);"></textarea>
+        <textarea id="textInput" rows="3" data-i18n-placeholder="canvas.text.placeholder" placeholder="${_i18n("canvas.text.placeholder", "Type text...")}" style="background:var(--bg-raised);color:var(--text-1);border:1px solid var(--border);border-radius:4px;padding:6px;font-size:14px;resize:vertical;min-width:200px;font-family:var(--font);"></textarea>
         <div style="display:flex;gap:4px;">
             <button id="textOk" style="flex:1;background:var(--accent);color:#fff;border:none;border-radius:4px;padding:5px 10px;cursor:pointer;font-size:11px;font-family:var(--font);">Place Text</button>
             <button id="textCancel" style="background:var(--bg-raised);color:var(--text-2);border:1px solid var(--border);border-radius:4px;padding:5px 10px;cursor:pointer;font-size:11px;font-family:var(--font);">Cancel</button>
