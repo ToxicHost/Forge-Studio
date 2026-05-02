@@ -785,5 +785,18 @@
 
   "lexicon.confirm.discardUnsaved": "Cambios sin guardar en {path}. ¿Descartar?",
   "lexicon.confirm.deleteFile": "¿Eliminar «{name}»?",
-  "lexicon.confirm.deleteFolder": "«{name}» contiene {count} archivo(s) wildcard. ¿Eliminar carpeta y todo su contenido?"
+  "lexicon.confirm.deleteFolder": "«{name}» contiene {count} archivo(s) wildcard. ¿Eliminar carpeta y todo su contenido?",
+
+  "education.pathPicker.title": "¿Cómo te gustaría empezar?",
+  "education.pathPicker.beginner.title": "Soy nuevo en la generación de imágenes con IA",
+  "education.pathPicker.beginner.desc": "Guíame para crear mi primera imagen y muéstrame las herramientas.",
+  "education.pathPicker.experienced.title": "He usado Stable Diffusion, Photoshop u otras herramientas similares",
+  "education.pathPicker.experienced.desc": "Muéstrame dónde están las cosas y qué es diferente aquí.",
+  "education.pathPicker.skip": "Lo descubriré por mi cuenta",
+  "education.cancelConfirm.walkthrough": "¿Terminar el tutorial? Puedes reiniciarlo en cualquier momento desde Ajustes.",
+  "education.settings.title": "Aprendizaje",
+  "education.settings.currentPath": "Ruta actual",
+  "education.settings.restartTour": "Reiniciar tour",
+  "education.settings.changePath": "Cambiar ruta",
+  "education.toast.selectPath": "Selecciona primero una ruta"
 }
