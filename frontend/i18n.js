@@ -155,7 +155,11 @@
             var domAttr = pair[1];
             root.querySelectorAll("[" + dataAttr + "]").forEach(function (el) {
                 var key = el.getAttribute(dataAttr);
-                var txt = t(key);
+                // Pass data-i18n-params through so attribute walkers can
+                // interpolate the same way the textContent walker does
+                // (e.g. crop-ratio tooltips with a {ratio} placeholder).
+                var params = _readParams(el);
+                var txt = t(key, params);
                 if (txt !== key) el.setAttribute(domAttr, txt);
                 else if (_keysMode) el.setAttribute(domAttr, key);
             });

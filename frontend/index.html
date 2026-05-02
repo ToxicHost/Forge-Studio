@@ -121,28 +121,28 @@
         <span class="ctx-scrub ctx-item" data-ctx="strength" data-key="strength" data-min="1" data-max="100" data-step="1" data-suffix="%" data-scale="100">Strength: 50%</span>
         <!-- Shape sub-options (shown when shape tool active) -->
         <span class="ctx-item" data-ctx="shape-opts" style="display:flex;gap:2px;">
-          <button class="ctx-mode-btn active" data-smode="rect" title="Rectangle">&#x25ad;</button>
-          <button class="ctx-mode-btn" data-smode="ellipse" title="Ellipse">&#x25cb;</button>
-          <button class="ctx-mode-btn" data-smode="line" title="Line">&#x2571;</button>
-          <button class="ctx-mode-btn" data-sfill title="Fill shape">&#x25a0;</button>
+          <button class="ctx-mode-btn active" data-smode="rect" data-i18n-title="shapeTool.rectangle" title="Rectangle">&#x25ad;</button>
+          <button class="ctx-mode-btn" data-smode="ellipse" data-i18n-title="shapeTool.ellipse" title="Ellipse">&#x25cb;</button>
+          <button class="ctx-mode-btn" data-smode="line" data-i18n-title="shapeTool.line" title="Line">&#x2571;</button>
+          <button class="ctx-mode-btn" data-sfill data-i18n-title="shapeTool.fillShape" title="Fill shape">&#x25a0;</button>
         </span>
         <!-- Gradient sub-options -->
         <span class="ctx-item" data-ctx="grad-opts" style="display:flex;gap:2px;">
-          <button class="ctx-mode-btn active" data-gmode="linear" title="Linear">&#x2194;</button>
-          <button class="ctx-mode-btn" data-gmode="radial" title="Radial">&#x25ce;</button>
+          <button class="ctx-mode-btn active" data-gmode="linear" data-i18n-title="gradientTool.linear" title="Linear">&#x2194;</button>
+          <button class="ctx-mode-btn" data-gmode="radial" data-i18n-title="gradientTool.radial" title="Radial">&#x25ce;</button>
         </span>
         <!-- Dodge/Burn mode -->
         <span class="ctx-item" data-ctx="db-opts" style="display:flex;gap:2px;">
-          <button class="ctx-mode-btn active" data-dbmode="dodge" title="Dodge (lighten)">&#x2600;</button>
-          <button class="ctx-mode-btn" data-dbmode="burn" title="Burn (darken)">&#x25cf;</button>
+          <button class="ctx-mode-btn active" data-dbmode="dodge" data-i18n-title="dodgeTool.dodge" title="Dodge (lighten)">&#x2600;</button>
+          <button class="ctx-mode-btn" data-dbmode="burn" data-i18n-title="dodgeTool.burn" title="Burn (darken)">&#x25cf;</button>
         </span>
         <!-- Liquify sub-options -->
         <span class="ctx-item" data-ctx="liquify-opts" style="display:flex;gap:2px;align-items:center;border-left:1px solid var(--border);padding-left:6px;">
-          <button class="ctx-mode-btn active" data-liqmode="move" title="Move (push)">&#x2b95;</button>
-          <button class="ctx-mode-btn" data-liqmode="pinch" title="Pinch (shrink)">&#x29bb;</button>
-          <button class="ctx-mode-btn" data-liqmode="bloat" title="Bloat (expand)">&#x29be;</button>
-          <button class="ctx-mode-btn" data-liqmode="twirl_cw" title="Twirl clockwise">&#x21bb;</button>
-          <button class="ctx-mode-btn" data-liqmode="twirl_ccw" title="Twirl counter-clockwise">&#x21ba;</button>
+          <button class="ctx-mode-btn active" data-liqmode="move" data-i18n-title="liquifyTool.move" title="Move (push)">&#x2b95;</button>
+          <button class="ctx-mode-btn" data-liqmode="pinch" data-i18n-title="liquifyTool.pinch" title="Pinch (shrink)">&#x29bb;</button>
+          <button class="ctx-mode-btn" data-liqmode="bloat" data-i18n-title="liquifyTool.bloat" title="Bloat (expand)">&#x29be;</button>
+          <button class="ctx-mode-btn" data-liqmode="twirl_cw" data-i18n-title="liquifyTool.twirlCw" title="Twirl clockwise">&#x21bb;</button>
+          <button class="ctx-mode-btn" data-liqmode="twirl_ccw" data-i18n-title="liquifyTool.twirlCcw" title="Twirl counter-clockwise">&#x21ba;</button>
           <span class="ctx-scrub" data-key="spacing" data-min="5" data-max="100" data-step="5" data-suffix="%" style="margin-left:4px;">Spacing: 20%</span>
         </span>
         <!-- Transform sub-options (shown when transform tool active) -->
@@ -153,51 +153,51 @@
           <label class="tf-field"><span class="tf-lbl">H</span><input type="number" id="tfH" class="tf-input" step="1" min="4"></label>
           <label class="tf-field"><span class="tf-lbl">R°</span><input type="number" id="tfR" class="tf-input tf-input-r" step="0.5"></label>
           <span style="border-left:1px solid var(--border);padding-left:4px;margin-left:2px;">
-            <button class="ctx-mode-btn" id="tfSkewBtn" title="Skew mode — edge handles shear (K)">Skew</button>
-            <button class="ctx-mode-btn" id="tfPerspBtn" title="Perspective mode — drag corners freely (P)">Persp</button>
-            <button class="ctx-mode-btn" id="tfWarpBtn" title="Warp mode — MLS deformation (W)">Warp</button>
+            <button class="ctx-mode-btn" id="tfSkewBtn" data-i18n-title="transformTool.skew.tooltip" title="Skew mode — edge handles shear (K)">Skew</button>
+            <button class="ctx-mode-btn" id="tfPerspBtn" data-i18n-title="transformTool.persp.tooltip" title="Perspective mode — drag corners freely (P)">Persp</button>
+            <button class="ctx-mode-btn" id="tfWarpBtn" data-i18n-title="transformTool.warp.tooltip" title="Warp mode — MLS deformation (W)">Warp</button>
           </span>
           <span style="border-left:1px solid var(--border);padding-left:4px;margin-left:2px;display:inline-flex;gap:2px;align-items:center;">
-            <button class="ctx-mode-btn" id="tfFlipHBtn" title="Flip layer horizontally (Ctrl+Shift+H)">Flip H</button>
-            <button class="ctx-mode-btn" id="tfFlipVBtn" title="Flip layer vertically (Ctrl+Shift+V)">Flip V</button>
-            <button class="ctx-mode-btn" id="tfRot90CCWBtn" title="Rotate layer 90° counter-clockwise">⟲ 90°</button>
-            <button class="ctx-mode-btn" id="tfRot90CWBtn" title="Rotate layer 90° clockwise">⟳ 90°</button>
-            <button class="ctx-mode-btn" id="tfRot180Btn" title="Rotate layer 180°">180°</button>
-            <button class="ctx-mode-btn" id="tfRotArbBtn" title="Rotate layer by an arbitrary angle">Rot°…</button>
+            <button class="ctx-mode-btn" id="tfFlipHBtn" data-i18n-title="transformTool.flipH.tooltip" title="Flip layer horizontally (Ctrl+Shift+H)">Flip H</button>
+            <button class="ctx-mode-btn" id="tfFlipVBtn" data-i18n-title="transformTool.flipV.tooltip" title="Flip layer vertically (Ctrl+Shift+V)">Flip V</button>
+            <button class="ctx-mode-btn" id="tfRot90CCWBtn" data-i18n-title="transformTool.rot90Ccw.tooltip" title="Rotate layer 90° counter-clockwise">⟲ 90°</button>
+            <button class="ctx-mode-btn" id="tfRot90CWBtn" data-i18n-title="transformTool.rot90Cw.tooltip" title="Rotate layer 90° clockwise">⟳ 90°</button>
+            <button class="ctx-mode-btn" id="tfRot180Btn" data-i18n-title="transformTool.rot180.tooltip" title="Rotate layer 180°">180°</button>
+            <button class="ctx-mode-btn" id="tfRotArbBtn" data-i18n-title="transformTool.rotArb.tooltip" title="Rotate layer by an arbitrary angle">Rot°…</button>
           </span>
           <span id="tfWarpOpts" style="display:none;border-left:1px solid var(--border);padding-left:4px;margin-left:2px;gap:2px;align-items:center;">
-            <button class="ctx-mode-btn active" data-wdensity="3" title="3×3 grid">3</button>
-            <button class="ctx-mode-btn" data-wdensity="4" title="4×4 grid">4</button>
-            <button class="ctx-mode-btn" data-wdensity="5" title="5×5 grid">5</button>
+            <button class="ctx-mode-btn active" data-wdensity="3" data-i18n-title="transformTool.warp.density3" title="3×3 grid">3</button>
+            <button class="ctx-mode-btn" data-wdensity="4" data-i18n-title="transformTool.warp.density4" title="4×4 grid">4</button>
+            <button class="ctx-mode-btn" data-wdensity="5" data-i18n-title="transformTool.warp.density5" title="5×5 grid">5</button>
             <span style="border-left:1px solid var(--border);padding-left:3px;margin-left:2px;">
-              <button class="ctx-mode-btn" data-wmode="affine" title="Affine — allows shear">Aff</button>
-              <button class="ctx-mode-btn" data-wmode="similitude" title="Similitude — preserves angles">Sim</button>
-              <button class="ctx-mode-btn active" data-wmode="rigid" title="Rigid — preserves shape">Rig</button>
+              <button class="ctx-mode-btn" data-wmode="affine" data-i18n-title="transformTool.warp.affine" title="Affine — allows shear">Aff</button>
+              <button class="ctx-mode-btn" data-wmode="similitude" data-i18n-title="transformTool.warp.similitude" title="Similitude — preserves angles">Sim</button>
+              <button class="ctx-mode-btn active" data-wmode="rigid" data-i18n-title="transformTool.warp.rigid" title="Rigid — preserves shape">Rig</button>
             </span>
           </span>
         </span>
         <!-- Eyedropper options -->
         <span class="ctx-item" data-ctx="eye-opts" style="display:flex;gap:4px;align-items:center;border-left:1px solid var(--border);padding-left:6px;">
           <span class="ctx-scrub" data-key="sampleRadius" data-label="Radius" data-min="1" data-max="11" data-step="2" data-suffix="px" data-scale="1">Radius: 1px</span>
-          <button class="ctx-mode-btn" id="sampleMergedBtn" title="Sample from all visible layers">Merged</button>
+          <button class="ctx-mode-btn" id="sampleMergedBtn" data-i18n="eyedropperTool.merged" data-i18n-title="eyedropperTool.merged.tooltip" title="Sample from all visible layers">Merged</button>
         </span>
         <!-- Crop options -->
         <span class="ctx-item" data-ctx="crop-opts" style="display:flex;gap:2px;align-items:center;border-left:1px solid var(--border);padding-left:6px;">
-          <button class="ctx-mode-btn active" data-cropratio="0" title="Free crop">Free</button>
-          <button class="ctx-mode-btn" data-cropratio="1:1" title="Square">1:1</button>
-          <button class="ctx-mode-btn" data-cropratio="5:4" title="5:4 — click again to swap">5:4</button>
-          <button class="ctx-mode-btn" data-cropratio="4:3" title="4:3 — click again to swap">4:3</button>
-          <button class="ctx-mode-btn" data-cropratio="3:2" title="3:2 — click again to swap">3:2</button>
-          <button class="ctx-mode-btn" data-cropratio="16:9" title="16:9 — click again to swap">16:9</button>
-          <button class="ctx-mode-btn" data-cropratio="2:1" title="2:1 — click again to swap">2:1</button>
-          <button class="ctx-mode-btn" data-cropratio="2.39:1" title="2.39:1 — click again to swap">2.39:1</button>
-          <span style="font-size:10px;color:var(--text-4);margin-left:4px;">Shift=lock</span>
+          <button class="ctx-mode-btn active" data-cropratio="0" data-i18n="cropTool.free" data-i18n-title="cropTool.free.tooltip" title="Free crop">Free</button>
+          <button class="ctx-mode-btn" data-cropratio="1:1" data-i18n-title="cropTool.square.tooltip" title="Square">1:1</button>
+          <button class="ctx-mode-btn" data-cropratio="5:4" data-i18n-title="cropTool.ratio.tooltip" data-i18n-params='{"ratio":"5:4"}' title="5:4 — click again to swap">5:4</button>
+          <button class="ctx-mode-btn" data-cropratio="4:3" data-i18n-title="cropTool.ratio.tooltip" data-i18n-params='{"ratio":"4:3"}' title="4:3 — click again to swap">4:3</button>
+          <button class="ctx-mode-btn" data-cropratio="3:2" data-i18n-title="cropTool.ratio.tooltip" data-i18n-params='{"ratio":"3:2"}' title="3:2 — click again to swap">3:2</button>
+          <button class="ctx-mode-btn" data-cropratio="16:9" data-i18n-title="cropTool.ratio.tooltip" data-i18n-params='{"ratio":"16:9"}' title="16:9 — click again to swap">16:9</button>
+          <button class="ctx-mode-btn" data-cropratio="2:1" data-i18n-title="cropTool.ratio.tooltip" data-i18n-params='{"ratio":"2:1"}' title="2:1 — click again to swap">2:1</button>
+          <button class="ctx-mode-btn" data-cropratio="2.39:1" data-i18n-title="cropTool.ratio.tooltip" data-i18n-params='{"ratio":"2.39:1"}' title="2.39:1 — click again to swap">2.39:1</button>
+          <span style="font-size:10px;color:var(--text-4);margin-left:4px;" data-i18n="cropTool.shiftLock">Shift=lock</span>
         </span>
         <!-- Lasso sub-options (shown when any lasso tool active) -->
         <span class="ctx-item" data-ctx="lasso-opts" style="display:flex;gap:2px;align-items:center;border-left:1px solid var(--border);padding-left:6px;">
-          <button class="ctx-mode-btn active" data-lassotype="lasso" title="Freehand lasso (L)">Free</button>
-          <button class="ctx-mode-btn" data-lassotype="polylasso" title="Polygonal lasso (L)">Poly</button>
-          <button class="ctx-mode-btn" data-lassotype="maglasso" title="Magnetic lasso (L)">Mag</button>
+          <button class="ctx-mode-btn active" data-lassotype="lasso" data-i18n="lassoTool.free" data-i18n-title="lassoTool.free.tooltip" title="Freehand lasso (L)">Free</button>
+          <button class="ctx-mode-btn" data-lassotype="polylasso" data-i18n="lassoTool.poly" data-i18n-title="lassoTool.poly.tooltip" title="Polygonal lasso (L)">Poly</button>
+          <button class="ctx-mode-btn" data-lassotype="maglasso" data-i18n="lassoTool.mag" data-i18n-title="lassoTool.mag.tooltip" title="Magnetic lasso (L)">Mag</button>
         </span>
       </div>
 
@@ -241,29 +241,29 @@
       <!-- Brush dynamics flyout -->
       <div id="dynamicsPanel" style="display:none; position:absolute; bottom:80px; left:50%; transform:translateX(-50%); z-index:10; background:var(--bg-surface); border:1px solid var(--border); border-radius:10px; padding:10px 14px; min-width:280px; font-size:10px; color:var(--text-3);">
         <div style="font-weight:600;color:var(--text-1);margin-bottom:6px;display:flex;justify-content:space-between;align-items:center;">
-          Brush Dynamics
+          <span data-i18n="brushDynamics.title">Brush Dynamics</span>
           <label style="font-weight:400;display:flex;align-items:center;gap:3px;cursor:pointer;">
-            <input type="checkbox" id="dynFollowStroke" checked style="accent-color:var(--accent);"> Follow stroke
+            <input type="checkbox" id="dynFollowStroke" checked style="accent-color:var(--accent);"> <span data-i18n="brushDynamics.followStroke">Follow stroke</span>
           </label>
         </div>
         <div style="display:grid;grid-template-columns:80px 1fr 32px;gap:3px 8px;align-items:center;">
-          <span>Spacing</span><input type="range" class="ctx-slider" id="dynSpacing" min="2" max="50" value="8"><span id="dynSpacingVal">0.08</span>
-          <span>Size Jitter</span><input type="range" class="ctx-slider" id="dynSizeJitter" min="0" max="100" value="0"><span id="dynSizeJitterVal">0%</span>
-          <span>Opacity Jitter</span><input type="range" class="ctx-slider" id="dynOpacityJitter" min="0" max="100" value="0"><span id="dynOpacityJitterVal">0%</span>
-          <span>Scatter</span><input type="range" class="ctx-slider" id="dynScatter" min="0" max="100" value="0"><span id="dynScatterVal">0%</span>
-          <span>Rotation Jitter</span><input type="range" class="ctx-slider" id="dynRotJitter" min="0" max="100" value="0"><span id="dynRotJitterVal">0%</span>
+          <span data-i18n="brushDynamics.spacing">Spacing</span><input type="range" class="ctx-slider" id="dynSpacing" min="2" max="50" value="8"><span id="dynSpacingVal">0.08</span>
+          <span data-i18n="brushDynamics.sizeJitter">Size Jitter</span><input type="range" class="ctx-slider" id="dynSizeJitter" min="0" max="100" value="0"><span id="dynSizeJitterVal">0%</span>
+          <span data-i18n="brushDynamics.opacityJitter">Opacity Jitter</span><input type="range" class="ctx-slider" id="dynOpacityJitter" min="0" max="100" value="0"><span id="dynOpacityJitterVal">0%</span>
+          <span data-i18n="brushDynamics.scatter">Scatter</span><input type="range" class="ctx-slider" id="dynScatter" min="0" max="100" value="0"><span id="dynScatterVal">0%</span>
+          <span data-i18n="brushDynamics.rotationJitter">Rotation Jitter</span><input type="range" class="ctx-slider" id="dynRotJitter" min="0" max="100" value="0"><span id="dynRotJitterVal">0%</span>
         </div>
         <div style="border-top:1px solid var(--border-subtle);margin-top:8px;padding-top:6px;">
-          <div style="font-weight:600;color:var(--text-1);margin-bottom:6px;">Brush Shape</div>
+          <div style="font-weight:600;color:var(--text-1);margin-bottom:6px;" data-i18n="brushDynamics.shape.title">Brush Shape</div>
           <div style="display:grid;grid-template-columns:80px 1fr 32px;gap:3px 8px;align-items:center;">
-            <span>Ratio</span><input type="range" class="ctx-slider" id="dynRatio" min="10" max="100" step="5" value="100"><span id="dynRatioVal">100%</span>
-            <span>Density</span><input type="range" class="ctx-slider" id="dynDensity" min="5" max="100" step="5" value="100"><span id="dynDensityVal">100%</span>
-            <span>Spikes</span><input type="range" class="ctx-slider" id="dynSpikes" min="2" max="12" step="1" value="2"><span id="dynSpikesVal">2</span>
+            <span data-i18n="brushDynamics.shape.ratio">Ratio</span><input type="range" class="ctx-slider" id="dynRatio" min="10" max="100" step="5" value="100"><span id="dynRatioVal">100%</span>
+            <span data-i18n="brushDynamics.shape.density">Density</span><input type="range" class="ctx-slider" id="dynDensity" min="5" max="100" step="5" value="100"><span id="dynDensityVal">100%</span>
+            <span data-i18n="brushDynamics.shape.spikes">Spikes</span><input type="range" class="ctx-slider" id="dynSpikes" min="2" max="12" step="1" value="2"><span id="dynSpikesVal">2</span>
           </div>
           <div style="display:flex;gap:4px;margin-top:6px;">
-            <span style="width:80px;">Falloff</span>
-            <button class="ctx-mode-btn active" data-falloff="default" title="Standard smoothstep">Std</button>
-            <button class="ctx-mode-btn" data-falloff="gaussian" title="Gaussian bell curve">Gauss</button>
+            <span style="width:80px;" data-i18n="brushDynamics.falloff">Falloff</span>
+            <button class="ctx-mode-btn active" data-falloff="default" data-i18n-title="brushDynamics.falloff.std.tooltip" title="Standard smoothstep">Std</button>
+            <button class="ctx-mode-btn" data-falloff="gaussian" data-i18n-title="brushDynamics.falloff.gauss.tooltip" title="Gaussian bell curve">Gauss</button>
           </div>
         </div>
       </div>
@@ -1012,7 +1012,7 @@
   ];
   // Optional modules — loaded if available, silently skipped if not
   const optionalScripts = ["develop.js", "video-lab.js", "workshop.js", "lexicon.js", "education.js", "codex.js", "studio-showme.js", "gallery.js", "module-tours.js"];
-  const v = "4.5.0";
+  const v = "4.5.1";
   for (const s of scripts) {
     await new Promise((resolve, reject) => {
       const el = document.createElement("script");
