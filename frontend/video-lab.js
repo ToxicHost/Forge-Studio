@@ -10,6 +10,14 @@
 (function () {
 "use strict";
 
+// i18n helper — runtime-built strings pass their English source through
+// _t(). Markup elements get data-i18n* attrs so applyToDom() keeps them
+// in sync on locale switch. _t accepts an optional params object for
+// {placeholder} interpolation.
+function _t(key, fallback, params) {
+  return (window.I18N && window.I18N.t) ? window.I18N.t(key, fallback, params) : fallback;
+}
+
 const TAG = "[Video Lab]";
 const API = "/studio/api/video";
 
@@ -54,7 +62,7 @@ StudioModules.register("video", {
         // Show Canvas loading indicators while the model reloads
         const btn = document.getElementById("genBtn");
         const fill = document.getElementById("progressFill");
-        if (btn) { btn.textContent = "Restoring model..."; btn.classList.add("generating"); }
+        if (btn) { btn.textContent = _t("video.button.restoringModel", "Restoring model..."); btn.classList.add("generating"); }
         if (fill) { fill.style.width = "100%"; fill.classList.add("indeterminate"); }
         if (window.StatusBar) window.StatusBar.setStatus("loading");
 
@@ -68,7 +76,7 @@ StudioModules.register("video", {
                     window.StatusBar.setModel(data.model.split("[")[0].trim());
                 }
                 if (window.showToast && data.restored) {
-                    window.showToast("Canvas model restored", "success");
+                    window.showToast(_t("video.toast.canvasModelRestored", "Canvas model restored"), "success");
                 }
             })
             .catch(() => {})
@@ -97,17 +105,17 @@ function _buildHTML() {
             <div class="vl-ref-area" id="vlRefArea">
                 <div class="vl-ref-preview" id="vlRefPreview">
                     <div class="vl-ref-empty" id="vlRefEmpty">
-                        <span>No reference image</span>
-                        <small>Use canvas or drop an image for I2V</small>
-                        <small>Leave empty for T2V</small>
+                        <span data-i18n="video.empty.noReference">${_t("video.empty.noReference", "No reference image")}</span>
+                        <small data-i18n="video.empty.useCanvas">${_t("video.empty.useCanvas", "Use canvas or drop an image for I2V")}</small>
+                        <small data-i18n="video.empty.leaveEmpty">${_t("video.empty.leaveEmpty", "Leave empty for T2V")}</small>
                     </div>
                     <img id="vlRefImg" style="display:none;">
-                    <span class="vl-ref-zoom-hint">Scroll to zoom · Drag to pan</span>
+                    <span class="vl-ref-zoom-hint" data-i18n="video.hint.zoomPan">${_t("video.hint.zoomPan", "Scroll to zoom · Drag to pan")}</span>
                 </div>
                 <div class="vl-ref-actions">
-                    <button id="vlRefFromCanvas" class="vl-btn-sm" title="Capture current canvas">📋 From Canvas</button>
-                    <button id="vlRefUpload" class="vl-btn-sm" title="Upload reference image">📂 Upload</button>
-                    <button id="vlRefClear" class="vl-btn-sm vl-btn-dim" title="Clear (switch to T2V)">✕ Clear</button>
+                    <button id="vlRefFromCanvas" class="vl-btn-sm" data-i18n-title="video.tooltip.fromCanvas" title="${_t('video.tooltip.fromCanvas', 'Capture current canvas')}">📋 <span data-i18n="video.action.fromCanvas">${_t('video.action.fromCanvas', 'From Canvas')}</span></button>
+                    <button id="vlRefUpload" class="vl-btn-sm" data-i18n-title="video.tooltip.uploadRef" title="${_t('video.tooltip.uploadRef', 'Upload reference image')}">📂 <span data-i18n="video.action.upload">${_t('video.action.upload', 'Upload')}</span></button>
+                    <button id="vlRefClear" class="vl-btn-sm vl-btn-dim" data-i18n-title="video.tooltip.clearT2V" title="${_t('video.tooltip.clearT2V', 'Clear (switch to T2V)')}">✕ <span data-i18n="video.action.clear">${_t('video.action.clear', 'Clear')}</span></button>
                     <input type="file" id="vlRefFileInput" accept="image/*" style="display:none;">
                 </div>
             </div>
@@ -115,13 +123,13 @@ function _buildHTML() {
             <!-- Generate -->
             <div class="vl-gen-row">
                 <button class="vl-gen-btn" id="vlGenBtn">
-                    <span class="gen-shine"></span>Generate Video
+                    <span class="gen-shine"></span><span data-i18n="video.action.generate">${_t("video.action.generate", "Generate Video")}</span>
                 </button>
-                <button class="vl-cancel-btn" id="vlCancelBtn" style="display:none;">Cancel</button>
+                <button class="vl-cancel-btn" id="vlCancelBtn" style="display:none;" data-i18n="video.action.cancel">${_t("video.action.cancel", "Cancel")}</button>
             </div>
             <div class="vl-progress" id="vlProgress" style="display:none;">
                 <div class="vl-progress-fill" id="vlProgressFill"></div>
-                <span class="vl-progress-text" id="vlProgressText">Preparing...</span>
+                <span class="vl-progress-text" id="vlProgressText" data-i18n="video.status.preparing">${_t("video.status.preparing", "Preparing...")}</span>
             </div>
 
             <!-- Video Output (side-by-side: reference + generated video) -->
@@ -135,11 +143,11 @@ function _buildHTML() {
                     </div>
                 </div>
                 <div class="vl-output-actions">
-                    <button class="vl-btn vl-btn-sm" id="vlExtractLast" title="Use last frame as reference for next generation">Extract Last Frame</button>
+                    <button class="vl-btn vl-btn-sm" id="vlExtractLast" data-i18n="video.action.extractLastFrame" data-i18n-title="video.tooltip.extractLastFrame" title="${_t('video.tooltip.extractLastFrame', 'Use last frame as reference for next generation')}">${_t("video.action.extractLastFrame", "Extract Last Frame")}</button>
                     <span style="margin-left:auto; display:flex; gap:4px;">
-                        <button class="vl-btn-sm" id="vlOutRefFromCanvas" title="Capture current canvas">📋 Canvas</button>
-                        <button class="vl-btn-sm" id="vlOutRefUpload" title="Upload new reference">📂 Upload</button>
-                        <button class="vl-btn-sm vl-btn-dim" id="vlOutRefClear" title="Clear reference (T2V)">✕ Clear</button>
+                        <button class="vl-btn-sm" id="vlOutRefFromCanvas" data-i18n-title="video.tooltip.fromCanvas" title="${_t('video.tooltip.fromCanvas', 'Capture current canvas')}">📋 Canvas</button>
+                        <button class="vl-btn-sm" id="vlOutRefUpload" data-i18n-title="video.tooltip.uploadRef" title="${_t('video.tooltip.uploadRef', 'Upload new reference')}">📂 <span data-i18n="video.action.upload">${_t('video.action.upload', 'Upload')}</span></button>
+                        <button class="vl-btn-sm vl-btn-dim" id="vlOutRefClear" data-i18n-title="video.tooltip.clearT2V" title="${_t('video.tooltip.clearT2V', 'Clear reference (T2V)')}">✕ <span data-i18n="video.action.clear">${_t('video.action.clear', 'Clear')}</span></button>
                     </span>
                 </div>
                 <div class="vl-output-info" id="vlOutputInfo"></div>
@@ -156,55 +164,55 @@ function _buildHTML() {
             <!-- Prompt (first, matching Canvas tab layout) -->
             <div class="vl-section">
                 <div class="vl-section-title" style="display:flex;align-items:center;justify-content:space-between;">
-                    Prompt
+                    <span data-i18n="video.section.prompt">${_t("video.section.prompt", "Prompt")}</span>
                     <span style="display:flex;gap:4px;">
-                        <button id="vlLoraBtn" title="Insert LoRA" style="font-size:11px;padding:2px 6px;background:var(--bg-2,#2a2a2a);border:1px solid var(--border,#444);border-radius:4px;color:var(--fg-1,#ccc);cursor:pointer;">🎭 LoRA</button>
-                        <button id="vlWildcardBtn" title="Insert Wildcard" style="font-size:11px;padding:2px 6px;background:var(--bg-2,#2a2a2a);border:1px solid var(--border,#444);border-radius:4px;color:var(--fg-1,#ccc);cursor:pointer;">🎲 Wildcard</button>
+                        <button id="vlLoraBtn" data-i18n-title="video.tooltip.insertLora" title="${_t('video.tooltip.insertLora', 'Insert LoRA')}" style="font-size:11px;padding:2px 6px;background:var(--bg-2,#2a2a2a);border:1px solid var(--border,#444);border-radius:4px;color:var(--fg-1,#ccc);cursor:pointer;">🎭 LoRA</button>
+                        <button id="vlWildcardBtn" data-i18n-title="video.tooltip.insertWildcard" title="${_t('video.tooltip.insertWildcard', 'Insert Wildcard')}" style="font-size:11px;padding:2px 6px;background:var(--bg-2,#2a2a2a);border:1px solid var(--border,#444);border-radius:4px;color:var(--fg-1,#ccc);cursor:pointer;">🎲 Wildcard</button>
                     </span>
                 </div>
                 <textarea class="vl-prompt" id="vlPrompt" rows="3"
-                    placeholder="Describe the motion / scene..."></textarea>
+                    data-i18n-placeholder="video.placeholder.prompt" placeholder="${_t('video.placeholder.prompt', 'Describe the motion / scene...')}"></textarea>
                 <textarea class="vl-prompt vl-prompt-neg" id="vlNegPrompt" rows="2"
-                    placeholder="Negative prompt...">blurry, low quality, bad anatomy, censored, watermark</textarea>
+                    data-i18n-placeholder="video.placeholder.negPrompt" placeholder="${_t('video.placeholder.negPrompt', 'Negative prompt...')}">blurry, low quality, bad anatomy, censored, watermark</textarea>
             </div>
 
             <!-- Model Loader -->
             <div class="vl-section">
-                <div class="vl-section-title">Model</div>
+                <div class="vl-section-title" data-i18n="video.section.model">${_t("video.section.model", "Model")}</div>
                 <div class="vl-param">
-                    <label>High Noise Model</label>
+                    <label data-i18n="video.label.highNoiseModel">${_t("video.label.highNoiseModel", "High Noise Model")}</label>
                     <select id="vlModelSelect" class="vl-select">
-                        <option value="">Loading...</option>
+                        <option value="" data-i18n="video.status.loading">${_t("video.status.loading", "Loading...")}</option>
                     </select>
                 </div>
                 <div class="vl-param" style="margin-top:6px;">
-                    <label>Low Noise Model</label>
+                    <label data-i18n="video.label.lowNoiseModel">${_t("video.label.lowNoiseModel", "Low Noise Model")}</label>
                     <select id="vlRefinerSelect" class="vl-select">
                         <option value="">(none — single model)</option>
                     </select>
                 </div>
                 <div class="vl-param" style="margin-top:6px;">
-                    <label>Text Encoder</label>
+                    <label data-i18n="video.label.textEncoder">${_t("video.label.textEncoder", "Text Encoder")}</label>
                     <select id="vlTextEncoderSelect" class="vl-select">
                         <option value="">Loading...</option>
                     </select>
                 </div>
                 <div class="vl-param" style="margin-top:6px;">
-                    <label>VAE</label>
+                    <label data-i18n="video.label.vae">${_t("video.label.vae", "VAE")}</label>
                     <select id="vlVaeSelect" class="vl-select">
                         <option value="">Loading...</option>
                     </select>
                 </div>
                 <div class="vl-model-actions" style="margin-top:8px; display:flex; gap:6px;">
-                    <button id="vlLoadModelBtn" class="vl-btn-sm" style="flex:1;">Load Model</button>
-                    <button id="vlRefreshModelsBtn" class="vl-btn-sm vl-btn-dim" title="Refresh lists">🔄</button>
+                    <button id="vlLoadModelBtn" class="vl-btn-sm" style="flex:1;" data-i18n="video.action.loadModel">${_t("video.action.loadModel", "Load Model")}</button>
+                    <button id="vlRefreshModelsBtn" class="vl-btn-sm vl-btn-dim" data-i18n-title="video.action.refreshLists.tooltip" title="${_t('video.action.refreshLists.tooltip', 'Refresh lists')}">🔄</button>
                 </div>
                 <div class="vl-model-status" id="vlModelStatus" style="margin-top:6px; font:11px var(--mono); color:var(--text-3);"></div>
             </div>
 
             <!-- Video Params -->
             <div class="vl-section">
-                <div class="vl-section-title">Video Settings</div>
+                <div class="vl-section-title" data-i18n="video.section.videoSettings">${_t("video.section.videoSettings", "Video Settings")}</div>
                 <div class="vl-param-grid">
                     <div class="vl-param">
                         <label>Seconds</label>
@@ -240,7 +248,7 @@ function _buildHTML() {
 
             <!-- Sampling -->
             <div class="vl-section">
-                <div class="vl-section-title">Sampling</div>
+                <div class="vl-section-title" data-i18n="video.section.sampling">${_t("video.section.sampling", "Sampling")}</div>
                 <div class="vl-param-grid">
                     <div class="vl-param">
                         <label>Steps</label>
@@ -286,7 +294,7 @@ function _buildHTML() {
             <!-- Enhancements -->
             <div class="vl-section vl-collapse">
                 <div class="vl-collapse-header" id="vlEnhToggle">
-                    <span class="vl-section-title">Enhancements</span>
+                    <span class="vl-section-title" data-i18n="video.section.enhancements">${_t("video.section.enhancements", "Enhancements")}</span>
                     <svg class="vl-arrow open" width="10" height="10" viewBox="0 0 10 10"
                          fill="none" stroke="currentColor" stroke-width="1.5">
                         <path d="M2 3.5l3 3 3-3"/>
@@ -381,7 +389,7 @@ function _buildHTML() {
             <!-- Post-Processing -->
             <div class="vl-section vl-collapse">
                 <div class="vl-collapse-header" id="vlPostToggle">
-                    <span class="vl-section-title">Post-Processing</span>
+                    <span class="vl-section-title" data-i18n="video.section.postProcessing">${_t("video.section.postProcessing", "Post-Processing")}</span>
                     <svg class="vl-arrow" width="10" height="10" viewBox="0 0 10 10"
                          fill="none" stroke="currentColor" stroke-width="1.5">
                         <path d="M2 3.5l3 3 3-3"/>
@@ -715,7 +723,7 @@ function _captureCanvasPreview() {
     if (!_services) return;
     const b64 = _services.getCanvasB64("image/png");
     if (!b64) {
-        _showStatus("No canvas content to capture", "warn");
+        _showStatus(_t("video.toast.noCanvasContent", "No canvas content to capture"), "warn");
         return;
     }
     _refB64 = b64;
@@ -883,7 +891,7 @@ async function _generate() {
     _els.cancelBtn.style.display = "";
     _els.progress.style.display = "";
     _els.progressFill.style.width = "0%";
-    _els.progressText.textContent = _refB64 ? "Starting I2V..." : "Starting T2V...";
+    _els.progressText.textContent = _refB64 ? _t("video.status.startingI2V", "Starting I2V...") : _t("video.status.startingT2V", "Starting T2V...");
     _els.output.style.display = "none";
     _els.refArea.style.display = "";  // restore if collapsed by previous result
     _hideStatus();
@@ -892,7 +900,7 @@ async function _generate() {
     const timer = setInterval(() => {
         if (!_generating) return clearInterval(timer);
         const s = ((Date.now() - t0) / 1000).toFixed(0);
-        _els.progressText.textContent = `Generating... ${s}s`;
+        _els.progressText.textContent = _t("video.status.generating", `Generating... ${s}s`, { s: s });
         // Fake progress bar (we don't have step-level WS progress yet)
         const pct = Math.min(95, (Date.now() - t0) / (parseInt(_els.steps.value) * 2000) * 100);
         _els.progressFill.style.width = pct + "%";
@@ -927,7 +935,7 @@ async function _generate() {
 async function _cancel() {
     try {
         await fetch(API + "/cancel", { method: "POST" });
-        _showStatus("Generation cancelled", "warn");
+        _showStatus(_t("video.status.cancelled", "Generation cancelled"), "warn");
     } catch (e) {
         console.error(TAG, "Cancel failed:", e);
     }
@@ -949,7 +957,7 @@ function _displayResult(result) {
             `${result.frames} frames | seed: ${result.seed}`;
 
         if (result.seed && result.seed > 0) _els.seed.value = result.seed;
-        _showStatus("Video generated", "ok");
+        _showStatus(_t("video.status.videoGenerated", "Video generated"), "ok");
 
     } else if (result.thumbnail_b64) {
         // Frames generated but no video file — FFmpeg missing
@@ -960,10 +968,10 @@ function _displayResult(result) {
             `${result.frames} frames | seed: ${result.seed} | ⚠ Install FFmpeg for video output`;
 
         if (result.seed && result.seed > 0) _els.seed.value = result.seed;
-        _showStatus("Frames generated but FFmpeg not found — install FFmpeg to get video output", "warn");
+        _showStatus(_t("video.status.ffmpegMissing", "Frames generated but FFmpeg not found — install FFmpeg to get video output"), "warn");
 
     } else {
-        _showStatus("Generation completed but no output. Check terminal.", "warn");
+        _showStatus(_t("video.status.noOutput", "Generation completed but no output. Check terminal."), "warn");
     }
 
     // Show reference alongside video for comparison (I2V only)
@@ -1089,7 +1097,7 @@ async function _populateModelDropdowns() {
 async function _loadModel() {
     const checkpoint = _els.modelSelect.value;
     if (!checkpoint) {
-        _showStatus("Select a checkpoint first", "warn");
+        _showStatus(_t("video.toast.selectCheckpoint", "Select a checkpoint first"), "warn");
         return;
     }
 
@@ -1112,17 +1120,17 @@ async function _loadModel() {
         const result = await resp.json();
 
         if (result.error) {
-            _showStatus("Load failed: " + result.error, "error");
+            _showStatus(_t("video.toast.loadFailed", "Load failed: " + result.error, { error: result.error }), "error");
             _els.modelStatus.textContent = "Load failed";
         } else {
-            _showStatus("Model loaded: " + (result.loaded || checkpoint), "ok");
+            _showStatus(_t("video.toast.modelLoaded", "Model loaded: " + (result.loaded || checkpoint), { name: (result.loaded || checkpoint) }), "ok");
             _els.modelStatus.textContent = "✓ " + (result.loaded || checkpoint);
             _els.genBtn.disabled = false;
             // Re-check capability
             setTimeout(_checkCapability, 1000);
         }
     } catch (e) {
-        _showStatus("Load error: " + e.message, "error");
+        _showStatus(_t("video.toast.loadFailed", "Load error: " + e.message, { error: e.message }), "error");
         _els.modelStatus.textContent = "Error";
     } finally {
         _els.loadModelBtn.disabled = false;
@@ -1153,7 +1161,7 @@ async function _extractLastFrame() {
         const data = await resp.json();
 
         if (data.error) {
-            _showStatus("No frames available", "warn");
+            _showStatus(_t("video.toast.noFrames", "No frames available"), "warn");
             return;
         }
 
@@ -1167,7 +1175,7 @@ async function _extractLastFrame() {
         if (data.width) _els.width.value = data.width;
         if (data.height) _els.height.value = data.height;
 
-        _showStatus("Last frame set as reference", "ok");
+        _showStatus(_t("video.toast.lastFrameSet", "Last frame set as reference"), "ok");
     } catch (e) {
         _showStatus("Extract failed: " + e.message, "error");
     } finally {
