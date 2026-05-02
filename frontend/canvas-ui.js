@@ -9,6 +9,12 @@
 (function () {
 "use strict";
 
+// i18n helper — runtime-built strings pass their English source through
+// _i18n(). Used for region hints, inpaint feedback, confirm dialogs, etc.
+function _i18n(key, fallback, params) {
+  return (window.I18N && window.I18N.t) ? window.I18N.t(key, fallback, params) : fallback;
+}
+
 const C = window.StudioCore;
 if (!C) { console.error("[StudioUI] StudioCore not loaded!"); return; }
 const S = C.state;
@@ -954,13 +960,13 @@ function bindCanvas() {
             const px2 = Math.round(p.x), py2 = Math.round(p.y);
             if (!S._magAnchors) {
                 // First click — compute edge map once, place first anchor
-                if (window.showToast) showToast("Computing edges...", "info");
+                if (window.showToast) showToast(_i18n("canvas.inpaint.computingEdges", "Computing edges..."), "info");
                 setTimeout(() => {
                     S._magEdgeMap = C.magneticEdgeMap();
                     S._magAnchors = [{ x: px2, y: py2 }];
                     S._magPaths = [];
                     S._magLivePath = null;
-                    if (window.showToast) showToast("Click to add points, close or double-click to finish", "info");
+                    if (window.showToast) showToast(_i18n("canvas.inpaint.clickToAdd", "Click to add points, close or double-click to finish"), "info");
                     _redraw();
                 }, 10);
                 return;
@@ -2250,7 +2256,7 @@ function _showTextOverlay(p, e) {
                 <input id="textItalic" type="checkbox"> <em>I</em>
             </label>
         </div>
-        <textarea id="textInput" rows="3" placeholder="Type text..." style="background:var(--bg-raised);color:var(--text-1);border:1px solid var(--border);border-radius:4px;padding:6px;font-size:14px;resize:vertical;min-width:200px;font-family:var(--font);"></textarea>
+        <textarea id="textInput" rows="3" data-i18n-placeholder="canvas.text.placeholder" placeholder="Type text..." style="background:var(--bg-raised);color:var(--text-1);border:1px solid var(--border);border-radius:4px;padding:6px;font-size:14px;resize:vertical;min-width:200px;font-family:var(--font);"></textarea>
         <div style="display:flex;gap:4px;">
             <button id="textOk" style="flex:1;background:var(--accent);color:#fff;border:none;border-radius:4px;padding:5px 10px;cursor:pointer;font-size:11px;font-family:var(--font);">Place Text</button>
             <button id="textCancel" style="background:var(--bg-raised);color:var(--text-2);border:1px solid var(--border);border-radius:4px;padding:5px 10px;cursor:pointer;font-size:11px;font-family:var(--font);">Cancel</button>
@@ -3054,7 +3060,7 @@ function renderRegionPanel() {
     if (!S.regions.length) {
         const hint = document.createElement("div");
         hint.style.cssText = "font-size:10px;color:var(--text-4);padding:6px 4px;";
-        hint.textContent = "Add regions for per-area prompts.";
+        hint.textContent = _i18n("canvas.regions.hint.add", "Add regions for per-area prompts.");
         panel.appendChild(hint);
         return;
     }
@@ -3179,11 +3185,11 @@ function renderRegionPanel() {
     const hint = document.createElement("div");
     hint.style.cssText = "font-size:9px;color:var(--text-4);padding:3px 0;line-height:1.4;";
     if (S.regionMode && S.studioMode === "Edit") {
-        hint.textContent = "Each region runs as a separate inpaint pass.";
+        hint.textContent = _i18n("canvas.regions.hint.runs", "Each region runs as a separate inpaint pass.");
     } else if (S.regionMode) {
-        hint.textContent = "Paint regions for different characters/areas. Main prompt = scene.";
+        hint.textContent = _i18n("canvas.regions.hint.paint", "Paint regions for different characters/areas. Main prompt = scene.");
     } else {
-        hint.textContent = "Enable Paint mode to draw region masks on canvas.";
+        hint.textContent = _i18n("canvas.regions.hint.enable", "Enable Paint mode to draw region masks on canvas.");
     }
     panel.appendChild(hint);
 }
@@ -4148,7 +4154,7 @@ function bindToolbar() {
     });
     document.getElementById("regionClearAll")?.addEventListener("click", () => {
         if (!S.regions.length) return;
-        if (!confirm("Remove all regions?")) return;
+        if (!confirm(_i18n("canvas.regions.removeAllConfirm", "Remove all regions?"))) return;
         S.regions = []; S.activeRegionId = null; S._nextRegionId = 1; S.regionMode = false;
         renderRegionPanel(); _redraw();
     });
