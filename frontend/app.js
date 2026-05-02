@@ -324,7 +324,7 @@ const Live = {
       this._scheduleCanvasCheck(0);
     } catch (e) {
       console.error("[Live] Start failed:", e);
-      showToast("Live painting failed to start", "error");
+      showToast(_i18n("toast.live.failed", "Live painting failed to start"), "error");
     }
   },
 
@@ -503,7 +503,7 @@ const Live = {
       img.src = data.image;
       wrap.style.display = "";
       if (closeBtn) closeBtn.style.display = "";
-      if (label) label.textContent = "Live";
+      if (label) label.textContent = _i18n("panels.live", "Live");
       // Prevent progress handler and _hidePreview from stomping this
       State._resultPreviewActive = true;
       State._previewShown = true;
@@ -1446,11 +1446,11 @@ async function doGenerate() {
         }).catch(() => {});
       }
     } else {
-      showToast("No images generated", "error");
+      showToast(_i18n("toast.gen.noImages", "No images generated"), "error");
     }
   } catch (e) {
     console.error("[Studio] Generation failed:", e);
-    showToast("Generation failed: " + e.message, "error");
+    showToast(_i18n("toast.gen.failed", "Generation failed: " + e.message, { error: e.message }), "error");
   }
 
   State.generating = false;
@@ -1526,7 +1526,7 @@ function _hidePreview() {
   const closeBtn = document.getElementById("canvasPreviewClose");
   if (closeBtn) closeBtn.style.display = "none";
   const label = document.getElementById("canvasPreviewLabel");
-  if (label) label.textContent = "Preview";
+  if (label) label.textContent = _i18n("panels.preview", "Preview");
 }
 
 /** Show the viewport preview with a generated result image. */
@@ -1545,7 +1545,7 @@ function _showResultPreview(idx) {
   State._resultPreviewActive = true;
   State._previewShown = true;
   if (closeBtn) closeBtn.style.display = "";
-  if (label) label.textContent = "Result";
+  if (label) label.textContent = _i18n("panels.result", "Result");
 }
 
 
@@ -1721,7 +1721,7 @@ function displayOnCanvas(imgSrc, opts) {
     const _cb = document.getElementById("canvasPreviewClose");
     if (_cb) _cb.style.display = "none";
     const _lb = document.getElementById("canvasPreviewLabel");
-    if (_lb) _lb.textContent = "Preview";
+    if (_lb) _lb.textContent = _i18n("panels.preview", "Preview");
   }
 
   // Auto-disable Hires Fix — the image is already at final resolution,
@@ -1875,7 +1875,7 @@ function _updateOutputInfo() {
       modelMatch ? modelMatch[1].trim() : null,
     ].filter(Boolean).join(" · ");
 
-    info.innerHTML = `<div class="infotext-summary">${summary || "No info"}</div>`
+    info.innerHTML = `<div class="infotext-summary">${summary || _i18n("infotext.noInfo", "No info")}</div>`
       + `<div class="infotext-full" style="display:none;">${_escapeHtml(infotext)}</div>`;
     info.classList.add("has-info");
     info.onclick = (e) => {
@@ -2689,7 +2689,7 @@ function bindUI() {
     // FR-002: Show progress bar during model load
     const btn = document.getElementById("genBtn");
     const fill = document.getElementById("progressFill");
-    if (btn) { btn.textContent = "Loading model..."; btn.classList.add("generating"); }
+    if (btn) { btn.textContent = _i18n("toast.model.loading", "Loading model..."); btn.classList.add("generating"); }
     if (fill) { fill.style.width = "100%"; fill.classList.add("indeterminate"); }
     StatusBar.setStatus("loading");
     try {
@@ -2738,14 +2738,14 @@ function bindUI() {
       const data = await r.json();
       if (r.ok && data.ok) {
         StatusBar.setModel(data.loaded.split("[")[0].trim());
-        showToast("Model loaded: " + data.loaded, "success");
+        showToast(_i18n("toast.model.loaded", "Model loaded: " + data.loaded, { name: data.loaded }), "success");
       } else {
         console.error("[Studio] Model load failed:", data);
-        showToast("Model load failed: " + (data.error || r.status), "error");
+        showToast(_i18n("toast.model.loadFailed", "Model load failed: " + (data.error || r.status), { error: data.error || r.status }), "error");
       }
     } catch (err) {
       console.error("[Studio] Model load error:", err);
-      showToast("Model load error: " + err.message, "error");
+      showToast(_i18n("toast.model.loadError", "Model load error: " + err.message, { error: err.message }), "error");
     }
     if (btn) {
       btn.textContent = (window.I18N && window.I18N.t) ? window.I18N.t("actions.generate", "Generate") : "Generate";
@@ -2779,11 +2779,11 @@ function bindUI() {
         showToast("VAE: " + data.loaded, "success");
       } else {
         console.error("[Studio] VAE load failed:", data);
-        showToast("VAE load failed: " + (data.error || r.status), "error");
+        showToast(_i18n("toast.vae.loadFailed", "VAE load failed: " + (data.error || r.status), { error: data.error || r.status }), "error");
       }
     } catch (err) {
       console.error("[Studio] VAE load error:", err);
-      showToast("VAE load error: " + err.message, "error");
+      showToast(_i18n("toast.vae.loadError", "VAE load error: " + err.message, { error: err.message }), "error");
     }
   });
 
@@ -2803,7 +2803,7 @@ function bindUI() {
     showToast("Loading with text encoder...", "info");
     const btn = document.getElementById("genBtn");
     const fill = document.getElementById("progressFill");
-    if (btn) { btn.textContent = "Loading model..."; btn.classList.add("generating"); }
+    if (btn) { btn.textContent = _i18n("toast.model.loading", "Loading model..."); btn.classList.add("generating"); }
     if (fill) { fill.style.width = "100%"; fill.classList.add("indeterminate"); }
     StatusBar.setStatus("loading");
     try {
@@ -2872,7 +2872,7 @@ function bindUI() {
   });
 
   document.getElementById("refreshTEBtn")?.addEventListener("click", async () => {
-    showToast("Refreshing text encoders...", "info");
+    showToast(_i18n("toast.te.refreshing", "Refreshing text encoders..."), "info");
     try {
       const teList = await fetch(API.base + "/studio/text_encoders").then(r => r.json());
       const teSelect = document.getElementById("paramTextEncoder");
@@ -3022,7 +3022,7 @@ function bindUI() {
 
   // Manual unload button
   document.getElementById("unloadModelBtn")?.addEventListener("click", async () => {
-    showToast("Unloading model...", "info");
+    showToast(_i18n("toast.model.unloading", "Unloading model..."), "info");
     try {
       const r = await API.unloadModel();
       if (r.ok) {
@@ -3033,9 +3033,9 @@ function bindUI() {
           StatusBar.setVRAM(v.allocated_gb, v.total_gb);
           showToast(`Model unloaded — VRAM: ${v.allocated_gb} / ${v.total_gb} GB`, "success");
         } else if (r.status === "already_unloaded") {
-          showToast("Model already unloaded", "info");
+          showToast(_i18n("toast.model.alreadyUnloaded", "Model already unloaded"), "info");
         } else {
-          showToast("Model unloaded from VRAM", "success");
+          showToast(_i18n("toast.model.unloadedVRAM", "Model unloaded from VRAM"), "success");
         }
       } else {
         showToast("Unload failed", "error");
@@ -3085,7 +3085,7 @@ function bindUI() {
       if (gb === 0) {
         try {
           await _vramSendWeights(0);
-          showToast("GPU weights reset to Forge default", "success");
+          showToast(_i18n("toast.gpuWeights.reset", "GPU weights reset to Forge default"), "success");
           _refreshVRAM();
         } catch (e) { showToast("GPU weights error: " + e.message, "error"); }
         return;
@@ -3096,7 +3096,7 @@ function bindUI() {
           showToast(`GPU weights set to ${gb.toFixed(1)} GB`, "success");
           _refreshVRAM();
         } else {
-          showToast("Failed to set GPU weights: " + (r.error || ""), "error");
+          showToast(_i18n("toast.gpuWeights.failed", "Failed to set GPU weights"), "error");
         }
       } catch (e) {
         showToast("GPU weights error: " + e.message, "error");
@@ -3499,11 +3499,11 @@ function bindUI() {
   });
   document.getElementById("saveDefaults")?.addEventListener("click", () => {
     saveDefaults();
-    showToast("Workflow defaults saved", "success");
+    showToast(_i18n("toast.defaults.saved", "Workflow defaults saved"), "success");
   });
   document.getElementById("resetDefaults")?.addEventListener("click", () => {
     API.generate({ action: "delete_defaults" }).catch(() => {});
-    showToast("Defaults cleared — reload for factory settings", "info");
+    showToast(_i18n("toast.defaults.cleared", "Defaults cleared — reload for factory settings"), "info");
   });
 
   // Expose for init() — priority: session memory → server defaults → factory
@@ -3973,7 +3973,7 @@ function bindUI() {
       window._cnUploadData[n] = null;
       if (uploadThumb) { uploadThumb.src = ""; uploadThumb.style.display = "none"; }
       if (uploadClear) uploadClear.style.display = "none";
-      if (uploadBtn) uploadBtn.textContent = "Choose Image...";
+      if (uploadBtn) uploadBtn.textContent = _i18n("actions.chooseImage", "Choose Image...");
     });
   });
 }
@@ -4002,7 +4002,7 @@ const ExtensionBridge = {
       this.manifest = await resp.json();
     } catch (e) {
       console.warn("[Studio] Extension manifest fetch failed:", e);
-      if (loading) loading.textContent = "Could not load extensions";
+      if (loading) loading.textContent = _i18n("toast.extensions.loadFailed", "Could not load extensions");
       return;
     }
 

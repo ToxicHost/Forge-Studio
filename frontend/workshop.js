@@ -465,7 +465,7 @@ async function loadCosineDiff() {
         WS.cosineDiff = await fetchJSON(API + "/cosine_diff?model_a=" + encodeURIComponent(a) + "&model_b=" + encodeURIComponent(b));
     } catch (e) {
         console.error(TAG, "Cosine diff failed:", e);
-        if (window.showToast) window.showToast("Cosine diff failed: " + e.message, "error");
+        if (window.showToast) window.showToast(_t("workshop.toast.cosineDiffFailed", "Cosine diff failed: " + e.message, { error: e.message }), "error");
     }
     WS.diffLoading = false; _renderInfo();
 }
@@ -488,7 +488,7 @@ async function loadModelStockForRow(rowIdx) {
     const b = _isConcreteModel(r.secondary) ? r.secondary : null;
     if (!a || !b) return;
     try {
-        if (window.showToast) window.showToast("Computing Model Stock auto-alpha…", "info");
+        if (window.showToast) window.showToast(_t("workshop.toast.modelStockComputing", "Computing Model Stock auto-alpha…"), "info");
         const data = await fetchJSON(API + "/model_stock?model_a=" + encodeURIComponent(a) + "&model_b=" + encodeURIComponent(b));
         if (data.alphas && Object.keys(data.alphas).length) {
             r.blockWeights = data.alphas;
@@ -498,11 +498,11 @@ async function loadModelStockForRow(rowIdx) {
                 WS.cosineDiff = { blocks: data.cosine_diff, global_similarity: data.global_similarity, architecture: WS.inspectA?.architecture };
                 _renderInfo();
             }
-            if (window.showToast) window.showToast("Model Stock alphas applied to Row " + (rowIdx + 1), "success");
+            if (window.showToast) window.showToast(_t("workshop.toast.modelStockApplied", "Model Stock alphas applied to Row " + (rowIdx + 1), { row: rowIdx + 1 }), "success");
         }
     } catch (e) {
         console.error(TAG, "Model Stock failed:", e);
-        if (window.showToast) window.showToast("Model Stock failed: " + e.message, "error");
+        if (window.showToast) window.showToast(_t("workshop.toast.modelStockFailed", "Model Stock failed: " + e.message, { error: e.message }), "error");
     }
 }
 
@@ -711,7 +711,7 @@ async function startMerge() {
     try {
         WS.merging = true; WS.status = "running"; WS.progress = 0; WS.error = null; WS.result = null;
         _renderProgress(); _setMergeButtonState(true);
-        if (window.showToast) window.showToast("Running " + chainSteps.length + "-step recipe…", "info");
+        if (window.showToast) window.showToast(_t("workshop.toast.runningRecipe", "Running " + chainSteps.length + "-step recipe…", { steps: chainSteps.length }), "info");
         await fetchJSON(API + "/chain", {
             method: "POST", headers: { "Content-Type": "application/json" },
             body: JSON.stringify({ steps: chainSteps, save_intermediates: WS.saveIntermediates }),
@@ -1353,7 +1353,7 @@ function _buildUI(container) {
     + '<div id="wsTabHistory" class="ws-tab-content" style="display:none;">'
     + '<div class="ws-journal-toolbar">'
     + '<div class="ws-journal-toolbar-top">'
-    + '<input type="text" id="wsJournalSearch" class="param-val ws-journal-search-input" placeholder="Search merges, notes, recipes...">'
+    + '<input type="text" id="wsJournalSearch" class="param-val ws-journal-search-input" data-i18n-placeholder="workshop.search.placeholder" placeholder="Search merges, notes, recipes...">'
     + '<button id="wsJournalAddEntry" class="ws-journal-add-btn">+ New Entry</button>'
     + '</div>'
     + '<div class="ws-journal-filters">'

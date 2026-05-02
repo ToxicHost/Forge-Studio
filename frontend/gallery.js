@@ -796,7 +796,7 @@ function _renderTagEditor(ids, info) {
     h += '<h3>Edit tags for ' + total + ' image' + (total > 1 ? 's' : '') + '</h3>';
     h += '<div class="gal-tagedit-body">';
     h += '<div class="gal-tagedit-add-row">'
-       +   '<input type="text" class="gal-tagedit-add-input" id="gal-tagedit-add" placeholder="Tag name…" />'
+       +   '<input type="text" class="gal-tagedit-add-input" id="gal-tagedit-add" data-i18n-placeholder="gallery.tags.placeholder" placeholder="Tag name…" />'
        +   '<button class="gal-btn accent" id="gal-tagedit-add-btn">Add</button>'
        + '</div>';
     if (common.length) {
@@ -808,7 +808,7 @@ function _renderTagEditor(ids, info) {
         h += '<div class="gal-tagedit-list">' + partial.map(tagRow).join('') + '</div>';
     }
     if (!tags.length) {
-        h += '<div class="gal-tagedit-empty">No tags on any selected image.</div>';
+        h += '<div class="gal-tagedit-empty">' + _t("gallery.tags.empty", "No tags on any selected image.") + '</div>';
     }
     h += '</div>';
     h += '<div class="mm-footer"><button class="gal-btn" id="gal-tagedit-close">Close</button></div>';

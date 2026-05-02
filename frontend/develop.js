@@ -3598,7 +3598,7 @@ function _resetAll() {
     syncPanel();
     recordUndo("Develop: Reset all");
     _scheduleFullRedraw();
-    if (window.showToast) window.showToast("Develop reset (click again to undo)", "info");
+    if (window.showToast) window.showToast(_t("develop.resetPrompt", "Develop reset (click again to undo)"), "info");
     // The button itself doesn't change; second click within ~5s undoes it.
     var prev = _resetUndoBuf;
     setTimeout(function () { if (_resetUndoBuf === prev) _resetUndoBuf = null; }, 5000);
@@ -3928,7 +3928,7 @@ function _buildPresetSection() {
     _presetSelect = document.createElement("select");
     _presetSelect.className = "develop-presets-select";
     var defOpt = document.createElement("option");
-    defOpt.value = ""; defOpt.textContent = "— Select a preset —";
+    defOpt.value = ""; defOpt.textContent = _t("develop.preset.placeholder", "— Select a preset —");
     _presetSelect.appendChild(defOpt);
     _presetSelect.addEventListener("change", function () {
         var idx = _presetSelect.selectedIndex;
@@ -3992,7 +3992,7 @@ function _savePreset() {
     if (!name) return;
     name = String(name).trim();
     if (!/^[A-Za-z0-9 _-]{1,64}$/.test(name)) {
-        if (window.showToast) window.showToast("Invalid preset name (letters, digits, space, _ -)", "error");
+        if (window.showToast) window.showToast(_t("develop.preset.invalidName", "Invalid preset name (letters, digits, space, _ -)"), "error");
         return;
     }
     // Build a partial: only include non-default values, plus _version.
@@ -4012,10 +4012,10 @@ function _savePreset() {
             if (window.showToast) window.showToast("Preset saved: " + name, "success");
             _loadPresetList();
         } else {
-            if (window.showToast) window.showToast("Save failed: " + (resp && resp.error || "unknown"), "error");
+            if (window.showToast) window.showToast(_t("develop.preset.saveFailed", "Save failed"), "error");
         }
     }).catch(function (e) {
-        if (window.showToast) window.showToast("Save failed: " + e.message, "error");
+        if (window.showToast) window.showToast(_t("develop.preset.saveFailed", "Save failed"), "error");
     });
 }
 

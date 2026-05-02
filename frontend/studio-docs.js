@@ -406,7 +406,7 @@ function switchDoc(idx) {
 
 function closeDoc(idx) {
   if (_docs.length <= 1) {
-    if (window.showToast) window.showToast("Can\u2019t close the last document", "info");
+    if (window.showToast) window.showToast((window.I18N && window.I18N.t) ? window.I18N.t("docs.cantCloseLast", "Can\u2019t close the last document") : "Can\u2019t close the last document", "info");
     return;
   }
 

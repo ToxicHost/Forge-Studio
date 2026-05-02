@@ -182,7 +182,7 @@ function _buildHTML() {
                 <div class="vl-param">
                     <label data-i18n="video.label.highNoiseModel">${_t("video.label.highNoiseModel", "High Noise Model")}</label>
                     <select id="vlModelSelect" class="vl-select">
-                        <option value="" data-i18n="video.status.loading">${_t("video.status.loading", "Loading...")}</option>
+                        <option value="" data-i18n="video.status.loading">${_t("video.status.loading", _t("video.status.loading", "Loading..."))}</option>
                     </select>
                 </div>
                 <div class="vl-param" style="margin-top:6px;">
@@ -1121,7 +1121,7 @@ async function _loadModel() {
 
         if (result.error) {
             _showStatus(_t("video.toast.loadFailed", "Load failed: " + result.error, { error: result.error }), "error");
-            _els.modelStatus.textContent = "Load failed";
+            _els.modelStatus.textContent = _t("video.status.loadFailed", "Load failed");
         } else {
             _showStatus(_t("video.toast.modelLoaded", "Model loaded: " + (result.loaded || checkpoint), { name: (result.loaded || checkpoint) }), "ok");
             _els.modelStatus.textContent = "✓ " + (result.loaded || checkpoint);
@@ -1155,7 +1155,7 @@ async function _populateUpscalers() {
 async function _extractLastFrame() {
     try {
         _els.extractLast.disabled = true;
-        _els.extractLast.textContent = "Extracting...";
+        _els.extractLast.textContent = _t("video.action.extracting", "Extracting...");
 
         const resp = await fetch(API + "/last_frame", { method: "POST" });
         const data = await resp.json();
