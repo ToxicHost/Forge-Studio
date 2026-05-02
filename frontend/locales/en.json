@@ -384,5 +384,23 @@
   "workshop.toast.nothingToDo": "Nothing to do — fill at least one row, or add a LoRA / VAE",
   "workshop.toast.computingMerge": "Computing in-memory merge…",
   "workshop.toast.testMergeApplied": "Test merge applied in {time}s — generate to preview!",
-  "workshop.toast.testMergeWarnings": "Test merge applied but validation had warnings"
+  "workshop.toast.testMergeWarnings": "Test merge applied but validation had warnings",
+
+  "workshop.inspector.title": "Inspector",
+  "workshop.inspector.toggle.tooltip": "Toggle inspector",
+
+  "workshop.method.weighted_sum.desc": "The simplest merge — blends every weight between A and B by the alpha value. Good starting point for any merge. If results look washed out, try SLERP instead.",
+  "workshop.method.slerp.desc": "Spherical interpolation — preserves the magnitude of weight vectors instead of averaging them. Usually produces sharper, more vibrant results than Weighted Sum at the same alpha. Best for blending two models of similar quality.",
+  "workshop.method.add_difference.desc": "Extracts what Model B learned from Model C (its base), then applies that training to Model A. Use this to transplant a finetune's skills (e.g. anime style, specific subject) into a different model. Requires Model C — the base model B was finetuned from.",
+  "workshop.method.ties.desc": "Trim, Elect Sign & Merge — extracts B's training over A, then trims away the weakest changes, keeping only the most significant ones. The Density parameter controls how aggressively to trim. Great for noisy finetunes where you want only the strongest signal.",
+  "workshop.method.dare.desc": "Drop And REscale — randomly drops most of B's training changes and rescales the survivors to compensate. Neural networks are redundant, so even dropping 90% of changes often preserves the effect. Produces surprisingly clean results from messy finetunes.",
+  "workshop.method.dare_ties.desc": "Combines DARE and TIES — randomly drops changes first, then trims the survivors by magnitude. The most aggressive filtering. Best when B is a very noisy finetune and you want only the absolute strongest signal.",
+  "workshop.method.cosine_adaptive.desc": "Automatically computes a unique blend ratio for every weight based on how similar A and B are at that point. Where they already agree, it keeps A. Where they diverge, it incorporates B. The Shift parameter adjusts how conservative (positive) or aggressive (negative) the blending is. No alpha needed — the math decides.",
+  "workshop.method.star.desc": "Spectral Truncation and Rescale — decomposes B's training via SVD and strips noisy components before merging. Produces cleaner results than element-wise methods, especially from overtrained or messy finetunes. The Eta parameter controls how aggressively noise is removed.",
+  "workshop.method.svd_struct_a_mag_b.desc": "Decomposes both models via SVD, then takes A's feature directions (what the layer detects) and B's magnitudes (how strongly it responds). Example: photorealism model's composition + anime model's vibrancy. Produces results impossible from any weight-averaging method.",
+  "workshop.method.svd_struct_b_mag_a.desc": "The inverse — takes B's feature directions (what the layer detects) and A's magnitudes (how strongly it responds). Same concept as Structure A + Mag B but swapped. Try both and compare — the results are surprisingly different.",
+  "workshop.method.svd_blend.desc": "Aligns both models' spectral decompositions via Procrustes rotation, then interpolates structure and magnitude together in spectral space. Smoother than Weighted Sum because it respects the geometric relationship between feature directions rather than averaging raw weights.",
+  "workshop.method.della.desc": "Like DARE but smarter about what it drops — drop probability is inversely proportional to magnitude, so large important changes survive while small noisy ones are more likely to be removed. Produces slightly more reliable results than DARE's uniform random masking.",
+  "workshop.method.della_ties.desc": "Combines DELLA and TIES — magnitude-weighted dropout first, then trims survivors by magnitude. Like DARE-TIES but with smarter dropout that preferentially keeps important parameters.",
+  "workshop.method.breadcrumbs.desc": "Dual-threshold trimming — like TIES but also removes the largest outlier changes, not just the smallest. Density controls the lower cutoff (how much to keep), Drop Rate controls the upper cutoff (how many outliers to remove). Best for finetunes with both noise and overfitting artifacts."
 }

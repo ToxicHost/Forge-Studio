@@ -1368,7 +1368,7 @@ function _buildUI(container) {
 
     + '</div>'
     // Inspector
-    + '<div class="ws-inspector" id="wsInspector"><div class="ws-inspector-header"><span>Inspector</span><button id="wsInspectorToggle" class="ws-inspector-toggle" title="Toggle inspector">◀</button></div><div class="ws-inspector-body" id="wsInspectorBody"><div id="wsInfoContent" class="ws-info-content"><div class="ws-info-placeholder">Select models to inspect</div></div></div></div>'
+    + '<div class="ws-inspector" id="wsInspector"><div class="ws-inspector-header"><span data-i18n="workshop.inspector.title">' + _t("workshop.inspector.title", "Inspector") + '</span><button id="wsInspectorToggle" class="ws-inspector-toggle" data-i18n-title="workshop.inspector.toggle.tooltip" title="' + _t("workshop.inspector.toggle.tooltip", "Toggle inspector") + '">◀</button></div><div class="ws-inspector-body" id="wsInspectorBody"><div id="wsInfoContent" class="ws-info-content"><div class="ws-info-placeholder">' + _t("workshop.inspector.placeholder", "Select models to inspect") + '</div></div></div></div>'
     + '</div>';
 
     // Cache element refs
@@ -2279,10 +2279,14 @@ function _renderInfo() {
         const rowLabel = _t("workshop.inspector.row", "Row " + (WS.activeRow + 1), { n: WS.activeRow + 1 });
         const activeLabel = _t("workshop.inspector.active", "Active: " + rowLabel, { label: rowLabel });
         const info = METHOD_INFO[r.method] || {};
+        // Method label + formula stay verbatim (they're math/feature names);
+        // the long description paragraph translates via workshop.method.<id>.desc,
+        // falling back to the English string baked into METHOD_INFO.
+        const desc = info.desc ? _t("workshop.method." + r.method + ".desc", info.desc) : "";
         parts.push('<div class="ws-info-block"><div class="ws-info-label">' + _esc(activeLabel) + '</div>'
             + '<div class="ws-info-row"><span>' + _t("workshop.inspector.method", "Method") + '</span><span>' + _esc(info.label || r.method) + '</span></div>'
             + (info.formula ? '<div class="ws-method-formula" title="' + _esc(info.formula) + '">' + _esc(info.formula) + '</div>' : '')
-            + (info.desc ? '<div class="ws-method-help-text">' + _esc(info.desc) + '</div>' : '')
+            + (desc ? '<div class="ws-method-help-text">' + _esc(desc) + '</div>' : '')
             + '</div>');
     }
 
