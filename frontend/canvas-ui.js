@@ -3689,7 +3689,14 @@ const _scrubMap = {
 function _scrubDisplay(el) {
     const key = el.dataset.key;
     const m = _scrubMap[key]; if (!m) return;
-    const label = el.dataset.label || (key.charAt(0).toUpperCase() + key.slice(1));
+    // English label: data-label override > capitalized key. Then route
+    // through I18N.t with ctxBar.scrub.<key> so the locale-aware text
+    // shows. The colon-space-value-suffix trailing format stays
+    // locale-neutral (numeric value + unit symbol).
+    const englishLabel = el.dataset.label || (key.charAt(0).toUpperCase() + key.slice(1));
+    const label = (window.I18N && window.I18N.t)
+        ? window.I18N.t("ctxBar.scrub." + key, englishLabel)
+        : englishLabel;
     const suffix = el.dataset.suffix || "";
     el.textContent = label + ": " + m.get() + suffix;
 }
@@ -3697,6 +3704,11 @@ function _scrubDisplay(el) {
 function _syncCtxBar() {
     document.querySelectorAll("#contextBar .ctx-scrub, #inpaintBar .ctx-scrub").forEach(_scrubDisplay);
 }
+
+// Re-render scrub labels on locale switch — applyToDom() handles
+// data-i18n* attributes but the scrub textContent is computed at sync
+// time from data-key, so we re-run _syncCtxBar on i18n:change.
+window.addEventListener("i18n:change", _syncCtxBar);
 
 function _syncDynamicsPanel() {
     const d = S.brushDynamics;

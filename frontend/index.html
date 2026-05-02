@@ -94,29 +94,29 @@
 
       <div id="ctxBarWrap" class="ctx-bar-wrap">
       <div class="context-bar" id="contextBar">
-        <span class="ctx-drag-handle" id="ctxDragHandle" title="Drag to reposition (double-click to reset)">&#x2801;&#x2801;</span>
+        <span class="ctx-drag-handle" id="ctxDragHandle" data-i18n-title="ctxBar.dragHandle.tooltip" title="Drag to reposition (double-click to reset)">&#x2801;&#x2801;</span>
         <span class="ctx-scrub ctx-item" data-ctx="size" data-key="size" data-min="1" data-max="500" data-step="1" data-suffix="" data-scale="1">Size: 15</span>
         <span class="ctx-scrub ctx-item" data-ctx="opacity" data-key="opacity" data-min="0" data-max="100" data-step="1" data-suffix="%" data-scale="100">Opacity: 100%</span>
         <span class="ctx-scrub ctx-item" data-ctx="hardness" data-key="hardness" data-min="0" data-max="100" data-step="1" data-suffix="%" data-scale="100">Hardness: 100%</span>
         <span class="ctx-scrub ctx-item" data-ctx="smoothing" data-key="smoothing" data-min="0" data-max="20" data-step="1" data-suffix="" data-scale="1">Smoothing: 4</span>
         <!-- Symmetry toggle -->
         <span class="ctx-item" data-ctx="sym-opts" style="display:flex;gap:2px;margin-left:4px;border-left:1px solid var(--border);padding-left:6px;align-items:center;">
-          <button class="ctx-mode-btn active" data-sym="none" title="No symmetry">&#x2205;</button>
-          <button class="ctx-mode-btn" data-sym="h" title="Horizontal symmetry">&#x2194;</button>
-          <button class="ctx-mode-btn" data-sym="v" title="Vertical symmetry">&#x2195;</button>
-          <button class="ctx-mode-btn" data-sym="both" title="Both axes">&#x271A;</button>
-          <button class="ctx-mode-btn" data-sym="radial" title="Radial symmetry">&#x2742;</button>
+          <button class="ctx-mode-btn active" data-sym="none" data-i18n-title="ctxBar.symmetry.none" title="No symmetry">&#x2205;</button>
+          <button class="ctx-mode-btn" data-sym="h" data-i18n-title="ctxBar.symmetry.horizontal" title="Horizontal symmetry">&#x2194;</button>
+          <button class="ctx-mode-btn" data-sym="v" data-i18n-title="ctxBar.symmetry.vertical" title="Vertical symmetry">&#x2195;</button>
+          <button class="ctx-mode-btn" data-sym="both" data-i18n-title="ctxBar.symmetry.both" title="Both axes">&#x271A;</button>
+          <button class="ctx-mode-btn" data-sym="radial" data-i18n-title="ctxBar.symmetry.radial" title="Radial symmetry">&#x2742;</button>
           <span class="ctx-scrub" id="symAxesScrub" data-key="symmetryAxes" data-label="Axes" data-min="2" data-max="16" data-step="1" data-suffix="" data-scale="1" style="display:none;margin-left:2px;">Axes: 4</span>
         </span>
         <!-- Mask mode toggle (Q) — shown when brush is active -->
         <span class="ctx-item" data-ctx="mask-toggle" style="margin-left:4px;border-left:1px solid var(--border);padding-left:6px;">
-          <button class="ctx-mode-btn" id="maskModeBtn" title="Toggle mask painting (Q)">Mask</button>
+          <button class="ctx-mode-btn" id="maskModeBtn" data-i18n-title="ctxBar.maskToggle.tooltip" title="Toggle mask painting (Q)">Mask</button>
         </span>
         <!-- Pen pressure toggle + Size/Opacity sub-options -->
         <span class="ctx-item" data-ctx="pressure-opts" style="display:flex;gap:2px;margin-left:4px;border-left:1px solid var(--border);padding-left:6px;">
-          <button class="ctx-mode-btn" id="pressureBtn" title="Pen pressure">Pen</button>
-          <button class="ctx-mode-btn pressure-sub" id="pressureSizeBtn" title="Pressure affects size" style="display:none;">S</button>
-          <button class="ctx-mode-btn pressure-sub" id="pressureOpacityBtn" title="Pressure affects opacity" style="display:none;">O</button>
+          <button class="ctx-mode-btn" id="pressureBtn" data-i18n-title="ctxBar.penPressure.tooltip" title="Pen pressure">Pen</button>
+          <button class="ctx-mode-btn pressure-sub" id="pressureSizeBtn" data-i18n-title="ctxBar.penPressure.size.tooltip" title="Pressure affects size" style="display:none;">S</button>
+          <button class="ctx-mode-btn pressure-sub" id="pressureOpacityBtn" data-i18n-title="ctxBar.penPressure.opacity.tooltip" title="Pressure affects opacity" style="display:none;">O</button>
         </span>
         <span class="ctx-scrub ctx-item" data-ctx="strength" data-key="strength" data-min="1" data-max="100" data-step="1" data-suffix="%" data-scale="100">Strength: 50%</span>
         <!-- Shape sub-options (shown when shape tool active) -->
@@ -204,38 +204,38 @@
       <!-- Inpaint settings sub-bar — visible when mask mode (Q) is active -->
       <div class="context-bar inpaint-bar" id="inpaintBar" style="display:none;">
         <span class="ctx-inline">
-          <label>Area</label>
+          <label data-i18n="inpaint.area">Area</label>
           <select class="ctx-select" id="paramInpaintArea">
-            <option value="1" selected>Only Masked</option>
-            <option value="0">Whole Picture</option>
+            <option value="1" selected data-i18n="inpaint.area.onlyMasked">Only Masked</option>
+            <option value="0" data-i18n="inpaint.area.wholePicture">Whole Picture</option>
           </select>
         </span>
         <span class="ctx-scrub inpaint-scrub" data-key="blur" data-min="0" data-max="64" data-step="1">Blur: 4</span>
         <input type="hidden" id="paramMaskBlur" value="4">
         <input type="hidden" id="paramBrushSize" value="5">
         <span class="ctx-inline">
-          <label>Fill</label>
+          <label data-i18n="inpaint.fill">Fill</label>
           <select class="ctx-select" id="paramFill">
-            <option value="1" selected>Original</option>
-            <option value="0">Fill</option>
-            <option value="2">Latent Noise</option>
-            <option value="3">Latent Nothing</option>
+            <option value="1" selected data-i18n="inpaint.fill.original">Original</option>
+            <option value="0" data-i18n="inpaint.fill.fill">Fill</option>
+            <option value="2" data-i18n="inpaint.fill.latentNoise">Latent Noise</option>
+            <option value="3" data-i18n="inpaint.fill.latentNothing">Latent Nothing</option>
           </select>
         </span>
         <span class="ctx-scrub inpaint-scrub" data-key="padding" data-min="0" data-max="512" data-step="8">Padding: 64</span>
         <input type="hidden" id="paramPadding" value="64">
         <span style="flex:1;"></span>
-        <button class="ctx-mode-btn" id="clearMaskBtn" title="Clear mask" style="color:var(--red);">&#x1f5d1; Clear</button>
+        <button class="ctx-mode-btn" id="clearMaskBtn" data-i18n-title="inpaint.clearMask.tooltip" title="Clear mask" style="color:var(--red);">&#x1f5d1; <span data-i18n="inpaint.clear">Clear</span></button>
       </div>
       </div>
 
       <div class="brush-presets" id="brushPresets">
-        <button class="brush-preset-btn active" title="Round">&#x25cf;</button>
-        <button class="brush-preset-btn" title="Flat">&#x25ac;</button>
-        <button class="brush-preset-btn" title="Scatter">&#x2726;</button>
-        <button class="brush-preset-btn" title="Marker">&#x25ae;</button>
-        <button class="brush-preset-btn" title="Custom">&#x2702;</button>
-        <button class="brush-preset-btn" id="dynamicsToggle" title="Brush Dynamics" style="margin-left:4px;border-left:1px solid var(--border);padding-left:6px;">&#x2699;</button>
+        <button class="brush-preset-btn active" data-i18n-title="brushPreset.round" title="Round">&#x25cf;</button>
+        <button class="brush-preset-btn" data-i18n-title="brushPreset.flat" title="Flat">&#x25ac;</button>
+        <button class="brush-preset-btn" data-i18n-title="brushPreset.scatter" title="Scatter">&#x2726;</button>
+        <button class="brush-preset-btn" data-i18n-title="brushPreset.marker" title="Marker">&#x25ae;</button>
+        <button class="brush-preset-btn" data-i18n-title="brushPreset.custom" title="Custom">&#x2702;</button>
+        <button class="brush-preset-btn" id="dynamicsToggle" data-i18n-title="brushPreset.dynamics" title="Brush Dynamics" style="margin-left:4px;border-left:1px solid var(--border);padding-left:6px;">&#x2699;</button>
       </div>
 
       <!-- Brush dynamics flyout -->
@@ -358,10 +358,10 @@
           <!-- Regional Prompting (between gallery and params for quick access) -->
           <div id="regionSection" style="display:none;">
             <div class="section-header">
-              <span class="section-label">Regions</span>
+              <span class="section-label" data-i18n="panels.regions">Regions</span>
               <div class="section-actions">
-                <button id="regionAdd" title="Add region">+</button>
-                <button id="regionClearAll" title="Remove all regions" style="font-size:11px;">&#x1f5d1;</button>
+                <button id="regionAdd" data-i18n-title="region.add.tooltip" title="Add region">+</button>
+                <button id="regionClearAll" data-i18n-title="region.removeAll.tooltip" title="Remove all regions" style="font-size:11px;">&#x1f5d1;</button>
               </div>
             </div>
             <div id="regionList"></div>
@@ -747,20 +747,20 @@
           <!-- Layers -->
           <div class="section-header" data-collapse="layersList">
             <span class="section-arrow">&#x25BC;</span>
-            <span class="section-label">Layers</span>
+            <span class="section-label" data-i18n="panels.layers">Layers</span>
             <div class="section-actions" id="layerActions">
-              <button title="Add layer" id="layerAdd"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg></button>
-              <button title="Add Brightness/Contrast" id="layerAddBrightness"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="9"/><path fill="currentColor" stroke="none" d="M12 3a9 9 0 0 1 0 18z"/></svg></button>
-              <button title="Add Hue/Saturation" id="layerAddHue"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><path d="M12 2.5c-3.5 4.5-7 7.5-7 11.5a7 7 0 0 0 14 0c0-4-3.5-7-7-11.5z"/></svg></button>
-              <button title="Add Levels" id="layerAddLevels"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="5" y1="20" x2="5" y2="14"/><line x1="10" y1="20" x2="10" y2="9"/><line x1="15" y1="20" x2="15" y2="5"/><line x1="20" y1="20" x2="20" y2="11"/></svg></button>
+              <button data-i18n-title="layer.add.tooltip" title="Add layer" id="layerAdd"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><path d="M12 5v14"/><path d="M5 12h14"/></svg></button>
+              <button data-i18n-title="layer.addBrightness.tooltip" title="Add Brightness/Contrast" id="layerAddBrightness"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="9"/><path fill="currentColor" stroke="none" d="M12 3a9 9 0 0 1 0 18z"/></svg></button>
+              <button data-i18n-title="layer.addHue.tooltip" title="Add Hue/Saturation" id="layerAddHue"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><path d="M12 2.5c-3.5 4.5-7 7.5-7 11.5a7 7 0 0 0 14 0c0-4-3.5-7-7-11.5z"/></svg></button>
+              <button data-i18n-title="layer.addLevels.tooltip" title="Add Levels" id="layerAddLevels"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round"><line x1="5" y1="20" x2="5" y2="14"/><line x1="10" y1="20" x2="10" y2="9"/><line x1="15" y1="20" x2="15" y2="5"/><line x1="20" y1="20" x2="20" y2="11"/></svg></button>
               <span class="action-sep" aria-hidden="true"></span>
-              <button title="Duplicate" id="layerDupe"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><rect x="8" y="8" width="13" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></svg></button>
-              <button title="Move up" id="layerUp"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg></button>
-              <button title="Move down" id="layerDown"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12l7 7 7-7"/></svg></button>
-              <button title="Merge down" id="layerMerge"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><line x1="4" y1="20" x2="20" y2="20"/></svg></button>
-              <button title="Delete" id="layerDel"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg></button>
+              <button data-i18n-title="layer.duplicate.tooltip" title="Duplicate" id="layerDupe"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linejoin="round"><rect x="8" y="8" width="13" height="13" rx="2"/><path d="M16 8V5a2 2 0 0 0-2-2H5a2 2 0 0 0-2 2v9a2 2 0 0 0 2 2h3"/></svg></button>
+              <button data-i18n-title="layer.moveUp.tooltip" title="Move up" id="layerUp"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 19V5"/><path d="M5 12l7-7 7 7"/></svg></button>
+              <button data-i18n-title="layer.moveDown.tooltip" title="Move down" id="layerDown"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 5v14"/><path d="M5 12l7 7 7-7"/></svg></button>
+              <button data-i18n-title="layer.mergeDown.tooltip" title="Merge down" id="layerMerge"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12"/><path d="M7 10l5 5 5-5"/><line x1="4" y1="20" x2="20" y2="20"/></svg></button>
+              <button data-i18n-title="layer.delete.tooltip" title="Delete" id="layerDel"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M3 6h18"/><path d="M8 6V4a2 2 0 0 1 2-2h4a2 2 0 0 1 2 2v2"/><path d="M19 6l-1 14a2 2 0 0 1-2 2H8a2 2 0 0 1-2-2L5 6"/></svg></button>
               <span class="action-sep" aria-hidden="true"></span>
-              <button title="Export Canvas / PSD" id="layerSave"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></button>
+              <button data-i18n-title="layer.export.tooltip" title="Export Canvas / PSD" id="layerSave"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg></button>
             </div>
           </div>
           <div id="layersList" class="section-body">
@@ -779,10 +779,10 @@
           <!-- Action History -->
           <div class="section-header" data-collapse="historyList">
             <span class="section-arrow">&#x25BC;</span>
-            <span class="section-label">History</span>
+            <span class="section-label" data-i18n="panels.history">History</span>
             <div class="section-actions">
-              <button id="historyUndo" title="Undo (Ctrl+Z)" style="font-size:12px;">&#x21b6;</button>
-              <button id="historyRedo" title="Redo (Ctrl+Shift+Z)" style="font-size:12px;">&#x21b7;</button>
+              <button id="historyUndo" data-i18n-title="history.undo.tooltip" title="Undo (Ctrl+Z)" style="font-size:12px;">&#x21b6;</button>
+              <button id="historyRedo" data-i18n-title="history.redo.tooltip" title="Redo (Ctrl+Shift+Z)" style="font-size:12px;">&#x21b7;</button>
             </div>
           </div>
           <div id="historyList" class="section-body"></div>
@@ -1012,7 +1012,7 @@
   ];
   // Optional modules — loaded if available, silently skipped if not
   const optionalScripts = ["develop.js", "video-lab.js", "workshop.js", "lexicon.js", "education.js", "codex.js", "studio-showme.js", "gallery.js", "module-tours.js"];
-  const v = "4.4.9";
+  const v = "4.5.0";
   for (const s of scripts) {
     await new Promise((resolve, reject) => {
       const el = document.createElement("script");
