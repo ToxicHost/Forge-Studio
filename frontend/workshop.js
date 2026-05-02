@@ -18,6 +18,14 @@
 (function () {
 "use strict";
 
+// i18n helper — every dynamically-built string passes its English source
+// through _t() so the locale-aware text shows on first paint. Elements
+// also get data-i18n* attributes so applyToDom() keeps them in sync on
+// locale switch.
+function _t(key, fallback, params) {
+  return (window.I18N && window.I18N.t) ? window.I18N.t(key, fallback, params) : fallback;
+}
+
 const TAG = "[Workshop]";
 const API = "/studio/workshop";
 const VERSION = "0.8.0";
@@ -373,7 +381,7 @@ async function loadVaes() {
 async function refreshAssets() {
     const btn = _els && _els.refreshAssets;
     const prevLabel = btn ? btn.textContent : null;
-    if (btn) { btn.disabled = true; btn.textContent = "Scanning…"; }
+    if (btn) { btn.disabled = true; btn.textContent = _t("workshop.action.scanning", "Scanning…"); }
     try {
         let summary = null;
         try { summary = await fetchJSON(API + "/refresh", { method: "POST" }); }
@@ -444,7 +452,7 @@ async function runHealthScan(filename) {
         WS.healthScan = await fetchJSON(API + "/health?filename=" + encodeURIComponent(filename));
     } catch (e) {
         console.error(TAG, "Health scan failed:", e);
-        if (window.showToast) window.showToast("Health scan failed: " + e.message, "error");
+        if (window.showToast) window.showToast(_t("workshop.toast.healthScanFailed", "Health scan failed: " + e.message, { error: e.message }), "error");
     }
     WS.healthLoading = false; _renderInfo();
 }
@@ -718,7 +726,7 @@ async function testMerge() {
     if (!_canTestMerge()) return;
     const body = _buildMergeBody();
     try {
-        WS.testMerging = true; _els.testMergeBtn.disabled = true; _els.testMergeBtn.textContent = "Merging…";
+        WS.testMerging = true; _els.testMergeBtn.disabled = true; _els.testMergeBtn.textContent = _t("workshop.action.merging", "Merging…");
         if (window.showToast) window.showToast("Computing in-memory merge…", "info");
         const res = await fetchJSON(API + "/merge_memory", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
         WS.memoryMergeActive = true; _renderMemoryStatus(res);
@@ -726,17 +734,17 @@ async function testMerge() {
         else { if (window.showToast) window.showToast("Test merge applied but validation had warnings", "warning"); }
         if (res.non_unet_warning && window.showToast) window.showToast(res.non_unet_warning, "info");
     } catch (e) { WS.memoryMergeActive = false; if (window.showToast) window.showToast("Test merge failed: " + e.message, "error"); }
-    finally { WS.testMerging = false; _els.testMergeBtn.textContent = "Test Merge"; _updateActionButtons(); }
+    finally { WS.testMerging = false; _els.testMergeBtn.textContent = _t("workshop.action.testMerge", "Test Merge"); _updateActionButtons(); }
 }
 
 async function revertMerge() {
     try {
-        _els.revertBtn.disabled = true; _els.revertBtn.textContent = "Reverting…";
+        _els.revertBtn.disabled = true; _els.revertBtn.textContent = _t("workshop.action.reverting", "Reverting…");
         const res = await fetchJSON(API + "/revert", { method: "POST" });
         WS.memoryMergeActive = false; _els.memoryStatus.style.display = "none"; _updateActionButtons();
-        if (window.showToast) window.showToast("Reverted in " + res.elapsed + "s", "success");
-    } catch (e) { if (window.showToast) window.showToast("Revert failed: " + e.message, "error"); }
-    finally { _els.revertBtn.disabled = false; _els.revertBtn.textContent = "Revert"; }
+        if (window.showToast) window.showToast(_t("workshop.toast.reverted", "Reverted in " + res.elapsed + "s", { elapsed: res.elapsed }), "success");
+    } catch (e) { if (window.showToast) window.showToast(_t("workshop.toast.revertFailed", "Revert failed: " + e.message, { error: e.message }), "error"); }
+    finally { _els.revertBtn.disabled = false; _els.revertBtn.textContent = _t("workshop.action.revert", "Revert"); }
 }
 
 async function cancelMerge() { try { await fetchJSON(API + "/cancel", { method: "POST" }); } catch (e) { console.error(TAG, "Cancel failed:", e); } }
@@ -1261,9 +1269,9 @@ function _handleWsMessage(data) {
     WS.elapsed = data.elapsed || 0; WS.keysDone = data.keys_done || 0; WS.keysTotal = data.keys_total || 0;
     if (data.status === "complete" || data.status === "error" || data.status === "cancelled") {
         WS.merging = false; _setMergeButtonState(false);
-        if (data.status === "complete") { if (window.showToast) window.showToast("Complete!", "success"); loadModels(); _loadJournal(); fetch(API + "/refresh_checkpoints", { method: "POST" }).catch(() => {}); }
+        if (data.status === "complete") { if (window.showToast) window.showToast(_t("workshop.toast.complete", "Complete!"), "success"); loadModels(); _loadJournal(); fetch(API + "/refresh_checkpoints", { method: "POST" }).catch(() => {}); }
         else if (data.status === "error") { if (window.showToast) window.showToast("Failed: " + data.error, "error"); }
-        else if (data.status === "cancelled") { if (window.showToast) window.showToast("Cancelled", "warning"); }
+        else if (data.status === "cancelled") { if (window.showToast) window.showToast(_t("workshop.toast.cancelled", "Cancelled"), "warning"); }
     }
     _renderProgress();
 }
@@ -2249,9 +2257,13 @@ function _renderProgress() {
     _els.progressTime.textContent = WS.elapsed ? WS.elapsed + "s" : "";
     _els.progressSection.style.display = "";
     const s = _els.progressStatus;
-    if (WS.status === "complete") { s.textContent = "✓ Complete"; s.className = "ws-progress-status ws-status-ok"; _els.progressFill.className = "ws-progress-bar-fill ws-fill-ok"; }
-    else if (WS.status === "error") { s.textContent = "✗ " + (WS.error || "Unknown error"); s.className = "ws-progress-status ws-status-err"; _els.progressFill.className = "ws-progress-bar-fill ws-fill-err"; }
-    else if (WS.status === "cancelled") { s.textContent = "— Cancelled"; s.className = "ws-progress-status ws-status-warn"; _els.progressFill.className = "ws-progress-bar-fill ws-fill-warn"; }
+    if (WS.status === "complete") { s.textContent = _t("workshop.status.complete", "✓ Complete"); s.className = "ws-progress-status ws-status-ok"; _els.progressFill.className = "ws-progress-bar-fill ws-fill-ok"; }
+    else if (WS.status === "error") {
+        var errMsg = WS.error || _t("workshop.status.unknownError", "Unknown error");
+        s.textContent = _t("workshop.status.error", "✗ " + errMsg, { error: errMsg });
+        s.className = "ws-progress-status ws-status-err"; _els.progressFill.className = "ws-progress-bar-fill ws-fill-err";
+    }
+    else if (WS.status === "cancelled") { s.textContent = _t("workshop.status.cancelled", "— Cancelled"); s.className = "ws-progress-status ws-status-warn"; _els.progressFill.className = "ws-progress-bar-fill ws-fill-warn"; }
     else { s.textContent = ""; s.className = "ws-progress-status"; _els.progressFill.className = "ws-progress-bar-fill"; }
 }
 
@@ -2291,10 +2303,10 @@ function _renderInfo() {
 
     if (WS.preflight) parts.push(_renderPreflight(WS.preflight));
 
-    if (WS.diffLoading) parts.push('<div class="ws-info-block"><div class="ws-info-label">Block Divergence</div><div class="ws-diff-loading">Computing diff…</div></div>');
+    if (WS.diffLoading) parts.push('<div class="ws-info-block"><div class="ws-info-label">' + _t("workshop.label.blockDivergence", "Block Divergence") + '</div><div class="ws-diff-loading">' + _t("workshop.label.computingDiff", "Computing diff…") + '</div></div>');
     else if (WS.cosineDiff) parts.push(_renderCosineDiff(WS.cosineDiff));
 
-    if (WS.healthLoading) parts.push('<div class="ws-info-block"><div class="ws-info-label">Health Scan</div><div class="ws-diff-loading">Scanning tensors…</div></div>');
+    if (WS.healthLoading) parts.push('<div class="ws-info-block"><div class="ws-info-label">' + _t("workshop.label.healthScan", "Health Scan") + '</div><div class="ws-diff-loading">' + _t("workshop.label.scanningTensors", "Scanning tensors…") + '</div></div>');
     else if (WS.healthScan) parts.push(_renderHealth(WS.healthScan));
 
     if ((WS.inspectA || WS.inspectB) && !WS.healthLoading && !WS.healthScan) {
@@ -2327,7 +2339,7 @@ function _renderModelInfo(label, info) {
 
 function _renderPreflight(pf) {
     return '<div class="' + (pf.safe ? "ws-info-block" : "ws-info-block ws-info-warning-block") + '">'
-        + '<div class="ws-info-label">RAM Estimate</div>'
+        + '<div class="ws-info-label">' + _t("workshop.label.ramEstimate", "RAM Estimate") + '</div>'
         + '<div class="ws-info-row"><span>Output buffer</span><span>' + pf.output_buffer_gb + ' GB</span></div>'
         + '<div class="ws-info-row"><span>Overhead</span><span>~' + pf.overhead_gb + ' GB</span></div>'
         + '<div class="ws-info-row ws-info-row-highlight"><span>Peak estimate</span><span>' + pf.peak_gb + ' GB</span></div>'
@@ -2369,7 +2381,7 @@ function _renderCosineDiff(diff) {
     const globalDiv = ((1 - (diff.global_similarity || 0)) * 100).toFixed(2);
 
     return '<div class="ws-info-block ws-diff-block">'
-        + '<div class="ws-info-label">Block Divergence <span class="ws-diff-global">(global: ' + globalDiv + '% different)</span></div>'
+        + '<div class="ws-info-label">' + _t("workshop.label.blockDivergence", "Block Divergence") + ' <span class="ws-diff-global">(global: ' + globalDiv + '% different)</span></div>'
         + '<div class="ws-diff-legend"><span style="color:var(--green);">◼ Similar</span><span style="color:var(--amber);">◼ Moderate</span><span style="color:var(--red);">◼ Divergent</span></div>'
         + '<div class="ws-diff-hint">Higher % = more different between the models. These are the blocks worth adjusting.</div>'
         + nanWarn + unetHtml + specialHtml + '</div>';
@@ -2398,7 +2410,7 @@ function _renderCompatibility(compat) {
     const colors = { incompatible: "var(--red)", caution: "var(--amber)", compatible: "var(--green)" };
     const labels = { incompatible: "Incompatible", caution: "Caution", compatible: "Compatible" };
     const v = compat.verdict;
-    let html = '<div class="ws-info-block"><div class="ws-info-label">Compatibility <span style="color:' + colors[v] + ';font-weight:600;font-size:10px;text-transform:none;letter-spacing:0;">' + icons[v] + ' ' + labels[v] + '</span></div>';
+    let html = '<div class="ws-info-block"><div class="ws-info-label">' + _t("workshop.label.compatibility", "Compatibility") + ' <span style="color:' + colors[v] + ';font-weight:600;font-size:10px;text-transform:none;letter-spacing:0;">' + icons[v] + ' ' + labels[v] + '</span></div>';
     for (const issue of (compat.issues || [])) {
         html += '<div class="ws-compat-item ws-compat-issue"><span style="color:var(--red);">✖</span> ' + _esc(issue.text) + '</div>';
         if (issue.detail) html += '<div class="ws-compat-detail">' + _esc(issue.detail) + '</div>';
@@ -2416,10 +2428,15 @@ function _renderCompatibility(compat) {
 function _renderHealth(scan) {
     const icons = { healthy: "✔", minor: "⚠", warning: "⚠", critical: "❌" };
     const colors = { healthy: "var(--green)", minor: "var(--text-3)", warning: "var(--amber)", critical: "var(--red)" };
-    const labels = { healthy: "Healthy", minor: "Minor Issues", warning: "Warning", critical: "Critical" };
+    const labels = {
+        healthy:  _t("workshop.health.healthy",  "Healthy"),
+        minor:    _t("workshop.health.minor",    "Minor Issues"),
+        warning:  _t("workshop.health.warning",  "Warning"),
+        critical: _t("workshop.health.critical", "Critical"),
+    };
     const v = scan.verdict;
-    let html = '<div class="ws-info-block"><div class="ws-info-label">Health Scan <span style="color:' + colors[v] + ';font-weight:600;font-size:10px;text-transform:none;letter-spacing:0;">' + icons[v] + ' ' + labels[v] + '</span></div>';
-    html += '<div class="ws-info-row"><span>Total keys</span><span>' + scan.total_keys.toLocaleString() + '</span></div>';
+    let html = '<div class="ws-info-block"><div class="ws-info-label">' + _t("workshop.label.healthScan", "Health Scan") + ' <span style="color:' + colors[v] + ';font-weight:600;font-size:10px;text-transform:none;letter-spacing:0;">' + icons[v] + ' ' + labels[v] + '</span></div>';
+    html += '<div class="ws-info-row"><span>' + _t("workshop.label.totalKeys", "Total keys") + '</span><span>' + scan.total_keys.toLocaleString() + '</span></div>';
     if (scan.total_nan > 0 && scan.nan_clip_only) {
         html += '<div class="ws-info-row" style="color:var(--text-3);"><span>NaN keys (CLIP)</span><span>' + scan.total_nan + '</span></div>';
         html += '<div style="color:var(--text-4);font-size:9px;padding:2px 0;font-style:italic;">Known artifact — unused CLIP encoder layers. Not a merge issue.</div>';
@@ -2480,7 +2497,7 @@ if (window.StudioModules) {
             loadModels(); loadLoras(); loadVaes();
             fetchJSON(API + "/memory_status").then(status => {
                 WS.memoryMergeActive = status.active;
-                if (status.active) { _els.memoryStatus.style.display = ""; _els.memoryInfo.textContent = "In-memory merge active"; }
+                if (status.active) { _els.memoryStatus.style.display = ""; _els.memoryInfo.textContent = _t("workshop.status.inMemoryMerge", "In-memory merge active"); }
                 else { _els.memoryStatus.style.display = "none"; }
             }).catch(() => {});
         },
