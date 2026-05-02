@@ -56,7 +56,9 @@ function Tour(opts) {
   this.onStep = opts.onStep || null;
   this.bodyClass = opts.bodyClass || null;
   this.confirmCancel = opts.confirmCancel !== false;
-  this.cancelPrompt = opts.cancelPrompt || "End the tour? You can restart it anytime from Settings.";
+  this.cancelPrompt = opts.cancelPrompt || ((window.I18N && window.I18N.t)
+    ? window.I18N.t("tour.endConfirm", "End the tour? You can restart it anytime from Settings.")
+    : "End the tour? You can restart it anytime from Settings.");
 
   this._idx = -1;
   this._guide = null;
@@ -244,12 +246,15 @@ Tour.prototype._renderGuide = function (step, idx) {
   var el = document.createElement("div");
   el.className = "st-guide";
 
+  // i18n helper — framework chrome translates; per-step content
+  // (text, step.btn) stays in whatever language the tour author wrote.
+  var _t = (key, fallback) => (window.I18N && window.I18N.t) ? window.I18N.t(key, fallback) : fallback;
   var html = '<div class="st-guide-text">' + text + "</div>";
   html += '<div class="st-guide-actions">';
   html += '<span class="st-guide-step">' + (idx + 1) + " / " + total + "</span>";
-  if (prevIdx >= 0) html += '<button class="st-guide-prev" data-action="prev">Back</button>';
+  if (prevIdx >= 0) html += '<button class="st-guide-prev" data-action="prev" data-i18n="tour.back">' + _t("tour.back", "Back") + '</button>';
   if (step.btn) html += '<button class="st-guide-btn" data-action="next">' + step.btn + "</button>";
-  html += '<button class="st-guide-skip" data-action="cancel">End tour</button>';
+  html += '<button class="st-guide-skip" data-action="cancel" data-i18n="tour.endTour">' + _t("tour.endTour", "End tour") + '</button>';
   html += "</div>";
   el.innerHTML = html;
 

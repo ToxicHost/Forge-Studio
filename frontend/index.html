@@ -315,7 +315,7 @@
             </div>
             <div class="gen-row">
               <button class="gen-btn" id="genBtn"><span class="gen-shine"></span><span data-i18n="actions.generate">Generate</span></button>
-              <button class="live-btn" id="liveToggleBtn" title="Start Live Painting">▶ Live</button>
+              <button class="live-btn" id="liveToggleBtn" data-i18n="live.toggle.start" data-i18n-title="live.toggle.start.tooltip" title="Start Live Painting">▶ Live</button>
             </div>
             <div class="gen-actions">
               <button id="interruptBtn" data-i18n="actions.interrupt">Interrupt</button>
@@ -337,9 +337,9 @@
                 <span id="liveStrengthVal">0.3</span>
               </div>
               <div class="live-panel-row">
-                <label>Seed</label>
+                <label data-i18n="live.seed">Seed</label>
                 <span id="liveSeed" class="live-seed-display">—</span>
-                <button id="liveRerollBtn" title="Re-roll seed">🎲</button>
+                <button id="liveRerollBtn" data-i18n-title="live.reroll.tooltip" title="Re-roll seed">🎲</button>
               </div>
               <button class="live-apply-btn" id="liveApplyBtn" disabled data-i18n="actions.applyToLayer">Apply to Layer</button>
             </div>
@@ -1012,7 +1012,7 @@
   ];
   // Optional modules — loaded if available, silently skipped if not
   const optionalScripts = ["develop.js", "video-lab.js", "workshop.js", "lexicon.js", "education.js", "codex.js", "studio-showme.js", "gallery.js", "module-tours.js"];
-  const v = "4.5.1";
+  const v = "4.5.2";
   for (const s of scripts) {
     await new Promise((resolve, reject) => {
       const el = document.createElement("script");

@@ -29,7 +29,7 @@ var _activeTutorialDoc = -1; // doc index of active tutorial, or -1
 function _register(tutorialId, config) {
   _tutorials[tutorialId] = {
     entryId: config.entryId || tutorialId,
-    label: config.label || "Show Me",
+    label: config.label || ((window.I18N && window.I18N.t) ? window.I18N.t("showme.label", "Show Me") : "Show Me"),
     run: config.run
   };
 }
@@ -85,7 +85,11 @@ function run(tutorialId) {
 
 function _createTutorialDoc(name) {
   if (!window.StudioDocs) { console.warn(TAG, "StudioDocs not available"); return -1; }
-  var idx = StudioDocs.newDoc("Tutorial: " + name);
+  // Doc title prefix translates; the tutorial name itself stays as-passed.
+  var prefix = (window.I18N && window.I18N.t)
+    ? window.I18N.t("showme.docPrefix", "Tutorial: " + name, { name: name })
+    : "Tutorial: " + name;
+  var idx = StudioDocs.newDoc(prefix);
   _activeTutorialDoc = idx;
   return idx;
 }
@@ -178,7 +182,7 @@ _register("core_workflow", {
       Education.reset();
       Education.showFirstRun();
     } else {
-      if (window.showToast) showToast("Education system not available", "error");
+      if (window.showToast) showToast(((window.I18N && window.I18N.t) ? window.I18N.t("showme.educationUnavailable", "Education system not available") : "Education system not available"), "error");
     }
   }
 });
@@ -191,7 +195,7 @@ _register("first_image_showme", {
       Education.reset();
       Education.showFirstRun();
     } else {
-      if (window.showToast) showToast("Education system not available", "error");
+      if (window.showToast) showToast(((window.I18N && window.I18N.t) ? window.I18N.t("showme.educationUnavailable", "Education system not available") : "Education system not available"), "error");
     }
   }
 });

@@ -2495,9 +2495,17 @@ function _buildNumericInput(opts) {
 function _buildResetButton(onReset, title) {
     const b = document.createElement("button");
     b.className = "adj-reset-btn"; b.type = "button";
-    b.textContent = "↺"; b.title = title || "Reset";
+    b.textContent = "↺";
+    b.title = title || ((window.I18N && window.I18N.t) ? window.I18N.t("adjust.reset", "Reset") : "Reset");
     b.addEventListener("click", e => { e.stopPropagation(); onReset(); });
     return b;
+}
+
+// Translate an adjustment slider label and the per-slider reset
+// tooltip ("Reset {label}"). Mirrors the canvas-ui _t() / data-i18n
+// pattern used elsewhere — keeps the call sites concise.
+function _adjT(key, fallback, params) {
+    return (window.I18N && window.I18N.t) ? window.I18N.t(key, fallback, params) : fallback;
 }
 
 function _buildAdjEditor(L, redraw) {
@@ -2532,11 +2540,11 @@ function _buildAdjEditor(L, redraw) {
             r.appendChild(_buildResetButton(() => {
                 ap[key] = ad[key]; L._lutCache = null;
                 sliderApi.setValue("p", ap[key]); num.value = ap[key]; redraw();
-            }, "Reset " + label));
+            }, _adjT("adjust.resetSlider.tooltip", "Reset " + label, { label: label })));
             return r;
         }
-        wrap.appendChild(row("Brightness", "brightness", -100, 100));
-        wrap.appendChild(row("Contrast",   "contrast",   -100, 100));
+        wrap.appendChild(row(_adjT("adjust.brightness", "Brightness"), "brightness", -100, 100));
+        wrap.appendChild(row(_adjT("adjust.contrast",   "Contrast"),   "contrast",   -100, 100));
         return wrap;
     }
 
@@ -2559,7 +2567,7 @@ function _buildAdjEditor(L, redraw) {
         const colInp = document.createElement("input"); colInp.type = "checkbox"; colInp.checked = !!ap.colorize;
         colInp.addEventListener("click", e => e.stopPropagation());
         colInp.addEventListener("change", () => { ap.colorize = colInp.checked; redraw(); });
-        colLabel.appendChild(colInp); colLabel.appendChild(document.createTextNode(" Colorize"));
+        colLabel.appendChild(colInp); colLabel.appendChild(document.createTextNode(" " + _adjT("adjust.colorize", "Colorize")));
         head.appendChild(segWrap); head.appendChild(colLabel);
         wrap.appendChild(head);
 
@@ -2613,7 +2621,7 @@ function _buildAdjEditor(L, redraw) {
             r.appendChild(_buildResetButton(() => {
                 ap[key] = ad[key]; sliderApi.setValue("p", ap[key]);
                 num.value = ap[key]; _repaintDeps(key); redraw();
-            }, "Reset " + label));
+            }, _adjT("adjust.resetSlider.tooltip", "Reset " + label, { label: label })));
             return r;
         }
         function _repaintDeps(changedKey) {
@@ -2623,13 +2631,13 @@ function _buildAdjEditor(L, redraw) {
                 if (sliders.lightness)  sliders.lightness.repaint();
             }
         }
-        wrap.appendChild(makeRow("Hue",        "hue",        -180, 180, paintHueTrack));
-        wrap.appendChild(makeRow("Saturation", "saturation", -100, 100, paintSatTrack));
-        wrap.appendChild(makeRow("Lightness",  "lightness",  -100, 100, paintLightTrack));
+        wrap.appendChild(makeRow(_adjT("adjust.hue",        "Hue"),        "hue",        -180, 180, paintHueTrack));
+        wrap.appendChild(makeRow(_adjT("adjust.saturation", "Saturation"), "saturation", -100, 100, paintSatTrack));
+        wrap.appendChild(makeRow(_adjT("adjust.lightness",  "Lightness"),  "lightness",  -100, 100, paintLightTrack));
 
         const foot = document.createElement("div"); foot.className = "adj-row adj-row--foot";
         const resetAll = document.createElement("button"); resetAll.type = "button"; resetAll.className = "adj-button";
-        resetAll.textContent = "Reset all";
+        resetAll.textContent = _adjT("adjust.resetAll", "Reset all");
         resetAll.addEventListener("click", e => {
             e.stopPropagation();
             Object.assign(ap, ad);
@@ -2693,7 +2701,7 @@ function _buildAdjEditor(L, redraw) {
         });
 
         const inRow = document.createElement("div"); inRow.className = "adj-row";
-        const inLbl = document.createElement("span"); inLbl.className = "adj-label"; inLbl.textContent = "Input";
+        const inLbl = document.createElement("span"); inLbl.className = "adj-label"; inLbl.textContent = _adjT("adjust.input", "Input");
         inRow.appendChild(inLbl); inRow.appendChild(inSlider.el);
         wrap.appendChild(inRow);
 
@@ -2750,7 +2758,7 @@ function _buildAdjEditor(L, redraw) {
         });
 
         const outRow = document.createElement("div"); outRow.className = "adj-row";
-        const outLbl = document.createElement("span"); outLbl.className = "adj-label"; outLbl.textContent = "Output";
+        const outLbl = document.createElement("span"); outLbl.className = "adj-label"; outLbl.textContent = _adjT("adjust.output", "Output");
         outRow.appendChild(outLbl); outRow.appendChild(outSlider.el);
         wrap.appendChild(outRow);
 
@@ -2777,11 +2785,11 @@ function _buildAdjEditor(L, redraw) {
         // Buttons row: refresh histogram, auto-levels, reset all
         const btnRow = document.createElement("div"); btnRow.className = "adj-row adj-row--foot";
         const refreshBtn = document.createElement("button"); refreshBtn.type = "button"; refreshBtn.className = "adj-button";
-        refreshBtn.textContent = "Refresh histogram";
+        refreshBtn.textContent = _adjT("adjust.refreshHistogram", "Refresh histogram");
         refreshBtn.addEventListener("click", e => { e.stopPropagation(); refreshHistogram(); });
 
         const autoBtn = document.createElement("button"); autoBtn.type = "button"; autoBtn.className = "adj-button";
-        autoBtn.textContent = "Auto";
+        autoBtn.textContent = _adjT("adjust.auto", "Auto");
         autoBtn.dataset.i18nTitle = "tooltip.histogramAutoStretch";
         autoBtn.title = (window.I18N && window.I18N.t)
             ? window.I18N.t("tooltip.histogramAutoStretch",
@@ -2813,7 +2821,7 @@ function _buildAdjEditor(L, redraw) {
         });
 
         const resetBtn = document.createElement("button"); resetBtn.type = "button"; resetBtn.className = "adj-button";
-        resetBtn.textContent = "Reset";
+        resetBtn.textContent = _adjT("adjust.reset", "Reset");
         resetBtn.addEventListener("click", e => {
             e.stopPropagation();
             Object.assign(ap, ad); L._lutCache = null;
