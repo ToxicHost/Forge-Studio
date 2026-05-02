@@ -1632,6 +1632,60 @@ _memory_merge = {
 }
 
 
+def _ensure_forge_objects():
+    """Force-load the active checkpoint into Forge runtime objects.
+
+    Forge lazy-loads models — picking a checkpoint in the dropdown doesn't
+    actually populate sd_model.forge_objects until the first generation.
+    Test Merge needs the UNet patcher BEFORE any generation has happened
+    (it hot-swaps weights on the live model), so without this the user
+    has to run a dummy generate before they can use Test Merge.
+
+    Mirrors studio_generation._ensure_model_loaded — same load-method
+    fallback chain (forge_model_reload → load_model → reload_model_weights).
+    Returns silently on success; raises RuntimeError if every method fails.
+    """
+    sd_model = getattr(shared, 'sd_model', None)
+    if sd_model is not None and getattr(sd_model, 'forge_objects', None) is not None:
+        return  # Already loaded
+
+    last_err = None
+
+    if hasattr(sd_models, 'forge_model_reload'):
+        try:
+            sd_models.forge_model_reload()
+            sd_model = getattr(shared, 'sd_model', None)
+            if sd_model is not None and getattr(sd_model, 'forge_objects', None) is not None:
+                return
+        except Exception as e:
+            last_err = e
+            print(f"{TAG} forge_model_reload failed: {e}")
+
+    try:
+        sd_models.load_model()
+        sd_model = getattr(shared, 'sd_model', None)
+        if sd_model is not None and getattr(sd_model, 'forge_objects', None) is not None:
+            return
+    except Exception as e:
+        last_err = e
+        print(f"{TAG} load_model failed: {e}")
+
+    if hasattr(sd_models, 'reload_model_weights'):
+        try:
+            sd_models.reload_model_weights()
+            sd_model = getattr(shared, 'sd_model', None)
+            if sd_model is not None and getattr(sd_model, 'forge_objects', None) is not None:
+                return
+        except Exception as e:
+            last_err = e
+            print(f"{TAG} reload_model_weights failed: {e}")
+
+    raise RuntimeError(
+        "Could not load model into memory. Pick a checkpoint in the model dropdown "
+        "and try generating once, then retry Test Merge."
+        + (f" (last error: {last_err})" if last_err else ""))
+
+
 def _get_diffusion_model():
     """Get the active diffusion model nn.Module."""
     sd_model = getattr(shared, 'sd_model', None)
@@ -1640,7 +1694,13 @@ def _get_diffusion_model():
 
     forge_objects = getattr(sd_model, 'forge_objects', None)
     if forge_objects is None:
-        raise RuntimeError("Model has no forge_objects — is it fully loaded?")
+        # Lazy-load before giving up. _ensure_forge_objects raises with a
+        # user-actionable message if it can't bring the model in.
+        _ensure_forge_objects()
+        sd_model = getattr(shared, 'sd_model', None)
+        forge_objects = getattr(sd_model, 'forge_objects', None) if sd_model else None
+        if forge_objects is None:
+            raise RuntimeError("Model has no forge_objects — pick a checkpoint and try generating once first.")
 
     unet_patcher = forge_objects.unet
     if unet_patcher is None:
