@@ -850,5 +850,28 @@
   "moduleTour.gallery.interact.text": "Click any image for a detail view with full metadata. Right-click for a context menu (rename, move, delete, send to canvas).\n\nDrag images between folders in the sidebar to organize.",
   "moduleTour.gallery.interact.btn": "Next",
   "moduleTour.gallery.live.text": "The gallery updates <em>in real-time</em> — new images appear automatically as they’re generated. The status dot in the topbar shows watcher status.\n\n<em>Send to Canvas</em> loads any image into Studio for editing.",
-  "moduleTour.gallery.live.btn": "Got it"
+  "moduleTour.gallery.live.btn": "Got it",
+
+  "showme.inpaint.intro.text": "Here’s a simple scene. Let’s change part of it using <em>inpainting</em>.\n\nSee the sun in the sky? We’re going to replace it with something else.",
+  "showme.inpaint.intro.btn": "Next",
+  "showme.inpaint.mask.text": "Press <span class=\"cx-kbd\">Q</span> to enter mask mode. Your brush now paints a <em>red overlay</em> instead of color.\n\nPaint red over the sun. It doesn’t need to be precise — just cover it.",
+  "showme.inpaint.mask.btn": "I’ve masked the sun",
+  "showme.inpaint.prompt.text": "A prompt has been pre-filled — \"a full moon in a night sky\" — but you can change it to whatever you want. The AI will only change the red area.",
+  "showme.inpaint.prompt.btn": "Next",
+  "showme.inpaint.generate.text": "Hit <em>Generate</em>. Only the masked area changes — the rest stays untouched.\n\nAfterward, press <span class=\"cx-kbd\">Q</span> to exit mask mode. Try different denoise values to see how much changes.",
+  "showme.inpaint.generate.btn": "Got it",
+
+  "showme.softInpaint.intro.text": "Standard inpainting has a hard boundary — inside the mask changes, outside doesn’t. <em>Soft Inpainting</em> adds smooth blending at the boundary for more natural transitions.\n\nLet’s try it. First, press <span class=\"cx-kbd\">Q</span> and mask an area — paint over the house.",
+  "showme.softInpaint.intro.btn": "I’ve masked the house",
+  "showme.softInpaint.enable.text": "Find <em>Soft Inpainting</em> in the Generate panel (it appears when mask mode is active). Enable the checkbox.\n\nYou’ll see six parameters. Here’s what matters most:\n\n• <strong>Preservation</strong> — how much the original is kept outside the mask. Higher = less change.\n• <strong>Transition Contrast</strong> — how sharp the blend edge is. Lower = softer blend.",
+  "showme.softInpaint.enable.btn": "Next",
+  "showme.softInpaint.generate.text": "Hit <em>Generate</em> and compare the result to standard inpainting (disable Soft Inpainting and regenerate with the same mask to compare).\n\nSoft Inpainting works best with <em>feathered masks</em> — use a soft brush (low hardness) to paint your mask for the best blending.\n\nThe other parameters (Schedule Bias, Mask Influence, Difference Threshold/Contrast) are fine at defaults until you need specific control.",
+  "showme.softInpaint.generate.btn": "Got it",
+
+  "showme.routing.blank.text": "This is a <em>blank canvas</em>. If you hit Generate right now, Studio runs <strong>txt2img</strong> — generating from scratch based only on your prompt.\n\nNo mode selection needed. The canvas state IS the mode.",
+  "showme.routing.blank.btn": "Next",
+  "showme.routing.content.text": "Now paint something on the canvas — anything. A scribble, a shape, a splash of color.\n\nOnce there are pixels on the canvas, Generate switches to <strong>img2img</strong> automatically. The AI works <em>with</em> what’s there. <em>Denoise</em> controls how much it changes.",
+  "showme.routing.content.btn": "I painted something",
+  "showme.routing.mask.text": "Now press <span class=\"cx-kbd\">Q</span> to enter mask mode. Paint a red overlay over part of your content.\n\nWith a mask present, Generate switches to <strong>inpainting</strong> — only the masked area changes. Everything else stays untouched.\n\nThree modes, zero toggles. The pixels decide.",
+  "showme.routing.mask.btn": "Got it"
 }

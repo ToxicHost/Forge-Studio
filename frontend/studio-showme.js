@@ -19,6 +19,10 @@ var TAG = "[ShowMe]";
 var _tutorials = {};
 var _activeTutorialDoc = -1; // doc index of active tutorial, or -1
 
+function _t(key, fallback) {
+  return (window.I18N && window.I18N.t) ? window.I18N.t(key, fallback) : fallback;
+}
+
 // ========================================================================
 // REGISTRATION
 // ========================================================================
@@ -220,25 +224,29 @@ _register("inpaint_basics", {
       steps: [
         {
           id: "si_intro",
-          text: "Here\u2019s a simple scene. Let\u2019s change part of it using <em>inpainting</em>.\n\nSee the sun in the sky? We\u2019re going to replace it with something else.",
-          spotlight: null, advance: "click", btn: "Next",
+          text: _t("showme.inpaint.intro.text", "Here\u2019s a simple scene. Let\u2019s change part of it using <em>inpainting</em>.\n\nSee the sun in the sky? We\u2019re going to replace it with something else."),
+          spotlight: null, advance: "click",
+          btn: _t("showme.inpaint.intro.btn", "Next"),
           position: { bottom: "80px", left: "calc(50% - 190px)" }
         },
         {
           id: "si_mask",
-          text: "Press <span class=\"cx-kbd\">Q</span> to enter mask mode. Your brush now paints a <em>red overlay</em> instead of color.\n\nPaint red over the sun. It doesn\u2019t need to be precise \u2014 just cover it.",
-          spotlight: "#maskModeBtn", advance: "click", btn: "I\u2019ve masked the sun"
+          text: _t("showme.inpaint.mask.text", "Press <span class=\"cx-kbd\">Q</span> to enter mask mode. Your brush now paints a <em>red overlay</em> instead of color.\n\nPaint red over the sun. It doesn\u2019t need to be precise \u2014 just cover it."),
+          spotlight: "#maskModeBtn", advance: "click",
+          btn: _t("showme.inpaint.mask.btn", "I\u2019ve masked the sun")
         },
         {
           id: "si_prompt",
-          text: "A prompt has been pre-filled \u2014 \"a full moon in a night sky\" \u2014 but you can change it to whatever you want. The AI will only change the red area.",
-          spotlight: "#paramPrompt", advance: "click", btn: "Next",
+          text: _t("showme.inpaint.prompt.text", "A prompt has been pre-filled \u2014 \"a full moon in a night sky\" \u2014 but you can change it to whatever you want. The AI will only change the red area."),
+          spotlight: "#paramPrompt", advance: "click",
+          btn: _t("showme.inpaint.prompt.btn", "Next"),
           focusTarget: "#paramPrompt"
         },
         {
           id: "si_generate",
-          text: "Hit <em>Generate</em>. Only the masked area changes \u2014 the rest stays untouched.\n\nAfterward, press <span class=\"cx-kbd\">Q</span> to exit mask mode. Try different denoise values to see how much changes.",
-          spotlight: "#genBtn", advance: "click", btn: "Got it"
+          text: _t("showme.inpaint.generate.text", "Hit <em>Generate</em>. Only the masked area changes \u2014 the rest stays untouched.\n\nAfterward, press <span class=\"cx-kbd\">Q</span> to exit mask mode. Try different denoise values to see how much changes."),
+          spotlight: "#genBtn", advance: "click",
+          btn: _t("showme.inpaint.generate.btn", "Got it")
         },
       ],
       persist: false, confirmCancel: false,
@@ -535,19 +543,22 @@ _register("canvas_routing", {
       steps: [
         {
           id: "scr_blank",
-          text: "This is a <em>blank canvas</em>. If you hit Generate right now, Studio runs <strong>txt2img</strong> \u2014 generating from scratch based only on your prompt.\n\nNo mode selection needed. The canvas state IS the mode.",
-          spotlight: null, advance: "click", btn: "Next",
+          text: _t("showme.routing.blank.text", "This is a <em>blank canvas</em>. If you hit Generate right now, Studio runs <strong>txt2img</strong> \u2014 generating from scratch based only on your prompt.\n\nNo mode selection needed. The canvas state IS the mode."),
+          spotlight: null, advance: "click",
+          btn: _t("showme.routing.blank.btn", "Next"),
           position: { bottom: "80px", left: "calc(50% - 190px)" }
         },
         {
           id: "scr_content",
-          text: "Now paint something on the canvas \u2014 anything. A scribble, a shape, a splash of color.\n\nOnce there are pixels on the canvas, Generate switches to <strong>img2img</strong> automatically. The AI works <em>with</em> what\u2019s there. <em>Denoise</em> controls how much it changes.",
-          spotlight: "#toolstrip", advance: "click", btn: "I painted something"
+          text: _t("showme.routing.content.text", "Now paint something on the canvas \u2014 anything. A scribble, a shape, a splash of color.\n\nOnce there are pixels on the canvas, Generate switches to <strong>img2img</strong> automatically. The AI works <em>with</em> what\u2019s there. <em>Denoise</em> controls how much it changes."),
+          spotlight: "#toolstrip", advance: "click",
+          btn: _t("showme.routing.content.btn", "I painted something")
         },
         {
           id: "scr_mask",
-          text: "Now press <span class=\"cx-kbd\">Q</span> to enter mask mode. Paint a red overlay over part of your content.\n\nWith a mask present, Generate switches to <strong>inpainting</strong> \u2014 only the masked area changes. Everything else stays untouched.\n\nThree modes, zero toggles. The pixels decide.",
-          spotlight: "#maskModeBtn", advance: "click", btn: "Got it"
+          text: _t("showme.routing.mask.text", "Now press <span class=\"cx-kbd\">Q</span> to enter mask mode. Paint a red overlay over part of your content.\n\nWith a mask present, Generate switches to <strong>inpainting</strong> \u2014 only the masked area changes. Everything else stays untouched.\n\nThree modes, zero toggles. The pixels decide."),
+          spotlight: "#maskModeBtn", advance: "click",
+          btn: _t("showme.routing.mask.btn", "Got it")
         },
       ],
       persist: false, confirmCancel: false,
@@ -725,19 +736,22 @@ _register("soft_inpainting", {
       steps: [
         {
           id: "ssi_intro",
-          text: "Standard inpainting has a hard boundary \u2014 inside the mask changes, outside doesn\u2019t. <em>Soft Inpainting</em> adds smooth blending at the boundary for more natural transitions.\n\nLet\u2019s try it. First, press <span class=\"cx-kbd\">Q</span> and mask an area \u2014 paint over the house.",
-          spotlight: "#maskModeBtn", advance: "click", btn: "I\u2019ve masked the house"
+          text: _t("showme.softInpaint.intro.text", "Standard inpainting has a hard boundary \u2014 inside the mask changes, outside doesn\u2019t. <em>Soft Inpainting</em> adds smooth blending at the boundary for more natural transitions.\n\nLet\u2019s try it. First, press <span class=\"cx-kbd\">Q</span> and mask an area \u2014 paint over the house."),
+          spotlight: "#maskModeBtn", advance: "click",
+          btn: _t("showme.softInpaint.intro.btn", "I\u2019ve masked the house")
         },
         {
           id: "ssi_enable",
-          text: "Find <em>Soft Inpainting</em> in the Generate panel (it appears when mask mode is active). Enable the checkbox.\n\nYou\u2019ll see six parameters. Here\u2019s what matters most:\n\n\u2022 <strong>Preservation</strong> \u2014 how much the original is kept outside the mask. Higher = less change.\n\u2022 <strong>Transition Contrast</strong> \u2014 how sharp the blend edge is. Lower = softer blend.",
-          spotlight: null, advance: "click", btn: "Next",
+          text: _t("showme.softInpaint.enable.text", "Find <em>Soft Inpainting</em> in the Generate panel (it appears when mask mode is active). Enable the checkbox.\n\nYou\u2019ll see six parameters. Here\u2019s what matters most:\n\n\u2022 <strong>Preservation</strong> \u2014 how much the original is kept outside the mask. Higher = less change.\n\u2022 <strong>Transition Contrast</strong> \u2014 how sharp the blend edge is. Lower = softer blend."),
+          spotlight: null, advance: "click",
+          btn: _t("showme.softInpaint.enable.btn", "Next"),
           position: { bottom: "80px", right: "340px" }
         },
         {
           id: "ssi_generate",
-          text: "Hit <em>Generate</em> and compare the result to standard inpainting (disable Soft Inpainting and regenerate with the same mask to compare).\n\nSoft Inpainting works best with <em>feathered masks</em> \u2014 use a soft brush (low hardness) to paint your mask for the best blending.\n\nThe other parameters (Schedule Bias, Mask Influence, Difference Threshold/Contrast) are fine at defaults until you need specific control.",
-          spotlight: "#genBtn", advance: "click", btn: "Got it"
+          text: _t("showme.softInpaint.generate.text", "Hit <em>Generate</em> and compare the result to standard inpainting (disable Soft Inpainting and regenerate with the same mask to compare).\n\nSoft Inpainting works best with <em>feathered masks</em> \u2014 use a soft brush (low hardness) to paint your mask for the best blending.\n\nThe other parameters (Schedule Bias, Mask Influence, Difference Threshold/Contrast) are fine at defaults until you need specific control."),
+          spotlight: "#genBtn", advance: "click",
+          btn: _t("showme.softInpaint.generate.btn", "Got it")
         },
       ],
       persist: false, confirmCancel: false,
