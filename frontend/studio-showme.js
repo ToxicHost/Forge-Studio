@@ -220,7 +220,7 @@ _register("first_image_showme", {
 _register("inpaint_basics", {
   label: "Basic Inpainting",
   run: function () {
-    _createTutorialDoc("Inpainting");
+    _createTutorialDoc(_t("showme.tutorialName.inpainting", "Inpainting"));
     _drawTutorialScene();
     window.StudioCore.composite();
     window.StudioUI.redraw();
@@ -271,7 +271,7 @@ _register("inpaint_basics", {
 
 _register("regional_prompting", {
   run: function () {
-    _createTutorialDoc("Regional Prompting");
+    _createTutorialDoc(_t("showme.tutorialName.regionalPrompting", "Regional Prompting"));
     window.StudioCore.composite();
     window.StudioUI.redraw();
 
@@ -323,7 +323,7 @@ _register("regional_prompting", {
 _register("controlnet", {
   label: "Overview",
   run: function () {
-    _createTutorialDoc("ControlNet");
+    _createTutorialDoc(_t("showme.tutorialName.controlnet", "ControlNet"));
     _drawTutorialScene();
     window.StudioCore.composite();
     window.StudioUI.redraw();
@@ -371,7 +371,7 @@ _register("controlnet", {
 
 _register("layers_basics", {
   run: function () {
-    _createTutorialDoc("Layers");
+    _createTutorialDoc(_t("showme.tutorialName.layers", "Layers"));
     var S = window.StudioCore.state;
     var C = window.StudioCore;
 
@@ -435,7 +435,7 @@ _register("layers_basics", {
 
 _register("tool_clone", {
   run: function () {
-    _createTutorialDoc("Clone Stamp");
+    _createTutorialDoc(_t("showme.tutorialName.cloneStamp", "Clone Stamp"));
     _drawTutorialScene();
 
     // Add an "unwanted" object to remove
@@ -489,7 +489,7 @@ _register("tool_clone", {
 
 _register("tool_transform", {
   run: function () {
-    _createTutorialDoc("Transform & Warp");
+    _createTutorialDoc(_t("showme.tutorialName.transformWarp", "Transform & Warp"));
     var S = window.StudioCore.state;
     var paint = S.layers.find(function (l) { return l.type === "paint"; });
     if (paint) {
@@ -544,7 +544,7 @@ _register("tool_transform", {
 
 _register("canvas_routing", {
   run: function () {
-    _createTutorialDoc("Canvas Routing");
+    _createTutorialDoc(_t("showme.tutorialName.canvasRouting", "Canvas Routing"));
     window.StudioCore.composite();
     window.StudioUI.redraw();
 
@@ -588,7 +588,7 @@ _register("controlnet_canny", {
   entryId: "controlnet",
   label: "Canny (Edges)",
   run: function () {
-    _createTutorialDoc("ControlNet: Canny");
+    _createTutorialDoc(_t("showme.tutorialName.controlnetCanny", "ControlNet: Canny"));
     _drawTutorialScene();
     window.StudioCore.composite();
     window.StudioUI.redraw();
@@ -631,7 +631,7 @@ _register("controlnet_openpose", {
   entryId: "controlnet",
   label: "OpenPose (Poses)",
   run: function () {
-    _createTutorialDoc("ControlNet: OpenPose");
+    _createTutorialDoc(_t("showme.tutorialName.controlnetOpenpose", "ControlNet: OpenPose"));
 
     // Draw a simple figure for pose detection
     var S = window.StudioCore.state;
@@ -694,7 +694,7 @@ _register("controlnet_depth", {
   entryId: "controlnet",
   label: "Depth (Layout)",
   run: function () {
-    _createTutorialDoc("ControlNet: Depth");
+    _createTutorialDoc(_t("showme.tutorialName.controlnetDepth", "ControlNet: Depth"));
     _drawTutorialScene();
     window.StudioCore.composite();
     window.StudioUI.redraw();
@@ -737,7 +737,7 @@ _register("soft_inpainting", {
   entryId: "inpaint_basics",
   label: "Soft Inpainting",
   run: function () {
-    _createTutorialDoc("Soft Inpainting");
+    _createTutorialDoc(_t("showme.tutorialName.softInpainting", "Soft Inpainting"));
     _drawTutorialScene();
     window.StudioCore.composite();
     window.StudioUI.redraw();
@@ -781,7 +781,7 @@ _register("soft_inpainting", {
 _register("tool_radial_symmetry", {
   label: "Show Me",
   run: function () {
-    _createTutorialDoc("Radial Symmetry");
+    _createTutorialDoc(_t("showme.tutorialName.radialSymmetry", "Radial Symmetry"));
     window.StudioCore.composite();
     window.StudioUI.redraw();
 
@@ -854,7 +854,7 @@ _register("brush_dynamics", {
   entryId: "tool_brush",
   label: "Brush Dynamics",
   run: function () {
-    _createTutorialDoc("Brush Dynamics");
+    _createTutorialDoc(_t("showme.tutorialName.brushDynamics", "Brush Dynamics"));
     window.StudioCore.composite();
     window.StudioUI.redraw();
 
