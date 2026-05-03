@@ -162,7 +162,8 @@ function attach(select, opts) {
         }
 
         if (visible.length === 0) {
-            listEl.innerHTML = '<div class="ssel-empty">No matches</div>';
+            var noMatches = (window.I18N && window.I18N.t) ? window.I18N.t("searchableSelect.noMatches", "No matches") : "No matches";
+            listEl.innerHTML = '<div class="ssel-empty">' + noMatches + '</div>';
             kbIdx = -1;
             return;
         }

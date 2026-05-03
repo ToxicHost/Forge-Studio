@@ -50,6 +50,12 @@ function _catLabel(cat) {
   return cat ? _t(cat.i18nKey || "", cat.label) : "";
 }
 
+// Translate an entry title via codex.entry.<id>.title, falling back to
+// the English title embedded in the entry definition.
+function _entryTitle(e) {
+  return e ? _t("codex.entry." + e.id + ".title", e.title) : "";
+}
+
 // ══════════════════════════════════════════════════════════════════
 // ENTRIES
 // ══════════════════════════════════════════════════════════════════
@@ -455,7 +461,9 @@ function _search(q) {
   if (!q.trim()) return ENTRIES;
   var t = q.toLowerCase().split(/\s+/);
   return ENTRIES.filter(function (e) {
-    var s = (e.title + " " + e.tags.join(" ") + " " + e.category + " " + (e.shortcut || "")).toLowerCase();
+    // Search corpus: translated title + English title (so users can match
+    // either localized or English vocabulary), tags, category, shortcut.
+    var s = (_entryTitle(e) + " " + e.title + " " + e.tags.join(" ") + " " + e.category + " " + (e.shortcut || "")).toLowerCase();
     return t.every(function (w) { return s.indexOf(w) >= 0; });
   });
 }
@@ -489,11 +497,13 @@ function _renderTree(entries, forceOpen) {
     ce.forEach(function (e) {
       var a = (_selectedEntry && _selectedEntry.id === e.id) ? " active" : "";
       var sc = e.shortcut ? ' <span style="float:right;color:var(--text-4);font-family:var(--mono);font-size:9px;">' + e.shortcut + '</span>' : "";
-      html += '<button class="cx-entry' + a + '" data-id="' + e.id + '">' + e.title + sc + '</button>';
+      // Title in its own data-i18n span so applyToDom() retranslates on
+      // locale switch without clobbering the trailing shortcut hint.
+      html += '<button class="cx-entry' + a + '" data-id="' + e.id + '"><span data-i18n="codex.entry.' + e.id + '.title">' + _entryTitle(e) + '</span>' + sc + '</button>';
     });
     html += '</div></div>';
   });
-  if (!entries.length) html = '<div class="cx-no-results">No matching entries</div>';
+  if (!entries.length) html = '<div class="cx-no-results" data-i18n="codex.popover.empty">' + _t("codex.popover.empty", "No matching entries") + '</div>';
   _els.tree.innerHTML = html;
   // Category toggle
   _els.tree.querySelectorAll(".cx-cat-title").forEach(function (t) {
@@ -537,7 +547,7 @@ function _selectEntry(e) {
     showMeHtml += '</div>';
   }
 
-  _els.content.innerHTML = '<div class="cx-article"><div class="cx-article-category">' + _catLabel(cat) + '</div><div class="cx-article-title">' + e.title + '</div>' + sc + showMeHtml + '<div class="cx-article-body">' + content + '</div>' + deepHtml + '</div>';
+  _els.content.innerHTML = '<div class="cx-article"><div class="cx-article-category" data-i18n="' + (cat ? (cat.i18nKey || "") : "") + '">' + _catLabel(cat) + '</div><div class="cx-article-title" data-i18n="codex.entry.' + e.id + '.title">' + _entryTitle(e) + '</div>' + sc + showMeHtml + '<div class="cx-article-body">' + content + '</div>' + deepHtml + '</div>';
 
   // Wire Show Me buttons
   _els.content.querySelectorAll("[data-showme]").forEach(function (btn) {
@@ -720,7 +730,7 @@ function _popRenderResults(entries) {
   var html = "";
   entries.forEach(function (e) {
     var cat = CATEGORIES.find(function (c) { return c.id === e.category; });
-    html += '<button class="cx-pop-result" data-id="' + e.id + '"><span class="cx-pop-result-title">' + e.title + '</span><span class="cx-pop-result-cat">' + _catLabel(cat) + '</span></button>';
+    html += '<button class="cx-pop-result" data-id="' + e.id + '"><span class="cx-pop-result-title" data-i18n="codex.entry.' + e.id + '.title">' + _entryTitle(e) + '</span><span class="cx-pop-result-cat" data-i18n="' + (cat ? (cat.i18nKey || "") : "") + '">' + _catLabel(cat) + '</span></button>';
   });
   _popEls.results.innerHTML = html;
   _popEls.results.querySelectorAll(".cx-pop-result").forEach(function (btn) {
@@ -748,7 +758,7 @@ function _popSelectEntry(e) {
     showMeHtml += '</div>';
   }
   _popEls.article.innerHTML = '<div class="cx-pop-back-wrap"><button class="cx-pop-back" data-i18n="codex.popover.back">' + _t("codex.popover.back", "\u2190 Back") + '</button></div>' +
-    '<div class="cx-article"><div class="cx-article-category">' + _catLabel(cat) + '</div><div class="cx-article-title">' + e.title + '</div>' + sc + showMeHtml + '<div class="cx-article-body">' + e.content + '</div>' + deepHtml + '</div>';
+    '<div class="cx-article"><div class="cx-article-category" data-i18n="' + (cat ? (cat.i18nKey || "") : "") + '">' + _catLabel(cat) + '</div><div class="cx-article-title" data-i18n="codex.entry.' + e.id + '.title">' + _entryTitle(e) + '</div>' + sc + showMeHtml + '<div class="cx-article-body">' + e.content + '</div>' + deepHtml + '</div>';
   _popEls.results.style.display = "none";
   _popEls.article.style.display = "block";
   _popEls.article.scrollTop = 0;
