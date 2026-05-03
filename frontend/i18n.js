@@ -49,7 +49,12 @@
     // ── String tables ────────────────────────────────────────────────────
     function _loadLocale(code) {
         if (_dict[code]) return Promise.resolve(_dict[code]);
-        return fetch(LOCALE_BASE + code + ".json", { cache: "no-cache" })
+        // Cache-bust matches index.html's script ?v= so a deploy bump
+        // forces fresh locale files alongside fresh JS. Without this the
+        // browser returns 304-revalidated stale JSON and new keys appear
+        // missing even though the JS knows about them.
+        var v = (typeof window !== "undefined" && window.__STUDIO_V) ? window.__STUDIO_V : "0";
+        return fetch(LOCALE_BASE + code + ".json?v=" + encodeURIComponent(v), { cache: "no-cache" })
             .then(function (r) { return r.ok ? r.json() : {}; })
             .then(function (json) { _dict[code] = json || {}; return _dict[code]; })
             .catch(function (e) {
