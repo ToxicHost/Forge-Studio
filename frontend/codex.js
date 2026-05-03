@@ -529,12 +529,12 @@ function _selectEntry(e) {
   });
   _els.tree.querySelectorAll(".cx-entry").forEach(function (b) { b.classList.toggle("active", b.dataset.id === e.id); });
   var cat = CATEGORIES.find(function (c) { return c.id === e.category; });
-  var content = e.content || "";
+  var content = _t("codex.entry." + e.id + ".content", e.content || "");
   var sc = e.shortcut ? '<p style="margin-bottom:12px;"><span class="cx-kbd">' + e.shortcut + '</span></p>' : "";
 
   var deepHtml = "";
   if (e.deep) {
-    deepHtml = '<div class="cx-deep"><button class="cx-deep-toggle" onclick="this.parentElement.classList.toggle(\'open\')">Under the Hood <span class="cx-deep-arrow">\u25b6</span></button><div class="cx-deep-body">' + e.deep + '</div></div>';
+    deepHtml = '<div class="cx-deep"><button class="cx-deep-toggle" onclick="this.parentElement.classList.toggle(\'open\')">' + _t("codex.deepToggle", "Under the Hood") + ' <span class="cx-deep-arrow">\u25b6</span></button><div class="cx-deep-body">' + _t("codex.entry." + e.id + ".deep", e.deep) + '</div></div>';
   }
 
   var showMeHtml = "";
@@ -746,7 +746,7 @@ function _popSelectEntry(e) {
   var sc = e.shortcut ? '<p style="margin-bottom:8px;"><span class="cx-kbd">' + e.shortcut + '</span></p>' : "";
   var deepHtml = "";
   if (e.deep) {
-    deepHtml = '<div class="cx-deep"><button class="cx-deep-toggle" onclick="this.parentElement.classList.toggle(\'open\')">Under the Hood <span class="cx-deep-arrow">\u25b6</span></button><div class="cx-deep-body">' + e.deep + '</div></div>';
+    deepHtml = '<div class="cx-deep"><button class="cx-deep-toggle" onclick="this.parentElement.classList.toggle(\'open\')">' + _t("codex.deepToggle", "Under the Hood") + ' <span class="cx-deep-arrow">\u25b6</span></button><div class="cx-deep-body">' + _t("codex.entry." + e.id + ".deep", e.deep) + '</div></div>';
   }
   var showMeHtml = "";
   if (window.StudioShowMe && StudioShowMe.has(e.id)) {
@@ -758,7 +758,7 @@ function _popSelectEntry(e) {
     showMeHtml += '</div>';
   }
   _popEls.article.innerHTML = '<div class="cx-pop-back-wrap"><button class="cx-pop-back" data-i18n="codex.popover.back">' + _t("codex.popover.back", "\u2190 Back") + '</button></div>' +
-    '<div class="cx-article"><div class="cx-article-category" data-i18n="' + (cat ? (cat.i18nKey || "") : "") + '">' + _catLabel(cat) + '</div><div class="cx-article-title" data-i18n="codex.entry.' + e.id + '.title">' + _entryTitle(e) + '</div>' + sc + showMeHtml + '<div class="cx-article-body">' + e.content + '</div>' + deepHtml + '</div>';
+    '<div class="cx-article"><div class="cx-article-category" data-i18n="' + (cat ? (cat.i18nKey || "") : "") + '">' + _catLabel(cat) + '</div><div class="cx-article-title" data-i18n="codex.entry.' + e.id + '.title">' + _entryTitle(e) + '</div>' + sc + showMeHtml + '<div class="cx-article-body">' + _t("codex.entry." + e.id + ".content", e.content || "") + '</div>' + deepHtml + '</div>';
   _popEls.results.style.display = "none";
   _popEls.article.style.display = "block";
   _popEls.article.scrollTop = 0;

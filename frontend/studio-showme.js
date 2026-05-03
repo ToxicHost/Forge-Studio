@@ -218,7 +218,7 @@ _register("first_image_showme", {
 // ── Inpainting ───────────────────────────────────────────────────────
 
 _register("inpaint_basics", {
-  label: "Basic Inpainting",
+  label: _t("showme.tutorialLabel.basicInpainting", "Basic Inpainting"),
   run: function () {
     _createTutorialDoc(_t("showme.tutorialName.inpainting", "Inpainting"));
     _drawTutorialScene();
@@ -321,7 +321,7 @@ _register("regional_prompting", {
 // ── ControlNet ───────────────────────────────────────────────────────
 
 _register("controlnet", {
-  label: "Overview",
+  label: _t("showme.tutorialLabel.overview", "Overview"),
   run: function () {
     _createTutorialDoc(_t("showme.tutorialName.controlnet", "ControlNet"));
     _drawTutorialScene();
@@ -586,7 +586,7 @@ _register("canvas_routing", {
 
 _register("controlnet_canny", {
   entryId: "controlnet",
-  label: "Canny (Edges)",
+  label: _t("showme.tutorialLabel.cannyEdges", "Canny (Edges)"),
   run: function () {
     _createTutorialDoc(_t("showme.tutorialName.controlnetCanny", "ControlNet: Canny"));
     _drawTutorialScene();
@@ -629,7 +629,7 @@ _register("controlnet_canny", {
 
 _register("controlnet_openpose", {
   entryId: "controlnet",
-  label: "OpenPose (Poses)",
+  label: _t("showme.tutorialLabel.openposePoses", "OpenPose (Poses)"),
   run: function () {
     _createTutorialDoc(_t("showme.tutorialName.controlnetOpenpose", "ControlNet: OpenPose"));
 
@@ -692,7 +692,7 @@ _register("controlnet_openpose", {
 
 _register("controlnet_depth", {
   entryId: "controlnet",
-  label: "Depth (Layout)",
+  label: _t("showme.tutorialLabel.depthLayout", "Depth (Layout)"),
   run: function () {
     _createTutorialDoc(_t("showme.tutorialName.controlnetDepth", "ControlNet: Depth"));
     _drawTutorialScene();
@@ -735,7 +735,7 @@ _register("controlnet_depth", {
 
 _register("soft_inpainting", {
   entryId: "inpaint_basics",
-  label: "Soft Inpainting",
+  label: _t("showme.tutorialLabel.softInpainting", "Soft Inpainting"),
   run: function () {
     _createTutorialDoc(_t("showme.tutorialName.softInpainting", "Soft Inpainting"));
     _drawTutorialScene();
@@ -817,7 +817,7 @@ _register("tool_radial_symmetry", {
 
 _register("lora_browser", {
   entryId: "loras",
-  label: "LoRA Browser",
+  label: _t("showme.tutorialLabel.loraBrowser", "LoRA Browser"),
   run: function () {
     StudioTour.create({
       id: "showme-loras",
@@ -852,7 +852,7 @@ _register("lora_browser", {
 
 _register("brush_dynamics", {
   entryId: "tool_brush",
-  label: "Brush Dynamics",
+  label: _t("showme.tutorialLabel.brushDynamics", "Brush Dynamics"),
   run: function () {
     _createTutorialDoc(_t("showme.tutorialName.brushDynamics", "Brush Dynamics"));
     window.StudioCore.composite();
