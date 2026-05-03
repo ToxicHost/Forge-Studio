@@ -273,31 +273,31 @@ _register("regional_prompting", {
       steps: [
         {
           id: "sr_intro",
-          text: "Regional prompting lets you assign <em>different prompts to different areas</em> of your canvas.\n\nInstead of one description for the whole image, you can say \"forest on the left, city on the right.\"",
-          spotlight: null, advance: "click", btn: "Next",
+          text: _t("showme.regions.intro.text", "Regional prompting lets you assign <em>different prompts to different areas</em> of your canvas.\n\nInstead of one description for the whole image, you can say \"forest on the left, city on the right.\""),
+          spotlight: null, advance: "click", btn: _t("showme.regions.intro.btn", "Next"),
           position: { bottom: "80px", left: "calc(50% - 190px)" }
         },
         {
           id: "sr_add",
-          text: "Scroll down in the Generate panel to the <em>Regions</em> section. Click the <strong>+</strong> button to add a region.\n\nA new region appears with a colored swatch and a prompt field.",
-          spotlight: null, advance: "click", btn: "I added a region",
+          text: _t("showme.regions.add.text", "Scroll down in the Generate panel to the <em>Regions</em> section. Click the <strong>+</strong> button to add a region.\n\nA new region appears with a colored swatch and a prompt field."),
+          spotlight: null, advance: "click", btn: _t("showme.regions.add.btn", "I added a region"),
           position: { bottom: "80px", right: "340px" }
         },
         {
           id: "sr_paint",
-          text: "Now paint on the canvas with the <em>brush</em> (<span class=\"cx-kbd\">B</span>). The region\u2019s color marks where this prompt applies.\n\nPaint the left half of the canvas, then type a prompt like \"dense forest, green trees\" in the region\u2019s prompt field.",
-          spotlight: "#toolstrip", advance: "click", btn: "Next"
+          text: _t("showme.regions.paint.text", "Now paint on the canvas with the <em>brush</em> (<span class=\"cx-kbd\">B</span>). The region\u2019s color marks where this prompt applies.\n\nPaint the left half of the canvas, then type a prompt like \"dense forest, green trees\" in the region\u2019s prompt field."),
+          spotlight: "#toolstrip", advance: "click", btn: _t("showme.regions.paint.btn", "Next")
         },
         {
           id: "sr_second",
-          text: "Add a <em>second region</em> with the <strong>+</strong> button. Paint the right half with the new color. Give it a different prompt like \"modern city skyline.\"\n\nThe <em>main prompt</em> (top box) has been pre-filled with a style \u2014 it sets the overall look for all regions.",
-          spotlight: null, advance: "click", btn: "Next",
+          text: _t("showme.regions.second.text", "Add a <em>second region</em> with the <strong>+</strong> button. Paint the right half with the new color. Give it a different prompt like \"modern city skyline.\"\n\nThe <em>main prompt</em> (top box) has been pre-filled with a style \u2014 it sets the overall look for all regions."),
+          spotlight: null, advance: "click", btn: _t("showme.regions.second.btn", "Next"),
           position: { bottom: "80px", left: "calc(50% - 190px)" }
         },
         {
           id: "sr_generate",
-          text: "Hit <em>Generate</em>. Each region gets its own content based on its prompt. Small regions work too \u2014 Studio\u2019s system is designed for this.\n\nRemember to clear regions when done \u2014 they persist until removed.",
-          spotlight: "#genBtn", advance: "click", btn: "Got it"
+          text: _t("showme.regions.generate.text", "Hit <em>Generate</em>. Each region gets its own content based on its prompt. Small regions work too \u2014 Studio\u2019s system is designed for this.\n\nRemember to clear regions when done \u2014 they persist until removed."),
+          spotlight: "#genBtn", advance: "click", btn: _t("showme.regions.generate.btn", "Got it")
         },
       ],
       persist: false, confirmCancel: false,
@@ -327,26 +327,26 @@ _register("controlnet", {
       steps: [
         {
           id: "sc_intro",
-          text: "ControlNet uses the <em>structure</em> of an existing image to guide generation. Let\u2019s use this scene as our structural source.\n\nThe AI will follow the layout (where the sky is, where the ground is, where objects are) but create new content.",
-          spotlight: null, advance: "click", btn: "Next",
+          text: _t("showme.controlnet.intro.text", "ControlNet uses the <em>structure</em> of an existing image to guide generation. Let\u2019s use this scene as our structural source.\n\nThe AI will follow the layout (where the sky is, where the ground is, where objects are) but create new content."),
+          spotlight: null, advance: "click", btn: _t("showme.controlnet.intro.btn", "Next"),
           position: { bottom: "80px", left: "calc(50% - 190px)" }
         },
         {
           id: "sc_enable",
-          text: "In the <em>Extensions</em> tab, find <strong>ControlNet Unit 1</strong>. Enable the checkbox.\n\nSet the <em>Preprocessor</em> and <em>Model</em> to a matching pair \u2014 for example, <strong>Canny</strong> preprocessor with a <strong>Canny</strong> model. Set <em>Source</em> to <strong>Canvas</strong>.\n\nPreprocessor and model must match in type AND architecture (SD1.5 vs SDXL).",
-          spotlight: null, advance: "click", btn: "Next",
+          text: _t("showme.controlnet.enable.text", "In the <em>Extensions</em> tab, find <strong>ControlNet Unit 1</strong>. Enable the checkbox.\n\nSet the <em>Preprocessor</em> and <em>Model</em> to a matching pair \u2014 for example, <strong>Canny</strong> preprocessor with a <strong>Canny</strong> model. Set <em>Source</em> to <strong>Canvas</strong>.\n\nPreprocessor and model must match in type AND architecture (SD1.5 vs SDXL)."),
+          spotlight: null, advance: "click", btn: _t("showme.controlnet.enable.btn", "Next"),
           position: { bottom: "80px", right: "340px" }
         },
         {
           id: "sc_prompt",
-          text: "A prompt has been pre-filled for you, but you can change it to whatever you like. Describe what the image should <em>become</em> while keeping this layout.\n\nThe structural map preserves the spatial arrangement \u2014 where foreground and background are, where objects sit.",
-          spotlight: "#paramPrompt", advance: "click", btn: "Next",
+          text: _t("showme.controlnet.prompt.text", "A prompt has been pre-filled for you, but you can change it to whatever you like. Describe what the image should <em>become</em> while keeping this layout.\n\nThe structural map preserves the spatial arrangement \u2014 where foreground and background are, where objects sit."),
+          spotlight: "#paramPrompt", advance: "click", btn: _t("showme.controlnet.prompt.btn", "Next"),
           focusTarget: "#paramPrompt"
         },
         {
           id: "sc_generate",
-          text: "Hit <em>Generate</em>. The result follows the spatial structure of the original but with completely new content.\n\n<strong>Weight</strong> controls how strongly the structure guides (1.0 = full). <strong>Start/End</strong> controls which denoising steps it applies to \u2014 try 0.0\u20130.5 for looser structure.",
-          spotlight: "#genBtn", advance: "click", btn: "Got it"
+          text: _t("showme.controlnet.generate.text", "Hit <em>Generate</em>. The result follows the spatial structure of the original but with completely new content.\n\n<strong>Weight</strong> controls how strongly the structure guides (1.0 = full). <strong>Start/End</strong> controls which denoising steps it applies to \u2014 try 0.0\u20130.5 for looser structure."),
+          spotlight: "#genBtn", advance: "click", btn: _t("showme.controlnet.generate.btn", "Got it")
         },
       ],
       persist: false, confirmCancel: false,
@@ -387,8 +387,8 @@ _register("layers_basics", {
       steps: [
         {
           id: "sl_intro",
-          text: "This canvas has two layers. The <em>Background</em> layer has a blue square. <em>Layer 1</em> has a red square overlapping it.\n\nLayers are transparent sheets stacked on each other.",
-          spotlight: "#layersList", advance: "click", btn: "Next",
+          text: _t("showme.layers.intro.text", "This canvas has two layers. The <em>Background</em> layer has a blue square. <em>Layer 1</em> has a red square overlapping it.\n\nLayers are transparent sheets stacked on each other."),
+          spotlight: "#layersList", advance: "click", btn: _t("showme.layers.intro.btn", "Next"),
           beforeShow: function () {
             var genTab = document.querySelector('[data-panel="generate"]');
             if (genTab) genTab.click();
@@ -397,19 +397,19 @@ _register("layers_basics", {
         },
         {
           id: "sl_visibility",
-          text: "Try clicking the <em>eye icon</em> on Layer 1 to hide it. The red square disappears, revealing the blue one underneath.\n\nClick it again to show it. This is how you control what\u2019s visible without deleting anything.",
-          spotlight: "#layersList", advance: "click", btn: "Next"
+          text: _t("showme.layers.visibility.text", "Try clicking the <em>eye icon</em> on Layer 1 to hide it. The red square disappears, revealing the blue one underneath.\n\nClick it again to show it. This is how you control what\u2019s visible without deleting anything."),
+          spotlight: "#layersList", advance: "click", btn: _t("showme.layers.visibility.btn", "Next")
         },
         {
           id: "sl_generation",
-          text: "When you <em>Generate</em>, the result lands on the reference (bottom) layer. Your painting on upper layers is <strong>never overwritten</strong>.\n\nThis means you can always regenerate without losing your edits.",
-          spotlight: null, advance: "click", btn: "Next",
+          text: _t("showme.layers.generation.text", "When you <em>Generate</em>, the result lands on the reference (bottom) layer. Your painting on upper layers is <strong>never overwritten</strong>.\n\nThis means you can always regenerate without losing your edits."),
+          spotlight: null, advance: "click", btn: _t("showme.layers.generation.btn", "Next"),
           position: { bottom: "80px", left: "calc(50% - 190px)" }
         },
         {
           id: "sl_blend",
-          text: "Each layer has <em>Opacity</em> and <em>Blend Mode</em>. Try changing Layer 1\u2019s blend mode to Multiply or Screen to see how it interacts with the layer below.\n\nExport the full stack as PSD via the <em>Export</em> button.",
-          spotlight: "#layersList", advance: "click", btn: "Got it"
+          text: _t("showme.layers.blend.text", "Each layer has <em>Opacity</em> and <em>Blend Mode</em>. Try changing Layer 1\u2019s blend mode to Multiply or Screen to see how it interacts with the layer below.\n\nExport the full stack as PSD via the <em>Export</em> button."),
+          spotlight: "#layersList", advance: "click", btn: _t("showme.layers.blend.btn", "Got it")
         },
       ],
       persist: false, confirmCancel: false,
@@ -443,25 +443,25 @@ _register("tool_clone", {
       steps: [
         {
           id: "scl_intro",
-          text: "See the pink square on the ground? We\u2019ll remove it using the <em>Clone Stamp</em>.\n\nThis tool copies pixels from one area and paints them over another \u2014 perfect for removing unwanted objects.",
-          spotlight: null, advance: "click", btn: "Next",
+          text: _t("showme.clone.intro.text", "See the pink square on the ground? We\u2019ll remove it using the <em>Clone Stamp</em>.\n\nThis tool copies pixels from one area and paints them over another \u2014 perfect for removing unwanted objects."),
+          spotlight: null, advance: "click", btn: _t("showme.clone.intro.btn", "Next"),
           position: { bottom: "80px", left: "calc(50% - 190px)" }
         },
         {
           id: "scl_select",
-          text: "Press <span class=\"cx-kbd\">K</span> to select the Clone Stamp tool.",
-          spotlight: "#toolstrip", advance: "click", btn: "Next"
+          text: _t("showme.clone.select.text", "Press <span class=\"cx-kbd\">K</span> to select the Clone Stamp tool."),
+          spotlight: "#toolstrip", advance: "click", btn: _t("showme.clone.select.btn", "Next")
         },
         {
           id: "scl_source",
-          text: "Now hold <span class=\"cx-kbd\">Alt</span> and click on a <em>clean area</em> of green ground near the pink square. This sets your <strong>source point</strong> \u2014 where the clone copies from.",
-          spotlight: null, advance: "click", btn: "I set the source",
+          text: _t("showme.clone.source.text", "Now hold <span class=\"cx-kbd\">Alt</span> and click on a <em>clean area</em> of green ground near the pink square. This sets your <strong>source point</strong> \u2014 where the clone copies from."),
+          spotlight: null, advance: "click", btn: _t("showme.clone.source.btn", "I set the source"),
           position: { bottom: "80px", left: "calc(50% - 190px)" }
         },
         {
           id: "scl_paint",
-          text: "Now paint directly over the pink square. The tool copies green ground from the source point, covering the pink.\n\nIf the clone starts picking up wrong content, <span class=\"cx-kbd\">Alt+Click</span> a new source and keep going.",
-          spotlight: null, advance: "click", btn: "Got it",
+          text: _t("showme.clone.paint.text", "Now paint directly over the pink square. The tool copies green ground from the source point, covering the pink.\n\nIf the clone starts picking up wrong content, <span class=\"cx-kbd\">Alt+Click</span> a new source and keep going."),
+          spotlight: null, advance: "click", btn: _t("showme.clone.paint.btn", "Got it"),
           position: { bottom: "80px", left: "calc(50% - 190px)" }
         },
       ],
@@ -503,19 +503,19 @@ _register("tool_transform", {
       steps: [
         {
           id: "st_intro",
-          text: "Here\u2019s a shape on the canvas. Press <span class=\"cx-kbd\">V</span> to activate the <em>Transform</em> tool.\n\nDrag the handles to resize, drag inside to move, and rotate from the corners.",
-          spotlight: "#toolstrip", advance: "click", btn: "Next"
+          text: _t("showme.transform.intro.text", "Here\u2019s a shape on the canvas. Press <span class=\"cx-kbd\">V</span> to activate the <em>Transform</em> tool.\n\nDrag the handles to resize, drag inside to move, and rotate from the corners."),
+          spotlight: "#toolstrip", advance: "click", btn: _t("showme.transform.intro.btn", "Next")
         },
         {
           id: "st_basic",
-          text: "Try the basics: drag a corner handle to resize. Hold <span class=\"cx-kbd\">Shift</span> to constrain proportions. Drag inside to reposition.\n\n<span class=\"cx-kbd\">Enter</span> applies the transform. <span class=\"cx-kbd\">Escape</span> cancels.",
-          spotlight: null, advance: "click", btn: "Next",
+          text: _t("showme.transform.basic.text", "Try the basics: drag a corner handle to resize. Hold <span class=\"cx-kbd\">Shift</span> to constrain proportions. Drag inside to reposition.\n\n<span class=\"cx-kbd\">Enter</span> applies the transform. <span class=\"cx-kbd\">Escape</span> cancels."),
+          spotlight: null, advance: "click", btn: _t("showme.transform.basic.btn", "Next"),
           position: { bottom: "80px", left: "calc(50% - 190px)" }
         },
         {
           id: "st_warp",
-          text: "In the context bar, you\u2019ll see <em>warp mode buttons</em>:\n\n\u2022 <strong>Affine</strong> \u2014 free deformation with control points\n\u2022 <strong>Similitude</strong> \u2014 scale + rotate only (no skew)\n\u2022 <strong>Rigid</strong> \u2014 minimal distortion, natural repositioning\n\u2022 <strong>Perspective</strong> \u2014 four-corner pin\n\nTry each one to see how they differ.",
-          spotlight: null, advance: "click", btn: "Got it",
+          text: _t("showme.transform.warp.text", "In the context bar, you\u2019ll see <em>warp mode buttons</em>:\n\n\u2022 <strong>Affine</strong> \u2014 free deformation with control points\n\u2022 <strong>Similitude</strong> \u2014 scale + rotate only (no skew)\n\u2022 <strong>Rigid</strong> \u2014 minimal distortion, natural repositioning\n\u2022 <strong>Perspective</strong> \u2014 four-corner pin\n\nTry each one to see how they differ."),
+          spotlight: null, advance: "click", btn: _t("showme.transform.warp.btn", "Got it"),
           position: { bottom: "80px", left: "calc(50% - 190px)" }
         },
       ],
@@ -588,20 +588,20 @@ _register("controlnet_canny", {
       steps: [
         {
           id: "cnc_intro",
-          text: "<em>Canny</em> extracts edge lines from your image. The AI follows those edges while generating new content \u2014 maintaining architectural layouts, linework, and structural outlines.",
-          spotlight: null, advance: "click", btn: "Next",
+          text: _t("showme.cnCanny.intro.text", "<em>Canny</em> extracts edge lines from your image. The AI follows those edges while generating new content \u2014 maintaining architectural layouts, linework, and structural outlines."),
+          spotlight: null, advance: "click", btn: _t("showme.cnCanny.intro.btn", "Next"),
           position: { bottom: "80px", left: "calc(50% - 190px)" }
         },
         {
           id: "cnc_setup",
-          text: "In the <em>Extensions</em> tab:\n\n1. Enable <strong>ControlNet Unit 1</strong>\n2. Set Preprocessor to <strong>Canny</strong>\n3. Set Model to a <strong>Canny</strong> ControlNet model\n4. Set Source to <strong>Canvas</strong>\n\nPreprocessor and model must both be Canny, and match your checkpoint architecture (SD1.5 or SDXL).",
-          spotlight: null, advance: "click", btn: "Next",
+          text: _t("showme.cnCanny.setup.text", "In the <em>Extensions</em> tab:\n\n1. Enable <strong>ControlNet Unit 1</strong>\n2. Set Preprocessor to <strong>Canny</strong>\n3. Set Model to a <strong>Canny</strong> ControlNet model\n4. Set Source to <strong>Canvas</strong>\n\nPreprocessor and model must both be Canny, and match your checkpoint architecture (SD1.5 or SDXL)."),
+          spotlight: null, advance: "click", btn: _t("showme.cnCanny.setup.btn", "Next"),
           position: { bottom: "80px", right: "340px" }
         },
         {
           id: "cnc_generate",
-          text: "A prompt has been pre-filled. Hit <em>Generate</em> \u2014 the result follows the edges of the original scene (house outline, tree shape, horizon line) but with completely new colors, textures, and content.\n\nLower the <strong>Weight</strong> for looser edge following. Try <strong>Start/End 0.0\u20130.5</strong> for structural guidance that fades during detail refinement.",
-          spotlight: "#genBtn", advance: "click", btn: "Got it"
+          text: _t("showme.cnCanny.generate.text", "A prompt has been pre-filled. Hit <em>Generate</em> \u2014 the result follows the edges of the original scene (house outline, tree shape, horizon line) but with completely new colors, textures, and content.\n\nLower the <strong>Weight</strong> for looser edge following. Try <strong>Start/End 0.0\u20130.5</strong> for structural guidance that fades during detail refinement."),
+          spotlight: "#genBtn", advance: "click", btn: _t("showme.cnCanny.generate.btn", "Got it")
         },
       ],
       persist: false, confirmCancel: false,
@@ -650,20 +650,20 @@ _register("controlnet_openpose", {
       steps: [
         {
           id: "cnp_intro",
-          text: "<em>OpenPose</em> detects body poses \u2014 the position of head, arms, legs, and joints. The AI generates a new character following that exact pose.\n\nHere\u2019s a simple figure. OpenPose will extract its pose.",
-          spotlight: null, advance: "click", btn: "Next",
+          text: _t("showme.cnOpenpose.intro.text", "<em>OpenPose</em> detects body poses \u2014 the position of head, arms, legs, and joints. The AI generates a new character following that exact pose.\n\nHere\u2019s a simple figure. OpenPose will extract its pose."),
+          spotlight: null, advance: "click", btn: _t("showme.cnOpenpose.intro.btn", "Next"),
           position: { bottom: "80px", left: "calc(50% - 190px)" }
         },
         {
           id: "cnp_setup",
-          text: "In the <em>Extensions</em> tab:\n\n1. Enable <strong>ControlNet Unit 1</strong>\n2. Set Preprocessor to <strong>OpenPose</strong>\n3. Set Model to an <strong>OpenPose</strong> ControlNet model\n4. Set Source to <strong>Canvas</strong>\n\nThe preprocessor detects the pose skeleton. The model uses it to guide generation.",
-          spotlight: null, advance: "click", btn: "Next",
+          text: _t("showme.cnOpenpose.setup.text", "In the <em>Extensions</em> tab:\n\n1. Enable <strong>ControlNet Unit 1</strong>\n2. Set Preprocessor to <strong>OpenPose</strong>\n3. Set Model to an <strong>OpenPose</strong> ControlNet model\n4. Set Source to <strong>Canvas</strong>\n\nThe preprocessor detects the pose skeleton. The model uses it to guide generation."),
+          spotlight: null, advance: "click", btn: _t("showme.cnOpenpose.setup.btn", "Next"),
           position: { bottom: "80px", right: "340px" }
         },
         {
           id: "cnp_generate",
-          text: "Hit <em>Generate</em>. The result shows a new character in the same pose as the figure.\n\nOpenPose is great for: maintaining specific poses, transferring poses from reference photos, generating consistent character positions across images.\n\nYou can also use a real photo as the source \u2014 set Source to <strong>Upload</strong> instead of Canvas.",
-          spotlight: "#genBtn", advance: "click", btn: "Got it"
+          text: _t("showme.cnOpenpose.generate.text", "Hit <em>Generate</em>. The result shows a new character in the same pose as the figure.\n\nOpenPose is great for: maintaining specific poses, transferring poses from reference photos, generating consistent character positions across images.\n\nYou can also use a real photo as the source \u2014 set Source to <strong>Upload</strong> instead of Canvas."),
+          spotlight: "#genBtn", advance: "click", btn: _t("showme.cnOpenpose.generate.btn", "Got it")
         },
       ],
       persist: false, confirmCancel: false,
@@ -693,20 +693,20 @@ _register("controlnet_depth", {
       steps: [
         {
           id: "cnd_intro",
-          text: "<em>Depth</em> extracts a depth map \u2014 what\u2019s close vs far. The AI preserves the spatial arrangement (foreground objects stay in front, background stays behind) while creating entirely new content.",
-          spotlight: null, advance: "click", btn: "Next",
+          text: _t("showme.cnDepth.intro.text", "<em>Depth</em> extracts a depth map \u2014 what\u2019s close vs far. The AI preserves the spatial arrangement (foreground objects stay in front, background stays behind) while creating entirely new content."),
+          spotlight: null, advance: "click", btn: _t("showme.cnDepth.intro.btn", "Next"),
           position: { bottom: "80px", left: "calc(50% - 190px)" }
         },
         {
           id: "cnd_setup",
-          text: "In the <em>Extensions</em> tab:\n\n1. Enable <strong>ControlNet Unit 1</strong>\n2. Set Preprocessor to <strong>Depth</strong> (or Depth Anything)\n3. Set Model to a <strong>Depth</strong> ControlNet model\n4. Set Source to <strong>Canvas</strong>\n\n<em>Note:</em> Some Depth preprocessors require compatible GPU drivers. If you get an error, try <strong>Canny</strong> instead.",
-          spotlight: null, advance: "click", btn: "Next",
+          text: _t("showme.cnDepth.setup.text", "In the <em>Extensions</em> tab:\n\n1. Enable <strong>ControlNet Unit 1</strong>\n2. Set Preprocessor to <strong>Depth</strong> (or Depth Anything)\n3. Set Model to a <strong>Depth</strong> ControlNet model\n4. Set Source to <strong>Canvas</strong>\n\n<em>Note:</em> Some Depth preprocessors require compatible GPU drivers. If you get an error, try <strong>Canny</strong> instead."),
+          spotlight: null, advance: "click", btn: _t("showme.cnDepth.setup.btn", "Next"),
           position: { bottom: "80px", right: "340px" }
         },
         {
           id: "cnd_generate",
-          text: "Hit <em>Generate</em>. The house, tree, and ground stay in their spatial positions but become entirely new content.\n\nDepth is ideal for: scene reimagination, style transfer while keeping composition, maintaining spatial relationships in complex scenes.",
-          spotlight: "#genBtn", advance: "click", btn: "Got it"
+          text: _t("showme.cnDepth.generate.text", "Hit <em>Generate</em>. The house, tree, and ground stay in their spatial positions but become entirely new content.\n\nDepth is ideal for: scene reimagination, style transfer while keeping composition, maintaining spatial relationships in complex scenes."),
+          spotlight: "#genBtn", advance: "click", btn: _t("showme.cnDepth.generate.btn", "Got it")
         },
       ],
       persist: false, confirmCancel: false,
@@ -775,19 +775,19 @@ _register("tool_radial_symmetry", {
       steps: [
         {
           id: "srs_intro",
-          text: "Radial symmetry mirrors your brush strokes around a center point. Let\u2019s paint a mandala pattern.\n\nFirst, select the <em>Brush</em> tool (<span class=\"cx-kbd\">B</span>).",
-          spotlight: "#toolstrip", advance: "click", btn: "Next"
+          text: _t("showme.radialSym.intro.text", "Radial symmetry mirrors your brush strokes around a center point. Let\u2019s paint a mandala pattern.\n\nFirst, select the <em>Brush</em> tool (<span class=\"cx-kbd\">B</span>)."),
+          spotlight: "#toolstrip", advance: "click", btn: _t("showme.radialSym.intro.btn", "Next")
         },
         {
           id: "srs_enable",
-          text: "In the context bar (top of the canvas area), find the symmetry buttons (near the right side). Click the <strong>radial</strong> button (the starburst icon).\n\nSet the <em>axis count</em> \u2014 try <strong>6</strong> for a snowflake pattern or <strong>8</strong> for a mandala. More axes = more repetitions.",
-          spotlight: null, advance: "click", btn: "Next",
+          text: _t("showme.radialSym.enable.text", "In the context bar (top of the canvas area), find the symmetry buttons (near the right side). Click the <strong>radial</strong> button (the starburst icon).\n\nSet the <em>axis count</em> \u2014 try <strong>6</strong> for a snowflake pattern or <strong>8</strong> for a mandala. More axes = more repetitions."),
+          spotlight: null, advance: "click", btn: _t("showme.radialSym.enable.btn", "Next"),
           position: { top: "100px", left: "calc(50% - 190px)" }
         },
         {
           id: "srs_paint",
-          text: "Now paint on the canvas. Every stroke is replicated around the center point.\n\nTry painting outward from the center, or in arcs. Even simple strokes create complex patterns.\n\nThe smudge tool also works with radial symmetry \u2014 each segment has its own independent smudge buffer.",
-          spotlight: null, advance: "click", btn: "Got it",
+          text: _t("showme.radialSym.paint.text", "Now paint on the canvas. Every stroke is replicated around the center point.\n\nTry painting outward from the center, or in arcs. Even simple strokes create complex patterns.\n\nThe smudge tool also works with radial symmetry \u2014 each segment has its own independent smudge buffer."),
+          spotlight: null, advance: "click", btn: _t("showme.radialSym.paint.btn", "Got it"),
           position: { bottom: "80px", left: "calc(50% - 190px)" }
         },
       ],
@@ -809,20 +809,20 @@ _register("lora_browser", {
       steps: [
         {
           id: "slb_intro",
-          text: "The <em>LoRA Browser</em> lets you visually browse and insert LoRAs without typing the syntax manually.\n\nLook for the <strong>LORA</strong> button near the prompt box in the Generate panel \u2014 click it to open the browser.",
-          spotlight: null, advance: "click", btn: "Next",
+          text: _t("showme.lora.intro.text", "The <em>LoRA Browser</em> lets you visually browse and insert LoRAs without typing the syntax manually.\n\nLook for the <strong>LORA</strong> button near the prompt box in the Generate panel \u2014 click it to open the browser."),
+          spotlight: null, advance: "click", btn: _t("showme.lora.intro.btn", "Next"),
           position: { bottom: "80px", right: "340px" }
         },
         {
           id: "slb_browse",
-          text: "The browser shows cards for each LoRA file in your <code>models/Lora/</code> folder. Cards display the name and <em>trigger words</em> (read from sidecar <code>.json</code> metadata files).\n\nUse the search bar to filter by name or trigger word.",
-          spotlight: null, advance: "click", btn: "Next",
+          text: _t("showme.lora.browse.text", "The browser shows cards for each LoRA file in your <code>models/Lora/</code> folder. Cards display the name and <em>trigger words</em> (read from sidecar <code>.json</code> metadata files).\n\nUse the search bar to filter by name or trigger word."),
+          spotlight: null, advance: "click", btn: _t("showme.lora.browse.btn", "Next"),
           position: { bottom: "80px", right: "340px" }
         },
         {
           id: "slb_insert",
-          text: "Click a LoRA card to insert it into your prompt. The browser auto-inserts the <code>&lt;lora:name:weight&gt;</code> tag AND any trigger words at the preferred weight.\n\nYou can stack multiple LoRAs \u2014 just click more cards. Lower individual weights (0.5\u20130.7) when stacking to prevent conflicts.",
-          spotlight: null, advance: "click", btn: "Got it",
+          text: _t("showme.lora.insert.text", "Click a LoRA card to insert it into your prompt. The browser auto-inserts the <code>&lt;lora:name:weight&gt;</code> tag AND any trigger words at the preferred weight.\n\nYou can stack multiple LoRAs \u2014 just click more cards. Lower individual weights (0.5\u20130.7) when stacking to prevent conflicts."),
+          spotlight: null, advance: "click", btn: _t("showme.lora.insert.btn", "Got it"),
           position: { bottom: "80px", right: "340px" }
         },
       ],
@@ -848,19 +848,19 @@ _register("brush_dynamics", {
       steps: [
         {
           id: "sbd_intro",
-          text: "The brush engine has a <em>dynamics panel</em> that controls advanced stroke behavior.\n\nSelect the <em>Brush</em> (<span class=\"cx-kbd\">B</span>) and look for the <strong>gear icon</strong> in the brush presets area below the context bar.",
-          spotlight: "#toolstrip", advance: "click", btn: "Next"
+          text: _t("showme.dynamics.intro.text", "The brush engine has a <em>dynamics panel</em> that controls advanced stroke behavior.\n\nSelect the <em>Brush</em> (<span class=\"cx-kbd\">B</span>) and look for the <strong>gear icon</strong> in the brush presets area below the context bar."),
+          spotlight: "#toolstrip", advance: "click", btn: _t("showme.dynamics.intro.btn", "Next")
         },
         {
           id: "sbd_panel",
-          text: "The Brush Dynamics panel exposes:\n\n\u2022 <strong>Spacing</strong> \u2014 gap between brush stamps (lower = smoother, higher = dotted)\n\u2022 <strong>Size Jitter</strong> \u2014 random size variation per stamp\n\u2022 <strong>Opacity Jitter</strong> \u2014 random opacity variation\n\u2022 <strong>Scatter</strong> \u2014 random offset from stroke path\n\u2022 <strong>Rotation Jitter</strong> \u2014 random angle per stamp\n\u2022 <strong>Follow Stroke</strong> \u2014 stamps rotate to follow stroke direction",
-          spotlight: null, advance: "click", btn: "Next",
+          text: _t("showme.dynamics.panel.text", "The Brush Dynamics panel exposes:\n\n\u2022 <strong>Spacing</strong> \u2014 gap between brush stamps (lower = smoother, higher = dotted)\n\u2022 <strong>Size Jitter</strong> \u2014 random size variation per stamp\n\u2022 <strong>Opacity Jitter</strong> \u2014 random opacity variation\n\u2022 <strong>Scatter</strong> \u2014 random offset from stroke path\n\u2022 <strong>Rotation Jitter</strong> \u2014 random angle per stamp\n\u2022 <strong>Follow Stroke</strong> \u2014 stamps rotate to follow stroke direction"),
+          spotlight: null, advance: "click", btn: _t("showme.dynamics.panel.btn", "Next"),
           position: { top: "120px", left: "60px" }
         },
         {
           id: "sbd_try",
-          text: "Try painting with different dynamics settings. High scatter + size jitter creates foliage and particle effects. High spacing creates dotted/stippled lines.\n\nThe <strong>Scatter</strong> preset is pre-configured with dynamics for textured spray effects. Each preset stores its own dynamics.",
-          spotlight: null, advance: "click", btn: "Got it",
+          text: _t("showme.dynamics.try.text", "Try painting with different dynamics settings. High scatter + size jitter creates foliage and particle effects. High spacing creates dotted/stippled lines.\n\nThe <strong>Scatter</strong> preset is pre-configured with dynamics for textured spray effects. Each preset stores its own dynamics."),
+          spotlight: null, advance: "click", btn: _t("showme.dynamics.try.btn", "Got it"),
           position: { bottom: "80px", left: "calc(50% - 190px)" }
         },
       ],
@@ -882,26 +882,26 @@ _register("wildcards_tutorial", {
       steps: [
         {
           id: "sw_intro",
-          text: "Wildcards insert <em>random text</em> into your prompts for automatic variety. The syntax is <code>__name__</code> (double underscores).\n\nEach generation picks a different line from the matching text file.",
-          spotlight: null, advance: "click", btn: "Next",
+          text: _t("showme.wildcards.intro.text", "Wildcards insert <em>random text</em> into your prompts for automatic variety. The syntax is <code>__name__</code> (double underscores).\n\nEach generation picks a different line from the matching text file."),
+          spotlight: null, advance: "click", btn: _t("showme.wildcards.intro.btn", "Next"),
           position: { bottom: "80px", left: "calc(50% - 190px)" }
         },
         {
           id: "sw_browse",
-          text: "Click the <strong>WILDCARD</strong> button near the prompt box to open the wildcard browser. This shows all your installed wildcard files.\n\nWildcard files live in <code>extensions/sd-dynamic-prompts/wildcards/</code>. Each <code>.txt</code> file is one wildcard \u2014 the filename becomes the name.",
-          spotlight: null, advance: "click", btn: "Next",
+          text: _t("showme.wildcards.browse.text", "Click the <strong>WILDCARD</strong> button near the prompt box to open the wildcard browser. This shows all your installed wildcard files.\n\nWildcard files live in <code>extensions/sd-dynamic-prompts/wildcards/</code>. Each <code>.txt</code> file is one wildcard \u2014 the filename becomes the name."),
+          spotlight: null, advance: "click", btn: _t("showme.wildcards.browse.btn", "Next"),
           position: { bottom: "80px", right: "340px" }
         },
         {
           id: "sw_syntax",
-          text: "Try typing in your prompt: <code>a __colors__ cat sitting on a __furniture__</code>\n\nEach generation replaces <code>__colors__</code> with a random line from <code>colors.txt</code> and <code>__furniture__</code> from <code>furniture.txt</code>.\n\n<strong>Folders work too:</strong> a file at <code>wildcards/animals/cats.txt</code> is used as <code>__animals/cats__</code>.",
-          spotlight: "#paramPrompt", advance: "click", btn: "Next",
+          text: _t("showme.wildcards.syntax.text", "Try typing in your prompt: <code>a __colors__ cat sitting on a __furniture__</code>\n\nEach generation replaces <code>__colors__</code> with a random line from <code>colors.txt</code> and <code>__furniture__</code> from <code>furniture.txt</code>.\n\n<strong>Folders work too:</strong> a file at <code>wildcards/animals/cats.txt</code> is used as <code>__animals/cats__</code>."),
+          spotlight: "#paramPrompt", advance: "click", btn: _t("showme.wildcards.syntax.btn", "Next"),
           focusTarget: "#paramPrompt"
         },
         {
           id: "sw_lexicon",
-          text: "The <em>Wildcards</em> tab (in the main tab bar) provides a full wildcard editor \u2014 folder tree, file creation, inline editing, and preview.\n\nWildcards work in the negative prompt too. Common pattern: put your standard negatives in <code>neg4.txt</code> and use <code>__neg4__</code> instead of typing them every time.",
-          spotlight: null, advance: "click", btn: "Got it",
+          text: _t("showme.wildcards.lexicon.text", "The <em>Wildcards</em> tab (in the main tab bar) provides a full wildcard editor \u2014 folder tree, file creation, inline editing, and preview.\n\nWildcards work in the negative prompt too. Common pattern: put your standard negatives in <code>neg4.txt</code> and use <code>__neg4__</code> instead of typing them every time."),
+          spotlight: null, advance: "click", btn: _t("showme.wildcards.lexicon.btn", "Got it"),
           position: { bottom: "80px", left: "calc(50% - 190px)" }
         },
       ],
