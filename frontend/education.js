@@ -17,8 +17,8 @@
 "use strict";
 
 var Education = (function () {
-  // i18n helper — chrome strings translate. Long-form step content is
-  // intentionally NOT routed through _t in this PR (deferred to Phase 3B).
+  // i18n helper. Step arrays are built lazily via get*() so _t() resolves
+  // against the live locale at tour-start time (after I18N.ready).
   function _t(key, fallback, params) {
     return (window.I18N && window.I18N.t) ? window.I18N.t(key, fallback, params) : fallback;
   }
@@ -76,197 +76,219 @@ var Education = (function () {
   // MODEL ACQUISITION BRANCH
   // ========================================================================
 
-  var MODEL_BRANCH = [
-    {
-      id: "need_model",
-      text: "Before we start, you need an AI <em>model</em> \u2014 the brain that generates images. You don\u2019t have one installed yet.\n\nHere\u2019s a good starter model to get going:\n<a href=\"https://pixeldrain.com/u/5pv797g8\" target=\"_blank\" rel=\"noopener\" style=\"color:var(--accent-bright);text-decoration:underline;\">Download ToxicHost\u2019s recommended model</a>\n\nOnce downloaded, put the file in your Forge folder:\n<code>models/Stable-diffusion/</code>\n\nDon\u2019t close Studio \u2014 just drop the file in that folder.",
-      spotlight: null, reveal: ["edu-show-model"], advance: "click", btn: "I\u2019ve put it in the folder"
-    },
-    {
-      id: "refresh_models",
-      text: "Now click the <em>refresh button</em> (\u21bb) next to the Model dropdown. Studio will scan for new models without needing a restart.\n\nOnce your model appears in the dropdown, select it and we\u2019ll get started.",
-      spotlight: "#refreshModelsBtn", reveal: ["edu-show-model"],
-      advance: function (next, nextBtn, tour) {
-        var poll = setInterval(function () {
-          if (window.State && window.State.models && window.State.models.length > 0) {
-            clearInterval(poll);
-            _setFlag("model_downloaded");
-            next();
-          }
-        }, 1000);
-        tour.addCleanup(function () { clearInterval(poll); });
+  function getModelBranch() {
+    return [
+      {
+        id: "need_model",
+        text: _t("education.tour.modelBranch.needModel.text", "Before we start, you need an AI <em>model</em> \u2014 the brain that generates images. You don\u2019t have one installed yet.\n\nHere\u2019s a good starter model to get going:\n<a href=\"https://pixeldrain.com/u/5pv797g8\" target=\"_blank\" rel=\"noopener\" style=\"color:var(--accent-bright);text-decoration:underline;\">Download ToxicHost\u2019s recommended model</a>\n\nOnce downloaded, put the file in your Forge folder:\n<code>models/Stable-diffusion/</code>\n\nDon\u2019t close Studio \u2014 just drop the file in that folder."),
+        spotlight: null, reveal: ["edu-show-model"], advance: "click",
+        btn: _t("education.tour.modelBranch.needModel.btn", "I\u2019ve put it in the folder")
       },
-      btn: null
-    },
-  ];
+      {
+        id: "refresh_models",
+        text: _t("education.tour.modelBranch.refreshModels.text", "Now click the <em>refresh button</em> (\u21bb) next to the Model dropdown. Studio will scan for new models without needing a restart.\n\nOnce your model appears in the dropdown, select it and we\u2019ll get started."),
+        spotlight: "#refreshModelsBtn", reveal: ["edu-show-model"],
+        advance: function (next, nextBtn, tour) {
+          var poll = setInterval(function () {
+            if (window.State && window.State.models && window.State.models.length > 0) {
+              clearInterval(poll);
+              _setFlag("model_downloaded");
+              next();
+            }
+          }, 1000);
+          tour.addCleanup(function () { clearInterval(poll); });
+        },
+        btn: null
+      },
+    ];
+  }
 
   // ========================================================================
   // BEGINNER — CORE WALKTHROUGH
   // ========================================================================
 
-  var CORE_STEPS = [
-    // ── Make your first image (4 steps) ──
-    {
-      id: "welcome",
-      text: "Welcome to <em>Forge Studio</em>.\n\nLet\u2019s make your first image. See the text box on the right? Describe something you\u2019d like to see \u2014 anything at all.",
-      spotlight: "#paramPrompt", reveal: [],
-      advance: { poll: function () { var p = document.getElementById("paramPrompt"); return p && p.value.trim().length > 0; } },
-      focusTarget: "#paramPrompt", btn: null
-    },
-    {
-      id: "hit_generate",
-      text: "Now hit <em>Generate</em>.",
-      spotlight: "#genBtn", reveal: [],
-      advance: { event: "click", selector: "#genBtn" }, btn: null
-    },
-    {
-      id: "generating",
-      text: "Working on it \u2014 watch the progress bar.",
-      spotlight: null, reveal: [],
-      advance: function (next, nextBtn, tour) {
-        var poll = setInterval(function () {
-          if (window.State && !window.State.generating && window.State.outputImages && window.State.outputImages.length > 0) {
-            clearInterval(poll);
-            _setFlag("has_generated_first_image");
-            next();
-          }
-        }, 500);
-        tour.addCleanup(function () { clearInterval(poll); });
+  function getCoreSteps() {
+    return [
+      // ── Make your first image (4 steps) ──
+      {
+        id: "welcome",
+        text: _t("education.tour.core.welcome.text", "Welcome to <em>Forge Studio</em>.\n\nLet\u2019s make your first image. See the text box on the right? Describe something you\u2019d like to see \u2014 anything at all."),
+        spotlight: "#paramPrompt", reveal: [],
+        advance: { poll: function () { var p = document.getElementById("paramPrompt"); return p && p.value.trim().length > 0; } },
+        focusTarget: "#paramPrompt", btn: null
       },
-      btn: null
-    },
-    {
-      id: "first_image",
-      text: "That\u2019s yours. You just made that. No one else has this exact image.\n\nYou can put it on your canvas to paint over it \u2014 try clicking <em>Result \u2192 Canvas</em>. Or hit <em>Next</em> to see what else is here.",
-      spotlight: "#outputSection", reveal: ["edu-show-output"],
-      advance: function (next, nextBtn, tour) {
-        if (nextBtn) nextBtn.addEventListener("click", function () { next(); });
-        var rtc = document.getElementById("outputToCanvas");
-        if (rtc) {
-          var h = function () {
-            _setFlag("used_result_to_canvas");
-            for (var i = 0; i < tour.steps.length; i++) {
-              if (tour.steps[i].id === "first_image") {
-                tour.spliceSteps(i, INPAINT_BRANCH);
-                break;
-              }
+      {
+        id: "hit_generate",
+        text: _t("education.tour.core.hitGenerate.text", "Now hit <em>Generate</em>."),
+        spotlight: "#genBtn", reveal: [],
+        advance: { event: "click", selector: "#genBtn" }, btn: null
+      },
+      {
+        id: "generating",
+        text: _t("education.tour.core.generating.text", "Working on it \u2014 watch the progress bar."),
+        spotlight: null, reveal: [],
+        advance: function (next, nextBtn, tour) {
+          var poll = setInterval(function () {
+            if (window.State && !window.State.generating && window.State.outputImages && window.State.outputImages.length > 0) {
+              clearInterval(poll);
+              _setFlag("has_generated_first_image");
+              next();
             }
-            next();
-          };
-          rtc.addEventListener("click", h, { once: true });
-          tour.addCleanup(function () { rtc.removeEventListener("click", h); });
-        }
+          }, 500);
+          tour.addCleanup(function () { clearInterval(poll); });
+        },
+        btn: null
       },
-      btn: "Next"
-    },
+      {
+        id: "first_image",
+        text: _t("education.tour.core.firstImage.text", "That\u2019s yours. You just made that. No one else has this exact image.\n\nYou can put it on your canvas to paint over it \u2014 try clicking <em>Result \u2192 Canvas</em>. Or hit <em>Next</em> to see what else is here."),
+        spotlight: "#outputSection", reveal: ["edu-show-output"],
+        advance: function (next, nextBtn, tour) {
+          if (nextBtn) nextBtn.addEventListener("click", function () { next(); });
+          var rtc = document.getElementById("outputToCanvas");
+          if (rtc) {
+            var h = function () {
+              _setFlag("used_result_to_canvas");
+              for (var i = 0; i < tour.steps.length; i++) {
+                if (tour.steps[i].id === "first_image") {
+                  tour.spliceSteps(i, getInpaintBranch());
+                  break;
+                }
+              }
+              next();
+            };
+            rtc.addEventListener("click", h, { once: true });
+            tour.addCleanup(function () { rtc.removeEventListener("click", h); });
+          }
+        },
+        btn: _t("education.tour.core.firstImage.btn", "Next")
+      },
 
-    // ── Orient to the workspace (3 steps) ──
-    {
-      id: "reveal_settings",
-      text: "This panel is where you shape your results. A few things worth knowing right now:\n\n\u2022 <em>Model</em> \u2014 the AI brain. Different models, completely different styles.\n\u2022 <em>Denoise</em> \u2014 how much the AI changes existing canvas content. Your most important dial.\n\nEverything else \u2014 CFG, Steps, Seed, Sampler \u2014 you\u2019ll learn by experimenting. The <em>Codex</em> tab explains each one when you\u2019re ready.",
-      spotlight: "#panelSampling", reveal: ["edu-show-model", "edu-show-sampling", "edu-show-canvas", "edu-show-seed", "edu-show-hires", "edu-show-adetailer"], advance: "click", btn: "Next"
-    },
-    {
-      id: "reveal_workspace",
-      text: "<em>Toolstrip</em> (left) \u2014 19 painting tools. Start with <span class=\"cx-kbd\">B</span> for brush and <span class=\"cx-kbd\">E</span> for eraser.\n\n<em>Layers</em> (right panel) \u2014 generated images land on the bottom layer, your painting goes above. Regenerating never destroys your painted edits.\n\nThis is a real canvas. Paint, generate, paint more, generate again.",
-      spotlight: "#toolstrip", reveal: ["edu-show-tools", "edu-show-layers"], advance: "click", btn: "Next"
-    },
-    {
-      id: "complete",
-      text: "That\u2019s the core: <em>describe, generate, paint, iterate</em>.\n\nThe rest of the UI is now open. Check the <em>Codex</em> tab anytime \u2014 it has reference docs for every tool, setting, and feature.\n\nEnjoy making things.",
-      spotlight: null, reveal: ["edu-show-chrome"], advance: "click", btn: "Let\u2019s go"
-    },
-  ];
+      // ── Orient to the workspace (3 steps) ──
+      {
+        id: "reveal_settings",
+        text: _t("education.tour.core.revealSettings.text", "This panel is where you shape your results. A few things worth knowing right now:\n\n\u2022 <em>Model</em> \u2014 the AI brain. Different models, completely different styles.\n\u2022 <em>Denoise</em> \u2014 how much the AI changes existing canvas content. Your most important dial.\n\nEverything else \u2014 CFG, Steps, Seed, Sampler \u2014 you\u2019ll learn by experimenting. The <em>Codex</em> tab explains each one when you\u2019re ready."),
+        spotlight: "#panelSampling", reveal: ["edu-show-model", "edu-show-sampling", "edu-show-canvas", "edu-show-seed", "edu-show-hires", "edu-show-adetailer"], advance: "click",
+        btn: _t("education.tour.core.revealSettings.btn", "Next")
+      },
+      {
+        id: "reveal_workspace",
+        text: _t("education.tour.core.revealWorkspace.text", "<em>Toolstrip</em> (left) \u2014 19 painting tools. Start with <span class=\"cx-kbd\">B</span> for brush and <span class=\"cx-kbd\">E</span> for eraser.\n\n<em>Layers</em> (right panel) \u2014 generated images land on the bottom layer, your painting goes above. Regenerating never destroys your painted edits.\n\nThis is a real canvas. Paint, generate, paint more, generate again."),
+        spotlight: "#toolstrip", reveal: ["edu-show-tools", "edu-show-layers"], advance: "click",
+        btn: _t("education.tour.core.revealWorkspace.btn", "Next")
+      },
+      {
+        id: "complete",
+        text: _t("education.tour.core.complete.text", "That\u2019s the core: <em>describe, generate, paint, iterate</em>.\n\nThe rest of the UI is now open. Check the <em>Codex</em> tab anytime \u2014 it has reference docs for every tool, setting, and feature.\n\nEnjoy making things."),
+        spotlight: null, reveal: ["edu-show-chrome"], advance: "click",
+        btn: _t("education.tour.core.complete.btn", "Let\u2019s go")
+      },
+    ];
+  }
 
   // ========================================================================
   // BEGINNER — INPAINT BRANCH
   // ========================================================================
 
-  var INPAINT_BRANCH = [
-    {
-      id: "branch_paint",
-      text: "Your image is on the canvas now \u2014 ready to work with.\n\nPick up the <em>brush</em> (<span class=\"cx-kbd\">B</span>) and paint something on top of it. Scribble, add a shape, change a color. Don\u2019t worry about being precise.",
-      spotlight: "#toolstrip", reveal: ["edu-show-tools"], advance: "click", btn: "I painted something",
-      position: { bottom: "60px", left: "calc(50% - 190px)"}
-    },
-    {
-      id: "branch_regenerate",
-      text: "Now hit <em>Generate</em> again.\n\nThe AI sees your paint strokes and incorporates them. It reinterprets the whole canvas with your edits as input \u2014 not just pasting paint on top.\n\nThe <em>Denoise</em> slider controls how much it changes. Lower = keep more of what\u2019s there.",
-      spotlight: "#genBtn", reveal: ["edu-show-sampling"], advance: "click", btn: "Next"
-    },
-    {
-      id: "branch_masking",
-      text: "What if you only want to change <em>part</em> of the image?\n\nPress <span class=\"cx-kbd\">Q</span> to enter mask mode. Your brush now paints a red overlay. The red tells the AI: \"only change this area.\"\n\nPaint the mask \u2192 write what should go there \u2192 Generate. Only the masked area changes. Press <span class=\"cx-kbd\">Q</span> again to exit. You\u2019ll use this constantly.",
-      spotlight: "#maskModeBtn", reveal: [], advance: "click", btn: "Next"
-    },
-  ];
+  function getInpaintBranch() {
+    return [
+      {
+        id: "branch_paint",
+        text: _t("education.tour.inpaint.paint.text", "Your image is on the canvas now \u2014 ready to work with.\n\nPick up the <em>brush</em> (<span class=\"cx-kbd\">B</span>) and paint something on top of it. Scribble, add a shape, change a color. Don\u2019t worry about being precise."),
+        spotlight: "#toolstrip", reveal: ["edu-show-tools"], advance: "click",
+        btn: _t("education.tour.inpaint.paint.btn", "I painted something"),
+        position: { bottom: "60px", left: "calc(50% - 190px)"}
+      },
+      {
+        id: "branch_regenerate",
+        text: _t("education.tour.inpaint.regenerate.text", "Now hit <em>Generate</em> again.\n\nThe AI sees your paint strokes and incorporates them. It reinterprets the whole canvas with your edits as input \u2014 not just pasting paint on top.\n\nThe <em>Denoise</em> slider controls how much it changes. Lower = keep more of what\u2019s there."),
+        spotlight: "#genBtn", reveal: ["edu-show-sampling"], advance: "click",
+        btn: _t("education.tour.inpaint.regenerate.btn", "Next")
+      },
+      {
+        id: "branch_masking",
+        text: _t("education.tour.inpaint.masking.text", "What if you only want to change <em>part</em> of the image?\n\nPress <span class=\"cx-kbd\">Q</span> to enter mask mode. Your brush now paints a red overlay. The red tells the AI: \"only change this area.\"\n\nPaint the mask \u2192 write what should go there \u2192 Generate. Only the masked area changes. Press <span class=\"cx-kbd\">Q</span> again to exit. You\u2019ll use this constantly."),
+        spotlight: "#maskModeBtn", reveal: [], advance: "click",
+        btn: _t("education.tour.inpaint.masking.btn", "Next")
+      },
+    ];
+  }
 
   // ========================================================================
   // EXPERIENCED — ORIENTATION TOUR
   // ========================================================================
 
-  var EXPERIENCED_STEPS = [
-    {
-      id: "exp_layout",
-      text: "Quick orientation. <em>Toolstrip</em> on the left (19 painting tools). <em>Canvas</em> in the center \u2014 scroll to zoom, Space+drag to pan. <em>Panel</em> on the right with Generate, Extensions, and Settings tabs. <span class=\"cx-kbd\">\\</span> collapses it.\n\nContext bar above the canvas shows controls for the active tool.",
-      spotlight: null, reveal: [], advance: "click", btn: "Next",
-      position: { bottom: "80px", left: "calc(50% - 190px)" }
-    },
-    {
-      id: "exp_canvas_routing",
-      text: "No separate txt2img/img2img tabs. Studio checks the canvas and routes automatically:\n\n\u2022 <strong>Blank canvas</strong> \u2192 txt2img\n\u2022 <strong>Content on canvas</strong> \u2192 img2img\n\u2022 <strong>Mask painted</strong> \u2192 inpainting\n\nThe pixels are the source of truth. Paint something, erase it all, generate \u2014 that\u2019s txt2img because the canvas is blank. No mode toggles.",
-      spotlight: null, reveal: [], advance: "click", btn: "Next",
-      position: { bottom: "80px", left: "calc(50% - 190px)" }
-    },
-    {
-      id: "exp_canvas_ux",
-      text: "A few things that work differently here:\n\n\u2022 Context bar values are <em>scrub labels</em> \u2014 drag horizontally to adjust, click to type a number.\n\u2022 Each tool <em>remembers its own settings</em> independently. Switch tools and back \u2014 settings preserved.\n\u2022 <span class=\"cx-kbd\">Shift+Drag</span> on canvas adjusts brush size (horizontal) and opacity (vertical).\n\u2022 <span class=\"cx-kbd\">Ctrl+Click</span> eyedrops from any tool without switching.\n\u2022 At 200%+ zoom, pixels render nearest-neighbor (crisp, not blurry).",
-      spotlight: null, reveal: [], advance: "click", btn: "Next",
-      position: { bottom: "80px", left: "calc(50% - 190px)" }
-    },
-    {
-      id: "exp_mask_regions",
-      text: "<em>Mask mode</em> (<span class=\"cx-kbd\">Q</span>) uses the same brush engine \u2014 pressure, hardness, all of it. No separate mask canvas.\n\n<em>Regional prompting</em> is painted directly on the canvas. Add a region, paint its area with the region color, write a prompt. Uses pre-softmax attention bias, not output blending \u2014 small regions actually get their own content.",
-      spotlight: null, reveal: [], advance: "click", btn: "Next",
-      position: { bottom: "80px", left: "calc(50% - 190px)" }
-    },
-    {
-      id: "exp_layers",
-      text: "Real layer stack with blend modes, opacity, and reordering. Sending results to canvas creates a <em>new layer</em> \u2014 never overwrites your work.\n\nGeneration results go to a reusable \"Gen Result\" layer. Your painted edits on other layers are always safe. Export the full stack as PSD.",
-      spotlight: "#layersList", reveal: [], advance: "click", btn: "Next",
-      beforeShow: function () {
-        var genTab = document.querySelector('[data-panel="generate"]');
-        if (genTab) genTab.click();
-        return new Promise(function (resolve) {
-          setTimeout(function () {
-            var el = document.getElementById("layersList");
-            if (el) el.scrollIntoView({ behavior: "smooth", block: "nearest" });
-            setTimeout(resolve, 300);
-          }, 100);
-        });
-      }
-    },
-    {
-      id: "exp_extras",
-      text: "<em>ControlNet</em> (2 units) can source from the canvas composite, active layer, or an upload. <em>ADetailer</em> (3 slots) runs automatically after generation.\n\n<em>Drag and drop</em> an image onto the canvas to load it \u2014 resizes canvas, imports metadata, creates a new layer.\n\nSave current settings as <em>workflow defaults</em> \u2014 persists server-side across sessions.",
-      spotlight: null, reveal: [], advance: "click", btn: "Next",
-      position: { bottom: "80px", right: "340px" }
-    },
-    {
-      id: "exp_shortcuts",
-      text: "Key shortcuts to know:\n\n<span class=\"cx-kbd\">Q</span> Mask mode \u2022 <span class=\"cx-kbd\">B</span> Brush \u2022 <span class=\"cx-kbd\">E</span> Eraser \u2022 <span class=\"cx-kbd\">V</span> Transform\n<span class=\"cx-kbd\">[</span>/<span class=\"cx-kbd\">]</span> Brush size \u2022 <span class=\"cx-kbd\">Shift+Drag</span> Size + opacity\n<span class=\"cx-kbd\">Ctrl+Enter</span> Generate \u2022 <span class=\"cx-kbd\">\\</span> Toggle panel\n<span class=\"cx-kbd\">Ctrl+Z</span> Undo \u2022 <span class=\"cx-kbd\">Space+Drag</span> Pan \u2022 <span class=\"cx-kbd\">Scroll</span> Zoom\n\nFull list in the <em>Codex</em> tab (highlighted above) under Keyboard Shortcuts.\n\nYou\u2019re set. Go make something.",
-      spotlight: null, reveal: [], advance: "click", btn: "Let\u2019s go",
-      position: { bottom: "80px", left: "calc(50% - 190px)" },
-      beforeShow: function () {
-        var codexTab = document.querySelector('button[data-module="codex"]');
-        if (codexTab) {
-          codexTab.style.outline = "2px solid var(--accent-bright)";
-          codexTab.style.outlineOffset = "2px";
-          codexTab.style.borderRadius = "4px";
+  function getExperiencedSteps() {
+    return [
+      {
+        id: "exp_layout",
+        text: _t("education.tour.experienced.layout.text", "Quick orientation. <em>Toolstrip</em> on the left (19 painting tools). <em>Canvas</em> in the center \u2014 scroll to zoom, Space+drag to pan. <em>Panel</em> on the right with Generate, Extensions, and Settings tabs. <span class=\"cx-kbd\">\\</span> collapses it.\n\nContext bar above the canvas shows controls for the active tool."),
+        spotlight: null, reveal: [], advance: "click",
+        btn: _t("education.tour.experienced.layout.btn", "Next"),
+        position: { bottom: "80px", left: "calc(50% - 190px)" }
+      },
+      {
+        id: "exp_canvas_routing",
+        text: _t("education.tour.experienced.canvasRouting.text", "No separate txt2img/img2img tabs. Studio checks the canvas and routes automatically:\n\n\u2022 <strong>Blank canvas</strong> \u2192 txt2img\n\u2022 <strong>Content on canvas</strong> \u2192 img2img\n\u2022 <strong>Mask painted</strong> \u2192 inpainting\n\nThe pixels are the source of truth. Paint something, erase it all, generate \u2014 that\u2019s txt2img because the canvas is blank. No mode toggles."),
+        spotlight: null, reveal: [], advance: "click",
+        btn: _t("education.tour.experienced.canvasRouting.btn", "Next"),
+        position: { bottom: "80px", left: "calc(50% - 190px)" }
+      },
+      {
+        id: "exp_canvas_ux",
+        text: _t("education.tour.experienced.canvasUx.text", "A few things that work differently here:\n\n\u2022 Context bar values are <em>scrub labels</em> \u2014 drag horizontally to adjust, click to type a number.\n\u2022 Each tool <em>remembers its own settings</em> independently. Switch tools and back \u2014 settings preserved.\n\u2022 <span class=\"cx-kbd\">Shift+Drag</span> on canvas adjusts brush size (horizontal) and opacity (vertical).\n\u2022 <span class=\"cx-kbd\">Ctrl+Click</span> eyedrops from any tool without switching.\n\u2022 At 200%+ zoom, pixels render nearest-neighbor (crisp, not blurry)."),
+        spotlight: null, reveal: [], advance: "click",
+        btn: _t("education.tour.experienced.canvasUx.btn", "Next"),
+        position: { bottom: "80px", left: "calc(50% - 190px)" }
+      },
+      {
+        id: "exp_mask_regions",
+        text: _t("education.tour.experienced.maskRegions.text", "<em>Mask mode</em> (<span class=\"cx-kbd\">Q</span>) uses the same brush engine \u2014 pressure, hardness, all of it. No separate mask canvas.\n\n<em>Regional prompting</em> is painted directly on the canvas. Add a region, paint its area with the region color, write a prompt. Uses pre-softmax attention bias, not output blending \u2014 small regions actually get their own content."),
+        spotlight: null, reveal: [], advance: "click",
+        btn: _t("education.tour.experienced.maskRegions.btn", "Next"),
+        position: { bottom: "80px", left: "calc(50% - 190px)" }
+      },
+      {
+        id: "exp_layers",
+        text: _t("education.tour.experienced.layers.text", "Real layer stack with blend modes, opacity, and reordering. Sending results to canvas creates a <em>new layer</em> \u2014 never overwrites your work.\n\nGeneration results go to a reusable \"Gen Result\" layer. Your painted edits on other layers are always safe. Export the full stack as PSD."),
+        spotlight: "#layersList", reveal: [], advance: "click",
+        btn: _t("education.tour.experienced.layers.btn", "Next"),
+        beforeShow: function () {
+          var genTab = document.querySelector('[data-panel="generate"]');
+          if (genTab) genTab.click();
+          return new Promise(function (resolve) {
+            setTimeout(function () {
+              var el = document.getElementById("layersList");
+              if (el) el.scrollIntoView({ behavior: "smooth", block: "nearest" });
+              setTimeout(resolve, 300);
+            }, 100);
+          });
         }
-      }
-    },
-  ];
+      },
+      {
+        id: "exp_extras",
+        text: _t("education.tour.experienced.extras.text", "<em>ControlNet</em> (2 units) can source from the canvas composite, active layer, or an upload. <em>ADetailer</em> (3 slots) runs automatically after generation.\n\n<em>Drag and drop</em> an image onto the canvas to load it \u2014 resizes canvas, imports metadata, creates a new layer.\n\nSave current settings as <em>workflow defaults</em> \u2014 persists server-side across sessions."),
+        spotlight: null, reveal: [], advance: "click",
+        btn: _t("education.tour.experienced.extras.btn", "Next"),
+        position: { bottom: "80px", right: "340px" }
+      },
+      {
+        id: "exp_shortcuts",
+        text: _t("education.tour.experienced.shortcuts.text", "Key shortcuts to know:\n\n<span class=\"cx-kbd\">Q</span> Mask mode \u2022 <span class=\"cx-kbd\">B</span> Brush \u2022 <span class=\"cx-kbd\">E</span> Eraser \u2022 <span class=\"cx-kbd\">V</span> Transform\n<span class=\"cx-kbd\">[</span>/<span class=\"cx-kbd\">]</span> Brush size \u2022 <span class=\"cx-kbd\">Shift+Drag</span> Size + opacity\n<span class=\"cx-kbd\">Ctrl+Enter</span> Generate \u2022 <span class=\"cx-kbd\">\\</span> Toggle panel\n<span class=\"cx-kbd\">Ctrl+Z</span> Undo \u2022 <span class=\"cx-kbd\">Space+Drag</span> Pan \u2022 <span class=\"cx-kbd\">Scroll</span> Zoom\n\nFull list in the <em>Codex</em> tab (highlighted above) under Keyboard Shortcuts.\n\nYou\u2019re set. Go make something."),
+        spotlight: null, reveal: [], advance: "click",
+        btn: _t("education.tour.experienced.shortcuts.btn", "Let\u2019s go"),
+        position: { bottom: "80px", left: "calc(50% - 190px)" },
+        beforeShow: function () {
+          var codexTab = document.querySelector('button[data-module="codex"]');
+          if (codexTab) {
+            codexTab.style.outline = "2px solid var(--accent-bright)";
+            codexTab.style.outlineOffset = "2px";
+            codexTab.style.borderRadius = "4px";
+          }
+        }
+      },
+    ];
+  }
 
   // ========================================================================
   // FIRST-RUN MODAL
@@ -352,12 +374,13 @@ var Education = (function () {
 
   function _startGuidedWalkthrough() {
     _state.guidedActive = true;
-    var steps = CORE_STEPS.slice();
+    var steps = getCoreSteps();
 
     var hasModels = window.State && window.State.models && window.State.models.length > 0;
     if (!hasModels) {
-      for (var i = MODEL_BRANCH.length - 1; i >= 0; i--) {
-        steps.unshift(MODEL_BRANCH[i]);
+      var modelBranch = getModelBranch();
+      for (var i = modelBranch.length - 1; i >= 0; i--) {
+        steps.unshift(modelBranch[i]);
       }
       _setFlag("needed_model_download");
       console.log("[Education] No models detected \u2014 model acquisition branch added");
@@ -372,11 +395,12 @@ var Education = (function () {
   }
 
   function _resumeWalkthrough() {
-    var steps = CORE_STEPS.slice();
+    var steps = getCoreSteps();
 
     if (_state.flags.needed_model_download && !_state.flags.model_downloaded) {
-      for (var m = MODEL_BRANCH.length - 1; m >= 0; m--) {
-        steps.unshift(MODEL_BRANCH[m]);
+      var modelBranch = getModelBranch();
+      for (var m = modelBranch.length - 1; m >= 0; m--) {
+        steps.unshift(modelBranch[m]);
       }
     }
 
@@ -386,8 +410,9 @@ var Education = (function () {
         if (steps[j].id === "first_image") { fi = j; break; }
       }
       if (fi >= 0) {
-        for (var k = 0; k < INPAINT_BRANCH.length; k++) {
-          steps.splice(fi + 1 + k, 0, INPAINT_BRANCH[k]);
+        var inpaintBranch = getInpaintBranch();
+        for (var k = 0; k < inpaintBranch.length; k++) {
+          steps.splice(fi + 1 + k, 0, inpaintBranch[k]);
         }
       }
     }
@@ -421,7 +446,7 @@ var Education = (function () {
   function _startExperiencedTour() {
     _tour = StudioTour.create({
       id: "experienced-tour",
-      steps: EXPERIENCED_STEPS,
+      steps: getExperiencedSteps(),
       persist: false,
       bodyClass: null,
       confirmCancel: true,
