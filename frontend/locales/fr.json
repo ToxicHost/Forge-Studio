@@ -836,5 +836,19 @@
   "education.tour.experienced.extras.text": "<em>ControlNet</em> (2 unités) peut prendre comme source le composite de la toile, le calque actif ou un upload. <em>ADetailer</em> (3 slots) tourne automatiquement après la génération.\n\n<em>Glisse-dépose</em> une image sur la toile pour la charger — redimensionne la toile, importe les métadonnées, crée un nouveau calque.\n\nEnregistre les réglages actuels comme <em>workflow par défaut</em> — persiste côté serveur entre les sessions.",
   "education.tour.experienced.extras.btn": "Suivant",
   "education.tour.experienced.shortcuts.text": "Raccourcis clés à connaître :\n\n<span class=\"cx-kbd\">Q</span> Mode masque • <span class=\"cx-kbd\">B</span> Pinceau • <span class=\"cx-kbd\">E</span> Gomme • <span class=\"cx-kbd\">V</span> Transformer\n<span class=\"cx-kbd\">[</span>/<span class=\"cx-kbd\">]</span> Taille du pinceau • <span class=\"cx-kbd\">Maj+Glisser</span> Taille + opacité\n<span class=\"cx-kbd\">Ctrl+Entrée</span> Générer • <span class=\"cx-kbd\">\\</span> Basculer le panneau\n<span class=\"cx-kbd\">Ctrl+Z</span> Annuler • <span class=\"cx-kbd\">Espace+Glisser</span> Déplacer • <span class=\"cx-kbd\">Molette</span> Zoom\n\nListe complète dans l'onglet <em>Codex</em> (mis en évidence ci-dessus) sous Raccourcis clavier.\n\nTu es prêt. Va créer.",
-  "education.tour.experienced.shortcuts.btn": "C'est parti"
+  "education.tour.experienced.shortcuts.btn": "C'est parti",
+
+  "moduleTour.workshop.merge.text": "C'est le <em>Workshop</em> — l'endroit où tu fusionnes et combines des modèles IA.\n\nLe panneau de fusion contient ta <em>Method</em>, le curseur <em>Weight</em> et les sélecteurs de modèle. Choisis deux modèles, règle un ratio de mélange et fusionne.",
+  "moduleTour.workshop.merge.btn": "Suivant",
+  "moduleTour.workshop.actions.text": "<em>Test Merge</em> échange les poids en mémoire à chaud — aucun fichier écrit. Génère quelques images de test pour voir si le mélange te plaît.\n\nContent du résultat ? <em>Save to Disk</em> écrit le modèle fusionné comme un nouveau checkpoint.",
+  "moduleTour.workshop.actions.btn": "Suivant",
+  "moduleTour.workshop.history.text": "L'onglet <em>History</em> garde un journal de chaque fusion — recette, réglages et notes. Tu peux noter, taguer et chercher tes expériences.\n\nVa voir le <em>Codex</em> pour les détails de chaque méthode de fusion.",
+  "moduleTour.workshop.history.btn": "Compris",
+
+  "moduleTour.gallery.layout.text": "C'est la <em>Galerie</em> — un navigateur pour toutes tes images générées.\n\nLa <em>barre latérale</em> a des dossiers et des tags de personnages pour filtrer. La <em>recherche</em> en haut cherche dans les noms de fichiers et les métadonnées.",
+  "moduleTour.gallery.layout.btn": "Suivant",
+  "moduleTour.gallery.interact.text": "Clique sur n'importe quelle image pour une vue détaillée avec les métadonnées complètes. Clic droit pour un menu contextuel (renommer, déplacer, supprimer, envoyer à la toile).\n\nGlisse les images entre les dossiers de la barre latérale pour t'organiser.",
+  "moduleTour.gallery.interact.btn": "Suivant",
+  "moduleTour.gallery.live.text": "La galerie se met à jour <em>en temps réel</em> — les nouvelles images apparaissent automatiquement à mesure qu'elles sont générées. Le point de statut dans la topbar montre l'état du watcher.\n\n<em>Envoyer à la toile</em> charge n'importe quelle image dans Studio pour l'éditer.",
+  "moduleTour.gallery.live.btn": "Compris"
 }

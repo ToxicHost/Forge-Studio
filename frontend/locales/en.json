@@ -836,5 +836,19 @@
   "education.tour.experienced.extras.text": "<em>ControlNet</em> (2 units) can source from the canvas composite, active layer, or an upload. <em>ADetailer</em> (3 slots) runs automatically after generation.\n\n<em>Drag and drop</em> an image onto the canvas to load it — resizes canvas, imports metadata, creates a new layer.\n\nSave current settings as <em>workflow defaults</em> — persists server-side across sessions.",
   "education.tour.experienced.extras.btn": "Next",
   "education.tour.experienced.shortcuts.text": "Key shortcuts to know:\n\n<span class=\"cx-kbd\">Q</span> Mask mode • <span class=\"cx-kbd\">B</span> Brush • <span class=\"cx-kbd\">E</span> Eraser • <span class=\"cx-kbd\">V</span> Transform\n<span class=\"cx-kbd\">[</span>/<span class=\"cx-kbd\">]</span> Brush size • <span class=\"cx-kbd\">Shift+Drag</span> Size + opacity\n<span class=\"cx-kbd\">Ctrl+Enter</span> Generate • <span class=\"cx-kbd\">\\</span> Toggle panel\n<span class=\"cx-kbd\">Ctrl+Z</span> Undo • <span class=\"cx-kbd\">Space+Drag</span> Pan • <span class=\"cx-kbd\">Scroll</span> Zoom\n\nFull list in the <em>Codex</em> tab (highlighted above) under Keyboard Shortcuts.\n\nYou’re set. Go make something.",
-  "education.tour.experienced.shortcuts.btn": "Let’s go"
+  "education.tour.experienced.shortcuts.btn": "Let’s go",
+
+  "moduleTour.workshop.merge.text": "This is the <em>Workshop</em> — where you merge and combine AI models.\n\nThe merge panel has your <em>Method</em>, <em>Weight</em> slider, and model selectors. Pick two models, set a blend ratio, and merge.",
+  "moduleTour.workshop.merge.btn": "Next",
+  "moduleTour.workshop.actions.text": "<em>Test Merge</em> hot-swaps the weights in memory — no file written. Generate some test images to see if you like the blend.\n\nHappy with it? <em>Save to Disk</em> writes the merged model as a new checkpoint.",
+  "moduleTour.workshop.actions.btn": "Next",
+  "moduleTour.workshop.history.text": "The <em>History</em> tab keeps a journal of every merge you’ve done — recipe, settings, and notes. You can rate, tag, and search your experiments.\n\nCheck the <em>Codex</em> for details on each merge method.",
+  "moduleTour.workshop.history.btn": "Got it",
+
+  "moduleTour.gallery.layout.text": "This is the <em>Gallery</em> — a browser for all your generated images.\n\n<em>Sidebar</em> has folders and character tags for filtering. <em>Search</em> at the top matches filenames and metadata.",
+  "moduleTour.gallery.layout.btn": "Next",
+  "moduleTour.gallery.interact.text": "Click any image for a detail view with full metadata. Right-click for a context menu (rename, move, delete, send to canvas).\n\nDrag images between folders in the sidebar to organize.",
+  "moduleTour.gallery.interact.btn": "Next",
+  "moduleTour.gallery.live.text": "The gallery updates <em>in real-time</em> — new images appear automatically as they’re generated. The status dot in the topbar shows watcher status.\n\n<em>Send to Canvas</em> loads any image into Studio for editing.",
+  "moduleTour.gallery.live.btn": "Got it"
 }

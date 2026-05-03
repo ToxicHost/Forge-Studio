@@ -836,5 +836,19 @@
   "education.tour.experienced.extras.text": "<em>ControlNet</em> (2 unidades) puede tomar como fuente el composite del lienzo, la capa activa o una subida. <em>ADetailer</em> (3 ranuras) se ejecuta automáticamente tras la generación.\n\n<em>Arrastra y suelta</em> una imagen sobre el lienzo para cargarla — redimensiona el lienzo, importa los metadatos, crea una nueva capa.\n\nGuarda los ajustes actuales como <em>valores por defecto del flujo</em> — persisten en el servidor entre sesiones.",
   "education.tour.experienced.extras.btn": "Siguiente",
   "education.tour.experienced.shortcuts.text": "Atajos clave que conviene saber:\n\n<span class=\"cx-kbd\">Q</span> Modo máscara • <span class=\"cx-kbd\">B</span> Pincel • <span class=\"cx-kbd\">E</span> Borrador • <span class=\"cx-kbd\">V</span> Transformar\n<span class=\"cx-kbd\">[</span>/<span class=\"cx-kbd\">]</span> Tamaño del pincel • <span class=\"cx-kbd\">Mayús+Arrastrar</span> Tamaño + opacidad\n<span class=\"cx-kbd\">Ctrl+Intro</span> Generar • <span class=\"cx-kbd\">\\</span> Alternar panel\n<span class=\"cx-kbd\">Ctrl+Z</span> Deshacer • <span class=\"cx-kbd\">Espacio+Arrastrar</span> Desplazar • <span class=\"cx-kbd\">Rueda</span> Zoom\n\nLista completa en la pestaña <em>Codex</em> (resaltada arriba) en Atajos de teclado.\n\nListo. A crear.",
-  "education.tour.experienced.shortcuts.btn": "Vamos"
+  "education.tour.experienced.shortcuts.btn": "Vamos",
+
+  "moduleTour.workshop.merge.text": "Esto es el <em>Workshop</em> — donde fusionas y combinas modelos de IA.\n\nEl panel de fusión tiene tu <em>Method</em>, el deslizador <em>Weight</em> y los selectores de modelo. Elige dos modelos, ajusta una proporción de mezcla y fusiona.",
+  "moduleTour.workshop.merge.btn": "Siguiente",
+  "moduleTour.workshop.actions.text": "<em>Test Merge</em> intercambia los pesos en memoria al vuelo — sin escribir archivo. Genera unas imágenes de prueba para ver si te gusta la mezcla.\n\n¿Contento? <em>Save to Disk</em> escribe el modelo fusionado como un nuevo checkpoint.",
+  "moduleTour.workshop.actions.btn": "Siguiente",
+  "moduleTour.workshop.history.text": "La pestaña <em>History</em> lleva un diario de cada fusión — receta, ajustes y notas. Puedes valorar, etiquetar y buscar tus experimentos.\n\nMira el <em>Codex</em> para los detalles de cada método de fusión.",
+  "moduleTour.workshop.history.btn": "Entendido",
+
+  "moduleTour.gallery.layout.text": "Esto es la <em>Galería</em> — un navegador para todas tus imágenes generadas.\n\nLa <em>barra lateral</em> tiene carpetas y etiquetas de personajes para filtrar. La <em>búsqueda</em> arriba busca en nombres de archivo y metadatos.",
+  "moduleTour.gallery.layout.btn": "Siguiente",
+  "moduleTour.gallery.interact.text": "Haz clic en cualquier imagen para una vista detallada con todos los metadatos. Clic derecho para un menú contextual (renombrar, mover, borrar, enviar al lienzo).\n\nArrastra imágenes entre carpetas en la barra lateral para organizar.",
+  "moduleTour.gallery.interact.btn": "Siguiente",
+  "moduleTour.gallery.live.text": "La galería se actualiza <em>en tiempo real</em> — las nuevas imágenes aparecen automáticamente conforme se generan. El punto de estado en la topbar muestra el estado del watcher.\n\n<em>Enviar al lienzo</em> carga cualquier imagen en Studio para editarla.",
+  "moduleTour.gallery.live.btn": "Entendido"
 }

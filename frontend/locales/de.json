@@ -836,5 +836,19 @@
   "education.tour.experienced.extras.text": "<em>ControlNet</em> (2 Units) kann das Leinwand-Composite, die aktive Ebene oder einen Upload als Quelle nutzen. <em>ADetailer</em> (3 Slots) läuft automatisch nach der Generierung.\n\n<em>Drag and Drop</em> ein Bild auf die Leinwand, um es zu laden — passt die Leinwand an, importiert Metadaten, erstellt eine neue Ebene.\n\nSpeichere aktuelle Einstellungen als <em>Workflow-Standards</em> — bleibt serverseitig über Sitzungen hinweg erhalten.",
   "education.tour.experienced.extras.btn": "Weiter",
   "education.tour.experienced.shortcuts.text": "Wichtige Shortcuts:\n\n<span class=\"cx-kbd\">Q</span> Maskenmodus • <span class=\"cx-kbd\">B</span> Pinsel • <span class=\"cx-kbd\">E</span> Radierer • <span class=\"cx-kbd\">V</span> Transformieren\n<span class=\"cx-kbd\">[</span>/<span class=\"cx-kbd\">]</span> Pinselgröße • <span class=\"cx-kbd\">Shift+Ziehen</span> Größe + Deckkraft\n<span class=\"cx-kbd\">Strg+Enter</span> Generieren • <span class=\"cx-kbd\">\\</span> Panel umschalten\n<span class=\"cx-kbd\">Strg+Z</span> Rückgängig • <span class=\"cx-kbd\">Leertaste+Ziehen</span> Schwenken • <span class=\"cx-kbd\">Scrollen</span> Zoomen\n\nVollständige Liste im <em>Codex</em>-Tab (oben hervorgehoben) unter Tastaturkürzel.\n\nDu bist startklar. Auf, mach was.",
-  "education.tour.experienced.shortcuts.btn": "Los geht’s"
+  "education.tour.experienced.shortcuts.btn": "Los geht’s",
+
+  "moduleTour.workshop.merge.text": "Das ist die <em>Workshop</em> — wo du KI-Modelle mergen und kombinieren kannst.\n\nIm Merge-Panel findest du <em>Method</em>, den <em>Weight</em>-Regler und die Modellauswahl. Wähle zwei Modelle, setze ein Mischverhältnis und merge.",
+  "moduleTour.workshop.merge.btn": "Weiter",
+  "moduleTour.workshop.actions.text": "<em>Test Merge</em> tauscht die Gewichte im Speicher aus — keine Datei wird geschrieben. Generiere ein paar Testbilder, um zu sehen, ob dir die Mischung gefällt.\n\nZufrieden? <em>Save to Disk</em> schreibt das gemergte Modell als neuen Checkpoint.",
+  "moduleTour.workshop.actions.btn": "Weiter",
+  "moduleTour.workshop.history.text": "Der <em>History</em>-Tab führt ein Journal über jeden Merge — Rezept, Einstellungen und Notizen. Du kannst deine Experimente bewerten, taggen und durchsuchen.\n\nDetails zu jeder Merge-Methode findest du im <em>Codex</em>.",
+  "moduleTour.workshop.history.btn": "Verstanden",
+
+  "moduleTour.gallery.layout.text": "Das ist die <em>Galerie</em> — ein Browser für all deine generierten Bilder.\n\nIn der <em>Sidebar</em> sind Ordner und Charakter-Tags zum Filtern. Die <em>Suche</em> oben durchsucht Dateinamen und Metadaten.",
+  "moduleTour.gallery.layout.btn": "Weiter",
+  "moduleTour.gallery.interact.text": "Klick auf ein beliebiges Bild für die Detailansicht mit allen Metadaten. Rechtsklick für ein Kontextmenü (umbenennen, verschieben, löschen, an Leinwand senden).\n\nZiehe Bilder in der Sidebar zwischen Ordnern, um sie zu organisieren.",
+  "moduleTour.gallery.interact.btn": "Weiter",
+  "moduleTour.gallery.live.text": "Die Galerie aktualisiert sich <em>in Echtzeit</em> — neue Bilder erscheinen automatisch, sobald sie generiert werden. Der Statuspunkt in der Topbar zeigt den Watcher-Status.\n\n<em>An Leinwand senden</em> lädt jedes Bild zur Bearbeitung in Studio.",
+  "moduleTour.gallery.live.btn": "Verstanden"
 }
