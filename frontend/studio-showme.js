@@ -114,7 +114,12 @@ function _drawRect(ctx, x, y, w, h, color) {
   ctx.fillRect(x, y, w, h);
 }
 
-// Draw a simple scene on the reference layer (colored shapes for tutorials)
+// Draw a simple scene on the reference layer (colored shapes for tutorials).
+// Fills white first so the scene composites cleanly even when newDoc skipped
+// the resizeCanvas white-fill (early-return when dimensions already match).
+// Bumps the composite version at the end — direct ctx mutations don't
+// invalidate the per-version composite cache, so without this the next
+// composite() call returns the pre-drawing pixels and the scene is invisible.
 function _drawTutorialScene() {
   var S = window.StudioCore.state;
   var ref = S.layers.find(function (l) { return l.type === "reference"; });
@@ -122,6 +127,10 @@ function _drawTutorialScene() {
 
   var W = S.W, H = S.H;
   var ctx = ref.ctx;
+
+  // White background so colors don't composite against transparent void
+  ctx.fillStyle = "#ffffff";
+  ctx.fillRect(0, 0, W, H);
 
   // Sky gradient
   var grad = ctx.createLinearGradient(0, 0, 0, H * 0.6);
@@ -171,6 +180,8 @@ function _drawTutorialScene() {
   ctx.fillStyle = "#a8c8e8";
   ctx.fillRect(W * 0.5 + 15, H * 0.44, 18, 18);
   ctx.fillRect(W * 0.5 + 68, H * 0.44, 18, 18);
+
+  if (window.StudioCore && window.StudioCore.markCompositeDirty) window.StudioCore.markCompositeDirty();
 }
 
 // ========================================================================
@@ -378,6 +389,7 @@ _register("layers_basics", {
       _drawRect(paint.ctx, 200, 200, 200, 200, "#c04040");
     }
 
+    C.markCompositeDirty();
     C.composite();
     window.StudioUI.redraw();
     window.StudioUI.renderLayerPanel();
@@ -434,6 +446,7 @@ _register("tool_clone", {
       ref.ctx.fillRect(S.W * 0.4, S.H * 0.65, 30, 30);
     }
 
+    window.StudioCore.markCompositeDirty();
     window.StudioCore.composite();
     window.StudioUI.redraw();
     window.StudioUI.renderLayerPanel();
@@ -494,6 +507,7 @@ _register("tool_transform", {
       paint.ctx.fill();
     }
 
+    window.StudioCore.markCompositeDirty();
     window.StudioCore.composite();
     window.StudioUI.redraw();
     window.StudioUI.renderLayerPanel();
@@ -638,6 +652,7 @@ _register("controlnet_openpose", {
       ctx.beginPath(); ctx.moveTo(cx - 40, H * 0.75); ctx.lineTo(cx, H * 0.55); ctx.lineTo(cx + 45, H * 0.78); ctx.stroke();
     }
 
+    window.StudioCore.markCompositeDirty();
     window.StudioCore.composite();
     window.StudioUI.redraw();
     window.StudioUI.renderLayerPanel();
