@@ -850,5 +850,28 @@
   "moduleTour.gallery.interact.text": "Haz clic en cualquier imagen para una vista detallada con todos los metadatos. Clic derecho para un menú contextual (renombrar, mover, borrar, enviar al lienzo).\n\nArrastra imágenes entre carpetas en la barra lateral para organizar.",
   "moduleTour.gallery.interact.btn": "Siguiente",
   "moduleTour.gallery.live.text": "La galería se actualiza <em>en tiempo real</em> — las nuevas imágenes aparecen automáticamente conforme se generan. El punto de estado en la topbar muestra el estado del watcher.\n\n<em>Enviar al lienzo</em> carga cualquier imagen en Studio para editarla.",
-  "moduleTour.gallery.live.btn": "Entendido"
+  "moduleTour.gallery.live.btn": "Entendido",
+
+  "showme.inpaint.intro.text": "Aquí tienes una escena sencilla. Cambiemos una parte usando <em>inpainting</em>.\n\n¿Ves el sol en el cielo? Vamos a reemplazarlo con otra cosa.",
+  "showme.inpaint.intro.btn": "Siguiente",
+  "showme.inpaint.mask.text": "Pulsa <span class=\"cx-kbd\">Q</span> para entrar en modo máscara. Tu pincel ahora pinta una <em>capa roja</em> en lugar de color.\n\nPinta de rojo sobre el sol. No tiene que ser preciso — solo cúbrelo.",
+  "showme.inpaint.mask.btn": "He enmascarado el sol",
+  "showme.inpaint.prompt.text": "Un prompt está pre-rellenado — «a full moon in a night sky» — pero puedes cambiarlo a lo que quieras. La IA solo cambiará la zona roja.",
+  "showme.inpaint.prompt.btn": "Siguiente",
+  "showme.inpaint.generate.text": "Pulsa <em>Generar</em>. Solo la zona enmascarada cambia — el resto queda intacto.\n\nDespués, pulsa <span class=\"cx-kbd\">Q</span> para salir del modo máscara. Prueba distintos valores de denoise para ver cuánto cambia.",
+  "showme.inpaint.generate.btn": "Entendido",
+
+  "showme.softInpaint.intro.text": "El inpainting estándar tiene un borde duro — dentro de la máscara cambia, fuera no. El <em>Soft Inpainting</em> añade un fundido suave en el borde para transiciones más naturales.\n\nProbemos. Primero, pulsa <span class=\"cx-kbd\">Q</span> y enmascara una zona — pinta sobre la casa.",
+  "showme.softInpaint.intro.btn": "He enmascarado la casa",
+  "showme.softInpaint.enable.text": "Encuentra <em>Soft Inpainting</em> en el panel Generate (aparece cuando el modo máscara está activo). Marca la casilla.\n\nVerás seis parámetros. Los más importantes:\n\n• <strong>Preservation</strong> — cuánto del original se conserva fuera de la máscara. Más alto = menos cambio.\n• <strong>Transition Contrast</strong> — nitidez del borde del fundido. Más bajo = fundido más suave.",
+  "showme.softInpaint.enable.btn": "Siguiente",
+  "showme.softInpaint.generate.text": "Pulsa <em>Generar</em> y compara el resultado con el inpainting estándar (desactiva Soft Inpainting y regenera con la misma máscara para comparar).\n\nSoft Inpainting funciona mejor con <em>máscaras difuminadas</em> — usa un pincel suave (baja dureza) para pintar tu máscara, para el mejor fundido.\n\nLos otros parámetros (Schedule Bias, Mask Influence, Difference Threshold/Contrast) están bien con sus valores por defecto hasta que necesites control específico.",
+  "showme.softInpaint.generate.btn": "Entendido",
+
+  "showme.routing.blank.text": "Esto es un <em>lienzo vacío</em>. Si pulsas Generar ahora, Studio ejecuta <strong>txt2img</strong> — genera desde cero basándose solo en tu prompt.\n\nNo hace falta seleccionar modo. El estado del lienzo ES el modo.",
+  "showme.routing.blank.btn": "Siguiente",
+  "showme.routing.content.text": "Ahora pinta algo en el lienzo — lo que sea. Un garabato, una forma, una mancha de color.\n\nEn cuanto hay píxeles en el lienzo, Generar cambia automáticamente a <strong>img2img</strong>. La IA trabaja <em>con</em> lo que hay. <em>Denoise</em> controla cuánto cambia.",
+  "showme.routing.content.btn": "He pintado algo",
+  "showme.routing.mask.text": "Ahora pulsa <span class=\"cx-kbd\">Q</span> para entrar en modo máscara. Pinta una capa roja sobre parte de tu contenido.\n\nCon máscara presente, Generar cambia a <strong>inpainting</strong> — solo la zona enmascarada cambia. Todo lo demás queda intacto.\n\nTres modos, cero selectores. Los píxeles deciden.",
+  "showme.routing.mask.btn": "Entendido"
 }

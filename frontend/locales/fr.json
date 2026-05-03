@@ -850,5 +850,28 @@
   "moduleTour.gallery.interact.text": "Clique sur n'importe quelle image pour une vue détaillée avec les métadonnées complètes. Clic droit pour un menu contextuel (renommer, déplacer, supprimer, envoyer à la toile).\n\nGlisse les images entre les dossiers de la barre latérale pour t'organiser.",
   "moduleTour.gallery.interact.btn": "Suivant",
   "moduleTour.gallery.live.text": "La galerie se met à jour <em>en temps réel</em> — les nouvelles images apparaissent automatiquement à mesure qu'elles sont générées. Le point de statut dans la topbar montre l'état du watcher.\n\n<em>Envoyer à la toile</em> charge n'importe quelle image dans Studio pour l'éditer.",
-  "moduleTour.gallery.live.btn": "Compris"
+  "moduleTour.gallery.live.btn": "Compris",
+
+  "showme.inpaint.intro.text": "Voici une scène simple. Modifions une partie en utilisant l'<em>inpainting</em>.\n\nTu vois le soleil dans le ciel ? On va le remplacer par autre chose.",
+  "showme.inpaint.intro.btn": "Suivant",
+  "showme.inpaint.mask.text": "Appuie sur <span class=\"cx-kbd\">Q</span> pour passer en mode masque. Ton pinceau peint maintenant un <em>voile rouge</em> au lieu de la couleur.\n\nPeins en rouge sur le soleil. Pas besoin d'être précis — couvre-le, c'est tout.",
+  "showme.inpaint.mask.btn": "J'ai masqué le soleil",
+  "showme.inpaint.prompt.text": "Un prompt a été pré-rempli — « a full moon in a night sky » — mais tu peux le changer comme tu veux. L'IA ne modifiera que la zone rouge.",
+  "showme.inpaint.prompt.btn": "Suivant",
+  "showme.inpaint.generate.text": "Clique sur <em>Générer</em>. Seule la zone masquée change — le reste reste intact.\n\nEnsuite, appuie sur <span class=\"cx-kbd\">Q</span> pour sortir du mode masque. Essaie différentes valeurs de denoise pour voir l'impact.",
+  "showme.inpaint.generate.btn": "Compris",
+
+  "showme.softInpaint.intro.text": "L'inpainting standard a une frontière nette — l'intérieur du masque change, l'extérieur non. Le <em>Soft Inpainting</em> ajoute un fondu doux à la frontière pour des transitions plus naturelles.\n\nEssayons. D'abord, appuie sur <span class=\"cx-kbd\">Q</span> et masque une zone — peins sur la maison.",
+  "showme.softInpaint.intro.btn": "J'ai masqué la maison",
+  "showme.softInpaint.enable.text": "Trouve <em>Soft Inpainting</em> dans le panneau Generate (apparaît quand le mode masque est actif). Coche la case.\n\nTu verras six paramètres. Voici les plus importants :\n\n• <strong>Preservation</strong> — combien de l'original est conservé hors du masque. Plus élevé = moins de changement.\n• <strong>Transition Contrast</strong> — netteté du bord du fondu. Plus bas = fondu plus doux.",
+  "showme.softInpaint.enable.btn": "Suivant",
+  "showme.softInpaint.generate.text": "Clique sur <em>Générer</em> et compare le résultat avec l'inpainting standard (désactive Soft Inpainting et regénère avec le même masque pour comparer).\n\nSoft Inpainting marche mieux avec des <em>masques flous</em> — utilise un pinceau doux (faible dureté) pour peindre ton masque, pour le meilleur fondu.\n\nLes autres paramètres (Schedule Bias, Mask Influence, Difference Threshold/Contrast) sont bien aux valeurs par défaut tant que tu n'as pas besoin d'un contrôle spécifique.",
+  "showme.softInpaint.generate.btn": "Compris",
+
+  "showme.routing.blank.text": "C'est une <em>toile vide</em>. Si tu cliques sur Générer maintenant, Studio lance <strong>txt2img</strong> — génération à partir de rien, basée uniquement sur ton prompt.\n\nPas besoin de sélectionner un mode. L'état de la toile EST le mode.",
+  "showme.routing.blank.btn": "Suivant",
+  "showme.routing.content.text": "Maintenant peins quelque chose sur la toile — n'importe quoi. Un gribouillage, une forme, une tache de couleur.\n\nDès qu'il y a des pixels sur la toile, Générer passe automatiquement en <strong>img2img</strong>. L'IA travaille <em>avec</em> ce qui est là. <em>Denoise</em> contrôle l'ampleur du changement.",
+  "showme.routing.content.btn": "J'ai peint quelque chose",
+  "showme.routing.mask.text": "Maintenant appuie sur <span class=\"cx-kbd\">Q</span> pour passer en mode masque. Peins un voile rouge sur une partie de ton contenu.\n\nAvec un masque, Générer passe en <strong>inpainting</strong> — seule la zone masquée change. Le reste reste intact.\n\nTrois modes, zéro bascule. Les pixels décident.",
+  "showme.routing.mask.btn": "Compris"
 }

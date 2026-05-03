@@ -850,5 +850,28 @@
   "moduleTour.gallery.interact.text": "Klick auf ein beliebiges Bild für die Detailansicht mit allen Metadaten. Rechtsklick für ein Kontextmenü (umbenennen, verschieben, löschen, an Leinwand senden).\n\nZiehe Bilder in der Sidebar zwischen Ordnern, um sie zu organisieren.",
   "moduleTour.gallery.interact.btn": "Weiter",
   "moduleTour.gallery.live.text": "Die Galerie aktualisiert sich <em>in Echtzeit</em> — neue Bilder erscheinen automatisch, sobald sie generiert werden. Der Statuspunkt in der Topbar zeigt den Watcher-Status.\n\n<em>An Leinwand senden</em> lädt jedes Bild zur Bearbeitung in Studio.",
-  "moduleTour.gallery.live.btn": "Verstanden"
+  "moduleTour.gallery.live.btn": "Verstanden",
+
+  "showme.inpaint.intro.text": "Hier ist eine einfache Szene. Ändern wir einen Teil davon mit <em>Inpainting</em>.\n\nSiehst du die Sonne am Himmel? Wir werden sie durch etwas anderes ersetzen.",
+  "showme.inpaint.intro.btn": "Weiter",
+  "showme.inpaint.mask.text": "Drück <span class=\"cx-kbd\">Q</span>, um in den Maskenmodus zu wechseln. Dein Pinsel malt jetzt eine <em>rote Überlagerung</em> statt Farbe.\n\nMal die Sonne rot an. Es muss nicht präzise sein — einfach abdecken.",
+  "showme.inpaint.mask.btn": "Sonne ist maskiert",
+  "showme.inpaint.prompt.text": "Ein Prompt wurde vorausgefüllt — „a full moon in a night sky“ — aber du kannst ihn ändern, wie du willst. Die KI ändert nur den roten Bereich.",
+  "showme.inpaint.prompt.btn": "Weiter",
+  "showme.inpaint.generate.text": "Drück <em>Generieren</em>. Nur der maskierte Bereich ändert sich — der Rest bleibt unangetastet.\n\nDanach drück <span class=\"cx-kbd\">Q</span>, um den Maskenmodus zu verlassen. Probier verschiedene Denoise-Werte, um zu sehen, wie viel sich ändert.",
+  "showme.inpaint.generate.btn": "Verstanden",
+
+  "showme.softInpaint.intro.text": "Standard-Inpainting hat eine harte Grenze — innerhalb der Maske ändert sich was, außerhalb nicht. <em>Soft Inpainting</em> fügt eine weiche Überblendung an der Grenze hinzu für natürlichere Übergänge.\n\nProbieren wir's. Zuerst drück <span class=\"cx-kbd\">Q</span> und maskier einen Bereich — mal über das Haus.",
+  "showme.softInpaint.intro.btn": "Haus ist maskiert",
+  "showme.softInpaint.enable.text": "Finde <em>Soft Inpainting</em> im Generate-Panel (erscheint, wenn der Maskenmodus aktiv ist). Aktivier die Checkbox.\n\nDu siehst sechs Parameter. Das Wichtigste:\n\n• <strong>Preservation</strong> — wie viel vom Original außerhalb der Maske erhalten bleibt. Höher = weniger Änderung.\n• <strong>Transition Contrast</strong> — wie scharf die Übergangskante ist. Niedriger = weichere Überblendung.",
+  "showme.softInpaint.enable.btn": "Weiter",
+  "showme.softInpaint.generate.text": "Drück <em>Generieren</em> und vergleich das Ergebnis mit Standard-Inpainting (Soft Inpainting deaktivieren und mit derselben Maske neu generieren zum Vergleich).\n\nSoft Inpainting funktioniert am besten mit <em>weichen Masken</em> — nimm einen weichen Pinsel (niedrige Härte) zum Malen der Maske für die beste Überblendung.\n\nDie anderen Parameter (Schedule Bias, Mask Influence, Difference Threshold/Contrast) sind mit Defaults okay, bis du spezifische Kontrolle brauchst.",
+  "showme.softInpaint.generate.btn": "Verstanden",
+
+  "showme.routing.blank.text": "Das ist eine <em>leere Leinwand</em>. Wenn du jetzt Generieren drückst, läuft Studio im <strong>txt2img</strong>-Modus — generiert von Grund auf, nur basierend auf deinem Prompt.\n\nKeine Modus-Auswahl nötig. Der Leinwand-Zustand IST der Modus.",
+  "showme.routing.blank.btn": "Weiter",
+  "showme.routing.content.text": "Jetzt mal etwas auf die Leinwand — irgendwas. Ein Gekritzel, eine Form, ein Farbklecks.\n\nSobald Pixel auf der Leinwand sind, wechselt Generieren automatisch zu <strong>img2img</strong>. Die KI arbeitet <em>mit</em> dem, was da ist. <em>Denoise</em> steuert, wie viel sie ändert.",
+  "showme.routing.content.btn": "Ich habe gemalt",
+  "showme.routing.mask.text": "Jetzt drück <span class=\"cx-kbd\">Q</span>, um in den Maskenmodus zu wechseln. Mal eine rote Überlagerung über einen Teil deines Inhalts.\n\nMit Maske wechselt Generieren zu <strong>Inpainting</strong> — nur der maskierte Bereich ändert sich. Alles andere bleibt unangetastet.\n\nDrei Modi, null Umschalter. Die Pixel entscheiden.",
+  "showme.routing.mask.btn": "Verstanden"
 }
