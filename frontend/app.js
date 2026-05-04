@@ -2257,9 +2257,9 @@ function bindUI() {
     _refreshVRAM();
   });
 
-  // PromptScope: live token counter
-  document.getElementById("paramPrompt")?.addEventListener("input", () => PromptScope.scheduleTokenCount());
-  PromptScope.scheduleTokenCount();
+  // Live token counter
+  document.getElementById("paramPrompt")?.addEventListener("input", () => TokenCounter.scheduleTokenCount());
+  TokenCounter.scheduleTokenCount();
 
   // Output gallery actions
   document.getElementById("outputToCanvas")?.addEventListener("click", () => {
@@ -4899,13 +4899,13 @@ if (new URLSearchParams(window.location.search).has("reset")) {
 }
 
 // ═══════════════════════════════════════════
-// PROMPTSCOPE — TOKEN COUNTER
+// TOKEN COUNTER — live token + BREAK chunk display
 // ═══════════════════════════════════════════
 
-const PromptScope = {
+const TokenCounter = {
   _tokenTimer: null,
 
-  /** Debounced token count — fires 300ms after typing stops */
+  /** Debounced count — fires 300ms after typing stops */
   scheduleTokenCount() {
     clearTimeout(this._tokenTimer);
     this._tokenTimer = setTimeout(() => this.updateTokenCount(), 300);
@@ -4923,25 +4923,35 @@ const PromptScope = {
     }
 
     try {
-      const r = await fetch(API.base + "/studio/promptscope/tokens", {
+      const r = await fetch(API.base + "/studio/tokens", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ prompt }),
       });
       if (!r.ok) return;
       const data = await r.json();
-      const count = Math.max(data.tokens_l, data.tokens_g);
       const chunks = data.chunks || 1;
-      const offline = data.offline ? "~" : "";
 
-      let label = `${offline}${count} tok`;
+      // No model loaded — show chunk count only (honest "tokens unknown" state)
+      if (data.tokens_l === null && data.tokens_g === null) {
+        el.textContent = chunks > 1 ? `${chunks} chunks` : "";
+        el.className = "token-count";
+        return;
+      }
+
+      // CLIP-L only (SD1.5) or CLIP-L+G (SDXL) — use whichever is larger
+      const tL = data.tokens_l ?? 0;
+      const tG = data.tokens_g ?? 0;
+      const count = Math.max(tL, tG);
+
+      let label = `${count} tok`;
       if (chunks > 1) label += ` · ${chunks} chunks`;
 
       el.textContent = label;
       const perChunk = count / chunks;
       el.className = "token-count" + (perChunk > 150 ? " over" : perChunk > 70 ? " warn" : "");
     } catch (_) {
-      // PromptScope not available — fail silently
+      // Endpoint not available — fail silently
     }
   },
 };
