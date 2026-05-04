@@ -1741,6 +1741,49 @@ function _boxBlur(buf, w, h, radius) {
     _boxBlur1D(tmp, buf, w, h, radius, "v");
 }
 
+// Guided filter (He, Sun, Tang 2010). Edge-preserving smoothing of `p` using
+// guidance image `g`. Both single-channel Float32Array of length n. Output
+// written in place to p.
+//
+// Used to refine the transmission map: a plain box blur leaks high-t values
+// from a bright surround into a dark region (e.g. an eclipse disc inside a
+// bright halo), which then amplifies (I-A)/t and lifts blacks toward A. The
+// guided filter respects the luminance edge so the dark region keeps its
+// own t and the recovery degenerates to identity there.
+function _guidedFilter(p, g, w, h, n, radius, eps) {
+    if (radius < 1) return;
+    var meanG = new Float32Array(n);
+    var meanP = new Float32Array(n);
+    var corrG = new Float32Array(n);
+    var corrGP = new Float32Array(n);
+    for (var i = 0; i < n; i++) {
+        var gi = g[i], pi = p[i];
+        meanG[i] = gi;
+        meanP[i] = pi;
+        corrG[i] = gi * gi;
+        corrGP[i] = gi * pi;
+    }
+    _boxBlur(meanG, w, h, radius);
+    _boxBlur(meanP, w, h, radius);
+    _boxBlur(corrG, w, h, radius);
+    _boxBlur(corrGP, w, h, radius);
+    // Reuse corrG/corrGP buffers for a and b coefficients
+    var a = corrGP, b = corrG;
+    for (var i2 = 0; i2 < n; i2++) {
+        var mg = meanG[i2], mp = meanP[i2];
+        var varG = corrG[i2] - mg * mg;
+        var covGP = corrGP[i2] - mg * mp;
+        var ai = covGP / (varG + eps);
+        a[i2] = ai;
+        b[i2] = mp - ai * mg;
+    }
+    _boxBlur(a, w, h, radius);
+    _boxBlur(b, w, h, radius);
+    for (var i3 = 0; i3 < n; i3++) {
+        p[i3] = a[i3] * g[i3] + b[i3];
+    }
+}
+
 function _dehazeIsIdentity(p) { return (p.dehaze | 0) === 0; }
 
 function _applyDehaze(d, n, w, h, p) {
@@ -1751,14 +1794,22 @@ function _applyDehaze(d, n, w, h, p) {
     // Window size: 15 px at 1024x, scale roughly with min dim.
     var winRadius = Math.max(3, Math.round(Math.min(w, h) * 0.0075));
     if (winRadius > 25) winRadius = 25;
-    var blurRadius = Math.max(1, winRadius >> 1);
+    // Guided-filter radius: ~5% of min dim, matching He et al.'s default.
+    // Larger than winRadius so smoothing spans wider neighborhoods, but the
+    // edge-aware coefficient still respects luminance boundaries.
+    var gfRadius = Math.max(8, Math.round(Math.min(w, h) * 0.05));
+    if (gfRadius > 80) gfRadius = 80;
 
-    // ===== Dark channel =====
+    // ===== Dark channel + luminance (single pass) =====
+    // Luminance (BT.601, normalized 0..1) is the guidance signal for the
+    // guided filter on the transmission map.
     var dark = new Float32Array(n);
+    var lum = new Float32Array(n);
     for (var i = 0, m = 0; i < n; i++, m += 4) {
         var r = d[m], g = d[m + 1], b = d[m + 2];
         var mi = r < g ? (r < b ? r : b) : (g < b ? g : b);
         dark[i] = mi / 255;
+        lum[i] = (0.299 * r + 0.587 * g + 0.114 * b) / 255;
     }
     _separableMinFilter(dark, w, h, winRadius);
 
@@ -1811,7 +1862,11 @@ function _applyDehaze(d, n, w, h, p) {
             if (tv < 0.2) tv = 0.2;
             t1[i3] = tv;
         }
-        _boxBlur(t1, w, h, blurRadius);
+        // Edge-aware refinement: guided filter using luminance as guidance.
+        // Replaces the previous box blur, which leaked transmission across
+        // strong luminance edges (e.g. lifted blacks inside an eclipse disc
+        // surrounded by a bright halo).
+        _guidedFilter(t1, lum, w, h, n, gfRadius, 1e-3);
 
         // Recover: J_c = (I_c - A_c)/t + A_c
         for (var i4 = 0, m4 = 0; i4 < n; i4++, m4 += 4) {
