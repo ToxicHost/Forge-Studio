@@ -1,0 +1,9 @@
+/* Forge Studio — Root style.css
+   Required by Forge (auto-loaded into Gradio UI).
+   Studio's actual styles live in frontend/app.css.
+   This file only styles the minimal Gradio redirect tab. */
+
+#forge_studio_tab .gradio-html {
+  display: flex;
+  justify-content: center;
+}

@@ -1,0 +1,102 @@
+/*
+ * Forge Studio — Tour Engine Styles
+ * by ToxicHost & Moritz
+ *
+ * Generic walkthrough styling used by StudioTour.
+ * Education-specific styles (first-run modal, progressive reveal) stay in education.css.
+ */
+
+/* ═══════════════════════════════════════════
+   GUIDE BUBBLE
+   ═══════════════════════════════════════════ */
+
+.st-guide {
+  position: fixed; z-index: 9000; max-width: 380px;
+  background: var(--bg-surface); border: 1px solid var(--accent);
+  border-radius: var(--radius); padding: 16px 18px 14px;
+  box-shadow: 0 4px 24px rgba(0,0,0,0.5), 0 0 0 1px var(--accent-dim);
+  animation: stBubbleIn 0.25s ease;
+}
+
+@keyframes stBubbleIn {
+  from { opacity: 0; transform: translateY(8px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.st-guide-text {
+  font-size: 12px; color: var(--text-1); line-height: 1.65; margin-bottom: 12px;
+}
+.st-guide-text em { color: var(--accent-bright); font-style: normal; font-weight: 500; }
+.st-guide-text code {
+  background: var(--bg-raised); border: 1px solid var(--border-subtle);
+  border-radius: 3px; padding: 1px 5px; font-family: var(--mono); font-size: 10px;
+  color: var(--text-1);
+}
+.st-guide-text a { color: var(--accent-bright); text-decoration: underline; }
+
+.st-guide-actions { display: flex; align-items: center; gap: 8px; }
+
+.st-guide-btn {
+  background: var(--accent); color: #fff; border: none; border-radius: var(--radius-sm);
+  padding: 6px 14px; font-size: 11px; font-weight: 600; font-family: var(--font);
+  cursor: pointer; transition: all 0.12s; text-transform: uppercase; letter-spacing: 0.3px;
+}
+.st-guide-btn:hover { filter: brightness(1.15); }
+
+.st-guide-prev {
+  background: var(--bg-raised); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  color: var(--text-3); font-size: 10px; font-family: var(--font); cursor: pointer;
+  padding: 5px 10px; transition: all 0.12s; text-transform: uppercase; letter-spacing: 0.3px;
+}
+.st-guide-prev:hover { border-color: var(--border-hover); color: var(--text-2); }
+
+.st-guide-skip {
+  background: none; border: none; color: var(--text-4); font-size: 10px;
+  font-family: var(--font); cursor: pointer; padding: 4px 6px;
+  transition: color 0.12s; margin-left: auto;
+}
+.st-guide-skip:hover { color: var(--text-3); }
+
+.st-guide-step { font-size: 9px; color: var(--text-4); font-family: var(--mono); }
+
+
+/* ═══════════════════════════════════════════
+   SPOTLIGHT
+   ═══════════════════════════════════════════ */
+
+.st-spotlight {
+  position: relative; z-index: 10;
+  box-shadow: 0 0 0 2px var(--accent), 0 0 12px var(--accent-dim) !important;
+  border-radius: var(--radius-sm);
+  animation: stPulse 2s ease-in-out infinite;
+}
+
+@keyframes stPulse {
+  0%, 100% { box-shadow: 0 0 0 2px var(--accent), 0 0 12px var(--accent-dim); }
+  50%      { box-shadow: 0 0 0 2px var(--accent), 0 0 20px var(--accent-mid); }
+}
+
+
+/* ═══════════════════════════════════════════
+   KBD INLINE
+   ═══════════════════════════════════════════ */
+
+.st-guide-text .cx-kbd,
+.st-guide-text .st-kbd {
+  display: inline-block; background: var(--bg-raised); border: 1px solid var(--border);
+  border-radius: 3px; padding: 1px 5px; font-family: var(--mono); font-size: 10px;
+  color: var(--text-1); font-weight: 500; min-width: 16px; text-align: center;
+}
+
+
+/* ═══════════════════════════════════════════
+   REDUCED MOTION
+   ═══════════════════════════════════════════ */
+
+[data-motion="reduced"] .st-guide { animation: none !important; }
+[data-motion="reduced"] .st-spotlight { animation: none !important; box-shadow: 0 0 0 2px var(--accent) !important; }
+
+@media (prefers-reduced-motion: reduce) {
+  .st-guide { animation: none !important; }
+  .st-spotlight { animation: none !important; }
+}

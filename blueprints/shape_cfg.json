@@ -1,0 +1,78 @@
+{
+  "version": 1,
+  "match": "shape cfg (run-scoped)",
+  "title": "Shape CFG",
+  "icon": "📐",
+  "description": "Dynamic CFG scale shaping across sampling steps — decay, fractal, spiral, thorn, toxic, grief curves with blending and live preview.",
+  "hooks": "shape_cfg.hooks.js",
+  "layout": [
+    { "arg": 0, "label": "Enable ShapeCFG" },
+    { "arg": 1, "label": "Curve" },
+    { "type": "row", "children": [
+      { "arg": 2, "label": "Floor multiplier" },
+      { "arg": 3, "label": "Ceil multiplier" }
+    ]},
+
+    { "type": "group", "id": "decay", "visible": true, "children": [
+      { "arg": 4, "label": "Decay start" },
+      { "arg": 5, "label": "Decay rate" }
+    ]},
+
+    { "type": "group", "id": "fractal", "visible": false, "children": [
+      { "arg": 6, "label": "Base" },
+      { "arg": 7, "label": "Amplitude" }
+    ]},
+
+    { "type": "group", "id": "spiral", "visible": false, "children": [
+      { "type": "html", "html": "<div class='ext-control' style='color:var(--text-3);font-size:10px;padding:4px 0;font-style:italic;'>Spiral: linear ramp from Floor → Ceil. No additional controls.</div>" }
+    ]},
+
+    { "type": "group", "id": "thorn", "visible": false, "children": [
+      { "arg": 8, "label": "Thorns (spikes)" },
+      { "arg": 9, "label": "Spike strength" },
+      { "arg": 10, "label": "Sharpness (lower = pointier)" },
+      { "arg": 11, "label": "Layout" },
+      { "arg": 12, "label": "Jitter" },
+      { "arg": 13, "label": "Jitter seed" }
+    ]},
+
+    { "type": "group", "id": "toxic", "visible": false, "children": [
+      { "arg": 14, "label": "High" },
+      { "arg": 15, "label": "Low" },
+      { "arg": 16, "label": "Period (steps)" },
+      { "arg": 17, "label": "Smooth" }
+    ]},
+
+    { "type": "group", "id": "grief", "visible": false, "children": [
+      { "type": "html", "html": "<div class='ext-control' style='color:var(--text-3);font-size:10px;padding:2px 0;font-style:italic;'>Damped oscillator — <em>G(t) = A·e<sup>-λt</sup>·sin(ωt + φ) + B</em></div>" },
+      { "arg": 18, "label": "A: Amplitude" },
+      { "arg": 19, "label": "λ: Decay rate" },
+      { "arg": 20, "label": "ω: Frequency" },
+      { "arg": 21, "label": "φ: Phase offset" },
+      { "arg": 22, "label": "B: Baseline" }
+    ]},
+
+    { "type": "accordion", "label": "Curve Blending", "open": false, "children": [
+      { "arg": 23, "label": "Enable Blend" },
+      { "type": "row", "children": [
+        { "arg": 24, "label": "Secondary Curve" },
+        { "arg": 25, "label": "Blend Weight" }
+      ]},
+      { "type": "html", "html": "<div class='ext-control' style='color:var(--text-4);font-size:9px;font-style:italic;'>Secondary uses factory defaults. Try: Thorn + Grief, Decay + Fractal, Toxic + Spiral.</div>" }
+    ]}
+  ],
+
+  "dependencies": [
+    {
+      "trigger": 1,
+      "effects": {
+        "Decay":   { "show_groups": ["decay"],   "hide_groups": ["fractal", "spiral", "thorn", "toxic", "grief"] },
+        "Fractal": { "show_groups": ["fractal"], "hide_groups": ["decay", "spiral", "thorn", "toxic", "grief"] },
+        "Spiral":  { "show_groups": ["spiral"],  "hide_groups": ["decay", "fractal", "thorn", "toxic", "grief"] },
+        "Thorn":   { "show_groups": ["thorn"],   "hide_groups": ["decay", "fractal", "spiral", "toxic", "grief"] },
+        "Toxic":   { "show_groups": ["toxic"],   "hide_groups": ["decay", "fractal", "spiral", "thorn", "grief"] },
+        "Grief":   { "show_groups": ["grief"],   "hide_groups": ["decay", "fractal", "spiral", "thorn", "toxic"] }
+      }
+    }
+  ]
+}

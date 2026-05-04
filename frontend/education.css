@@ -1,0 +1,160 @@
+/*
+ * Forge Studio — Education System Styles
+ * by ToxicHost & Moritz
+ *
+ * First-run modal, progressive reveal, highlight reel, settings.
+ * Tour guide bubble and spotlight styles are in studio-tour.css.
+ */
+
+/* ═══════════════════════════════════════════
+   FIRST-RUN MODAL
+   ═══════════════════════════════════════════ */
+
+.edu-modal-overlay {
+  position: fixed; inset: 0; z-index: 9999;
+  background: rgba(5, 5, 8, 0.92); display: flex;
+  align-items: center; justify-content: center;
+  backdrop-filter: blur(8px); animation: eduFadeIn 0.3s ease;
+}
+@keyframes eduFadeIn { from { opacity: 0; } to { opacity: 1; } }
+
+.edu-modal {
+  width: 560px; max-width: 90vw; background: var(--bg-surface);
+  border: 1px solid var(--border); border-radius: var(--radius-lg);
+  padding: 32px 28px 24px; animation: eduSlideUp 0.3s ease;
+}
+@keyframes eduSlideUp {
+  from { opacity: 0; transform: translateY(16px); }
+  to   { opacity: 1; transform: translateY(0); }
+}
+
+.edu-modal-brand { text-align: center; margin-bottom: 6px; }
+.edu-modal-brand em { font-size: 13px; font-style: normal; color: var(--text-2); letter-spacing: 2px; font-weight: 300; }
+.edu-modal-brand .edu-brand-studio { font-weight: 600; color: var(--text-1); }
+.edu-modal-subtitle { text-align: center; font-size: 11px; color: var(--text-4); margin-bottom: 24px; }
+
+.edu-cards { display: flex; flex-direction: column; gap: 8px; }
+
+.edu-card {
+  display: flex; align-items: flex-start; gap: 14px; padding: 14px 16px;
+  background: var(--bg-raised); border: 1px solid var(--border);
+  border-radius: var(--radius); cursor: pointer; transition: all 0.12s;
+}
+.edu-card:hover { border-color: var(--accent); background: var(--accent-dim); }
+.edu-card:active { transform: scale(0.99); }
+
+.edu-card-icon { font-size: 20px; line-height: 1; flex-shrink: 0; margin-top: 1px; }
+.edu-card-body { flex: 1; min-width: 0; }
+.edu-card-title { font-size: 12px; font-weight: 600; color: var(--text-1); margin-bottom: 3px; }
+.edu-card-desc { font-size: 10px; color: var(--text-3); line-height: 1.5; }
+
+.edu-skip-link {
+  display: block; text-align: center; margin-top: 16px; font-size: 10px;
+  color: var(--text-4); cursor: pointer; transition: color 0.12s;
+  background: none; border: none; font-family: var(--font);
+}
+.edu-skip-link:hover { color: var(--text-3); }
+
+
+/* ═══════════════════════════════════════════
+   GUIDED MODE — PROGRESSIVE REVEAL
+   ═══════════════════════════════════════════ */
+
+/* Settings tab always accessible — only generation chrome is dimmed */
+.edu-guided .toolstrip,
+.edu-guided .statusbar {
+  opacity: 0.15; pointer-events: none; transition: opacity 0.3s;
+}
+
+.edu-guided #page-generate .collapse-section,
+.edu-guided #regionSection, .edu-guided #softInpaintSection,
+.edu-guided #outputSection, .edu-guided .context-bar,
+.edu-guided .brush-presets, .edu-guided #dynamicsPanel,
+.edu-guided #page-generate .section-header,
+.edu-guided #layersList, .edu-guided #historyList { display: none !important; }
+
+.edu-guided #page-generate .param-section { display: none !important; }
+.edu-guided .prompt-section { display: block !important; }
+.edu-guided .gen-actions { display: flex !important; }
+
+/* Progressive reveal */
+.edu-show-output #outputSection { display: block !important; }
+.edu-show-sampling .collapse-section:has(#panelSampling) { display: block !important; }
+.edu-show-sampling #eduSamplingSection { display: block !important; }
+.edu-show-canvas .collapse-section:has(#panelCanvas) { display: block !important; }
+.edu-show-canvas #eduCanvasSection { display: block !important; }
+.edu-show-seed .collapse-section:has(#panelSeedBatch) { display: block !important; }
+.edu-show-seed #eduSeedSection { display: block !important; }
+.edu-show-tools .toolstrip { opacity: 1 !important; pointer-events: auto !important; }
+.edu-show-tools .context-bar { display: flex !important; }
+.edu-show-tools .brush-presets { display: flex !important; }
+.edu-show-layers #page-generate .section-header,
+.edu-show-layers #layersList { display: flex !important; }
+.edu-show-layers #layersList { display: block !important; }
+.edu-show-model #page-generate .param-section { display: block !important; }
+.edu-show-chrome .statusbar { opacity: 1 !important; pointer-events: auto !important; }
+.edu-show-inpaint .context-bar.inpaint-bar { display: flex !important; }
+
+/* Reveal HiRes Fix section */
+.edu-show-hires .collapse-section:has(#panelHires) { display: block !important; }
+.edu-show-hires #eduHiresSection { display: block !important; }
+
+/* Reveal ADetailer section */
+.edu-show-adetailer .collapse-section:has(#panelAD) { display: block !important; }
+.edu-show-adetailer #eduADetailerSection { display: block !important; }
+
+
+/* ═══════════════════════════════════════════
+   HIGHLIGHT REEL
+   ═══════════════════════════════════════════ */
+
+.edu-reel-overlay {
+  position: fixed; inset: 0; z-index: 9998; background: rgba(5,5,8,0.85);
+  display: flex; align-items: center; justify-content: center;
+  backdrop-filter: blur(4px); animation: eduFadeIn 0.3s ease;
+}
+.edu-reel {
+  width: 520px; max-width: 90vw; max-height: 80vh; background: var(--bg-surface);
+  border: 1px solid var(--border); border-radius: var(--radius-lg);
+  overflow: hidden; display: flex; flex-direction: column; animation: eduSlideUp 0.3s ease;
+}
+.edu-reel-header { padding: 20px 24px 12px; border-bottom: 1px solid var(--border); }
+.edu-reel-title { font-size: 13px; font-weight: 600; color: var(--text-1); margin-bottom: 3px; }
+.edu-reel-sub { font-size: 10px; color: var(--text-4); }
+.edu-reel-body { flex: 1; overflow-y: auto; padding: 16px 24px 24px; }
+.edu-feature { padding: 12px 0; border-bottom: 1px solid var(--border-subtle); }
+.edu-feature:last-child { border-bottom: none; }
+.edu-feature-name { font-size: 11px; font-weight: 600; color: var(--accent-bright); text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+.edu-feature-desc { font-size: 11px; color: var(--text-2); line-height: 1.6; }
+.edu-reel-footer { padding: 12px 24px; border-top: 1px solid var(--border); display: flex; justify-content: flex-end; }
+.edu-reel-close {
+  background: var(--accent); color: #fff; border: none; border-radius: var(--radius-sm);
+  padding: 8px 20px; font-size: 11px; font-weight: 600; font-family: var(--font);
+  cursor: pointer; text-transform: uppercase; letter-spacing: 0.3px; transition: all 0.12s;
+}
+.edu-reel-close:hover { filter: brightness(1.15); }
+
+
+/* ═══════════════════════════════════════════
+   SETTINGS
+   ═══════════════════════════════════════════ */
+
+.edu-settings-row { display: flex; align-items: center; justify-content: space-between; padding: 6px 0; }
+.edu-reset-btn {
+  background: var(--bg-raised); border: 1px solid var(--border); border-radius: var(--radius-sm);
+  color: var(--text-3); font-size: 10px; font-family: var(--font); padding: 5px 10px;
+  cursor: pointer; transition: all 0.12s;
+}
+.edu-reset-btn:hover { border-color: var(--border-hover); color: var(--text-2); }
+
+
+/* ═══════════════════════════════════════════
+   REDUCED MOTION
+   ═══════════════════════════════════════════ */
+
+[data-motion="reduced"] .edu-modal, [data-motion="reduced"] .edu-modal-overlay,
+[data-motion="reduced"] .edu-reel, [data-motion="reduced"] .edu-reel-overlay { animation: none !important; }
+
+@media (prefers-reduced-motion: reduce) {
+  .edu-modal, .edu-modal-overlay, .edu-reel, .edu-reel-overlay { animation: none !important; }
+}

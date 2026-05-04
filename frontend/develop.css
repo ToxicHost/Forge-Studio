@@ -1,0 +1,787 @@
+/**
+ * Forge Studio — Develop module
+ * Sidebar panel, slider rows, histogram, before/after split overlay.
+ * All sizing/colors come from app.css custom properties so themes apply.
+ */
+
+/* ═══════════════════════════════════════════
+   PANEL CONTAINER
+   ═══════════════════════════════════════════ */
+
+.develop-panel {
+  position: fixed;
+  top: 38px;            /* matches .titlebar height */
+  right: 0;
+  bottom: 0;
+  width: 320px;
+  z-index: 50;
+  background: var(--bg-surface);
+  border-left: 1px solid var(--border);
+  display: none;
+  flex-direction: column;
+  font-family: var(--font);
+  color: var(--text-1);
+  user-select: none;
+}
+
+.develop-panel.visible { display: flex; }
+
+/* When Develop is active, hide the generation right panel so the two
+   sidebars don't stack. The brush tools are gated off by a check in
+   canvas-ui's pointerdown handler — here we just give the canvas a
+   high-contrast white-fill + black-stroke arrow cursor so it stays
+   visible against the bg-void color (which is near-black on dark
+   themes and was making the system default cursor effectively
+   invisible). */
+body.develop-active #panelRight,
+body.develop-active #toolstrip,
+body.develop-active #ctxBarWrap,
+body.develop-active #inpaintBar,
+body.develop-active #hsvPopup { display: none !important; }
+body.develop-active #canvasArea canvas {
+    cursor: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='22' height='22' viewBox='0 0 22 22'%3E%3Cpath d='M3 2 L3 17 L7 13 L10 18 L12 17 L9 12 L15 12 Z' fill='%23ffffff' stroke='%23000000' stroke-width='1.5' stroke-linejoin='round'/%3E%3C/svg%3E") 3 2, default;
+}
+
+.develop-panel-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  flex-shrink: 0;
+  background: var(--bg-surface);
+}
+
+.develop-panel-title {
+  font-size: 12px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  color: var(--text-1);
+  text-transform: uppercase;
+  flex: 1;
+}
+
+.develop-panel-body {
+  flex: 1;
+  overflow-y: auto;
+  overflow-x: hidden;
+  padding: 6px 0;
+}
+
+/* ═══════════════════════════════════════════
+   HEADER CONTROLS
+   ═══════════════════════════════════════════ */
+
+.develop-toggle {
+  position: relative;
+  width: 32px;
+  height: 16px;
+  border-radius: 8px;
+  border: 1px solid var(--border);
+  background: var(--bg-raised);
+  cursor: pointer;
+  flex-shrink: 0;
+  padding: 0;
+}
+.develop-toggle::after {
+  content: "";
+  position: absolute;
+  top: 1px; left: 1px;
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  background: var(--text-3);
+  transition: transform 0.15s ease, background 0.15s ease;
+}
+.develop-toggle.on {
+  background: var(--accent);
+  border-color: var(--accent);
+}
+.develop-toggle.on::after {
+  transform: translateX(16px);
+  background: var(--bg-surface);
+}
+
+.develop-header-btn {
+  font-size: 10px;
+  padding: 3px 8px;
+  background: var(--bg-raised);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  cursor: pointer;
+  font-family: var(--font);
+}
+.develop-header-btn:hover { color: var(--accent); border-color: var(--accent); }
+.develop-header-btn.active { color: var(--accent); border-color: var(--accent); background: var(--accent-dim, rgba(124,58,237,0.18)); }
+
+.develop-hp-badge {
+  font-size: 9px;
+  font-weight: 600;
+  letter-spacing: 0.5px;
+  padding: 2px 5px;
+  margin: 0 4px;
+  color: var(--accent, #7c3aed);
+  background: var(--accent-dim, rgba(124,58,237,0.18));
+  border: 1px solid var(--accent, #7c3aed);
+  border-radius: 3px;
+  font-family: var(--mono, monospace);
+  user-select: none;
+}
+
+/* ═══════════════════════════════════════════
+   HISTOGRAM
+   ═══════════════════════════════════════════ */
+
+.develop-histogram-wrap {
+  position: relative;
+  padding: 8px 12px;
+  border-bottom: 1px solid var(--border);
+}
+.develop-histogram-canvas {
+  display: block;
+  width: 100%;
+  height: 60px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+}
+
+/* Clipping indicators — corner triangles that light up colored when any
+   channel clips at black (left) or white (right). Inactive: dim and grey.
+   Active: filled with the additive mix of clipped channels (R+G=yellow,
+   R+G+B=white, etc.). Per the maintainer's request — Moritz wanted a
+   visible warning when a slider was pushing pixels into clipping. */
+.develop-hist-clip {
+  position: absolute;
+  top: 11px;
+  width: 0; height: 0;
+  border-style: solid;
+  background: transparent;
+  padding: 0;
+  cursor: help;
+  opacity: 0.3;
+  transition: opacity 0.12s ease;
+  z-index: 2;
+}
+.develop-hist-clip-l {
+  left: 13px;
+  border-width: 8px 0 0 8px;
+  border-color: transparent transparent transparent currentColor;
+  color: var(--text-3);
+}
+.develop-hist-clip-r {
+  right: 13px;
+  border-width: 0 8px 8px 0;
+  border-color: transparent currentColor transparent transparent;
+  color: var(--text-3);
+}
+.develop-hist-clip.clipping {
+  opacity: 1;
+  filter: drop-shadow(0 0 3px currentColor);
+}
+
+/* ═══════════════════════════════════════════
+   COLLAPSIBLE SECTIONS
+   ═══════════════════════════════════════════ */
+
+.develop-section {
+  border-bottom: 1px solid var(--border);
+}
+.develop-section-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  padding: 8px 12px;
+  cursor: pointer;
+  font-size: 11px;
+  font-weight: 600;
+  color: var(--text-2);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+  background: var(--bg-surface);
+}
+.develop-section-header:hover { color: var(--text-1); }
+.develop-section-arrow {
+  display: inline-block;
+  font-size: 9px;
+  color: var(--text-3);
+  width: 8px;
+  transition: transform 0.15s ease;
+}
+.develop-section.collapsed .develop-section-arrow { transform: rotate(-90deg); }
+.develop-section.collapsed .develop-section-body { display: none; }
+
+.develop-section-body {
+  padding: 4px 12px 8px 12px;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+}
+
+.develop-section-divider {
+  height: 1px;
+  background: var(--border);
+  margin: 4px -12px;
+  opacity: 0.5;
+}
+
+/* ═══════════════════════════════════════════
+   SLIDER ROW
+   ═══════════════════════════════════════════ */
+
+.develop-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+}
+.develop-row-label {
+  font-size: 10px;
+  color: var(--text-3);
+  width: 80px;
+  flex-shrink: 0;
+  cursor: pointer;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.develop-row-label:hover { color: var(--accent); }
+.develop-row input[type="range"] {
+  flex: 1;
+  min-width: 60px;
+  height: 14px;
+  margin: 0;
+  background: transparent;
+  -webkit-appearance: none;
+  appearance: none;
+  cursor: pointer;
+}
+.develop-row input[type="range"]::-webkit-slider-runnable-track {
+  height: 3px;
+  background: var(--border);
+  border-radius: 1px;
+}
+.develop-row input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 12px; height: 12px;
+  border-radius: 50%;
+  background: var(--accent);
+  margin-top: -4.5px;
+  cursor: pointer;
+  border: 1px solid var(--bg-surface);
+}
+.develop-row input[type="range"]::-moz-range-track {
+  height: 3px;
+  background: var(--border);
+  border-radius: 1px;
+  border: none;
+}
+.develop-row input[type="range"]::-moz-range-thumb {
+  width: 11px; height: 11px;
+  border-radius: 50%;
+  background: var(--accent);
+  cursor: pointer;
+  border: 1px solid var(--bg-surface);
+}
+.develop-row input[type="number"] {
+  width: 44px;
+  height: 18px;
+  font-size: 10px;
+  font-family: var(--mono);
+  color: var(--text-1);
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 0 4px;
+  text-align: right;
+  flex-shrink: 0;
+}
+.develop-row input[type="number"]::-webkit-inner-spin-button,
+.develop-row input[type="number"]::-webkit-outer-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+
+/* Highlight rows whose value differs from identity */
+.develop-row.modified .develop-row-label {
+  color: var(--text-1);
+  font-weight: 500;
+}
+
+/* Eyedropper button — used by the dedicated calibration block at the top
+   of the Calibrate section (no longer attached to sliders). .armed shows
+   the selection state while waiting for a canvas click. .calibrated shows
+   that the calibration for this mode is currently set. */
+.develop-eyedrop {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  background: var(--bg-raised);
+  color: var(--text-3);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  cursor: pointer;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+}
+.develop-eyedrop:hover { color: var(--accent); border-color: var(--accent); }
+.develop-eyedrop.armed {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-dim, rgba(124,58,237,0.18));
+}
+.develop-eyedrop.calibrated {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* ═══════════════════════════════════════════
+   CALIBRATION BLOCK
+   Dedicated WB / White / Black eyedroppers at the top of the Calibrate
+   section. Each row is pick button + label + status text + clear "×"
+   button. Rows highlight when their calibration is currently set.
+   ═══════════════════════════════════════════ */
+.develop-calib-block {
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  padding: 4px 0 6px 0;
+  margin-bottom: 4px;
+  border-bottom: 1px dashed var(--border);
+}
+.develop-calib-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  height: 22px;
+}
+.develop-calib-label {
+  font-size: 10px;
+  color: var(--text-3);
+  flex: 1;
+  cursor: default;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+.develop-calib-row.calibrated .develop-calib-label {
+  color: var(--text-1);
+  font-weight: 500;
+}
+.develop-calib-status {
+  font-size: 9px;
+  font-family: var(--mono, monospace);
+  color: var(--text-3);
+  min-width: 22px;
+  text-align: right;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+}
+.develop-calib-row.calibrated .develop-calib-status {
+  color: var(--accent);
+}
+.develop-calib-clear {
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+  background: transparent;
+  color: var(--text-3);
+  border: 1px solid transparent;
+  border-radius: 3px;
+  cursor: pointer;
+  font-size: 14px;
+  line-height: 1;
+  padding: 0;
+  visibility: hidden;
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+}
+.develop-calib-row.calibrated .develop-calib-clear {
+  visibility: visible;
+}
+.develop-calib-clear:hover {
+  color: var(--accent);
+  border-color: var(--accent);
+}
+
+/* Live RGB readout shown next to the cursor while a calibration pick is
+   armed. Lets the user verify which pixel they're about to commit
+   before clicking. */
+.develop-pick-tooltip {
+  position: fixed;
+  z-index: 99999;
+  pointer-events: none;
+  background: rgba(20, 20, 20, 0.92);
+  color: #f0f0f0;
+  border: 1px solid rgba(255, 255, 255, 0.18);
+  border-radius: 4px;
+  padding: 4px 8px;
+  font: 11px/1.2 var(--mono, ui-monospace, monospace);
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+  box-shadow: 0 2px 8px rgba(0, 0, 0, 0.6);
+}
+
+/* Gradient slider tracks for Temperature (blue→yellow) and Tint
+   (green→magenta) — visual cue matching Lightroom / Camera Raw, so the
+   slider direction is obvious without reading the label. */
+.develop-row[data-track="temperature"] input[type="range"]::-webkit-slider-runnable-track {
+  background: linear-gradient(to right, #4a90e2 0%, #7ea8c4 35%, #b3a585 60%, #ffd060 100%);
+}
+.develop-row[data-track="temperature"] input[type="range"]::-moz-range-track {
+  background: linear-gradient(to right, #4a90e2 0%, #7ea8c4 35%, #b3a585 60%, #ffd060 100%);
+}
+.develop-row[data-track="tint"] input[type="range"]::-webkit-slider-runnable-track {
+  background: linear-gradient(to right, #50c878 0%, #888 50%, #c850a0 100%);
+}
+.develop-row[data-track="tint"] input[type="range"]::-moz-range-track {
+  background: linear-gradient(to right, #50c878 0%, #888 50%, #c850a0 100%);
+}
+
+/* Color Calibration tracks. Hue sliders show direction-of-rotation in the
+   primary's local color neighborhood; Saturation sliders show gray→vivid
+   in the primary's color. Same desaturated palette as Temperature / Tint
+   above so the panel reads coherently. */
+.develop-row[data-track="shadowTint"] input[type="range"]::-webkit-slider-runnable-track {
+  background: linear-gradient(to right, #50c878 0%, #888 50%, #c850a0 100%);
+}
+.develop-row[data-track="shadowTint"] input[type="range"]::-moz-range-track {
+  background: linear-gradient(to right, #50c878 0%, #888 50%, #c850a0 100%);
+}
+.develop-row[data-track="redHue"] input[type="range"]::-webkit-slider-runnable-track {
+  background: linear-gradient(to right, #c850a0 0%, #d24747 50%, #d68a3a 100%);
+}
+.develop-row[data-track="redHue"] input[type="range"]::-moz-range-track {
+  background: linear-gradient(to right, #c850a0 0%, #d24747 50%, #d68a3a 100%);
+}
+.develop-row[data-track="redSat"] input[type="range"]::-webkit-slider-runnable-track {
+  background: linear-gradient(to right, #888 0%, #b06a6a 50%, #d92020 100%);
+}
+.develop-row[data-track="redSat"] input[type="range"]::-moz-range-track {
+  background: linear-gradient(to right, #888 0%, #b06a6a 50%, #d92020 100%);
+}
+.develop-row[data-track="greenHue"] input[type="range"]::-webkit-slider-runnable-track {
+  background: linear-gradient(to right, #3aa8a8 0%, #50c878 50%, #c8c050 100%);
+}
+.develop-row[data-track="greenHue"] input[type="range"]::-moz-range-track {
+  background: linear-gradient(to right, #3aa8a8 0%, #50c878 50%, #c8c050 100%);
+}
+.develop-row[data-track="greenSat"] input[type="range"]::-webkit-slider-runnable-track {
+  background: linear-gradient(to right, #888 0%, #6da06d 50%, #20c020 100%);
+}
+.develop-row[data-track="greenSat"] input[type="range"]::-moz-range-track {
+  background: linear-gradient(to right, #888 0%, #6da06d 50%, #20c020 100%);
+}
+.develop-row[data-track="blueHue"] input[type="range"]::-webkit-slider-runnable-track {
+  background: linear-gradient(to right, #3ac8c8 0%, #4a90e2 50%, #8050c0 100%);
+}
+.develop-row[data-track="blueHue"] input[type="range"]::-moz-range-track {
+  background: linear-gradient(to right, #3ac8c8 0%, #4a90e2 50%, #8050c0 100%);
+}
+.develop-row[data-track="blueSat"] input[type="range"]::-webkit-slider-runnable-track {
+  background: linear-gradient(to right, #888 0%, #6a85b0 50%, #2050d9 100%);
+}
+.develop-row[data-track="blueSat"] input[type="range"]::-moz-range-track {
+  background: linear-gradient(to right, #888 0%, #6a85b0 50%, #2050d9 100%);
+}
+
+/* Sub-section heading inside a section body — used by Color Calibration to
+   group its seven sliders into "Shadows" / "Red Primary" / "Green Primary"
+   / "Blue Primary". The optional data-color attribute tints the heading
+   text in the primary's color so each group is visually self-identifying.
+   Reuses develop-section-divider's spacing logic above and below. */
+.develop-section-heading {
+  font-size: 10px;
+  font-weight: 600;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--text-3);
+  padding: 6px 0 2px 0;
+  margin-top: 2px;
+  user-select: none;
+}
+.develop-section-heading[data-color="red"]   { color: #d24747; }
+.develop-section-heading[data-color="green"] { color: #50c878; }
+.develop-section-heading[data-color="blue"]  { color: #4a90e2; }
+
+/* ═══════════════════════════════════════════
+   V2 — TONE CURVE
+   ═══════════════════════════════════════════ */
+
+.develop-tc-mode-tabs {
+  display: flex;
+  gap: 4px;
+  margin-bottom: 6px;
+}
+.develop-tc-mode-tabs button {
+  flex: 1;
+  font-size: 10px;
+  padding: 3px 6px;
+  background: var(--bg-raised);
+  color: var(--text-3);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  cursor: pointer;
+  font-family: var(--font);
+}
+.develop-tc-mode-tabs button.active {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-dim, rgba(124,58,237,0.18));
+}
+
+.develop-tc-param-wrap, .develop-tc-point-wrap {
+  display: flex; flex-direction: column; gap: 2px;
+}
+
+/* Split-marker strip below the four parametric sliders */
+.develop-tc-split-strip {
+  display: block;
+  width: 100%;
+  height: 22px;
+  margin-top: 6px;
+  cursor: ew-resize;
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  background: var(--bg-raised);
+}
+
+/* Point-curve editor canvas */
+.develop-tone-curve-canvas {
+  display: block;
+  width: 100%;
+  height: 180px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  cursor: crosshair;
+}
+
+/* Channel selector buttons under the curve */
+.develop-tc-channel-row {
+  display: flex; gap: 4px; margin-top: 6px;
+}
+.develop-tc-channel-btn {
+  flex: 1;
+  font-size: 10px;
+  padding: 3px 6px;
+  background: var(--bg-raised);
+  color: var(--text-3);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  cursor: pointer;
+  font-family: var(--mono);
+}
+.develop-tc-channel-btn.active { background: var(--accent-dim, rgba(124,58,237,0.18)); }
+.develop-tc-channel-r.active { color: #e24b4a; border-color: #e24b4a; }
+.develop-tc-channel-g.active { color: #5dca85; border-color: #5dca85; }
+.develop-tc-channel-b.active { color: #5da3e2; border-color: #5da3e2; }
+.develop-tc-channel-rgb.active { color: var(--accent); border-color: var(--accent); }
+
+/* ═══════════════════════════════════════════
+   V2 — HSL / COLOR MIXER
+   ═══════════════════════════════════════════ */
+
+.develop-hsl-tabs {
+  display: flex; gap: 4px; margin-bottom: 6px;
+}
+.develop-hsl-tabs button {
+  flex: 1;
+  font-size: 10px;
+  padding: 3px 6px;
+  background: var(--bg-raised);
+  color: var(--text-3);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  cursor: pointer;
+  font-family: var(--font);
+}
+.develop-hsl-tabs button.active {
+  color: var(--accent); border-color: var(--accent);
+  background: var(--accent-dim, rgba(124,58,237,0.18));
+}
+
+/* Only one HSL tab body is visible at a time (controlled by inline display) */
+.develop-hsl-tab-body {
+  display: flex; flex-direction: column; gap: 2px;
+}
+
+.develop-hsl-row .develop-row-label { width: 60px; }
+.develop-hsl-band-swatch {
+  display: inline-block;
+  width: 8px; height: 8px;
+  border-radius: 50%;
+  margin-right: 4px;
+  flex-shrink: 0;
+  border: 1px solid rgba(0,0,0,0.4);
+}
+
+/* ═══════════════════════════════════════════
+   V2 — COLOR GRADING
+   ═══════════════════════════════════════════ */
+
+.develop-cg-grid {
+  display: grid;
+  /* minmax(0, 1fr) keeps wide children (lum-row range + number input) from
+     pushing the track past the section width when the body scrollbar is
+     present, which was clipping the right-column wheels off-panel. */
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.develop-cg-wheel-wrap {
+  display: flex; flex-direction: column; align-items: center; gap: 4px;
+  min-width: 0;
+  overflow: hidden;
+}
+.develop-cg-wheel-label {
+  font-size: 10px;
+  color: var(--text-3);
+  text-transform: uppercase;
+  letter-spacing: 0.05em;
+}
+.develop-cg-wheel {
+  display: block;
+  width: 70px; height: 70px;
+  border-radius: 50%;
+  cursor: crosshair;
+  background: var(--bg-raised);
+}
+.develop-cg-lum {
+  display: flex; gap: 4px; align-items: center;
+  width: 100%;
+}
+.develop-cg-lum input[type="range"] {
+  flex: 1; height: 12px; margin: 0;
+  -webkit-appearance: none; appearance: none;
+  background: transparent;
+  cursor: pointer;
+}
+.develop-cg-lum input[type="range"]::-webkit-slider-runnable-track {
+  height: 3px;
+  background: linear-gradient(to right, #000 0%, #888 50%, #fff 100%);
+  border-radius: 1px;
+}
+.develop-cg-lum input[type="range"]::-moz-range-track {
+  height: 3px;
+  background: linear-gradient(to right, #000 0%, #888 50%, #fff 100%);
+  border-radius: 1px; border: none;
+}
+.develop-cg-lum input[type="range"]::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  width: 10px; height: 10px; border-radius: 50%;
+  background: var(--accent);
+  margin-top: -3.5px;
+  border: 1px solid var(--bg-surface);
+}
+.develop-cg-lum input[type="number"] {
+  width: 36px; height: 16px;
+  font-size: 9px; font-family: var(--mono);
+  color: var(--text-1);
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 2px;
+  padding: 0 3px;
+  text-align: right;
+}
+
+/* ═══════════════════════════════════════════
+   V2 — PROCESSING-STATE INDICATOR (Dehaze, NR)
+   Heavy-op rows pulse during the full-resolution pass after slider release
+   so the user knows it's working, not frozen. The class is added pre-RAF
+   and removed post-redraw by _markHeavyRowsProcessing.
+   ═══════════════════════════════════════════ */
+@keyframes develop-row-processing {
+  0%, 100% { box-shadow: inset 0 0 0 1px rgba(124,58,237,0.0); }
+  50%      { box-shadow: inset 0 0 0 1px rgba(124,58,237,0.55); }
+}
+.develop-row.processing {
+  animation: develop-row-processing 0.7s ease-in-out infinite;
+  border-radius: 3px;
+}
+.develop-row.processing input[type="number"] {
+  opacity: 0.55;
+}
+
+/* ═══════════════════════════════════════════
+   PRESETS
+   ═══════════════════════════════════════════ */
+
+.develop-presets-row {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.develop-presets-select {
+  flex: 1;
+  font-size: 11px;
+  font-family: var(--font);
+  background: var(--bg-raised);
+  color: var(--text-1);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  padding: 3px 6px;
+  height: 22px;
+}
+.develop-preset-save {
+  font-size: 10px;
+  padding: 3px 8px;
+  background: var(--bg-raised);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  cursor: pointer;
+}
+.develop-preset-save:hover { color: var(--accent); border-color: var(--accent); }
+
+/* ═══════════════════════════════════════════
+   BEFORE/AFTER SPLIT OVERLAY
+   ═══════════════════════════════════════════ */
+
+.develop-split-line {
+  position: fixed;
+  top: 0;
+  bottom: 0;
+  width: 2px;
+  background: var(--accent, #fff);
+  cursor: ew-resize;
+  z-index: 49;
+  display: none;
+  pointer-events: auto;
+  opacity: 0.85;
+}
+.develop-split-line.visible { display: block; }
+.develop-split-line::before,
+.develop-split-line::after {
+  content: "";
+  position: absolute;
+  left: 50%;
+  width: 14px;
+  height: 14px;
+  border-radius: 50%;
+  background: var(--accent, #fff);
+  transform: translate(-50%, -50%);
+  border: 2px solid var(--bg-surface);
+}
+.develop-split-line::before { top: 50%; }
+.develop-split-line::after { display: none; }
+
+.develop-split-label {
+  position: fixed;
+  top: 48px;
+  z-index: 49;
+  font-size: 10px;
+  font-family: var(--mono);
+  color: var(--text-1);
+  background: rgba(0,0,0,0.5);
+  padding: 2px 6px;
+  border-radius: 3px;
+  display: none;
+  pointer-events: none;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+}
+.develop-split-label.visible { display: block; }
