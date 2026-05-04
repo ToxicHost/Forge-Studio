@@ -3757,7 +3757,14 @@ function _initScrubLabels() {
         const max = +(el.dataset.max || 100);
         const step = +(el.dataset.step || 1);
         const suffix = el.dataset.suffix || "";
-        const label = el.dataset.label || (key.charAt(0).toUpperCase() + key.slice(1));
+        // Resolve label through I18N each time so drag/edit keep the locale
+        // version. Pre-resolving once captures whatever was active at handler
+        // setup, which is fine for initial render but reverts to English the
+        // moment we re-write textContent during drag/edit.
+        const getLabel = () => {
+            const eng = el.dataset.label || (key.charAt(0).toUpperCase() + key.slice(1));
+            return (window.I18N && window.I18N.t) ? window.I18N.t("ctxBar.scrub." + key, eng) : eng;
+        };
 
         let dragStartX = 0, dragStartVal = 0, dragged = false;
 
@@ -3781,7 +3788,7 @@ function _initScrubLabels() {
             let v = dragStartVal + Math.round(dx * sensitivity / step) * step;
             v = Math.max(min, Math.min(max, v));
             m.set(v);
-            el.textContent = label + ": " + v + suffix;
+            el.textContent = getLabel() + ": " + v + suffix;
         });
 
         el.addEventListener("pointerup", e => {
@@ -3792,7 +3799,7 @@ function _initScrubLabels() {
             if (!dragged) {
                 // Click — enter text editing mode
                 const current = m.get();
-                el.textContent = label + ": ";
+                el.textContent = getLabel() + ": ";
                 const input = document.createElement("input");
                 input.type = "text";
                 input.value = current;
