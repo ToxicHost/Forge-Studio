@@ -5,12 +5,17 @@ No external extension dependencies. Walks Forge's loaded model to find
 CLIP-L/G tokenizers, splits the prompt on BREAK boundaries, and returns
 total token counts per encoder plus the chunk count.
 
+Falls back to a model-independent CLIP-L tokenizer (loaded from the
+HuggingFace cache or fetched once) when no Forge model is loaded yet,
+so the counter shows real numbers from the moment Studio opens.
+
 Endpoint:  POST /studio/tokens
 Request:   {"prompt": str}
 Response:  {
-    "tokens_l": int | None,   # None if no model loaded
+    "tokens_l": int | None,   # None if neither model nor offline tokenizer available
     "tokens_g": int | None,
     "chunks":   int,          # always >= 1
+    "offline":  bool,         # true when counts came from the offline fallback
 }
 """
 
@@ -21,6 +26,14 @@ from fastapi import FastAPI
 
 TAG = "[Studio][Tokens]"
 _BREAK_RE = re.compile(r"\bBREAK\b", re.IGNORECASE)
+
+# Offline tokenizer state (loaded lazily, retained for the process lifetime).
+# CLIP-L's BPE vocab is universal across SD 1.5 / SDXL / Flux — one tokenizer
+# covers ~all checkpoints. SDXL also has CLIP-G with a slightly different
+# tokenizer, but the token counts come out within ~1 token of CLIP-L for
+# almost any prompt, so we use the L tokenizer for both encoders offline.
+_offline_tokenizer = None
+_offline_load_failed = False
 
 
 # --------------------------------------------------------------------------
@@ -81,6 +94,35 @@ def _get_tokenizers() -> Tuple[Optional[Callable], Optional[Callable]]:
 
 
 # --------------------------------------------------------------------------
+# Offline fallback — CLIP-L tokenizer from HuggingFace cache
+# --------------------------------------------------------------------------
+
+def _get_offline_tokenizer() -> Optional[Callable]:
+    """Return a CLIP-L tokenizer loaded independently of Forge's model state.
+
+    Uses ``transformers.CLIPTokenizer.from_pretrained("openai/clip-vit-large-patch14")``,
+    which reads from HuggingFace's local cache or fetches once on first call.
+    Result is memoized for the process lifetime; if loading fails (no network
+    on first run, transformers missing, etc.) the failure is also memoized so
+    we don't retry on every keystroke.
+    """
+    global _offline_tokenizer, _offline_load_failed
+    if _offline_tokenizer is not None:
+        return _offline_tokenizer
+    if _offline_load_failed:
+        return None
+    try:
+        from transformers import CLIPTokenizer
+        _offline_tokenizer = CLIPTokenizer.from_pretrained("openai/clip-vit-large-patch14")
+        print(f"{TAG} Offline CLIP-L tokenizer loaded — counter works without checkpoint")
+        return _offline_tokenizer
+    except Exception as e:
+        _offline_load_failed = True
+        print(f"{TAG} Offline tokenizer unavailable ({type(e).__name__}: {e}) — counter shows chunks only when no model loaded")
+        return None
+
+
+# --------------------------------------------------------------------------
 # Tokenization
 # --------------------------------------------------------------------------
 
@@ -122,7 +164,7 @@ def setup_token_routes(app: FastAPI) -> None:
     async def studio_tokens(req: dict):
         prompt = (req.get("prompt") or "").strip()
         if not prompt:
-            return {"tokens_l": 0, "tokens_g": 0, "chunks": 1}
+            return {"tokens_l": 0, "tokens_g": 0, "chunks": 1, "offline": False}
 
         # Split on BREAK — each chunk is its own 75-token attention window
         raw_chunks = _BREAK_RE.split(prompt)
@@ -130,10 +172,16 @@ def setup_token_routes(app: FastAPI) -> None:
         chunk_count = max(1, len(chunk_texts))
 
         clip_l, clip_g = _get_tokenizers()
+        offline = False
 
-        # No model loaded: return chunk count only, signal unknown token totals
+        # No model loaded: try the offline CLIP-L tokenizer
         if clip_l is None and clip_g is None:
-            return {"tokens_l": None, "tokens_g": None, "chunks": chunk_count}
+            fallback = _get_offline_tokenizer()
+            if fallback is not None:
+                clip_l = fallback   # stand in for both encoders
+                offline = True
+            else:
+                return {"tokens_l": None, "tokens_g": None, "chunks": chunk_count, "offline": False}
 
         total_l = 0
         total_g = 0
@@ -147,6 +195,7 @@ def setup_token_routes(app: FastAPI) -> None:
             "tokens_l": total_l if clip_l else None,
             "tokens_g": total_g if clip_g else None,
             "chunks":   chunk_count,
+            "offline":  offline,
         }
 
     print(f"{TAG} Token counter routes registered (/studio/tokens)")
