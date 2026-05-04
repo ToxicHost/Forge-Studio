@@ -1763,30 +1763,37 @@ function _applyDehaze(d, n, w, h, p) {
     _separableMinFilter(dark, w, h, winRadius);
 
     // ===== Atmospheric light =====
-    // Top 0.1% darkest-channel-brightest pixels → brightest in original RGB.
+    // Top 0.1% pixels by dark-channel brightness — these are the haze / sky
+    // candidates. Average their RGB instead of picking the single brightest:
+    // a single near-white outlier (sun glint, specular highlight, signature
+    // pixel on AI-generated images) used to skew A toward 255 and crush the
+    // recovery. Averaging stabilizes A across content types.
     var topN = Math.max(10, Math.floor(n * 0.001));
-    // Build index array, sort by dark[idx] descending. Slow but clear.
     var idxArr = new Uint32Array(n);
     for (var ii = 0; ii < n; ii++) idxArr[ii] = ii;
-    // Partial sort via Array.from + sort on top-N — for V2 simplicity
-    // we sort the whole index array. ~200ms at 4MP, acceptable on release.
     var idxList = Array.from(idxArr);
     idxList.sort(function (a, b) { return dark[b] - dark[a]; });
-    var Ar = 0, Ag = 0, Ab = 0, bestSum = -1;
+    var Ar = 0, Ag = 0, Ab = 0;
     for (var t = 0; t < topN; t++) {
         var pi = idxList[t];
         var pm = pi * 4;
-        var sum = d[pm] + d[pm + 1] + d[pm + 2];
-        if (sum > bestSum) {
-            bestSum = sum;
-            Ar = d[pm]; Ag = d[pm + 1]; Ab = d[pm + 2];
-        }
+        Ar += d[pm]; Ag += d[pm + 1]; Ab += d[pm + 2];
     }
-    if (Ar < 1) Ar = 1; if (Ag < 1) Ag = 1; if (Ab < 1) Ab = 1;     // avoid div-by-zero
+    Ar /= topN; Ag /= topN; Ab /= topN;
+    // Cap A at 240/255 — the recovery formula J = (I - A)/t + A is wildly
+    // sensitive to A when A is near max. Capping prevents the "everything
+    // crushes to black" failure mode on highly saturated / synthetic images
+    // (anime renders, AI generations) where the brightest area is genuine
+    // bright content rather than haze.
+    if (Ar > 240) Ar = 240; if (Ag > 240) Ag = 240; if (Ab > 240) Ab = 240;
+    if (Ar < 1) Ar = 1; if (Ag < 1) Ag = 1; if (Ab < 1) Ab = 1;
 
     if (dehaze >= 0) {
         // ===== Positive dehaze: estimate transmission, recover scene =====
-        var omega = dehaze;       // 0..1
+        // Cap effective omega at 0.85 — full omega = 1.0 with t0 = 0.1 produces
+        // tInv up to 10×, which crushes mid-tones and clips highlights even
+        // on photographs. Adobe's published behavior runs in roughly this range.
+        var omega = dehaze * 0.85;
         var t1 = new Float32Array(n);
         for (var i2 = 0, m2 = 0; i2 < n; i2++, m2 += 4) {
             // dark channel of (I/A): min over channels of ratio
@@ -1796,10 +1803,12 @@ function _applyDehaze(d, n, w, h, p) {
         }
         // Min-filter over the window (this is the dark channel of I/A)
         _separableMinFilter(t1, w, h, winRadius);
-        // Convert to transmission, clamp lower bound, then refine with box blur
+        // Higher t0 floor (0.2 vs old 0.1): keeps tInv ≤ 5 even at maximum
+        // omega. Combined with the omega cap above, this produces a wide
+        // safe range without the crush-to-black failure mode.
         for (var i3 = 0; i3 < n; i3++) {
             var tv = 1 - omega * t1[i3];
-            if (tv < 0.1) tv = 0.1;
+            if (tv < 0.2) tv = 0.2;
             t1[i3] = tv;
         }
         _boxBlur(t1, w, h, blurRadius);
