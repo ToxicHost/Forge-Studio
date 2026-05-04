@@ -796,15 +796,18 @@
       // Lazy-load tags on first enable in this session.
       if (!tagsLoaded && !loading) loadTags();
     },
-    setSource: function (name) {
-      if (VALID_SOURCES.indexOf(name) === -1) return;
-      if (name === _source) return;
+    setSource: async function (name) {
+      if (VALID_SOURCES.indexOf(name) === -1) return null;
+      if (name === _source) return { source: name, count: tags.length };
       _source = name;
       tags = [];
       tagsLoaded = false;
       hideDropdown();
-      if (_enabled) loadTags();
+      if (!_enabled) return { source: name, count: 0 };
+      await loadTags();
+      return { source: name, count: tags.length };
     },
+    getSource: function () { return _source; },
     getSources: function () { return VALID_SOURCES.slice(); },
   };
 

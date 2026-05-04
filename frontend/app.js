@@ -4789,6 +4789,10 @@ async function init() {
   // Prompt autocomplete: enable toggle + tag source picker. Persisted via
   // localStorage; the TagComplete module reads the same keys at boot for
   // first-paint correctness, then app.js drives runtime changes.
+  //
+  // The .toggle-track class has a global click handler (see top of this
+  // module) that flips its "on" class — read state AFTER it runs rather
+  // than predicting and re-toggling, otherwise the two handlers cancel.
   {
     const tacToggle = document.getElementById("toggleTagAutocomplete");
     const tacSource = document.getElementById("settingTagSource");
@@ -4796,18 +4800,42 @@ async function init() {
       const enabled = localStorage.getItem("studio-tac-enabled") !== "0";
       tacToggle.classList.toggle("on", enabled);
       tacToggle.addEventListener("click", () => {
-        const next = !tacToggle.classList.contains("on");
-        tacToggle.classList.toggle("on", next);
-        localStorage.setItem("studio-tac-enabled", next ? "1" : "0");
-        if (window.TagComplete) window.TagComplete.setEnabled(next);
+        const on = tacToggle.classList.contains("on");
+        localStorage.setItem("studio-tac-enabled", on ? "1" : "0");
+        if (window.TagComplete) window.TagComplete.setEnabled(on);
+        if (typeof showToast === "function") {
+          showToast(on
+            ? I18N.t("toast.tagAutocomplete.enabled", "Tag autocomplete enabled")
+            : I18N.t("toast.tagAutocomplete.disabled", "Tag autocomplete disabled"),
+            "info");
+        }
       });
     }
     if (tacSource) {
       const saved = localStorage.getItem("studio-tac-source");
       if (saved) tacSource.value = saved;
-      tacSource.addEventListener("change", () => {
-        localStorage.setItem("studio-tac-source", tacSource.value);
-        if (window.TagComplete) window.TagComplete.setSource(tacSource.value);
+      tacSource.addEventListener("change", async () => {
+        const choice = tacSource.value;
+        localStorage.setItem("studio-tac-source", choice);
+        if (!window.TagComplete) return;
+        const labels = {
+          danbooru: "Danbooru", e621: "e621",
+          danbooru_e621_merged: "Danbooru + e621", derpibooru: "Derpibooru",
+        };
+        const result = await window.TagComplete.setSource(choice);
+        if (typeof showToast !== "function") return;
+        if (result && result.count > 0) {
+          showToast(
+            I18N.t("toast.tagSource.loaded", "Loaded {count} tags from {source}")
+              .replace("{count}", result.count.toLocaleString())
+              .replace("{source}", labels[result.source] || result.source),
+            "success");
+        } else {
+          showToast(
+            I18N.t("toast.tagSource.failed", "Could not load {source} — is the CSV bundled?")
+              .replace("{source}", labels[choice] || choice),
+            "error");
+        }
       });
     }
   }
