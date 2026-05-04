@@ -919,6 +919,25 @@
               </div>
             </div>
             <div class="setting-group">
+              <div class="setting-group-title" data-i18n="settings.tagAutocomplete.title">Prompt Autocomplete</div>
+              <div class="setting-row">
+                <span class="setting-label" data-i18n="settings.tagAutocomplete.enabled">Tag suggestions</span>
+                <div class="toggle-track on" id="toggleTagAutocomplete"><div class="toggle-knob"></div></div>
+              </div>
+              <div class="setting-row">
+                <span class="setting-label" data-i18n="settings.tagAutocomplete.source">Tag source</span>
+                <select class="param-select" id="settingTagSource" style="width:160px;padding:4px 8px;">
+                  <option value="danbooru">Danbooru</option>
+                  <option value="e621">e621</option>
+                  <option value="danbooru_e621_merged" data-i18n="settings.tagAutocomplete.sourceMerged">Danbooru + e621</option>
+                  <option value="derpibooru">Derpibooru</option>
+                </select>
+              </div>
+              <p style="font-size:10px;color:var(--text-4);margin:6px 0 0 0;" data-i18n="settings.tagAutocomplete.note">
+                LoRA, embedding, and wildcard suggestions remain available regardless of this setting.
+              </p>
+            </div>
+            <div class="setting-group">
               <div class="setting-group-title" data-i18n="settings.language.title">Language</div>
               <div class="setting-row">
                 <span class="setting-label" data-i18n="settings.language.label">Interface language</span>

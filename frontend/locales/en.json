@@ -46,6 +46,12 @@
 
   "settings.theme.title": "Theme",
 
+  "settings.tagAutocomplete.title": "Prompt Autocomplete",
+  "settings.tagAutocomplete.enabled": "Tag suggestions",
+  "settings.tagAutocomplete.source": "Tag source",
+  "settings.tagAutocomplete.sourceMerged": "Danbooru + e621",
+  "settings.tagAutocomplete.note": "LoRA, embedding, and wildcard suggestions remain available regardless of this setting.",
+
   "settings.language.title": "Language",
   "settings.language.label": "Interface language",
   "settings.language.note": "AI generation parameters (Steps, Sampler, CFG Scale, etc.) stay in English to match the terminology in tutorials and guides.",

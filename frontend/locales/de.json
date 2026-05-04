@@ -46,6 +46,12 @@
 
   "settings.theme.title": "Design",
 
+  "settings.tagAutocomplete.title": "Prompt-Autovervollständigung",
+  "settings.tagAutocomplete.enabled": "Tag-Vorschläge",
+  "settings.tagAutocomplete.source": "Tag-Quelle",
+  "settings.tagAutocomplete.sourceMerged": "Danbooru + e621",
+  "settings.tagAutocomplete.note": "LoRA-, Embedding- und Wildcard-Vorschläge bleiben unabhängig von dieser Einstellung verfügbar.",
+
   "settings.language.title": "Sprache",
   "settings.language.label": "Sprache der Oberfläche",
   "settings.language.note": "KI-Generierungsparameter (Steps, Sampler, CFG Scale usw.) bleiben auf Englisch, um der Terminologie in Tutorials und Anleitungen zu entsprechen.",

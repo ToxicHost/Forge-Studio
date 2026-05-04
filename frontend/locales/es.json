@@ -46,6 +46,12 @@
 
   "settings.theme.title": "Tema",
 
+  "settings.tagAutocomplete.title": "Autocompletado del prompt",
+  "settings.tagAutocomplete.enabled": "Sugerencias de tags",
+  "settings.tagAutocomplete.source": "Fuente de tags",
+  "settings.tagAutocomplete.sourceMerged": "Danbooru + e621",
+  "settings.tagAutocomplete.note": "Las sugerencias de LoRA, embeddings y wildcards permanecen disponibles independientemente de este ajuste.",
+
   "settings.language.title": "Idioma",
   "settings.language.label": "Idioma de la interfaz",
   "settings.language.note": "Los parámetros de generación de IA (Steps, Sampler, CFG Scale, etc.) permanecen en inglés para coincidir con la terminología usada en tutoriales y guías.",

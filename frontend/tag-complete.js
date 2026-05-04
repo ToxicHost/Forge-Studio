@@ -21,14 +21,56 @@
   const DEBOUNCE_MS = 80;
   const MIN_CHARS = 2;
 
-  // Category colors (matches danbooru tag categories)
-  const CAT_COLORS = {
-    0: "var(--text-1)",       // general (white)
-    1: "#e8a4a4",             // artist (red-ish)
-    3: "#c4a4e8",             // copyright (purple)
-    4: "#a4c8e8",             // character (blue)
-    5: "#e8c4a4",             // meta (orange)
+  // Category colors per booru source. Each booru numbers its categories
+  // differently, so the color scheme is keyed on the active source. Sources
+  // we don't have a precise scheme for fall back to a safe palette via the
+  // CAT_COLORS getter below.
+  const CAT_COLORS_BY_SOURCE = {
+    danbooru: {
+      0: "var(--text-1)",   // general
+      1: "#e8a4a4",         // artist
+      3: "#c4a4e8",         // copyright
+      4: "#a4c8e8",         // character
+      5: "#e8c4a4",         // meta
+    },
+    e621: {
+      0: "var(--text-1)",   // general
+      1: "#e8a4a4",         // artist
+      3: "#c4a4e8",         // copyright
+      4: "#a4c8e8",         // character
+      5: "#a4e8c8",         // species
+      6: "#888",            // invalid
+      7: "#e8c4a4",         // meta
+      8: "#e4d4a4",         // lore
+    },
+    danbooru_e621_merged: {
+      0: "var(--text-1)",
+      1: "#e8a4a4",
+      3: "#c4a4e8",
+      4: "#a4c8e8",
+      5: "#a4e8c8",
+      6: "#888",
+      7: "#e8c4a4",
+      8: "#e4d4a4",
+    },
+    derpibooru: {
+      0: "var(--text-1)",   // general
+      1: "#888",            // error
+      3: "#a4e8a4",         // oc
+      4: "#e88a8a",         // spoiler
+      5: "#e8c4a4",         // meta
+      6: "#a4c8e8",         // rating
+      7: "#a4c8e8",         // character
+      8: "#c4a4e8",         // content-official
+      9: "#c4a4e8",         // content-fanmade
+      10: "#a4e8c8",        // species
+      11: "#e4d4a4",        // body type
+    },
   };
+
+  function CAT_COLORS_FOR(source) {
+    return CAT_COLORS_BY_SOURCE[source] || CAT_COLORS_BY_SOURCE.danbooru;
+  }
 
   // Special category colors for non-tag items
   const LORA_COLOR = "#a4e8a4";       // green
@@ -48,6 +90,20 @@
   let selectedIdx = -1;
   let currentResults = [];
   let debounceTimer = null;
+
+  // ── User-configurable settings (persisted via app.js) ────
+  // _enabled gates the bare-word "tag" autocomplete only. Trigger-prefixed
+  // completions (<lora:, embedding:, __wildcard__) stay active either way.
+  // _source picks which bundled CSV the tag list comes from.
+  const VALID_SOURCES = ["danbooru", "e621", "danbooru_e621_merged", "derpibooru"];
+  let _enabled = true;
+  let _source = "danbooru";
+  try {
+    const en = localStorage.getItem("studio-tac-enabled");
+    if (en === "0") _enabled = false;
+    const src = localStorage.getItem("studio-tac-source");
+    if (src && VALID_SOURCES.indexOf(src) !== -1) _source = src;
+  } catch (_) { /* localStorage may be unavailable */ }
 
   // ── CSV Loading ─────────────────────────────────────────
 
@@ -81,17 +137,19 @@
     if (tagsLoaded || loading) return;
     loading = true;
 
+    const filename = _source + ".csv";
+
     // Try Studio's bundled CSV first. Served at /studio/static/data/...
     // because studio_api.py mounts frontend/ at /studio/static. Lets Studio
     // work without the tagcomplete extension installed.
     try {
-      const resp = await fetch(`/studio/static/data/danbooru.csv?${Date.now()}`);
+      const resp = await fetch(`/studio/static/data/${filename}?${Date.now()}`);
       if (resp.ok) {
         const text = await resp.text();
         const added = _parseTagsInto(text, tags);
         if (added > 0) {
           tagsLoaded = true;
-          console.log(`[TagComplete] Loaded ${added} tags from bundled CSV`);
+          console.log(`[TagComplete] Loaded ${added} tags from bundled CSV (${_source})`);
           loading = false;
           return;
         }
@@ -99,22 +157,24 @@
     } catch (e) { /* fall through to extension lookup */ }
 
     // Fallback: tagcomplete extension's CSV, discovered via Gradio tmp file.
+    // Only the extension's danbooru.csv is reachable this way; non-danbooru
+    // sources have no fallback and will simply fail to load.
     const basePath = await findTagPath();
     if (!basePath) {
-      console.warn("[TagComplete] No bundled CSV and tagcomplete extension not found");
+      console.warn(`[TagComplete] No bundled ${filename} and tagcomplete extension not found`);
       loading = false;
       return;
     }
 
     try {
-      const resp = await fetch(`file=${basePath}/danbooru.csv?${Date.now()}`);
+      const resp = await fetch(`file=${basePath}/${filename}?${Date.now()}`);
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const text = await resp.text();
       const added = _parseTagsInto(text, tags);
       tagsLoaded = true;
-      console.log(`[TagComplete] Loaded ${added} tags from tagcomplete extension at ${basePath}`);
+      console.log(`[TagComplete] Loaded ${added} tags from tagcomplete extension (${_source}) at ${basePath}`);
     } catch (e) {
-      console.error("[TagComplete] Failed to load tags:", e);
+      console.error(`[TagComplete] Failed to load ${filename}:`, e);
     }
     loading = false;
   }
@@ -491,7 +551,8 @@
     // Tag items (from danbooru search)
     if (item.tag) {
       const t = item.tag;
-      const color = CAT_COLORS[t.cat] || CAT_COLORS[0];
+      const colors = CAT_COLORS_FOR(_source);
+      const color = colors[t.cat] || colors[0];
       const countStr = t.count >= 1000000 ? (t.count / 1000000).toFixed(1) + "M"
                      : t.count >= 1000 ? (t.count / 1000).toFixed(0) + "k"
                      : t.count.toString();
@@ -624,6 +685,7 @@
           return;  // _showWildcardContents handles dropdown directly
 
         case "tag":
+          if (!_enabled) { hideDropdown(); return; }
           results = searchTags(ctx.query);
           break;
       }
@@ -683,18 +745,23 @@
   }
 
   async function init() {
-    // Load tags first (from tagcomplete extension CSV)
-    await loadTags();
+    // Tag list only loads when bare-word autocomplete is enabled.
+    // Trigger-prefixed completions (loras/embeddings/wildcards) work either
+    // way — they use Studio's API, not the CSV.
+    if (_enabled) {
+      await loadTags();
+      if (!tagsLoaded) {
+        console.warn("[TagComplete] No tag data loaded — autocomplete limited to extras");
+      }
+    } else {
+      console.log("[TagComplete] Bare-word autocomplete disabled by user setting");
+    }
 
     // Load extras from Studio API (LoRAs, embeddings, wildcards)
     // Delay slightly to ensure API routes are registered
     setTimeout(async () => {
       await loadExtras();
     }, 1000);
-
-    if (!tagsLoaded) {
-      console.warn("[TagComplete] No tag data loaded — autocomplete limited to extras");
-    }
 
     // Attach to prompt textareas
     const targets = [
@@ -715,6 +782,31 @@
 
     console.log("[TagComplete] Ready");
   }
+
+  // Public control surface — used by Settings UI in app.js. Persistence
+  // (localStorage write) is the caller's responsibility; this module only
+  // reflects state changes at runtime.
+  window.TagComplete = {
+    setEnabled: function (v) {
+      _enabled = !!v;
+      if (!_enabled) {
+        hideDropdown();
+        return;
+      }
+      // Lazy-load tags on first enable in this session.
+      if (!tagsLoaded && !loading) loadTags();
+    },
+    setSource: function (name) {
+      if (VALID_SOURCES.indexOf(name) === -1) return;
+      if (name === _source) return;
+      _source = name;
+      tags = [];
+      tagsLoaded = false;
+      hideDropdown();
+      if (_enabled) loadTags();
+    },
+    getSources: function () { return VALID_SOURCES.slice(); },
+  };
 
   if (document.readyState === "loading") {
     document.addEventListener("DOMContentLoaded", init);

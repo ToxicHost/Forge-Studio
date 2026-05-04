@@ -4786,6 +4786,32 @@ async function init() {
     }
   }
 
+  // Prompt autocomplete: enable toggle + tag source picker. Persisted via
+  // localStorage; the TagComplete module reads the same keys at boot for
+  // first-paint correctness, then app.js drives runtime changes.
+  {
+    const tacToggle = document.getElementById("toggleTagAutocomplete");
+    const tacSource = document.getElementById("settingTagSource");
+    if (tacToggle) {
+      const enabled = localStorage.getItem("studio-tac-enabled") !== "0";
+      tacToggle.classList.toggle("on", enabled);
+      tacToggle.addEventListener("click", () => {
+        const next = !tacToggle.classList.contains("on");
+        tacToggle.classList.toggle("on", next);
+        localStorage.setItem("studio-tac-enabled", next ? "1" : "0");
+        if (window.TagComplete) window.TagComplete.setEnabled(next);
+      });
+    }
+    if (tacSource) {
+      const saved = localStorage.getItem("studio-tac-source");
+      if (saved) tacSource.value = saved;
+      tacSource.addEventListener("change", () => {
+        localStorage.setItem("studio-tac-source", tacSource.value);
+        if (window.TagComplete) window.TagComplete.setSource(tacSource.value);
+      });
+    }
+  }
+
   // Reduced motion
   {
     const motionSel = document.getElementById("settingMotion");
