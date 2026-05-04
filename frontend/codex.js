@@ -569,9 +569,17 @@ function _renderWelcome() {
     { id: "common_problems",     label: "Common Problems",         desc: "Troubleshooting" },
     { id: "shortcuts_tools",     label: "Keyboard Shortcuts",      desc: "Hotkeys" },
   ];
-  var h = '<div class="cx-welcome"><div class="cx-welcome-title">Codex</div><div class="cx-welcome-text">Reference documentation for every tool, parameter, and feature in Forge Studio.</div><div class="cx-welcome-shortcuts">';
+  var h = '<div class="cx-welcome">' +
+    '<div class="cx-welcome-title" data-i18n="codex.welcome.title">' + _t("codex.welcome.title", "Codex") + '</div>' +
+    '<div class="cx-welcome-text" data-i18n="codex.welcome.text">' + _t("codex.welcome.text", "Reference documentation for every tool, parameter, and feature in Forge Studio.") + '</div>' +
+    '<div class="cx-welcome-shortcuts">';
   sc.forEach(function (s) {
-    h += '<div class="cx-welcome-shortcut" data-id="' + s.id + '"><span class="cx-welcome-shortcut-title">' + s.label + '</span><span class="cx-welcome-shortcut-desc">' + s.desc + '</span></div>';
+    var labelKey = "codex.welcome.shortcut." + s.id + ".label";
+    var descKey = "codex.welcome.shortcut." + s.id + ".desc";
+    h += '<div class="cx-welcome-shortcut" data-id="' + s.id + '">' +
+      '<span class="cx-welcome-shortcut-title" data-i18n="' + labelKey + '">' + _t(labelKey, s.label) + '</span>' +
+      '<span class="cx-welcome-shortcut-desc" data-i18n="' + descKey + '">' + _t(descKey, s.desc) + '</span>' +
+      '</div>';
   });
   h += '</div></div>';
   _els.content.innerHTML = h;
