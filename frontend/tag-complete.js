@@ -81,41 +81,62 @@
     if (tagsLoaded || loading) return;
     loading = true;
 
+    // Try Studio's bundled CSV first. Served at /studio/static/data/...
+    // because studio_api.py mounts frontend/ at /studio/static. Lets Studio
+    // work without the tagcomplete extension installed.
+    try {
+      const resp = await fetch(`/studio/static/data/danbooru.csv?${Date.now()}`);
+      if (resp.ok) {
+        const text = await resp.text();
+        const added = _parseTagsInto(text, tags);
+        if (added > 0) {
+          tagsLoaded = true;
+          console.log(`[TagComplete] Loaded ${added} tags from bundled CSV`);
+          loading = false;
+          return;
+        }
+      }
+    } catch (e) { /* fall through to extension lookup */ }
+
+    // Fallback: tagcomplete extension's CSV, discovered via Gradio tmp file.
     const basePath = await findTagPath();
     if (!basePath) {
-      console.warn("[TagComplete] Could not find tag autocomplete path");
+      console.warn("[TagComplete] No bundled CSV and tagcomplete extension not found");
       loading = false;
       return;
     }
-
-    console.log(`[TagComplete] Loading tags from ${basePath}/danbooru.csv`);
 
     try {
       const resp = await fetch(`file=${basePath}/danbooru.csv?${Date.now()}`);
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
       const text = await resp.text();
-      const lines = text.split("\n");
-
-      for (let i = 0; i < lines.length; i++) {
-        const line = lines[i].trim();
-        if (!line) continue;
-        const parts = parseCSVLine(line);
-        if (parts.length < 3) continue;
-
-        const name = parts[0].trim();
-        const cat = parseInt(parts[1]) || 0;
-        const count = parseInt(parts[2]) || 0;
-        const aliases = parts[3] ? parts[3].trim().split(",").map(a => a.trim()).filter(Boolean) : [];
-
-        tags.push({ name, cat, count, aliases });
-      }
-
+      const added = _parseTagsInto(text, tags);
       tagsLoaded = true;
-      console.log(`[TagComplete] Loaded ${tags.length} tags`);
+      console.log(`[TagComplete] Loaded ${added} tags from tagcomplete extension at ${basePath}`);
     } catch (e) {
       console.error("[TagComplete] Failed to load tags:", e);
     }
     loading = false;
+  }
+
+  // Parse a danbooru.csv body into the target array. Returns the number of
+  // tags pushed. Shared by the bundled and extension load paths.
+  function _parseTagsInto(text, target) {
+    const lines = text.split("\n");
+    let added = 0;
+    for (let i = 0; i < lines.length; i++) {
+      const line = lines[i].trim();
+      if (!line) continue;
+      const parts = parseCSVLine(line);
+      if (parts.length < 3) continue;
+      const name = parts[0].trim();
+      const cat = parseInt(parts[1]) || 0;
+      const count = parseInt(parts[2]) || 0;
+      const aliases = parts[3] ? parts[3].trim().split(",").map(a => a.trim()).filter(Boolean) : [];
+      target.push({ name, cat, count, aliases });
+      added++;
+    }
+    return added;
   }
 
   // ── Extra Data Loading (LoRAs, Embeddings, Wildcards) ───
