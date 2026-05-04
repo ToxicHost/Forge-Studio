@@ -4566,7 +4566,7 @@ def setup_workshop_routes(app: FastAPI):
         info["text_attrs"] = text_attrs
         print(f"{TAG} CLIP Diagnose: text/clip/cond attrs = {text_attrs}")
 
-        # Check text_processing_engine_l/g (PromptScope pattern)
+        # Check text_processing_engine_l/g (Forge text engine pattern)
         engine_l = getattr(sd, 'text_processing_engine_l', None)
         engine_g = getattr(sd, 'text_processing_engine_g', None)
         info["engine_l"] = str(type(engine_l)) if engine_l else None

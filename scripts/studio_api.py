@@ -3791,12 +3791,12 @@ def setup_studio_routes(app: FastAPI):
     else:
         print(f"{TAG} Lexicon module not found — skipping")
 
-    # PromptScope integration
-    setup_promptscope_routes = _load_optional_module("studio_promptscope", "setup_promptscope_routes")
-    if setup_promptscope_routes:
-        setup_promptscope_routes(app)
+    # Token counter (standalone)
+    setup_token_routes = _load_optional_module("studio_tokens", "setup_token_routes")
+    if setup_token_routes:
+        setup_token_routes(app)
     else:
-        print(f"{TAG} PromptScope module not found — skipping")
+        print(f"{TAG} Token counter module not found — skipping")
 
     # ------------------------------------------------------------------
     # Gallery module routes
