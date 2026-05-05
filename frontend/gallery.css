@@ -720,6 +720,13 @@
   font-family: var(--mono);
   user-select: text;
   cursor: text;
+  display: block;
+  width: 100%;
+  box-sizing: border-box;
+  resize: none;
+  color: var(--text-2);
+  line-height: 1.5;
+  outline: none;
 }
 .gal-meta-empty {
   color: var(--text-4);
