@@ -33,7 +33,7 @@ const RE_WILDCARD = /__([a-zA-Z0-9_/\-]+)__/g;
 const LX = {
     tree: null,
     openFile: null,
-    dirty: false,
+    dirtyFiles: new Map(),   // path → unsaved content
     fileCount: 0,
     searchQuery: "",
     searchMode: "name",  // "name" or "content"
@@ -535,15 +535,23 @@ function _highlightActiveFile() {
 // ========================================================================
 
 async function openFile(path) {
-    if (LX.dirty && LX.openFile) {
-        if (!confirm("Unsaved changes in " + LX.openFile.path + ". Discard?")) return;
+    // Silently buffer any unsaved edits before switching files
+    if (LX.openFile && _els.textarea) {
+        const cur = _els.textarea.value;
+        if (cur !== LX.openFile.content) LX.dirtyFiles.set(LX.openFile.path, cur);
     }
+    if (LX.openFile && LX.openFile.path === path) return;
     try {
         const data = await fetchJSON(API + "/file?path=" + encodeURIComponent(path));
         LX.openFile = data;
-        LX.dirty = false;
         _showEditor();
+        // Restore any buffered edits for this file
+        if (LX.dirtyFiles.has(path) && _els.textarea) {
+            _els.textarea.value = LX.dirtyFiles.get(path);
+            _updateGutter(); _updateHighlight(); _updateEditorState();
+        }
         _highlightActiveFile();
+        _updateDirtyIndicators();
         if (_els.previewResult) _els.previewResult.textContent = "";
     } catch (e) {
         console.error(TAG, "Failed to open:", path, e);
@@ -552,21 +560,46 @@ async function openFile(path) {
 }
 
 async function saveFile() {
-    if (!LX.openFile || !LX.dirty) return;
-    const content = _els.textarea.value;
+    if (!LX.openFile) return;
+    const path = LX.openFile.path;
+    if (!LX.dirtyFiles.has(path)) return;
+    const content = LX.dirtyFiles.get(path);
     try {
-        const res = await postJSON(API + "/file/save", { path: LX.openFile.path, content });
+        const res = await postJSON(API + "/file/save", { path, content });
         LX.openFile.content = content;
         LX.openFile.lines = res.lines;
         LX.openFile.size = res.size;
-        LX.dirty = false;
+        LX.dirtyFiles.delete(path);
         _updateEditorState();
+        _updateDirtyIndicators();
         _toast(_t("lexicon.toast.saved", "Saved"));
         await loadTree();
     } catch (e) {
         console.error(TAG, "Save failed:", e);
         _toast("Save failed: " + e.message, "error");
     }
+}
+
+async function saveAllDirty() {
+    if (LX.dirtyFiles.size === 0) return;
+    let saved = 0, failed = 0;
+    for (const [path, content] of LX.dirtyFiles) {
+        try {
+            await postJSON(API + "/file/save", { path, content });
+            LX.dirtyFiles.delete(path);
+            if (LX.openFile && LX.openFile.path === path) LX.openFile.content = content;
+            saved++;
+        } catch (e) {
+            console.error(TAG, "Save failed for", path, e);
+            failed++;
+        }
+    }
+    _updateEditorState();
+    _updateDirtyIndicators();
+    const label = saved === 1 ? "Saved 1 file" : "Saved " + saved + " files";
+    if (saved > 0) _toast(label);
+    if (failed > 0) _toast("Save failed for " + failed + " file" + (failed > 1 ? "s" : ""), "error");
+    if (saved > 0) await loadTree();
 }
 
 async function createFile(parentPath) {
@@ -625,9 +658,12 @@ async function deleteItem(path) {
             }
         }
         _toast("Deleted " + name);
+        // Purge any buffered edits for deleted paths
+        for (const p of LX.dirtyFiles.keys()) {
+            if (p === path || p.startsWith(path + "/")) LX.dirtyFiles.delete(p);
+        }
         if (LX.openFile && (LX.openFile.path === path || LX.openFile.path.startsWith(path + "/"))) {
             LX.openFile = null;
-            LX.dirty = false;
             _showEmpty();
         }
         loadTree();
@@ -871,10 +907,13 @@ async function importZip() {
 // ========================================================================
 
 function _scheduleAutoSave() {
-    if (!LX.autoSave || !LX.dirty) return;
+    if (!LX.autoSave || LX.dirtyFiles.size === 0) return;
     clearTimeout(LX.autoSaveTimer);
     LX.autoSaveTimer = setTimeout(() => {
-        if (LX.autoSave && LX.dirty) { console.log(TAG, "Auto-saving", LX.openFile?.path); saveFile(); }
+        if (LX.autoSave && LX.dirtyFiles.size > 0) {
+            console.log(TAG, "Auto-saving", LX.dirtyFiles.size, "file(s)");
+            saveAllDirty();
+        }
     }, AUTOSAVE_DELAY);
 }
 
@@ -882,7 +921,7 @@ function _toggleAutoSave() {
     LX.autoSave = !LX.autoSave;
     _els.autoSaveToggle.classList.toggle("active", LX.autoSave);
     _els.autoSaveToggle.title = LX.autoSave ? "Autosave ON (click to disable)" : "Autosave OFF (click to enable)";
-    if (LX.autoSave && LX.dirty) _scheduleAutoSave();
+    if (LX.autoSave && LX.dirtyFiles.size > 0) _scheduleAutoSave();
 }
 
 // ========================================================================
@@ -1024,8 +1063,9 @@ function _showEditor() {
 function _showEmpty() { _els.empty.style.display = ""; _els.editorWrap.style.display = "none"; }
 
 function _updateEditorState() {
-    _els.dirtyDot.classList.toggle("visible", LX.dirty);
-    _els.saveBtn.classList.toggle("enabled", LX.dirty);
+    const dirty = LX.openFile ? LX.dirtyFiles.has(LX.openFile.path) : false;
+    _els.dirtyDot.classList.toggle("visible", dirty);
+    _els.saveBtn.classList.toggle("enabled", dirty);
     _updateFooter();
 }
 
@@ -1041,8 +1081,9 @@ function _updateFooter() {
         _els.footerPath.textContent = LX.openFile.path;
         const entries = _els.textarea.value.split("\n").filter(l => l.trim() && !l.trim().startsWith("#")).length;
         _els.footerEntries.textContent = entries + " entries";
-        _els.footerStatus.textContent = LX.dirty ? "unsaved" : "saved";
-        _els.footerStatus.style.color = LX.dirty ? "var(--accent)" : "var(--text-4)";
+        const dirty = LX.dirtyFiles.has(LX.openFile.path);
+        _els.footerStatus.textContent = dirty ? "unsaved" : "saved";
+        _els.footerStatus.style.color = dirty ? "var(--accent)" : "var(--text-4)";
     } else {
         _els.footerPath.textContent = ""; _els.footerEntries.textContent = ""; _els.footerStatus.textContent = "";
     }
@@ -1059,6 +1100,13 @@ function _showError(msg) { if (_els.errorBanner) { _els.errorBanner.textContent 
 function _toast(msg, type) {
     const fn = window.showToast;
     if (fn) fn(msg, type === "error" ? "error" : "success"); else console.log(TAG, msg);
+}
+
+function _updateDirtyIndicators() {
+    if (!_els.treeList) return;
+    _els.treeList.querySelectorAll(".lex-tree-item[data-type='file']").forEach(el => {
+        el.classList.toggle("lex-tree-item-dirty", LX.dirtyFiles.has(el.dataset.path));
+    });
 }
 
 // ========================================================================
@@ -1182,8 +1230,13 @@ function _buildUI(container) {
     // Textarea
     _els.textarea.addEventListener("input", () => {
         if (!LX.openFile) return;
-        LX.dirty = _els.textarea.value !== LX.openFile.content;
-        _updateGutter(); _updateHighlight(); _updateEditorState(); _scheduleAutoSave();
+        const content = _els.textarea.value;
+        if (content !== LX.openFile.content) {
+            LX.dirtyFiles.set(LX.openFile.path, content);
+        } else {
+            LX.dirtyFiles.delete(LX.openFile.path);
+        }
+        _updateGutter(); _updateHighlight(); _updateEditorState(); _updateDirtyIndicators(); _scheduleAutoSave();
     });
     _els.textarea.addEventListener("scroll", _syncScroll);
     _els.textarea.addEventListener("keydown", (e) => {
@@ -1208,6 +1261,11 @@ function _buildUI(container) {
     // Root-level drop target + panel-wide OS file drop
     _setupRootDrop();
     _setupPanelDrop(root.querySelector(".lex-tree-panel"));
+
+    // Tag autocomplete — attach if the module is loaded
+    if (window.TagComplete && window.TagComplete.attach) {
+        window.TagComplete.attach(_els.textarea);
+    }
 }
 
 // ========================================================================
