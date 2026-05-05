@@ -1006,6 +1006,13 @@ def _start_background_hash():
         _hash_progress["active"] = True
         try:
             db = _get_db()
+            pending = db.execute(
+                "SELECT COUNT(*) FROM images WHERE (phash IS NULL OR phash='') AND media_type != 'video'"
+            ).fetchone()[0]
+            db.close()
+            if pending:
+                print(f"{TAG} Background hashing started — {pending} image{'s' if pending != 1 else ''} queued")
+            db = _get_db()
             rows = db.execute(
                 "SELECT id,filepath FROM images "
                 "WHERE (phash IS NULL OR phash='') AND media_type != 'video'"
