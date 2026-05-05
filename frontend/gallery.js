@@ -1519,26 +1519,29 @@ async function refreshDupStatus() {
     }
     if (s.hashing) {
         statusEl.textContent = _t("gallery.dup.hashing",
-            "Hashing " + s.hash_current + " / " + s.hash_total + "...",
+            "Hashing in background: " + s.hash_current + " / " + s.hash_total + "...",
             { current: s.hash_current, total: s.hash_total });
-        if (hashBtn) { hashBtn.style.display = ""; hashBtn.disabled = true; hashBtn.textContent = _t("gallery.dup.hashingBtn", "Hashing..."); }
-        if (scanBtn) scanBtn.disabled = true;
+        if (hashBtn) hashBtn.style.display = "none";
+        // Allow scanning with whatever's hashed so far
+        if (scanBtn) scanBtn.disabled = s.hashed === 0;
         setTimeout(refreshDupStatus, 500);
         return;
     }
     const missing = s.total - s.hashed;
     if (missing > 0) {
+        // Hashing happens automatically after scan — guide user rather than block them
         statusEl.textContent = _t("gallery.dup.needHashing",
-            s.hashed + " / " + s.total + " images hashed. " + missing + " need hashing before scanning.",
+            s.hashed + " / " + s.total + " images hashed. Hashing starts automatically after a scan.",
             { hashed: s.hashed, total: s.total, missing: missing });
         if (hashBtn) {
+            // Fallback manual trigger — useful if hashing was interrupted
             hashBtn.style.display = "";
             hashBtn.disabled = false;
             hashBtn.textContent = _tp("gallery.dup.computeBtn", missing,
-                "Compute " + missing + " hash" + (missing > 1 ? "es" : ""),
+                "Hash " + missing + " remaining",
                 { missing: missing });
         }
-        if (scanBtn) scanBtn.disabled = true;
+        if (scanBtn) scanBtn.disabled = s.hashed === 0;
     } else {
         statusEl.textContent = _t("gallery.dup.readyTotal",
             "All " + s.total + " images hashed. Ready to scan.",

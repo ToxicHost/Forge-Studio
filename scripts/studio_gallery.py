@@ -229,6 +229,9 @@ def _incremental_sync():
             db.commit()
             sse_notify("sync", {"new": new_count, "removed": removed_count})
         db.close()
+        # Hash any newly-added images in the background
+        if new_count:
+            _start_background_hash()
 
         with _watcher_suppress_lock:
             _watcher_suppress.clear()
@@ -990,6 +993,63 @@ def _groups_from_pairs(db, threshold, folder="", sort="size"):
     return groups
 
 
+def _start_background_hash():
+    """Spawn a background thread to phash any unhashed images.
+    No-op if imagehash is unavailable or hashing is already running.
+    Safe to call from anywhere — guards against concurrent runs."""
+    if not HAS_IMAGEHASH:
+        return
+    if _hash_progress.get("active"):
+        return
+
+    def _do_hash():
+        _hash_progress["active"] = True
+        try:
+            db = _get_db()
+            rows = db.execute(
+                "SELECT id,filepath FROM images "
+                "WHERE (phash IS NULL OR phash='') AND media_type != 'video'"
+            ).fetchall()
+            _hash_progress["total"] = len(rows)
+            _hash_progress["current"] = 0
+            for i, r in enumerate(rows):
+                _hash_progress["current"] = i + 1
+                try:
+                    ph = compute_phash(r["filepath"])
+                    if ph:
+                        db.execute(
+                            "UPDATE images SET phash=? WHERE id=?",
+                            (ph, r["id"]),
+                        )
+                        compute_pairs_for_image(db, r["id"], ph)
+                    if (i + 1) % 50 == 0:
+                        db.commit()
+                except Exception:
+                    pass
+            db.commit()
+            # Second pass: images with hashes but no pairs yet (migration / race)
+            unpaired = db.execute("""
+                SELECT i.id, i.phash FROM images i
+                WHERE i.phash IS NOT NULL AND i.phash != ''
+                AND NOT EXISTS (
+                    SELECT 1 FROM dup_pairs dp
+                    WHERE dp.image_a = i.id OR dp.image_b = i.id
+                )
+            """).fetchall()
+            for i, r in enumerate(unpaired):
+                compute_pairs_for_image(db, r["id"], r["phash"])
+                if (i + 1) % 20 == 0:
+                    db.commit()
+            db.commit()
+            db.close()
+            sse_notify("hashes_updated", {"count": _hash_progress["total"]})
+        except Exception as e:
+            print(f"{TAG} Background hashing error: {e}")
+        _hash_progress["active"] = False
+
+    threading.Thread(target=_do_hash, daemon=True).start()
+
+
 def _cleanup_trash(max_age=600):
     """Move trash entries older than max_age seconds to OS Recycle Bin.
     If send2trash is unavailable, files stay in internal trash."""
@@ -1706,6 +1766,8 @@ def scan_all_folders():
     db.commit()
     db.close()
     scan_progress = {"active": False, "folders": []}
+    # Kick off background phash for any new or unhashed images
+    _start_background_hash()
     return {"new": total_new, "removed": len(removed), "total": len(all_found)}
 
 
@@ -4059,53 +4121,7 @@ def setup_gallery_routes(app: FastAPI):
             )
         if _hash_progress["active"]:
             return {"ok": True, "status": "already running"}
-
-        def do_hash():
-            _hash_progress["active"] = True
-            try:
-                db = _get_db()
-                rows = db.execute(
-                    "SELECT id,filepath FROM images "
-                    "WHERE (phash IS NULL OR phash='') AND media_type != 'video'"
-                ).fetchall()
-                _hash_progress["total"] = len(rows)
-                _hash_progress["current"] = 0
-                for i, r in enumerate(rows):
-                    _hash_progress["current"] = i + 1
-                    try:
-                        ph = compute_phash(r["filepath"])
-                        if ph:
-                            db.execute(
-                                "UPDATE images SET phash=? WHERE id=?",
-                                (ph, r["id"]),
-                            )
-                            compute_pairs_for_image(db, r["id"], ph)
-                        if (i + 1) % 50 == 0:
-                            db.commit()
-                    except Exception:
-                        pass
-                db.commit()
-                # Second pass: images that have hashes but no pairs yet (migration)
-                unpaired = db.execute("""
-                    SELECT i.id, i.phash FROM images i
-                    WHERE i.phash IS NOT NULL AND i.phash != ''
-                    AND NOT EXISTS (
-                        SELECT 1 FROM dup_pairs dp
-                        WHERE dp.image_a = i.id OR dp.image_b = i.id
-                    )
-                """).fetchall()
-                for i, r in enumerate(unpaired):
-                    compute_pairs_for_image(db, r["id"], r["phash"])
-                    if (i + 1) % 20 == 0:
-                        db.commit()
-                db.commit()
-                db.close()
-                sse_notify("hashes_updated", {"count": _hash_progress["total"]})
-            except Exception as e:
-                print(f"{TAG} Hashing error: {e}")
-            _hash_progress["active"] = False
-
-        threading.Thread(target=do_hash, daemon=True).start()
+        _start_background_hash()
         return {"ok": True, "status": "started"}
 
     @app.get("/studio/gallery/duplicates")
