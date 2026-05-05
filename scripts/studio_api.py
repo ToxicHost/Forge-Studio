@@ -125,6 +125,7 @@ _studio_root = _here_dir if (_here_dir / "frontend").is_dir() else _here_dir.par
 # print() of private content alongside log calls.
 
 import logging
+import sys
 from logging.handlers import RotatingFileHandler
 
 _log_dir = _studio_root / "logs"
@@ -132,6 +133,63 @@ try:
     _log_dir.mkdir(exist_ok=True)
 except Exception as _log_dir_err:
     print(f"{TAG} Could not create log directory: {_log_dir_err}")
+
+
+class _PrivacyFormatter(logging.Formatter):
+    """Logging Formatter that scrubs known sensitive path prefixes from
+    the formatted output, *including the traceback*.
+
+    Tracebacks include absolute file paths that on Windows always start
+    with `C:\\Users\\<username>\\...` — that's a username leak even when
+    the log message itself is a generic static string. This formatter
+    replaces:
+        - the studio extension root → <STUDIO>
+        - the active Python install (sys.prefix) → <PYTHON>
+        - the user's home directory → <USER>
+
+    Order matters: longest / most specific prefix first, otherwise
+    `<USER>` would replace the studio root's leading segment and the
+    rest wouldn't match.
+    """
+
+    def __init__(self, *args, **kwargs):
+        super().__init__(*args, **kwargs)
+        candidates = []
+        try:
+            candidates.append((str(_studio_root), "<STUDIO>"))
+        except Exception:
+            pass
+        try:
+            candidates.append((sys.prefix, "<PYTHON>"))
+        except Exception:
+            pass
+        try:
+            candidates.append((str(Path.home()), "<USER>"))
+        except Exception:
+            pass
+        # Deduplicate, then sort by source-string length descending so a
+        # path that's a prefix of another doesn't shadow it.
+        seen = set()
+        self._replacements = []
+        for src, dst in candidates:
+            if src and src not in seen:
+                seen.add(src)
+                self._replacements.append((src, dst))
+        self._replacements.sort(key=lambda r: len(r[0]), reverse=True)
+
+    def _scrub(self, text):
+        if not text:
+            return text
+        for src, dst in self._replacements:
+            if src in text:
+                text = text.replace(src, dst)
+        return text
+
+    def format(self, record):
+        # Format normally (which appends any traceback for log.exception),
+        # then scrub the entire result.
+        return self._scrub(super().format(record))
+
 
 log = logging.getLogger("forge-studio")
 log.setLevel(logging.INFO)
@@ -147,7 +205,7 @@ if not any(isinstance(h, RotatingFileHandler) for h in log.handlers):
             backupCount=3,               # → ~20 MB ceiling
             encoding="utf-8",
         )
-        _handler.setFormatter(logging.Formatter(
+        _handler.setFormatter(_PrivacyFormatter(
             "%(asctime)s [%(levelname)s] %(message)s",
             datefmt="%Y-%m-%d %H:%M:%S",
         ))
