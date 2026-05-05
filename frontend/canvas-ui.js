@@ -3423,10 +3423,10 @@ async function _ctxSaveCanvas(fmt) {
     const mimeMap = { png: "image/png", jpeg: "image/jpeg", webp: "image/webp" };
     const dataUrl = C.exportFlattened(mimeMap[fmt]);
 
-    // Embed generation metadata in PNGs when available
+    // Embed generation metadata when available (all formats that support it)
     const State = window.State;
     let metadata = null;
-    if (fmt === "png" && State?.embedMetadata && State.outputInfotexts?.length) {
+    if (State?.embedMetadata && State.outputInfotexts?.length) {
         metadata = State.outputInfotexts[State.selectedOutputIdx] || State.outputInfotexts[0] || null;
     }
 
