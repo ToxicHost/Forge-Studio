@@ -1730,15 +1730,29 @@ function displayOnCanvas(imgSrc, opts) {
 
   if (!window.StudioCore) return;
 
-  const img = new Image();
-  img.onload = () => {
+  // createImageBitmap with colorSpaceConversion:"none" loads raw pixel values
+  // without applying the display ICC profile. new Image() + drawImage would
+  // bake ICC-converted values into the canvas buffer, causing a second ICC
+  // pass when the exported file is opened — producing wrong colors on
+  // calibrated displays.
+  (async () => {
+    let bitmap;
+    try {
+      const resp = await fetch(imgSrc);
+      const blob = await resp.blob();
+      bitmap = await createImageBitmap(blob, { colorSpaceConversion: "none" });
+    } catch (e) {
+      console.error("[Studio] displayOnCanvas: failed to load bitmap", e);
+      return;
+    }
+
     const Core = window.StudioCore;
     const S = Core.state;
     S.lastResult = imgSrc;
 
     // Resize canvas to match the output image (handles hires fix)
-    const outW = img.naturalWidth;
-    const outH = img.naturalHeight;
+    const outW = bitmap.width;
+    const outH = bitmap.height;
 
     // Save undo BEFORE resize so the snapshot captures pre-resize state
     // at the correct dimensions. _restoreStructural already handles
@@ -1770,7 +1784,7 @@ function displayOnCanvas(imgSrc, opts) {
         // User-initiated send: always create a new layer on top
         const layerName = opts.layerName || "Imported";
         const newL = Core.makeLayer(layerName, "paint");
-        newL.ctx.drawImage(img, 0, 0, S.W, S.H);
+        newL.ctx.drawImage(bitmap, 0, 0, S.W, S.H);
         S.layers.push(newL);
         S.activeLayerIdx = S.layers.length - 1;
       } else {
@@ -1784,13 +1798,13 @@ function displayOnCanvas(imgSrc, opts) {
             S.layers.push(genLayer);
           }
           genLayer.ctx.clearRect(0, 0, S.W, S.H);
-          genLayer.ctx.drawImage(img, 0, 0, S.W, S.H);
+          genLayer.ctx.drawImage(bitmap, 0, 0, S.W, S.H);
           genLayer.visible = true;
           S.activeLayerIdx = S.layers.length - 1;
         } else {
           // Create new Gen Result layer at the top of the stack
           genLayer = Core.makeLayer("Gen Result", "paint");
-          genLayer.ctx.drawImage(img, 0, 0, S.W, S.H);
+          genLayer.ctx.drawImage(bitmap, 0, 0, S.W, S.H);
           S.layers.push(genLayer);
           S.activeLayerIdx = S.layers.length - 1;
         }
@@ -1828,8 +1842,7 @@ function displayOnCanvas(imgSrc, opts) {
         }
       }
     } catch (e) { /* Develop not loaded yet; ignore */ }
-  };
-  img.src = imgSrc;
+  })();
 }
 
 
