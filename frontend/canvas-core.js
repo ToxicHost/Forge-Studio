@@ -3482,9 +3482,9 @@ function resizeCanvas(nw, nh) {
 function boot(canvasElement) {
     if (S.ready) return;
     S.canvas = canvasElement;
-    // display-p3 lets the browser perform the sRGB→display-gamut conversion
-    // on the final blit. All offscreen/layer/develop work stays in sRGB, so
-    // pixel math is unaffected. On sRGB displays this is a no-op.
+    // display-p3 lets the browser use the full P3 gamut when rendering to
+    // wide-gamut displays. All pixel work happens on sRGB offscreen buffers;
+    // only the final blit to the display canvas uses P3. No-op on sRGB displays.
     S.ctx = S.canvas.getContext("2d", { colorSpace: "display-p3" });
     S.canvas.width = 800; S.canvas.height = 600;
 
