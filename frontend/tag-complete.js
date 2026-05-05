@@ -787,6 +787,7 @@
   // (localStorage write) is the caller's responsibility; this module only
   // reflects state changes at runtime.
   window.TagComplete = {
+    attach: attachToTextarea,
     setEnabled: function (v) {
       _enabled = !!v;
       if (!_enabled) {
