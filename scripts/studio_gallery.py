@@ -1525,7 +1525,7 @@ def parse_sd_parameters(text):
 # THUMBNAILS
 # =========================================================================
 
-def generate_thumbnail_bytes(filepath, max_size=320):
+def generate_thumbnail_bytes(filepath, max_size=640):
     if not HAS_PILLOW:
         return None
     try:
@@ -1549,7 +1549,7 @@ def generate_thumbnail_bytes(filepath, max_size=320):
 VIDEO_THUMB_SVG = b'<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 200 200" width="200" height="200"><rect width="200" height="200" fill="#16161c"/><polygon points="80,60 80,140 140,100" fill="#d4a017" opacity="0.7"/><rect x="40" y="155" width="120" height="20" rx="4" fill="#2a2a35"/><text x="100" y="169" text-anchor="middle" font-family="sans-serif" font-size="11" fill="#8888a0">VIDEO</text></svg>'
 
 
-def generate_video_thumbnail(filepath, max_size=320):
+def generate_video_thumbnail(filepath, max_size=640):
     for seek in ["0.5", "0", None]:
         try:
             cmd = [FFMPEG_BIN]
