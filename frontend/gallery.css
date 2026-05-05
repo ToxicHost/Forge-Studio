@@ -341,12 +341,11 @@
   border-radius: var(--radius);
   overflow: hidden;
   cursor: pointer;
-  transition: all 0.12s;
+  transition: border-color 0.12s, box-shadow 0.12s;
   position: relative;
 }
 .gal-card:hover {
   border-color: var(--accent);
-  transform: translateY(-1px);
   box-shadow: 0 6px 20px rgba(0, 0, 0, 0.25);
 }
 .gal-card.selected {
