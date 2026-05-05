@@ -3482,7 +3482,10 @@ function resizeCanvas(nw, nh) {
 function boot(canvasElement) {
     if (S.ready) return;
     S.canvas = canvasElement;
-    S.ctx = S.canvas.getContext("2d", { colorSpace: "srgb" });
+    // display-p3 lets the browser perform the sRGB→display-gamut conversion
+    // on the final blit. All offscreen/layer/develop work stays in sRGB, so
+    // pixel math is unaffected. On sRGB displays this is a no-op.
+    S.ctx = S.canvas.getContext("2d", { colorSpace: "display-p3" });
     S.canvas.width = 800; S.canvas.height = 600;
 
     // Initial layers
