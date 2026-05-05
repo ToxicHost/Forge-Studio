@@ -1530,12 +1530,16 @@ def generate_thumbnail_bytes(filepath, max_size=320):
         return None
     try:
         with Image.open(filepath) as img:
+            icc = img.info.get("icc_profile")
             img = ImageOps.exif_transpose(img)
             img.thumbnail((max_size, max_size), Image.LANCZOS)
             if img.mode in ("RGBA", "P"):
                 img = img.convert("RGB")
             buf = BytesIO()
-            img.save(buf, "WEBP", quality=75)
+            save_kwargs = {"quality": 75}
+            if icc:
+                save_kwargs["icc_profile"] = icc
+            img.save(buf, "WEBP", **save_kwargs)
             buf.seek(0)
             return buf.getvalue()
     except Exception:
