@@ -507,12 +507,8 @@
     </div>`;
     dd.innerHTML = header + results.map((r, i) => renderItem(r, i)).join("");
 
-    const rect = textarea.getBoundingClientRect();
-    dd.style.left = rect.left + "px";
-    dd.style.top = (rect.bottom + 4) + "px";
     dd.style.display = "block";
-    const ddW = dd.offsetWidth || 380;
-    if (rect.left + ddW > window.innerWidth - 8) dd.style.left = Math.max(4, window.innerWidth - ddW - 8) + "px";
+    _positionDropdown(dd, textarea);
 
     dd.querySelectorAll(".tac-item").forEach(item => {
       item.addEventListener("click", () => {
@@ -528,6 +524,57 @@
   let previewCache = {};  // name → {lines, count, truncated}
 
   // ── Dropdown UI ─────────────────────────────────────────
+
+  // Returns {x, y} in viewport coordinates just below the text cursor.
+  function _caretCoords(textarea) {
+    const style = window.getComputedStyle(textarea);
+    const lineH = parseFloat(style.lineHeight) || parseFloat(style.fontSize) * 1.4 || 16;
+
+    const mirror = document.createElement("div");
+    const copyProps = [
+      "boxSizing", "width",
+      "paddingTop", "paddingRight", "paddingBottom", "paddingLeft",
+      "borderTopWidth", "borderRightWidth", "borderBottomWidth", "borderLeftWidth",
+      "fontFamily", "fontSize", "fontWeight", "fontStyle", "fontVariant",
+      "lineHeight", "letterSpacing", "wordSpacing", "textTransform", "tabSize",
+    ];
+    Object.assign(mirror.style, {
+      position: "absolute", top: "-9999px", left: "0",
+      visibility: "hidden", whiteSpace: "pre-wrap", wordWrap: "break-word",
+      overflow: "hidden",
+    });
+    for (const p of copyProps) mirror.style[p] = style[p];
+    mirror.textContent = textarea.value.substring(0, textarea.selectionStart);
+    const caret = document.createElement("span");
+    caret.textContent = "​";
+    mirror.appendChild(caret);
+    document.body.appendChild(mirror);
+
+    const taRect = textarea.getBoundingClientRect();
+    const x = taRect.left + caret.offsetLeft - textarea.scrollLeft;
+    const y = taRect.top  + caret.offsetTop  - textarea.scrollTop + lineH;
+    document.body.removeChild(mirror);
+    return { x, y, lineH };
+  }
+
+  function _positionDropdown(dd, textarea) {
+    const { x, y, lineH } = _caretCoords(textarea);
+    const ddW = dd.offsetWidth || 380;
+    const ddH = Math.min(dd.scrollHeight, 320);
+    const margin = 8;
+
+    let top  = y + 4;
+    let left = x;
+
+    // Flip above caret if not enough room below
+    if (top + ddH > window.innerHeight - margin) top = y - lineH - ddH - 4;
+    // Clamp horizontally
+    if (left + ddW > window.innerWidth - margin) left = window.innerWidth - ddW - margin;
+    if (left < margin) left = margin;
+
+    dd.style.left = left + "px";
+    dd.style.top  = Math.max(margin, top) + "px";
+  }
 
   function createDropdown() {
     if (dropdown) return dropdown;
@@ -594,13 +641,9 @@
     }
 
     dd.innerHTML = results.map((r, i) => renderItem(r, i)).join("");
-
-    const rect = textarea.getBoundingClientRect();
-    dd.style.left = rect.left + "px";
-    dd.style.top = (rect.bottom + 4) + "px";
     dd.style.display = "block";
-    const ddW = dd.offsetWidth || 380;
-    if (rect.left + ddW > window.innerWidth - 8) dd.style.left = Math.max(4, window.innerWidth - ddW - 8) + "px";
+
+    _positionDropdown(dd, textarea);
 
     dd.querySelectorAll(".tac-item").forEach(item => {
       item.addEventListener("click", () => {

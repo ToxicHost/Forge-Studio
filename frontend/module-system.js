@@ -60,7 +60,7 @@ function _getServices() {
             const S = core.state;
             const tmp = document.createElement("canvas");
             tmp.width = S.W; tmp.height = S.H;
-            const ctx = tmp.getContext("2d");
+            const ctx = tmp.getContext("2d", { colorSpace: "srgb" });
             // Draw composited result
             for (const L of S.layers) {
                 if (!L.visible || L.type === "adjustment") continue;
