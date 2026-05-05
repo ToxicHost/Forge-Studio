@@ -110,6 +110,107 @@ _here_dir = Path(__file__).parent
 _studio_root = _here_dir if (_here_dir / "frontend").is_dir() else _here_dir.parent
 
 
+# =========================================================================
+# LOGGING + SUPPORTABILITY HELPERS
+# =========================================================================
+#
+# Rotating file logger at <studio_root>/logs/studio.log so users can attach
+# a log when reporting bugs. Privacy rule: log messages MUST NOT include
+# prompts, request payloads, full local paths, model/LoRA names, base64,
+# or any user-identifying content. Generic messages only — the traceback
+# in log.exception() carries enough context for the maintainer.
+#
+# Existing print(f"{TAG} ...") statements are out of scope (stdout, not
+# this log file) but new code in this module should not introduce new
+# print() of private content alongside log calls.
+
+import logging
+from logging.handlers import RotatingFileHandler
+
+_log_dir = _studio_root / "logs"
+try:
+    _log_dir.mkdir(exist_ok=True)
+except Exception as _log_dir_err:
+    print(f"{TAG} Could not create log directory: {_log_dir_err}")
+
+log = logging.getLogger("forge-studio")
+log.setLevel(logging.INFO)
+# Guard against duplicate handlers when this module is reloaded by Forge
+# (extension reload, settings change). Without the guard, every reload
+# would attach another RotatingFileHandler and each event would be
+# written N times.
+if not any(isinstance(h, RotatingFileHandler) for h in log.handlers):
+    try:
+        _handler = RotatingFileHandler(
+            _log_dir / "studio.log",
+            maxBytes=5 * 1024 * 1024,   # 5 MB per file
+            backupCount=3,               # → ~20 MB ceiling
+            encoding="utf-8",
+        )
+        _handler.setFormatter(logging.Formatter(
+            "%(asctime)s [%(levelname)s] %(message)s",
+            datefmt="%Y-%m-%d %H:%M:%S",
+        ))
+        log.addHandler(_handler)
+        log.info("Forge Studio API logger initialized")
+    except Exception as _log_init_err:
+        print(f"{TAG} Logger init failed, falling back to stdout: {_log_init_err}")
+
+
+def _atomic_write_json(path: Path, data) -> None:
+    """Write `data` as JSON to `path` atomically: write to a sibling .tmp
+    file, then rename over the target. `Path.replace()` is atomic on POSIX
+    and on Windows ≥ Vista, so a crash mid-write leaves either the old
+    file intact or the new one — never a half-written file.
+    """
+    tmp = path.with_name(path.name + ".tmp")
+    tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
+    tmp.replace(path)
+
+
+def _cleanup_stale_tmp_files() -> None:
+    """Sweep stale `.json.tmp` files left behind by killed processes.
+    Only scans directories where `_atomic_write_json` actually writes —
+    globbing `_studio_root` alone would miss tmps next to JSON files
+    that live in subdirectories (presets, etc.).
+    """
+    # Known JSON-write directories: the studio root (version.json,
+    # user_defaults.json) plus the develop presets directory.
+    dirs = {_studio_root, _studio_root / "presets" / "develop"}
+    for d in dirs:
+        if not d.is_dir():
+            continue
+        for tmp in d.glob("*.json.tmp"):
+            try:
+                tmp.unlink()
+            except Exception:
+                log.exception("Failed to clean stale tmp file")
+
+
+_cleanup_stale_tmp_files()
+
+
+def _ensure_disk_space(target_dir: Path, needed_bytes: int = 100 * 1024 * 1024) -> None:
+    """Raise RuntimeError if `target_dir`'s filesystem has less than
+    `needed_bytes` free. 100 MB default leaves headroom for a large PNG
+    plus the float32 sidecar. Caller should ensure target_dir exists.
+
+    Privacy: the error message intentionally omits the path — the user
+    knows which output directory they configured.
+    """
+    try:
+        free = shutil.disk_usage(target_dir).free
+    except Exception:
+        # If we can't read disk usage (permissions, removed mount), let
+        # the actual write surface its own error rather than block here.
+        return
+    if free < needed_bytes:
+        raise RuntimeError(
+            f"Output directory has only {free // (1024 * 1024)} MB free; "
+            f"need at least {needed_bytes // (1024 * 1024)} MB"
+        )
+
+
 def _next_forge_counter(output_dir: Path) -> int:
     """Return the next Forge-style 5-digit counter for the given folder.
     Scans existing files matching Studio-NNNNN-*.{png,jpg,webp} and returns
@@ -154,9 +255,8 @@ def _read_version():
 
 
 def _write_version(commit_sha):
-    """Write commit hash to version.json."""
-    with open(_VERSION_FILE, "w") as f:
-        json.dump({"commit": commit_sha}, f)
+    """Write commit hash to version.json (atomic)."""
+    _atomic_write_json(_VERSION_FILE, {"commit": commit_sha})
 
 
 def _github_get(path, timeout=15):
@@ -1326,7 +1426,7 @@ def setup_studio_routes(app: FastAPI):
                     # Parent covers sibling folders (e.g. output/ when config says output/txt2img-images/)
                     allowed_roots.append(str(Path(_d).resolve().parent))
         except Exception:
-            pass
+            log.exception("Failed to read output config for allowed-roots check")
 
         resolved_str = str(resolved)
         if not any(resolved_str.startswith(root) for root in allowed_roots):
@@ -1358,10 +1458,11 @@ def setup_studio_routes(app: FastAPI):
 
         if req.action == "save_defaults" and req.defaults_data is not None:
             try:
-                _defaults_file.write_text(json.dumps(req.defaults_data, indent=2))
-                print(f"{TAG} Defaults saved to {_defaults_file} ({len(req.defaults_data)} keys)")
+                _atomic_write_json(_defaults_file, req.defaults_data)
+                print(f"{TAG} Defaults saved ({len(req.defaults_data)} keys)")
                 return GenerateResponse(settings={"defaults_saved": True})
             except Exception as e:
+                log.exception("Failed to write user defaults")
                 return GenerateResponse(error=f"Defaults save failed: {e}")
 
         if req.action == "load_defaults":
@@ -1370,6 +1471,7 @@ def setup_studio_routes(app: FastAPI):
                     data = json.loads(_defaults_file.read_text())
                     return GenerateResponse(settings=data)
                 except Exception:
+                    log.exception("Corrupted user_defaults.json, returning empty settings")
                     return GenerateResponse(settings={})
             return GenerateResponse(settings={})
 
@@ -1417,8 +1519,8 @@ def setup_studio_routes(app: FastAPI):
                                 if isinstance(val, bool):
                                     ext_args[str(i)] = False
                         print(f"{TAG} Suppressed disabled extension: {title}")
-            except Exception as e:
-                print(f"{TAG} Extension suppression error: {e}")
+            except Exception:
+                log.exception("Extension suppression failed")
 
         try:
             result = await asyncio.to_thread(
@@ -1454,8 +1556,7 @@ def setup_studio_routes(app: FastAPI):
                 bool(req.high_precision and req.save_outputs),
             )
         except Exception as e:
-            print(f"{TAG} Generation error: {e}")
-            traceback.print_exc()
+            log.exception("Generation handler failed")
             return GenerateResponse(error=str(e))
 
         if not result or not isinstance(result, (list, tuple)) or len(result) < 5:
@@ -1504,7 +1605,7 @@ def setup_studio_routes(app: FastAPI):
                 _parsed_settings = json.loads(settings_json)
                 _parsed_infotexts = _parsed_settings.get("infotexts", [])
             except Exception:
-                pass
+                log.exception("Settings JSON parse failed in generation handler")
 
         # Preserve raw wildcard template in embedded metadata — Forge's infotext
         # only contains the resolved prompt, so we append the un-resolved source.
@@ -1553,12 +1654,15 @@ def setup_studio_routes(app: FastAPI):
                                     pnginfo.add_text("parameters", _parsed_infotexts[i])
                                     save_kwargs["pnginfo"] = pnginfo
                             except Exception:
-                                pass
+                                log.exception("Failed to embed PNG metadata")
                         # Encode to buffer once, use for both disk and b64
                         buf = io.BytesIO()
                         img.save(buf, format="PNG", icc_profile=_SRGB_ICC, **save_kwargs)
                         png_bytes = buf.getvalue()
-                        # Write to disk from buffer (no re-encode)
+                        # Write to disk from buffer (no re-encode). Disk-space
+                        # preflight catches "no space left" before a half-
+                        # written PNG hits disk.
+                        _ensure_disk_space(fpath.parent)
                         with open(str(fpath), "wb") as f:
                             f.write(png_bytes)
                         image_paths.append(str(fpath))
@@ -1586,11 +1690,11 @@ def setup_studio_routes(app: FastAPI):
                                                   float_path=_per_image_float_path,
                                                   blend_mask_path=_per_image_mask_path)
                         except Exception:
-                            pass
+                            log.exception("Gallery metadata save failed (PNG path)")
                         # b64 from same buffer (no re-encode)
                         images_b64.append("data:image/png;base64," + base64.b64encode(png_bytes).decode())
-                    except Exception as e:
-                        print(f"{TAG} Auto-save error: {e}")
+                    except Exception:
+                        log.exception("Auto-save failed (PNG path)")
                         # Fallback: at least get the b64
                         images_b64.append(_pil_to_b64(img))
                 elif req.save_outputs and req.save_format in ("jpeg", "webp"):
@@ -1629,12 +1733,13 @@ def setup_studio_routes(app: FastAPI):
                                     if exif_bytes:
                                         save_kwargs["exif"] = exif_bytes
                             except Exception:
-                                pass
+                                log.exception("Failed to embed EXIF metadata")
 
                         # Encode once, reuse for disk and b64 (no double-encode).
                         buf = io.BytesIO()
                         img.save(buf, format=pil_format, icc_profile=_SRGB_ICC, **save_kwargs)
                         file_bytes = buf.getvalue()
+                        _ensure_disk_space(fpath.parent)
                         with open(str(fpath), "wb") as f:
                             f.write(file_bytes)
                         image_paths.append(str(fpath))
@@ -1660,9 +1765,9 @@ def setup_studio_routes(app: FastAPI):
                                                   float_path=_per_image_float_path,
                                                   blend_mask_path=_per_image_mask_path)
                         except Exception:
-                            pass
-                    except Exception as e:
-                        print(f"{TAG} Auto-save error: {e}")
+                            log.exception("Gallery metadata save failed (lossy path)")
+                    except Exception:
+                        log.exception("Auto-save failed (lossy path)")
                         # Fallback: at least get a (PNG) b64 so the client has something to show.
                         images_b64.append(_pil_to_b64(img))
                 else:
@@ -1685,7 +1790,7 @@ def setup_studio_routes(app: FastAPI):
                 infotexts = settings.get("infotexts", [])
                 seed_val = settings.get("seed", -1)
             except Exception:
-                pass
+                log.exception("Settings JSON parse failed (fallback path)")
 
         error_msg = None
         if not images_b64 and info_html:
@@ -1817,7 +1922,7 @@ def setup_studio_routes(app: FastAPI):
             else:
                 return {"ok": False, "error": "neither float_path nor image_b64 provided"}
         except Exception as e:
-            traceback.print_exc()
+            log.exception("EXR export input decode failed")
             return {"ok": False, "error": f"input decode failed: {e}"}
 
         # Build output path under the same studio output root the regular
@@ -2091,8 +2196,7 @@ def setup_studio_routes(app: FastAPI):
             return result
 
         except Exception as e:
-            import traceback
-            traceback.print_exc()
+            log.exception("Upscale handler failed")
             return JSONResponse({"error": str(e)}, status_code=500)
 
     # ------------------------------------------------------------------
@@ -2376,14 +2480,14 @@ def setup_studio_routes(app: FastAPI):
                     from modules.progress import finish_task as _ft
                     _ft(id_task)
                 except Exception:
-                    pass
+                    log.exception("Task finish cleanup failed")
 
             return result, infotext, seed, None
 
         try:
             result, infotext, seed_val, err = await asyncio.to_thread(_worker)
         except Exception as e:
-            traceback.print_exc()
+            log.exception("Upscale+refine handler failed")
             return JSONResponse({"error": str(e)}, status_code=500)
 
         if err:
@@ -2427,6 +2531,8 @@ def setup_studio_routes(app: FastAPI):
                     counter += 1
 
                 save_kwargs = {}
+                # One disk-space preflight covers all three branches below.
+                _ensure_disk_space(fpath.parent)
                 if req.save_format == "png":
                     if req.embed_metadata and infotext:
                         try:
@@ -2435,7 +2541,7 @@ def setup_studio_routes(app: FastAPI):
                             pnginfo.add_text("parameters", infotext)
                             save_kwargs["pnginfo"] = pnginfo
                         except Exception:
-                            pass
+                            log.exception("Failed to embed PNG metadata (upscale)")
                     buf = io.BytesIO()
                     result.save(buf, format="PNG", icc_profile=_SRGB_ICC, **save_kwargs)
                     png_bytes = buf.getvalue()
@@ -2474,7 +2580,7 @@ def setup_studio_routes(app: FastAPI):
                             if _ch:
                                 _gallery_save(_ch, infotext, {"infotexts": [infotext]}, filepath=str(fpath))
                     except Exception:
-                        pass
+                        log.exception("Gallery metadata save failed (upscale path)")
             except Exception as e:
                 print(f"{TAG} Upscale+refine save failed: {e}")
 
@@ -2565,7 +2671,7 @@ def setup_studio_routes(app: FastAPI):
             try:
                 shared.opts.save(shared.config_filename)
             except Exception:
-                pass
+                log.exception("Failed to persist VAE setting to Forge config")
 
             # If no real model is loaded yet, the setting is enough — Forge will
             # pick up the VAE via additional_modules on first load.
@@ -2628,8 +2734,7 @@ def setup_studio_routes(app: FastAPI):
             print(f"{TAG} VAE changed to: {vae_name}")
             return {"ok": True, "loaded": vae_name}
         except Exception as e:
-            import traceback
-            traceback.print_exc()
+            log.exception("VAE load failed")
             return JSONResponse({"error": str(e)}, status_code=500)
 
     # ------------------------------------------------------------------
@@ -2702,7 +2807,7 @@ def setup_studio_routes(app: FastAPI):
                 arch_info = _detect(keys)
                 arch = arch_info.get("arch", "unknown")
             except Exception:
-                pass
+                log.exception("Architecture detection failed")
 
             return {"needs_te": not has_te, "needs_vae": not has_vae, "arch": arch}
         except Exception as e:
@@ -2760,7 +2865,7 @@ def setup_studio_routes(app: FastAPI):
                                 activation_text = user_meta.get("activation text", "")
                                 preferred_weight = float(user_meta.get("preferred weight", 0.0))
                         except Exception:
-                            pass
+                            log.exception("Failed to read embedding user-metadata file")
 
                     try:
                         stat = os.stat(full_path)
@@ -2834,8 +2939,7 @@ def setup_studio_routes(app: FastAPI):
             print(f"{TAG} Saved LoRA preview: {preview_path}")
             return {"ok": True, "path": preview_path}
         except Exception as e:
-            import traceback
-            traceback.print_exc()
+            log.exception("LoRA preview save failed")
             return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
     @app.delete("/studio/lora_preview")
@@ -2961,7 +3065,7 @@ def setup_studio_routes(app: FastAPI):
                         lines = [l.strip() for l in text.splitlines() if l.strip() and not l.strip().startswith("#")]
                         return {"lines": lines[:50], "count": len(lines), "truncated": len(lines) > 50}
                     except Exception:
-                        pass
+                        log.exception("Failed to read wildcard file")
         return {"lines": [], "count": 0}
 
     @app.get("/studio/cn_models")
@@ -3047,8 +3151,7 @@ def setup_studio_routes(app: FastAPI):
                       f" ({len(additional)} additional module(s))")
             return {"ok": True, "loaded": info.title}
         except Exception as e:
-            import traceback
-            traceback.print_exc()
+            log.exception("Model load failed")
             return JSONResponse({"error": str(e)}, status_code=500)
 
     @app.post("/studio/refresh_models")
@@ -3134,7 +3237,7 @@ def setup_studio_routes(app: FastAPI):
                 current_reserve = max(mm.SETTING_RESERVED_VRAM, 0) / (1024 ** 3)
                 total_vram_mb = mm.total_vram
             except Exception:
-                pass
+                log.exception("Failed to read VRAM reserve setting")
             return {
                 "available": True,
                 "allocated_gb": round(allocated, 2),
@@ -3257,9 +3360,10 @@ def setup_studio_routes(app: FastAPI):
                 target.relative_to(base_resolved)
             except ValueError:
                 return JSONResponse({"ok": False, "error": "Invalid path"}, status_code=400)
-            target.write_text(json.dumps(params, indent=2), encoding="utf-8")
+            _atomic_write_json(target, params)
             return {"ok": True, "name": name}
         except Exception as e:
+            log.exception("Develop preset save failed")
             return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
     # ------------------------------------------------------------------
@@ -3357,8 +3461,7 @@ def setup_studio_routes(app: FastAPI):
             return {"ok": True, "path": str(path), "filename": path.name}
 
         except Exception as e:
-            print(f"{TAG} Save error: {e}")
-            traceback.print_exc()
+            log.exception("Save handler failed")
             return JSONResponse({"error": str(e)}, status_code=500)
 
     # ------------------------------------------------------------------
