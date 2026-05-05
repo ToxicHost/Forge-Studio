@@ -184,7 +184,7 @@ function _loadDoc(idx) {
   // Stroke buffer — resize to match doc
   S.stroke.canvas.width = S.W;
   S.stroke.canvas.height = S.H;
-  S.stroke.ctx = S.stroke.canvas.getContext("2d");
+  S.stroke.ctx = S.stroke.canvas.getContext("2d", { colorSpace: "srgb" });
 
   // Layers
   S.layers = doc.layers.map(function (saved) {
@@ -203,7 +203,7 @@ function _loadDoc(idx) {
       };
     }
     var c = C.createLayerCanvas();
-    var ctx = c.getContext("2d");
+    var ctx = c.getContext("2d", { colorSpace: "srgb" });
     if (saved.type === "reference") {
       ctx.fillStyle = "#fff";
       ctx.fillRect(0, 0, S.W, S.H);
@@ -222,7 +222,7 @@ function _loadDoc(idx) {
   // Mask
   S.mask.canvas.width = S.W;
   S.mask.canvas.height = S.H;
-  S.mask.ctx = S.mask.canvas.getContext("2d");
+  S.mask.ctx = S.mask.canvas.getContext("2d", { colorSpace: "srgb" });
   if (doc.maskData) S.mask.ctx.putImageData(doc.maskData, 0, 0);
   S.mask.visible = doc.maskVisible !== undefined ? doc.maskVisible : true;
   S.mask.opacity = doc.maskOpacity !== undefined ? doc.maskOpacity : 0.5;
@@ -230,7 +230,7 @@ function _loadDoc(idx) {
   // Regions
   S.regions = doc.regions.map(function (saved) {
     var c = C.createLayerCanvas();
-    var ctx = c.getContext("2d");
+    var ctx = c.getContext("2d", { colorSpace: "srgb" });
     if (saved.imageData) ctx.putImageData(saved.imageData, 0, 0);
     return {
       id: saved.id, color: saved.color, canvas: c, ctx: ctx,

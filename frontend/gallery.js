@@ -1287,7 +1287,7 @@ async function copyImageToClipboard(imgId) {
             const bmp = await createImageBitmap(blob);
             const canvas = document.createElement("canvas");
             canvas.width = bmp.width; canvas.height = bmp.height;
-            const ctx = canvas.getContext("2d");
+            const ctx = canvas.getContext("2d", { colorSpace: "srgb" });
             ctx.drawImage(bmp, 0, 0);
             pngBlob = await new Promise(r => canvas.toBlob(r, "image/png"));
         }
@@ -1908,7 +1908,7 @@ function _wireDetailEvents(ov, img) {
                             const bmp = await createImageBitmap(blob);
                             const canvas = document.createElement("canvas");
                             canvas.width = bmp.width; canvas.height = bmp.height;
-                            canvas.getContext("2d").drawImage(bmp, 0, 0);
+                            canvas.getContext("2d", { colorSpace: "srgb" }).drawImage(bmp, 0, 0);
                             pngBlob = await new Promise(r => canvas.toBlob(r, "image/png"));
                         }
                         await navigator.clipboard.write([new ClipboardItem({ "image/png": pngBlob })]);

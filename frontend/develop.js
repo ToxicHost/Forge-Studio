@@ -1186,7 +1186,7 @@ function _applyDevelopProxy(ctx, w, h, p) {
     var ph = Math.max(1, Math.round(h * scale));
     var tmp = document.createElement("canvas");
     tmp.width = pw; tmp.height = ph;
-    var tx = tmp.getContext("2d");
+    var tx = tmp.getContext("2d", { colorSpace: "srgb" });
     tx.imageSmoothingEnabled = true;
     tx.drawImage(ctx.canvas, 0, 0, pw, ph);
     _applyDevelopFull(tx, pw, ph, p);
@@ -2897,7 +2897,7 @@ function _tcResetDrag() {
 
 function _tcRedrawCurve() {
     if (!_tcCurveCanvas) return;
-    var ctx = _tcCurveCanvas.getContext("2d");
+    var ctx = _tcCurveCanvas.getContext("2d", { colorSpace: "srgb" });
     var w = _tcCurveCanvas.width, h = _tcCurveCanvas.height;
     ctx.clearRect(0, 0, w, h);
     // Background grid (4×4)
@@ -3115,7 +3115,7 @@ function _buildColorWheel(container, regionPrefix, label, i18nKey) {
     container.appendChild(wrap);
 
     function drawWheel() {
-        var ctx = canvas.getContext("2d");
+        var ctx = canvas.getContext("2d", { colorSpace: "srgb" });
         var w = canvas.width, h = canvas.height;
         var cx = w / 2, cy = h / 2, r = Math.min(w, h) / 2 - 1;
         ctx.clearRect(0, 0, w, h);
@@ -3467,7 +3467,7 @@ function syncPanel() {
 function _renderHistogram() {
     if (!_histCanvas) return;
     var S = _S(); if (!S || !S.canvas) return;
-    var hctx = _histCanvas.getContext("2d");
+    var hctx = _histCanvas.getContext("2d", { colorSpace: "srgb" });
     var W = _histCanvas.width, H = _histCanvas.height;
     hctx.clearRect(0, 0, W, H);
 
@@ -3476,7 +3476,7 @@ function _renderHistogram() {
     var sw = src.width, sh = src.height;
     if (!sw || !sh) return;
     var sctx;
-    try { sctx = src.getContext("2d"); } catch (e) { return; }
+    try { sctx = src.getContext("2d", { colorSpace: "srgb" }); } catch (e) { return; }
     // Compute the image's rect inside the display canvas so we can ignore
     // the surrounding "void" padding that the display canvas paints. Inside
     // the image rect, alpha=0 pixels count as bin 0 (the user sees them
@@ -3811,7 +3811,7 @@ function _samplePreDevelopRegion(cx, cy, radius) {
     var w = x1 - x0 + 1, h = y1 - y0 + 1;
     if (w <= 0 || h <= 0) return null;
     var img;
-    try { img = buf.getContext("2d").getImageData(x0, y0, w, h); }
+    try { img = buf.getContext("2d", { colorSpace: "srgb" }).getImageData(x0, y0, w, h); }
     catch (e) { return null; }
     var d = img.data, n = w * h;
     var rs = 0, gs = 0, bs = 0;
@@ -4064,7 +4064,7 @@ function _buildBeforeBuffer() {
     // Render layers without develop into a doc-resolution canvas.
     var c = document.createElement("canvas");
     c.width = S.W; c.height = S.H;
-    var x = c.getContext("2d");
+    var x = c.getContext("2d", { colorSpace: "srgb" });
     x.fillStyle = "#ffffff"; x.fillRect(0, 0, S.W, S.H);
     for (var i = 0; i < S.layers.length; i++) {
         var L = S.layers[i];
@@ -4301,7 +4301,7 @@ function _decodeMaskPng(url, w, h) {
             try {
                 var c = document.createElement("canvas");
                 c.width = w; c.height = h;
-                var cx = c.getContext("2d");
+                var cx = c.getContext("2d", { colorSpace: "srgb" });
                 cx.drawImage(im, 0, 0, w, h);
                 var d = cx.getImageData(0, 0, w, h).data;
                 var out = new Uint8ClampedArray(w * h);
@@ -4345,7 +4345,7 @@ function _decodeImageToRGBA(url, w, h) {
             try {
                 var c = document.createElement("canvas");
                 c.width = w; c.height = h;
-                var cx = c.getContext("2d");
+                var cx = c.getContext("2d", { colorSpace: "srgb" });
                 cx.drawImage(im, 0, 0, w, h);
                 resolve(cx.getImageData(0, 0, w, h).data);
             } catch (e) { reject(e); }

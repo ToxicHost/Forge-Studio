@@ -398,7 +398,7 @@ function drawMarchingAnts(c) {
         }
         const edges = S.selection._edgeCache;
         const edgeCanvas = C.getTempCanvas("marchingAnts", w, h);
-        const ectx = edgeCanvas.getContext("2d");
+        const ectx = edgeCanvas.getContext("2d", { colorSpace: "srgb" });
         const eimg = ectx.createImageData(w, h);
         const ed = eimg.data;
         const phase = Math.floor(S.selection.marchOffset) % 8;
@@ -847,12 +847,12 @@ function bindCanvas() {
                 const origData = L.ctx.getImageData(0, 0, S.W, S.H);
                 const tc = document.createElement("canvas");
                 tc.width = bounds.w; tc.height = bounds.h;
-                tc.getContext("2d").drawImage(L.canvas, bounds.x, bounds.y, bounds.w, bounds.h, 0, 0, bounds.w, bounds.h);
+                tc.getContext("2d", { colorSpace: "srgb" }).drawImage(L.canvas, bounds.x, bounds.y, bounds.w, bounds.h, 0, 0, bounds.w, bounds.h);
                 L.ctx.clearRect(bounds.x, bounds.y, bounds.w, bounds.h);
                 S.transform = {
                     active: true, bounds: { ...bounds }, origBounds: { ...bounds },
                     originalData: origData,
-                    layerIdx: S.activeLayerIdx, canvas: tc, ctx: tc.getContext("2d"),
+                    layerIdx: S.activeLayerIdx, canvas: tc, ctx: tc.getContext("2d", { colorSpace: "srgb" }),
                     dragMode: null, dragStart: null, origDragBounds: null, rotation: 0,
                     flipH: false, flipV: false, aspectLock: false,
                     skewX: 0, skewY: 0, skewMode: false,
@@ -1603,19 +1603,19 @@ function _finalizeCrop() {
     const croppedLayers = S.layers.map(L => {
         if (!L.canvas) return null;
         const tc = document.createElement("canvas"); tc.width = cw; tc.height = ch;
-        tc.getContext("2d").drawImage(L.canvas, cx, cy, cw, ch, 0, 0, cw, ch);
+        tc.getContext("2d", { colorSpace: "srgb" }).drawImage(L.canvas, cx, cy, cw, ch, 0, 0, cw, ch);
         return tc;
     });
     const croppedMask = document.createElement("canvas"); croppedMask.width = cw; croppedMask.height = ch;
-    croppedMask.getContext("2d").drawImage(S.mask.canvas, cx, cy, cw, ch, 0, 0, cw, ch);
+    croppedMask.getContext("2d", { colorSpace: "srgb" }).drawImage(S.mask.canvas, cx, cy, cw, ch, 0, 0, cw, ch);
     S.W = cw; S.H = ch;
     S.stroke.canvas.width = cw; S.stroke.canvas.height = ch;
-    S.mask.canvas.width = cw; S.mask.canvas.height = ch; S.mask.ctx = S.mask.canvas.getContext("2d");
+    S.mask.canvas.width = cw; S.mask.canvas.height = ch; S.mask.ctx = S.mask.canvas.getContext("2d", { colorSpace: "srgb" });
     S.mask.ctx.drawImage(croppedMask, 0, 0);
     for (let i = 0; i < S.layers.length; i++) {
         if (!S.layers[i].canvas) continue;
         S.layers[i].canvas.width = cw; S.layers[i].canvas.height = ch;
-        S.layers[i].ctx = S.layers[i].canvas.getContext("2d");
+        S.layers[i].ctx = S.layers[i].canvas.getContext("2d", { colorSpace: "srgb" });
         if (croppedLayers[i]) S.layers[i].ctx.drawImage(croppedLayers[i], 0, 0);
     }
     S.selection.rect = null;
@@ -1789,13 +1789,13 @@ function smartRotate(angleRad) {
     // Snapshot the source content
     const snap = document.createElement("canvas");
     snap.width = bw; snap.height = bh;
-    snap.getContext("2d").drawImage(L.canvas, bounds.x, bounds.y, bw, bh, 0, 0, bw, bh);
+    snap.getContext("2d", { colorSpace: "srgb" }).drawImage(L.canvas, bounds.x, bounds.y, bw, bh, 0, 0, bw, bh);
 
     // Bake the rotation into a canvas of post-rotation dimensions
     const tcW = Math.ceil(newW), tcH = Math.ceil(newH);
     const tc = document.createElement("canvas");
     tc.width = tcW; tc.height = tcH;
-    const tctx = tc.getContext("2d");
+    const tctx = tc.getContext("2d", { colorSpace: "srgb" });
     tctx.imageSmoothingEnabled = true;
     tctx.imageSmoothingQuality = "high";
     tctx.translate(tcW / 2, tcH / 2);
@@ -1949,7 +1949,7 @@ function _applyHSV() {
 
 function _drawHueWheel() {
     const c = document.getElementById("hsvWheel"); if (!c) return;
-    const ctx = c.getContext("2d"), cx = 80, cy = 80, ro = 75, ri = 52;
+    const ctx = c.getContext("2d", { colorSpace: "srgb" }), cx = 80, cy = 80, ro = 75, ri = 52;
     ctx.clearRect(0, 0, 160, 160);
     for (let a = 0; a < 360; a++) {
         const r1 = a * Math.PI / 180, r2 = (a + 2) * Math.PI / 180;
@@ -1965,7 +1965,7 @@ function _drawHueWheel() {
 
 function _drawSVSquare() {
     const c = document.getElementById("hsvSV"); if (!c) return;
-    const ctx = c.getContext("2d"), w = 128, h = 128;
+    const ctx = c.getContext("2d", { colorSpace: "srgb" }), w = 128, h = 128;
     const img = ctx.createImageData(w, h);
     for (let y = 0; y < h; y++) for (let x = 0; x < w; x++) {
         const s_val = x / w * 100, v_val = (1 - y / h) * 100;
@@ -2153,7 +2153,7 @@ async function savePSD() {
     if (dp && dp.enabled && C._applyDevelop && window.StudioDevelop) {
         const devCanvas = document.createElement("canvas");
         devCanvas.width = S.W; devCanvas.height = S.H;
-        const dx = devCanvas.getContext("2d");
+        const dx = devCanvas.getContext("2d", { colorSpace: "srgb" });
         dx.fillStyle = "#ffffff"; dx.fillRect(0, 0, S.W, S.H);
         for (const L of S.layers) {
             if (!L.visible) continue;
@@ -2452,7 +2452,7 @@ function buildHistogram(opts) {
     canvas.height = opts.height || 60;
     canvas.className = "histogram__canvas";
     wrap.appendChild(canvas);
-    const ctx = canvas.getContext("2d");
+    const ctx = canvas.getContext("2d", { colorSpace: "srgb" });
 
     function setSource(imgData) {
         const bins = new Uint32Array(256);
@@ -2578,7 +2578,7 @@ function _buildAdjEditor(L, redraw) {
         wrap.appendChild(head);
 
         function paintHueTrack(canvas) {
-            const cx = canvas.getContext("2d");
+            const cx = canvas.getContext("2d", { colorSpace: "srgb" });
             const w = canvas.width, h = canvas.height;
             for (let x = 0; x < w; x++) {
                 const hue = (x / w) * 360;
@@ -2586,7 +2586,7 @@ function _buildAdjEditor(L, redraw) {
             }
         }
         function paintSatTrack(canvas) {
-            const cx = canvas.getContext("2d"); const w = canvas.width, h = canvas.height;
+            const cx = canvas.getContext("2d", { colorSpace: "srgb" }); const w = canvas.width, h = canvas.height;
             const baseHue = ((ap.hue || 0) % 360 + 360) % 360;
             for (let x = 0; x < w; x++) {
                 const t = x / w * 100;
@@ -2594,7 +2594,7 @@ function _buildAdjEditor(L, redraw) {
             }
         }
         function paintLightTrack(canvas) {
-            const cx = canvas.getContext("2d"); const w = canvas.width, h = canvas.height;
+            const cx = canvas.getContext("2d", { colorSpace: "srgb" }); const w = canvas.width, h = canvas.height;
             const baseHue = ((ap.hue || 0) % 360 + 360) % 360;
             for (let x = 0; x < w; x++) {
                 const t = x / w * 100;
@@ -2664,7 +2664,7 @@ function _buildAdjEditor(L, redraw) {
         function refreshHistogram() {
             try {
                 const c = C._compositeLayersBelow(layerIdx);
-                sourceImgData = c.getContext("2d").getImageData(0, 0, c.width, c.height);
+                sourceImgData = c.getContext("2d", { colorSpace: "srgb" }).getImageData(0, 0, c.width, c.height);
                 histo.setSource(sourceImgData);
             } catch (e) {
                 console.error("[StudioUI] histogram build failed", e);
@@ -2862,7 +2862,7 @@ function renderLayerPanel() {
         if (L.canvas) {
             try {
                 const tc = document.createElement("canvas"); tc.width = 32; tc.height = 32;
-                tc.getContext("2d").drawImage(L.canvas, 0, 0, S.W, S.H, 0, 0, 32, 32);
+                tc.getContext("2d", { colorSpace: "srgb" }).drawImage(L.canvas, 0, 0, S.W, S.H, 0, 0, 32, 32);
                 thumb.style.backgroundImage = `url(${tc.toDataURL()})`;
                 thumb.style.backgroundSize = "cover";
             } catch (_) {}

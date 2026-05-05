@@ -32,7 +32,7 @@ function getTempCanvas(key, w, h) {
         tc = _createCanvas(w, h);
         _tempCanvases[key] = tc;
     }
-    const ctx = tc.getContext("2d");
+    const ctx = tc.getContext("2d", { colorSpace: "srgb" });
     ctx.globalCompositeOperation = "source-over";
     ctx.globalAlpha = 1;
     ctx.filter = "none";
@@ -363,7 +363,7 @@ function createLayerCanvas() {
 
 function makeLayer(name, type, opts) {
     const c = createLayerCanvas();
-    const ctx = c.getContext("2d");
+    const ctx = c.getContext("2d", { colorSpace: "srgb" });
     return {
         id: S.nextLayerId++, name: name, type: type || "paint",
         canvas: c, ctx: ctx,
@@ -687,7 +687,7 @@ function makeStamp(sz, preset, col, ang) {
         return _stampCache.canvas;
     }
     const c = _createCanvas(d, d);
-    const x = c.getContext("2d"), rgb = hexRgb(col), cx = d / 2, cy = d / 2, r = d / 2;
+    const x = c.getContext("2d", { colorSpace: "srgb" }), rgb = hexRgb(col), cx = d / 2, cy = d / 2, r = d / 2;
     switch (preset) {
         case "round":
             x.fillStyle = `rgba(${rgb.r},${rgb.g},${rgb.b},1)`;
@@ -1250,12 +1250,12 @@ function cloneStamp(x, y, p) {
     const srcX = x + S._cloneOffset.dx, srcY = y + S._cloneOffset.dy;
     // Composite visible layers for source sampling
     const tc = getTempCanvas("cloneSrc", S.W, S.H);
-    const tctx = tc.getContext("2d");
+    const tctx = tc.getContext("2d", { colorSpace: "srgb" });
     for (const L of S.layers) {
         if (L.visible && L.canvas) { tctx.globalAlpha = L.opacity; tctx.drawImage(L.canvas, 0, 0); }
     }
     const stamp = getTempCanvas("cloneStamp", Math.ceil(sz), Math.ceil(sz));
-    const sctx = stamp.getContext("2d");
+    const sctx = stamp.getContext("2d", { colorSpace: "srgb" });
     sctx.save();
     sctx.beginPath(); sctx.arc(r, r, r, 0, Math.PI * 2); sctx.clip();
     sctx.drawImage(tc, srcX - r, srcY - r, sz, sz, 0, 0, sz, sz);
@@ -1325,7 +1325,7 @@ function drawGradient(start, end, mode) {
     grad.addColorStop(1, `rgba(${rgb.r},${rgb.g},${rgb.b},0)`);
     if (S.selection.active && S.selection.mask) {
         const tc = getTempCanvas("gradientMask", S.W, S.H);
-        const tctx = tc.getContext("2d");
+        const tctx = tc.getContext("2d", { colorSpace: "srgb" });
         tctx.fillStyle = grad;
         tctx.fillRect(0, 0, S.W, S.H);
         const gd = tctx.getImageData(0, 0, S.W, S.H);
@@ -1380,7 +1380,7 @@ function pickColor(pt) {
     if (merged) {
         // Sample from composited visible layers
         const tmp = _createCanvas(S.W, S.H);
-        const tc = tmp.getContext("2d");
+        const tc = tmp.getContext("2d", { colorSpace: "srgb" });
         for (let i = 0; i < S.layers.length; i++) {
             const L = S.layers[i];
             if (!L.visible || !L.canvas) continue;
@@ -1576,7 +1576,7 @@ function _restoreStructural(entry) {
         S.W = entry.canvasW; S.H = entry.canvasH;
         S.stroke.canvas.width = S.W; S.stroke.canvas.height = S.H;
         S.mask.canvas.width = S.W; S.mask.canvas.height = S.H;
-        S.mask.ctx = S.mask.canvas.getContext("2d");
+        S.mask.ctx = S.mask.canvas.getContext("2d", { colorSpace: "srgb" });
     }
     if (entry.maskData) S.mask.ctx.putImageData(entry.maskData, 0, 0);
     S.layers = [];
@@ -1588,7 +1588,7 @@ function _restoreStructural(entry) {
             L._lutCache = null;
             S.layers.push(L);
         } else {
-            const c = createLayerCanvas(); const ctx = c.getContext("2d");
+            const c = createLayerCanvas(); const ctx = c.getContext("2d", { colorSpace: "srgb" });
             if (ld.data) ctx.putImageData(ld.data, 0, 0);
             S.layers.push({
                 id: ld.id, name: ld.name, type: ld.type, canvas: c, ctx: ctx,
@@ -1705,7 +1705,7 @@ function fillPolygonMask(pts, mask, w, h) {
 function magicWandSelect(pt) {
     const tolerance = S.toolStrength * 50;
     const tc = _createCanvas(S.W, S.H);
-    const tctx = tc.getContext("2d");
+    const tctx = tc.getContext("2d", { colorSpace: "srgb" });
     for (const L of S.layers) {
         if (L.visible && L.canvas) { tctx.globalAlpha = L.opacity; tctx.drawImage(L.canvas, 0, 0); }
     }
@@ -2215,7 +2215,7 @@ function _computeEdgeMap(ctx, w, h) {
  */
 function magneticEdgeMap() {
     const tmp = _createCanvas(S.W, S.H);
-    const tc = tmp.getContext("2d");
+    const tc = tmp.getContext("2d", { colorSpace: "srgb" });
     for (const L of S.layers) {
         if (!L.visible || !L.canvas) continue;
         tc.globalAlpha = L.opacity ?? 1;
@@ -2454,7 +2454,7 @@ function addRegion(name) {
         id, name: name || ("Region " + id),
         prompt: "", negPrompt: "", denoising: 0.55, weight: 1.0,
         color: REGION_COLORS[colorIdx],
-        canvas: c, ctx: c.getContext("2d"), visible: true
+        canvas: c, ctx: c.getContext("2d", { colorSpace: "srgb" }), visible: true
     };
     S.regions.push(region);
     S.activeRegionId = id;
@@ -2797,7 +2797,7 @@ function symGuides(c) {
 // below `idx` are honored so the histogram reflects what the layer would see.
 function _compositeLayersBelow(idx) {
     const c = _createCanvas(S.W, S.H);
-    const x = c.getContext("2d");
+    const x = c.getContext("2d", { colorSpace: "srgb" });
     x.filter = "none"; x.globalAlpha = 1; x.globalCompositeOperation = "source-over";
     const stop = Math.min(idx, S.layers.length);
     for (let i = 0; i < stop; i++) {
@@ -2815,7 +2815,7 @@ function _compositeLayersBelow(idx) {
 function _composite2D(c, w, h, z, eraserActive, AL, strokeDrawCanvas, showMask) {
     if (!_compBuffer || _compBuffer.width !== w || _compBuffer.height !== h) {
         _compBuffer = _createCanvas(w, h);
-        _compCtx = _compBuffer.getContext("2d");
+        _compCtx = _compBuffer.getContext("2d", { colorSpace: "srgb" });
     }
     const x = _compCtx;
     const strokeInStack = strokeDrawCanvas && S.tool === "brush" && !S.editingMask;
@@ -2890,7 +2890,7 @@ function _composite2D(c, w, h, z, eraserActive, AL, strokeDrawCanvas, showMask) 
             if (!_compBufCache || _compBufCache.width !== w || _compBufCache.height !== h) {
                 _compBufCache = _createCanvas(w, h);
             }
-            const cacheCtx = _compBufCache.getContext("2d");
+            const cacheCtx = _compBufCache.getContext("2d", { colorSpace: "srgb" });
             cacheCtx.globalCompositeOperation = "source-over"; cacheCtx.globalAlpha = 1;
             cacheCtx.clearRect(0, 0, w, h);
             cacheCtx.drawImage(_compBuffer, 0, 0);
@@ -2922,7 +2922,7 @@ function drawRegionOverlay(ctx) {
         const r = S.regions[ri];
         if (!r.visible) continue;
         const tmp = getTempCanvas("regionOvl_" + ri, S.W, S.H);
-        const tc = tmp.getContext("2d");
+        const tc = tmp.getContext("2d", { colorSpace: "srgb" });
         tc.fillStyle = r.color; tc.fillRect(0, 0, S.W, S.H);
         tc.globalCompositeOperation = "destination-in"; tc.drawImage(r.canvas, 0, 0);
         tc.globalCompositeOperation = "source-over";
@@ -3068,7 +3068,7 @@ function composite(dirtyOnly) {
 // ========================================================================
 function exportCanvas() {
     const c = _createCanvas(S.W, S.H);
-    const x = c.getContext("2d");
+    const x = c.getContext("2d", { colorSpace: "srgb" });
     x.filter = "none"; x.globalAlpha = 1; x.globalCompositeOperation = "source-over";
     // JPEG needs a white background (no alpha channel)
     x.fillStyle = "#ffffff";
@@ -3091,7 +3091,7 @@ function isCanvasBlank() {
     // Check if the composited canvas is all near-white.
     // Used for txt2img routing: blank = txt2img, content = img2img.
     const c = _createCanvas(S.W, S.H);
-    const x = c.getContext("2d");
+    const x = c.getContext("2d", { colorSpace: "srgb" });
     x.fillStyle = "#fff"; x.fillRect(0, 0, S.W, S.H);
     for (const L of S.layers) {
         if (!L.visible) continue;
@@ -3111,7 +3111,7 @@ function exportMask() {
     const isInpaintSketch = S.studioMode === "Edit" && S.inpaintMode === "Inpaint Sketch";
     if (isInpaintSketch) {
         const tmpC = _createCanvas(S.W, S.H);
-        const tmpX = tmpC.getContext("2d");
+        const tmpX = tmpC.getContext("2d", { colorSpace: "srgb" });
         for (let i = 1; i < S.layers.length; i++) {
             if (S.layers[i].visible && S.layers[i].canvas) tmpX.drawImage(S.layers[i].canvas, 0, 0);
         }
@@ -3120,7 +3120,7 @@ function exportMask() {
         for (let i = 3; i < pd.length; i += 4) if (pd[i] > 0) { has = true; break; }
         if (!has) return "null";
         const c = _createCanvas(S.W, S.H);
-        const x = c.getContext("2d");
+        const x = c.getContext("2d", { colorSpace: "srgb" });
         x.fillStyle = "#000"; x.fillRect(0, 0, S.W, S.H);
         const o = x.getImageData(0, 0, S.W, S.H), od = o.data;
         for (let i = 0; i < pd.length; i += 4) if (pd[i + 3] > 0) { od[i] = 255; od[i + 1] = 255; od[i + 2] = 255; od[i + 3] = 255; }
@@ -3128,7 +3128,7 @@ function exportMask() {
         return c.toDataURL("image/png");
     }
     const maskC = _createCanvas(S.W, S.H);
-    const mx = maskC.getContext("2d");
+    const mx = maskC.getContext("2d", { colorSpace: "srgb" });
     mx.drawImage(S.mask.canvas, 0, 0);
     if (S.studioMode === "Edit" && S.inpaintMode === "Regional" && S.regions.length) {
         for (const r of S.regions) { if (r.visible) mx.drawImage(r.canvas, 0, 0); }
@@ -3138,7 +3138,7 @@ function exportMask() {
     for (let i = 3; i < d.length; i += 4) if (d[i] > 0) { has = true; break; }
     if (!has) return "null";
     const c = _createCanvas(S.W, S.H);
-    const x = c.getContext("2d");
+    const x = c.getContext("2d", { colorSpace: "srgb" });
     x.fillStyle = "#000"; x.fillRect(0, 0, S.W, S.H);
     const o = x.getImageData(0, 0, S.W, S.H), od = o.data;
     for (let i = 0; i < d.length; i += 4) if (d[i + 3] > 0) { od[i] = 255; od[i + 1] = 255; od[i + 2] = 255; od[i + 3] = 255; }
@@ -3148,7 +3148,7 @@ function exportMask() {
 
 function exportFlattened(mime) {
     const c = _createCanvas(S.W, S.H);
-    const x = c.getContext("2d");
+    const x = c.getContext("2d", { colorSpace: "srgb" });
     if (mime === "image/jpeg" || mime === "image/webp") {
         x.fillStyle = "#ffffff"; x.fillRect(0, 0, S.W, S.H);
     }
@@ -3279,7 +3279,7 @@ function _rotateLayer90Common(direction) {
         }
     }
     const tmp = _createCanvas(rotW, rotH);
-    tmp.getContext("2d").putImageData(rot, 0, 0);
+    tmp.getContext("2d", { colorSpace: "srgb" }).putImageData(rot, 0, 0);
 
     L.ctx.clearRect(0, 0, w, h);
     // Center the rotated content. May overflow canvas; the drawImage
@@ -3310,7 +3310,7 @@ function _rotateLayerArbitrary(degrees) {
     const bx = bounds.x, by = bounds.y, bw = bounds.w, bh = bounds.h;
 
     const snap = _createCanvas(bw, bh);
-    snap.getContext("2d").drawImage(L.canvas, bx, by, bw, bh, 0, 0, bw, bh);
+    snap.getContext("2d", { colorSpace: "srgb" }).drawImage(L.canvas, bx, by, bw, bh, 0, 0, bw, bh);
 
     const rad = deg * Math.PI / 180;
     L.ctx.save();
@@ -3335,7 +3335,7 @@ function _rotateLayerArbitrary(degrees) {
 function compositeForLive(targetW, targetH) {
     // Composite at document resolution first
     const c = _createCanvas(S.W, S.H);
-    const x = c.getContext("2d");
+    const x = c.getContext("2d", { colorSpace: "srgb" });
     x.fillStyle = "#ffffff";
     x.fillRect(0, 0, S.W, S.H);
     for (const L of S.layers) {
@@ -3352,7 +3352,7 @@ function compositeForLive(targetW, targetH) {
     // Downscale to generation resolution
     if (targetW !== S.W || targetH !== S.H) {
         const sc = _createCanvas(targetW, targetH);
-        const sx = sc.getContext("2d");
+        const sx = sc.getContext("2d", { colorSpace: "srgb" });
         sx.drawImage(c, 0, 0, targetW, targetH);
         return sc.toDataURL("image/png");
     }
@@ -3369,7 +3369,7 @@ function setLivePreview(imageB64) {
     // Ensure preview canvas exists at document size
     if (!S.livePreview.canvas || S.livePreview.canvas.width !== S.W || S.livePreview.canvas.height !== S.H) {
         S.livePreview.canvas = _createCanvas(S.W, S.H);
-        S.livePreview.ctx = S.livePreview.canvas.getContext("2d");
+        S.livePreview.ctx = S.livePreview.canvas.getContext("2d", { colorSpace: "srgb" });
     }
 
     // Decode image
@@ -3444,33 +3444,33 @@ function resizeCanvas(nw, nh) {
     while (S.redoStack.length > S.maxUndo) S.redoStack.shift();
     S.stroke.canvas.width = nw; S.stroke.canvas.height = nh;
     S.mask.canvas.width = nw; S.mask.canvas.height = nh;
-    S.mask.ctx = S.mask.canvas.getContext("2d");
+    S.mask.ctx = S.mask.canvas.getContext("2d", { colorSpace: "srgb" });
     for (let i = 0; i < S.layers.length; i++) {
         const L = S.layers[i];
         if (!L.canvas) continue;
         L.canvas.width = nw; L.canvas.height = nh;
-        L.ctx = L.canvas.getContext("2d");
+        L.ctx = L.canvas.getContext("2d", { colorSpace: "srgb" });
         if (L.type === "reference") {
             L.ctx.fillStyle = "#fff"; L.ctx.fillRect(0, 0, nw, nh);
         }
         if (savedLayers[i]) {
             const tmpC = _createCanvas(savedLayers[i].width, savedLayers[i].height);
-            tmpC.getContext("2d").putImageData(savedLayers[i], 0, 0);
+            tmpC.getContext("2d", { colorSpace: "srgb" }).putImageData(savedLayers[i], 0, 0);
             L.ctx.drawImage(tmpC, 0, 0, nw, nh);
         }
     }
     const tmpM = _createCanvas(savedMask.width, savedMask.height);
-    tmpM.getContext("2d").putImageData(savedMask, 0, 0);
+    tmpM.getContext("2d", { colorSpace: "srgb" }).putImageData(savedMask, 0, 0);
     S.mask.ctx.drawImage(tmpM, 0, 0, nw, nh);
     // Resize region canvases to match new dimensions
     for (let i = 0; i < S.regions.length; i++) {
         const r = S.regions[i];
         r.canvas.width = nw; r.canvas.height = nh;
-        r.ctx = r.canvas.getContext("2d");
+        r.ctx = r.canvas.getContext("2d", { colorSpace: "srgb" });
         if (savedRegions[i]) {
             const sr = savedRegions[i];
             const tmpR = _createCanvas(sr.w, sr.h);
-            tmpR.getContext("2d").putImageData(sr.data, 0, 0);
+            tmpR.getContext("2d", { colorSpace: "srgb" }).putImageData(sr.data, 0, 0);
             r.ctx.drawImage(tmpR, 0, 0, nw, nh);
         }
     }
@@ -3482,7 +3482,7 @@ function resizeCanvas(nw, nh) {
 function boot(canvasElement) {
     if (S.ready) return;
     S.canvas = canvasElement;
-    S.ctx = S.canvas.getContext("2d");
+    S.ctx = S.canvas.getContext("2d", { colorSpace: "srgb" });
     S.canvas.width = 800; S.canvas.height = 600;
 
     // Initial layers
@@ -3493,8 +3493,8 @@ function boot(canvasElement) {
     S.activeLayerIdx = 1;
 
     // Mask + stroke buffers
-    S.mask.canvas = createLayerCanvas(); S.mask.ctx = S.mask.canvas.getContext("2d");
-    S.stroke.canvas = _createCanvas(S.W, S.H); S.stroke.ctx = S.stroke.canvas.getContext("2d");
+    S.mask.canvas = createLayerCanvas(); S.mask.ctx = S.mask.canvas.getContext("2d", { colorSpace: "srgb" });
+    S.stroke.canvas = _createCanvas(S.W, S.H); S.stroke.ctx = S.stroke.canvas.getContext("2d", { colorSpace: "srgb" });
 
     S.ready = true;
     console.log("[StudioCore] Ready", S.W + "x" + S.H, "| Canvas 2D");

@@ -1284,7 +1284,7 @@ async function doGenerate() {
     console.log("[Studio] No engine — using blank white canvas");
     const tmp = document.createElement("canvas");
     tmp.width = w; tmp.height = h;
-    const ctx = tmp.getContext("2d");
+    const ctx = tmp.getContext("2d", { colorSpace: "srgb" });
     ctx.fillStyle = "#ffffff";
     ctx.fillRect(0, 0, w, h);
     canvasB64 = tmp.toDataURL("image/png");
@@ -2160,7 +2160,7 @@ function bindUI() {
     // Get canvas composite as data URL
     const tmp = document.createElement("canvas");
     tmp.width = S.W; tmp.height = S.H;
-    const ctx = tmp.getContext("2d");
+    const ctx = tmp.getContext("2d", { colorSpace: "srgb" });
     for (const L of S.layers) {
       if (!L.visible || L.type === "adjustment") continue;
       ctx.globalAlpha = L.opacity;
