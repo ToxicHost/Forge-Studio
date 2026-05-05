@@ -52,6 +52,12 @@ except ImportError:
     print("[Gallery] imagehash not installed — duplicate detection disabled")
 
 try:
+    from send2trash import send2trash as _send2trash
+    HAS_SEND2TRASH = True
+except ImportError:
+    HAS_SEND2TRASH = False
+
+try:
     from watchdog.observers import Observer
     from watchdog.events import FileSystemEventHandler
     HAS_WATCHDOG = True
@@ -438,10 +444,20 @@ def _init_db():
         CREATE TABLE IF NOT EXISTS image_characters (
             image_id INTEGER NOT NULL, character_id INTEGER NOT NULL,
             position INTEGER DEFAULT 0,
+            source TEXT DEFAULT 'auto',
             PRIMARY KEY (image_id, character_id),
             FOREIGN KEY (image_id) REFERENCES images(id) ON DELETE CASCADE,
             FOREIGN KEY (character_id) REFERENCES characters(id) ON DELETE CASCADE
         );
+        CREATE TABLE IF NOT EXISTS dup_pairs (
+            image_a INTEGER NOT NULL,
+            image_b INTEGER NOT NULL,
+            distance INTEGER NOT NULL,
+            PRIMARY KEY (image_a, image_b)
+        );
+        CREATE INDEX IF NOT EXISTS idx_dup_dist ON dup_pairs(distance);
+        CREATE INDEX IF NOT EXISTS idx_dup_a ON dup_pairs(image_a);
+        CREATE INDEX IF NOT EXISTS idx_dup_b ON dup_pairs(image_b);
         CREATE TABLE IF NOT EXISTS ignore_words (word TEXT PRIMARY KEY COLLATE NOCASE);
         CREATE TABLE IF NOT EXISTS trash (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -532,6 +548,31 @@ def _init_db():
             db.execute(
                 "INSERT OR REPLACE INTO config (key,value) VALUES ('phash_version','3')"
             )
+            db.commit()
+    except Exception:
+        pass
+    # dup_pairs version gate — changing algorithm forces recomputation
+    try:
+        dup_ver = db.execute("SELECT value FROM config WHERE key='dup_pairs_version'").fetchone()
+        if not dup_ver or dup_ver["value"] != "1":
+            db.execute("DELETE FROM dup_pairs")
+            db.execute("INSERT OR REPLACE INTO config (key,value) VALUES ('dup_pairs_version','1')")
+            db.commit()
+    except Exception:
+        pass
+    # Add rating column to images
+    try:
+        img_cols = [r[1] for r in db.execute("PRAGMA table_info(images)").fetchall()]
+        if "rating" not in img_cols:
+            db.execute("ALTER TABLE images ADD COLUMN rating INTEGER DEFAULT 0")
+            db.commit()
+    except Exception:
+        pass
+    # Add source column to image_characters
+    try:
+        ic_cols = [r[1] for r in db.execute("PRAGMA table_info(image_characters)").fetchall()]
+        if "source" not in ic_cols:
+            db.execute("ALTER TABLE image_characters ADD COLUMN source TEXT DEFAULT 'auto'")
             db.commit()
     except Exception:
         pass
@@ -779,6 +820,202 @@ def find_next_global_number(db, base_name, exclude_ids=None):
                 if m:
                     max_n = max(max_n, int(m.group(1)))
     return max_n + 1
+
+
+# =========================================================================
+# DUPLICATE PAIR COMPUTATION
+# =========================================================================
+
+MAX_DUP_DIST = 128  # 50% of 256-bit hash
+
+try:
+    (0).bit_count()
+    def _popcount(x): return x.bit_count()
+except AttributeError:
+    def _popcount(x): return bin(x).count('1')
+
+
+def compute_pairs_for_image(db, image_id, ph_hex):
+    """Compute and store dup_pairs for one image against all others.
+    Applies 15% aspect-ratio tolerance to skip cross-format comparisons."""
+    if not ph_hex:
+        return
+    try:
+        ph1 = int(ph_hex, 16)
+    except (ValueError, TypeError):
+        return
+
+    target = db.execute(
+        "SELECT width, height FROM images WHERE id=?", (image_id,)
+    ).fetchone()
+    tw, th = (target["width"] or 0, target["height"] or 0) if target else (0, 0)
+    ar1 = tw / max(th, 1) if tw and th else 0
+
+    rows = db.execute(
+        "SELECT id, phash, width, height FROM images "
+        "WHERE phash IS NOT NULL AND phash != '' AND id != ?",
+        (image_id,)
+    ).fetchall()
+
+    db.execute("DELETE FROM dup_pairs WHERE image_a=? OR image_b=?",
+               (image_id, image_id))
+
+    batch = []
+    for r in rows:
+        try:
+            ph2 = int(r["phash"], 16)
+        except (ValueError, TypeError):
+            continue
+        rw, rh = r["width"] or 0, r["height"] or 0
+        if ar1 > 0 and rw and rh:
+            ar2 = rw / max(rh, 1)
+            if ar2 > 0 and abs(ar1 / ar2 - 1) > 0.15:
+                continue
+        dist = _popcount(ph1 ^ ph2)
+        if dist <= MAX_DUP_DIST:
+            a, b = min(image_id, r["id"]), max(image_id, r["id"])
+            batch.append((a, b, dist))
+
+    if batch:
+        db.executemany(
+            "INSERT OR REPLACE INTO dup_pairs (image_a, image_b, distance) VALUES (?,?,?)",
+            batch
+        )
+
+
+def delete_pairs_for_image(db, image_id):
+    """Remove all pairs involving a deleted image."""
+    db.execute("DELETE FROM dup_pairs WHERE image_a=? OR image_b=?",
+               (image_id, image_id))
+
+
+def _groups_from_pairs(db, threshold, folder="", sort="size"):
+    """Build duplicate groups using clique-based grouping.
+    Every member must be similar to every other member — no anchor chaining."""
+    if folder:
+        pairs = db.execute("""
+            SELECT dp.image_a, dp.image_b, dp.distance
+            FROM dup_pairs dp
+            JOIN images ia ON dp.image_a = ia.id
+            JOIN images ib ON dp.image_b = ib.id
+            WHERE dp.distance <= ?
+              AND (ia.folder = ? OR ia.folder LIKE ?)
+              AND (ib.folder = ? OR ib.folder LIKE ?)
+            ORDER BY dp.distance ASC
+        """, (threshold, folder, folder + "\\%",
+              folder, folder + "\\%")).fetchall()
+    else:
+        pairs = db.execute("""
+            SELECT image_a, image_b, distance FROM dup_pairs
+            WHERE distance <= ? ORDER BY distance ASC
+        """, (threshold,)).fetchall()
+
+    if not pairs:
+        return []
+
+    neighbors = {}
+    for a, b, d in pairs:
+        neighbors.setdefault(a, {})[b] = d
+        neighbors.setdefault(b, {})[a] = d
+
+    id_set = set(neighbors.keys())
+    ph = ",".join("?" * len(id_set))
+    rows = db.execute(
+        f"SELECT id,filename,folder,filepath,media_type FROM images WHERE id IN ({ph})",
+        list(id_set)
+    ).fetchall()
+    img_map = {}
+    for r in rows:
+        img_map[r["id"]] = {
+            "id": r["id"], "filename": r["filename"], "folder": r["folder"],
+            "fphash": get_filepath_hash(r["filepath"]),
+            "media_type": r["media_type"] or "image",
+        }
+
+    used = set()
+    groups = []
+
+    for a, b, d in pairs:
+        if a in used or b in used:
+            continue
+        if a not in img_map or b not in img_map:
+            continue
+
+        group = [a, b]
+        group_set = {a, b}
+        used.add(a)
+        used.add(b)
+
+        candidates = set()
+        for m in group:
+            for nb in neighbors.get(m, {}):
+                if nb not in used and nb in img_map:
+                    candidates.add(nb)
+
+        def candidate_max_dist(c):
+            return max(neighbors.get(m, {}).get(c, 999) for m in group_set)
+
+        for c in sorted(candidates, key=candidate_max_dist):
+            if c in used:
+                continue
+            all_similar = all(
+                c in neighbors.get(m, {}) for m in group_set
+            )
+            if all_similar:
+                group.append(c)
+                group_set.add(c)
+                used.add(c)
+                for nb in neighbors.get(c, {}):
+                    if nb not in used and nb in img_map:
+                        candidates.add(nb)
+
+        if len(group) > 1:
+            imgs = [img_map[m] for m in group if m in img_map]
+            dists = []
+            for i in range(len(group)):
+                for j in range(i + 1, len(group)):
+                    dd = neighbors.get(group[i], {}).get(group[j], 0)
+                    dists.append(dd)
+            avg_dist = sum(dists) / len(dists) if dists else 0
+            similarity = round((1 - avg_dist / 256) * 100)
+            groups.append({"images": imgs, "similarity": similarity})
+
+    if sort == "similarity_desc":
+        groups.sort(key=lambda g: g["similarity"], reverse=True)
+    elif sort == "similarity_asc":
+        groups.sort(key=lambda g: g["similarity"])
+    else:
+        groups.sort(key=lambda g: len(g["images"]), reverse=True)
+
+    return groups
+
+
+def _cleanup_trash(max_age=600):
+    """Move trash entries older than max_age seconds to OS Recycle Bin.
+    If send2trash is unavailable, files stay in internal trash."""
+    try:
+        db = _get_db()
+        cutoff = time.time() - max_age
+        old = db.execute(
+            "SELECT id, trash_path FROM trash WHERE deleted_at < ?", (cutoff,)
+        ).fetchall()
+        for r in old:
+            tp = r["trash_path"]
+            if tp and os.path.exists(tp):
+                if HAS_SEND2TRASH:
+                    try:
+                        _send2trash(tp)
+                    except Exception as e:
+                        print(f"{TAG} Could not send to Recycle Bin: {tp} ({e})")
+                        continue
+                else:
+                    continue
+            db.execute("DELETE FROM trash WHERE id=?", (r["id"],))
+        if old:
+            db.commit()
+        db.close()
+    except Exception:
+        pass
 
 
 # =========================================================================
@@ -1921,17 +2158,27 @@ def setup_gallery_routes(app: FastAPI):
             ignore_words = get_ignore_words(db)
             images = db.execute("SELECT id,filename FROM images").fetchall()
             for img in images:
+                # Preserve manual tags — only delete auto-generated ones
+                manual_tags = db.execute(
+                    "SELECT character_id FROM image_characters "
+                    "WHERE image_id=? AND source='manual'",
+                    (img["id"],)
+                ).fetchall()
+                manual_ids = {r["character_id"] for r in manual_tags}
+                db.execute(
+                    "DELETE FROM image_characters WHERE image_id=? AND (source='auto' OR source IS NULL)",
+                    (img["id"],)
+                )
                 chars = parse_characters_from_filename(img["filename"], ignore_words)
-                db.execute("DELETE FROM image_characters WHERE image_id=?", (img["id"],))
                 for pos, cn in enumerate(chars):
                     db.execute("INSERT OR IGNORE INTO characters (name) VALUES (?)", (cn,))
                     cr = db.execute(
                         "SELECT id FROM characters WHERE name=? COLLATE NOCASE", (cn,)
                     ).fetchone()
-                    if cr:
+                    if cr and cr["id"] not in manual_ids:
                         db.execute(
                             "INSERT OR IGNORE INTO image_characters "
-                            "(image_id,character_id,position) VALUES (?,?,?)",
+                            "(image_id,character_id,position,source) VALUES (?,?,?,'auto')",
                             (img["id"], cr["id"], pos),
                         )
             db.execute(
@@ -2260,7 +2507,37 @@ def setup_gallery_routes(app: FastAPI):
             result = [dict(r) for r in rows]
             unknown = [r for r in result if r["name"].lower() == "unknown"]
             rest = [r for r in result if r["name"].lower() != "unknown"]
-            return unknown + rest
+            # Rating pseudo-tags (negative IDs to avoid collision with real character IDs)
+            if folder:
+                rating_rows = db.execute(
+                    "SELECT rating, COUNT(*) as cnt FROM images "
+                    "WHERE rating > 0 AND (folder=? OR folder LIKE ?) "
+                    "GROUP BY rating ORDER BY rating",
+                    (folder, folder + "\\%")
+                ).fetchall()
+            else:
+                rating_rows = db.execute(
+                    "SELECT rating, COUNT(*) as cnt FROM images "
+                    "WHERE rating > 0 GROUP BY rating ORDER BY rating"
+                ).fetchall()
+            rating_tags = [
+                {"id": -r["rating"], "name": "★" * r["rating"],
+                 "image_count": r["cnt"]}
+                for r in rating_rows
+            ]
+            return rating_tags + unknown + rest
+        finally:
+            db.close()
+
+    @app.post("/studio/gallery/image/{image_id}/rating")
+    async def gallery_set_rating(image_id: int, request: Request):
+        data = await request.json()
+        rating = max(0, min(5, int(data.get("rating", 0))))
+        db = _get_db()
+        try:
+            db.execute("UPDATE images SET rating=? WHERE id=?", (rating, image_id))
+            db.commit()
+            return {"ok": True, "rating": rating}
         finally:
             db.close()
 
@@ -2272,7 +2549,7 @@ def setup_gallery_routes(app: FastAPI):
     async def gallery_images(
         character: str = "", folder: str = "", search: str = "",
         sort: str = "filename", order: str = "asc",
-        page: int = 1, per_page: int = 60,
+        page: int = 1, per_page: int = 60, rating: int = 0,
     ):
         db = _get_db()
         try:
@@ -2296,6 +2573,9 @@ def setup_gallery_routes(app: FastAPI):
                         "WHERE c2.name LIKE ? COLLATE NOCASE) OR i.search_text LIKE ?)"
                     )
                     params.extend([f"%{term}%", f"%{term}%", f"%{term.lower()}%"])
+            if rating > 0:
+                conds.append("i.rating=?")
+                params.append(rating)
             if conds:
                 q += " WHERE " + " AND ".join(conds)
 
@@ -2335,6 +2615,7 @@ def setup_gallery_routes(app: FastAPI):
                     "is_video": mt == "video",
                     "media_type": mt,
                     "characters": [c["name"] for c in chars],
+                    "rating": r["rating"] if "rating" in r.keys() else 0,
                 })
             return {
                 "images": images, "total": total,
@@ -2360,6 +2641,7 @@ def setup_gallery_routes(app: FastAPI):
                 "id": row["id"], "filename": row["filename"], "folder": row["folder"],
                 "filepath": row["filepath"], "width": row["width"], "height": row["height"],
                 "file_date": row["file_date"], "characters": [c["name"] for c in chars],
+                "rating": row["rating"] if "rating" in row.keys() else 0,
             }
         finally:
             db.close()
@@ -2393,6 +2675,7 @@ def setup_gallery_routes(app: FastAPI):
                 "fphash": get_filepath_hash(row["filepath"]),
                 "is_video": mt == "video",
                 "media_type": mt,
+                "rating": row["rating"] if "rating" in row.keys() else 0,
                 "characters": [c["name"] for c in chars],
             }
         finally:
@@ -2492,7 +2775,7 @@ def setup_gallery_routes(app: FastAPI):
                 ).fetchone()
                 pos = (maxp["mp"] or 0) + 1
                 db.execute(
-                    "INSERT OR IGNORE INTO image_characters (image_id,character_id,position) VALUES (?,?,?)",
+                    "INSERT OR IGNORE INTO image_characters (image_id,character_id,position,source) VALUES (?,?,?,'manual')",
                     (image_id, cr["id"], pos),
                 )
             db.commit()
@@ -2708,6 +2991,7 @@ def setup_gallery_routes(app: FastAPI):
                  json.dumps(chars), time.time()),
             )
             trash_id = db.execute("SELECT last_insert_rowid()").fetchone()[0]
+            delete_pairs_for_image(db, image_id)
             db.execute("DELETE FROM images WHERE id=?", (image_id,))
             db.execute(
                 "DELETE FROM characters WHERE id NOT IN "
@@ -2818,6 +3102,7 @@ def setup_gallery_routes(app: FastAPI):
                 )
                 tid = db.execute("SELECT last_insert_rowid()").fetchone()[0]
                 trash_ids.append(tid)
+                delete_pairs_for_image(db, img_id)
                 db.execute("DELETE FROM images WHERE id=?", (img_id,))
                 deleted += 1
             db.execute(
@@ -3742,19 +4027,26 @@ def setup_gallery_routes(app: FastAPI):
     async def gallery_hash_status():
         db = _get_db()
         try:
-            # Count only images, never videos — video perceptual hashing is not supported
             total = db.execute(
                 "SELECT COUNT(*) FROM images WHERE media_type != 'video'"
             ).fetchone()[0]
             hashed = db.execute(
                 "SELECT COUNT(*) FROM images WHERE phash IS NOT NULL AND phash != ''"
             ).fetchone()[0]
+            needs_pairs = db.execute("""
+                SELECT COUNT(*) FROM images i
+                WHERE i.phash IS NOT NULL AND i.phash != ''
+                AND NOT EXISTS (
+                    SELECT 1 FROM dup_pairs dp WHERE dp.image_a = i.id OR dp.image_b = i.id
+                )
+            """).fetchone()[0]
             return {
                 "total": total, "hashed": hashed,
                 "available": HAS_IMAGEHASH,
                 "hashing": _hash_progress.get("active", False),
                 "hash_current": _hash_progress.get("current", 0),
                 "hash_total": _hash_progress.get("total", 0),
+                "needs_pairs": needs_pairs,
             }
         finally:
             db.close()
@@ -3787,10 +4079,25 @@ def setup_gallery_routes(app: FastAPI):
                                 "UPDATE images SET phash=? WHERE id=?",
                                 (ph, r["id"]),
                             )
+                            compute_pairs_for_image(db, r["id"], ph)
                         if (i + 1) % 50 == 0:
                             db.commit()
                     except Exception:
                         pass
+                db.commit()
+                # Second pass: images that have hashes but no pairs yet (migration)
+                unpaired = db.execute("""
+                    SELECT i.id, i.phash FROM images i
+                    WHERE i.phash IS NOT NULL AND i.phash != ''
+                    AND NOT EXISTS (
+                        SELECT 1 FROM dup_pairs dp
+                        WHERE dp.image_a = i.id OR dp.image_b = i.id
+                    )
+                """).fetchall()
+                for i, r in enumerate(unpaired):
+                    compute_pairs_for_image(db, r["id"], r["phash"])
+                    if (i + 1) % 20 == 0:
+                        db.commit()
                 db.commit()
                 db.close()
                 sse_notify("hashes_updated", {"count": _hash_progress["total"]})
@@ -3802,82 +4109,79 @@ def setup_gallery_routes(app: FastAPI):
         return {"ok": True, "status": "started"}
 
     @app.get("/studio/gallery/duplicates")
-    async def gallery_duplicates(threshold: int = 12, folder: str = ""):
+    async def gallery_duplicates(threshold: int = 12, folder: str = "", sort: str = "size"):
         if not HAS_IMAGEHASH:
             return JSONResponse(
                 {"error": "imagehash not installed"}, status_code=400
             )
-        # Safety cap: 256-bit hash, cap at 25% (= 64 bits) — trackimage's v10.5.5 limit
-        if threshold < 0:
-            threshold = 0
-        if threshold > 64:
-            threshold = 64
+        threshold = max(0, min(threshold, 128))
         db = _get_db()
         try:
-            q = (
-                "SELECT id,filename,folder,filepath,phash,media_type FROM images "
-                "WHERE phash IS NOT NULL AND phash != ''"
-            )
-            params = []
-            if folder:
-                q += " AND folder=?"
-                params.append(folder)
-            rows = db.execute(q, params).fetchall()
-
-            items = []
-            for r in rows:
-                d = dict(r)
-                d["fphash"] = get_filepath_hash(d["filepath"])
-                items.append(d)
-
-            # Pre-convert hex hashes to integers for fast XOR comparison
-            int_hashes = []
-            for item in items:
-                try:
-                    int_hashes.append(int(item["phash"], 16))
-                except Exception:
-                    int_hashes.append(None)
-
-            n = len(items)
-            used = [False] * n
-            groups = []
-
-            # Prefer int.bit_count() (Python 3.10+); fallback to bin().count
-            try:
-                (0).bit_count()
-                def popcount(x): return x.bit_count()
-            except AttributeError:
-                def popcount(x): return bin(x).count('1')
-
-            for i in range(n):
-                if used[i] or int_hashes[i] is None:
-                    continue
-                group = [items[i]]
-                used[i] = True
-                hi = int_hashes[i]
-                for j in range(i + 1, n):
-                    if used[j] or int_hashes[j] is None:
-                        continue
-                    if popcount(hi ^ int_hashes[j]) <= threshold:
-                        group.append(items[j])
-                        used[j] = True
-                if len(group) > 1:
-                    groups.append(group)
-
-            groups.sort(key=lambda g: len(g), reverse=True)
-
-            # Strip phash from response payload — the hex strings are not useful
-            # to the frontend and just inflate the payload.
-            for g in groups:
-                for item in g:
-                    item.pop("phash", None)
-
+            groups = _groups_from_pairs(db, threshold, folder, sort)
+            n_hashed = db.execute(
+                "SELECT COUNT(*) FROM images WHERE phash IS NOT NULL AND phash != ''"
+            ).fetchone()[0]
             return {
                 "groups": groups,
                 "total_groups": len(groups),
-                "total_duplicates": sum(len(g) for g in groups),
-                "hashed": n,
+                "total_duplicates": sum(len(g["images"]) for g in groups),
+                "hashed": n_hashed,
             }
+        finally:
+            db.close()
+
+    @app.get("/studio/gallery/similar/{image_id}")
+    async def gallery_find_similar(image_id: int, threshold: int = 128):
+        if not HAS_IMAGEHASH:
+            return JSONResponse({"error": "imagehash not installed"}, status_code=400)
+        db = _get_db()
+        try:
+            target = db.execute(
+                "SELECT id,filename,folder,filepath,media_type,phash "
+                "FROM images WHERE id=?", (image_id,)
+            ).fetchone()
+            if not target or not target["phash"]:
+                return JSONResponse({"error": "Image not found or not hashed"}, status_code=404)
+
+            pairs = db.execute("""
+                SELECT image_a, image_b, distance FROM dup_pairs
+                WHERE (image_a=? OR image_b=?) AND distance <= ?
+            """, (image_id, image_id, threshold)).fetchall()
+
+            other_ids = set()
+            dist_map = {}
+            for a, b, d in pairs:
+                other = b if a == image_id else a
+                other_ids.add(other)
+                dist_map[other] = d
+
+            results = []
+            if other_ids:
+                ph = ",".join("?" * len(other_ids))
+                rows = db.execute(
+                    f"SELECT id,filename,folder,filepath,media_type "
+                    f"FROM images WHERE id IN ({ph})",
+                    list(other_ids)
+                ).fetchall()
+                for r in rows:
+                    d = dist_map.get(r["id"], 999)
+                    similarity = round((1 - d / 256) * 100)
+                    results.append({
+                        "id": r["id"], "filename": r["filename"],
+                        "folder": r["folder"],
+                        "fphash": get_filepath_hash(r["filepath"]),
+                        "media_type": r["media_type"] or "image",
+                        "similarity": similarity, "distance": d,
+                    })
+            results.sort(key=lambda x: x["distance"])
+
+            target_d = {
+                "id": target["id"], "filename": target["filename"],
+                "folder": target["folder"],
+                "fphash": get_filepath_hash(target["filepath"]),
+                "media_type": target["media_type"] or "image",
+            }
+            return {"target": target_d, "similar": results}
         finally:
             db.close()
 
@@ -3889,3 +4193,6 @@ def setup_gallery_routes(app: FastAPI):
         threading.Thread(target=start_watcher, daemon=True).start()
     else:
         print(f"{TAG} watchdog not installed — auto-sync disabled (pip install watchdog)")
+
+    # Opportunistic trash cleanup: move old internal-trash entries to OS Recycle Bin
+    threading.Thread(target=_cleanup_trash, daemon=True).start()

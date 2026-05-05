@@ -67,7 +67,7 @@ const IC = {
 
 const G = {
     page: "gallery", scanFolders: [], characters: [], folders: [], images: [], stats: {},
-    ignoreWords: [], filter: { character: "", folder: "", search: "" },
+    ignoreWords: [], filter: { character: "", folder: "", search: "", rating: 0 },
     sort: "newest", order: "desc", total: 0, allLoaded: false, loadingMore: false,
     currentImageId: null, currentImageIndex: -1, scrollPosition: 0, initialized: false,
     loading: false, openFolders: {}, filteredTotal: 0,
@@ -118,6 +118,7 @@ async function loadImagesReset() {
     if (G.filter.character) p.set("character", G.filter.character);
     if (G.filter.folder) p.set("folder", G.filter.folder);
     if (G.filter.search) p.set("search", G.filter.search);
+    if (G.filter.rating) p.set("rating", G.filter.rating);
     p.set("sort", G.sort); p.set("order", G.order); p.set("page", 1); p.set("per_page", 60);
     const d = await api("/images?" + p);
     G.images = d.images; G.total = d.total; G.filteredTotal = d.total;
@@ -130,6 +131,7 @@ async function loadMoreImages() {
     if (G.filter.character) p.set("character", G.filter.character);
     if (G.filter.folder) p.set("folder", G.filter.folder);
     if (G.filter.search) p.set("search", G.filter.search);
+    if (G.filter.rating) p.set("rating", G.filter.rating);
     p.set("sort", G.sort); p.set("order", G.order); p.set("page", pg); p.set("per_page", 60);
     const d = await api("/images?" + p);
     if (!d.images.length) G.allLoaded = true;
@@ -253,8 +255,9 @@ async function unlinkFolderIdx(idx) {
 // FILTERING & SORTING
 // ========================================================================
 
-function filterByCharacter(n) { G.filter.character = G.filter.character === n ? "" : n; G.selectedImages.clear(); loadImagesReset().then(() => { renderMain(); updateTagActive(); updateFolderActive(); }); }
-async function filterByFolder(f) { G.filter.folder = G.filter.folder === f ? "" : f; G.selectedImages.clear(); await Promise.all([loadCharacters(), loadImagesReset()]); renderMain(); renderTagList(); updateFolderActive(); updateTagActive(); }
+function filterByCharacter(n) { G.filter.character = G.filter.character === n ? "" : n; G.filter.rating = 0; G.selectedImages.clear(); loadImagesReset().then(() => { renderMain(); updateTagActive(); updateFolderActive(); }); }
+function filterByRating(n) { G.filter.rating = G.filter.rating === n ? 0 : n; G.filter.character = ""; G.selectedImages.clear(); loadImagesReset().then(() => { renderMain(); updateTagActive(); updateFolderActive(); }); }
+async function filterByFolder(f) { G.filter.folder = G.filter.folder === f ? "" : f; G.filter.rating = 0; G.selectedImages.clear(); await Promise.all([loadCharacters(), loadImagesReset()]); renderMain(); renderTagList(); updateFolderActive(); updateTagActive(); }
 function setSort(s) { if (G.sort === s) G.order = G.order === "asc" ? "desc" : "asc"; else { G.sort = s; G.order = s === "newest" ? "desc" : "asc"; } updateSortButtons(); loadImagesReset().then(renderMain); }
 function updateSortButtons() { G._container.querySelectorAll(".gal-sort-btn").forEach(b => { const s = b.dataset.sort; b.classList.toggle("active", s === G.sort); if (s === "filename") b.textContent = G.sort === "filename" ? (G.order === "asc" ? _t("gallery.sort.az", "A\u2013Z") : _t("gallery.sort.za", "Z\u2013A")) : "A\u2013Z"; if (s === "newest") b.textContent = G.sort === "newest" ? (G.order === "desc" ? _t("gallery.sort.newest", "Newest") : _t("gallery.sort.oldest", "Oldest")) : "Newest"; }); }
 let _searchTimeout;
@@ -1380,6 +1383,74 @@ function onHashesUpdated() {
     if (bg) refreshDupStatus();
 }
 
+// ========================================================================
+// RATINGS
+// ========================================================================
+
+function _buildStarRatingHtml(rating, imgId) {
+    let h = '<div class="gal-star-row">';
+    for (let i = 1; i <= 5; i++) {
+        h += '<span class="gal-star' + (i <= rating ? ' filled' : '') + '" data-img-id="' + imgId + '" data-v="' + i + '" data-cur="' + rating + '" title="' + i + ' star' + (i > 1 ? 's' : '') + '">★</span>';
+    }
+    h += '</div>';
+    return h;
+}
+
+async function setRating(imgId, rating) {
+    const r = await api("/image/" + imgId + "/rating", { method: "POST", body: JSON.stringify({ rating }) });
+    if (r.error) { toast("Error: " + r.error); return; }
+    // Update rating element in detail view
+    const ratingEl = document.getElementById("gal-detail-rating");
+    if (ratingEl) ratingEl.innerHTML = _buildStarRatingHtml(r.rating, imgId);
+    // Update in-memory image rating
+    const idx = G.images.findIndex(i => i.id === imgId);
+    if (idx >= 0) G.images[idx].rating = r.rating;
+    // Update card badge
+    const card = G._container?.querySelector('.gal-card[data-id="' + imgId + '"]');
+    if (card) {
+        let badge = card.querySelector(".gal-rating-badge");
+        if (r.rating > 0) {
+            if (!badge) { badge = document.createElement("span"); badge.className = "gal-rating-badge"; card.querySelector(".img-wrap").appendChild(badge); }
+            badge.textContent = "★".repeat(r.rating);
+        } else if (badge) {
+            badge.remove();
+        }
+    }
+}
+
+// ========================================================================
+// SIMILAR IMAGES MODAL
+// ========================================================================
+
+async function openSimilarModal(imgId) {
+    document.getElementById("gal-similar-bg")?.remove();
+    const bg = document.createElement("div");
+    bg.className = "gal-move-bg"; bg.id = "gal-similar-bg";
+    bg.innerHTML = '<div class="gal-dup-modal"><h3>Find Similar</h3><div class="gal-dup-status" id="gal-sim-status">Loading...</div><div class="gal-dup-results" id="gal-sim-results"></div><div class="mm-footer"><div style="flex:1"></div><button class="gal-btn" id="gal-sim-cancel">Close</button></div></div>';
+    bg.addEventListener("click", e => { if (e.target === bg || e.target.id === "gal-sim-cancel") bg.remove(); });
+    document.body.appendChild(bg);
+    const statusEl = document.getElementById("gal-sim-status");
+    const resultsEl = document.getElementById("gal-sim-results");
+    try {
+        const r = await api("/similar/" + imgId + "?threshold=128");
+        if (r.error) { statusEl.textContent = "Error: " + r.error; return; }
+        if (!r.similar || !r.similar.length) {
+            statusEl.textContent = "No similar images found.";
+            return;
+        }
+        statusEl.textContent = r.similar.length + " similar image" + (r.similar.length > 1 ? "s" : "") + " found for “" + r.target.filename + "”";
+        let html = '<div class="gal-dup-group"><div class="gal-dup-items">';
+        html += '<label class="gal-dup-item" style="opacity:0.6"><img src="' + API_BASE + '/thumb/' + r.target.id + '?v=' + r.target.fphash + '" alt="" loading="lazy"/><div class="gal-dup-item-info"><div class="gal-dup-item-name">' + esc(r.target.filename) + '</div><div class="gal-dup-item-folder">' + esc(r.target.folder) + '</div><div class="gal-dup-item-keep">source image</div></div></label>';
+        r.similar.forEach(item => {
+            html += '<label class="gal-dup-item"><img src="' + API_BASE + '/thumb/' + item.id + '?v=' + item.fphash + '" alt="" loading="lazy"/><div class="gal-dup-item-info"><div class="gal-dup-item-name">' + esc(item.filename) + '</div><div class="gal-dup-item-folder">' + esc(item.folder) + '</div><div class="gal-dup-item-keep" style="color:var(--accent)">' + item.similarity + '% similar</div></div></label>';
+        });
+        html += '</div></div>';
+        resultsEl.innerHTML = html;
+    } catch (e) {
+        if (statusEl) statusEl.textContent = "Error loading similar images.";
+    }
+}
+
 async function openDuplicatesModal() {
     // Teardown any existing instance first (avoid stacking)
     document.getElementById("gal-dup-bg")?.remove();
@@ -1507,14 +1578,16 @@ async function scanDuplicates() {
              + ' (keeping one per group would free ' + (r.total_duplicates - r.total_groups) + ' file'
              + ((r.total_duplicates - r.total_groups) !== 1 ? 's' : '') + ')</div>';
     r.groups.forEach((grp, gi) => {
+        const imgs = grp.images || grp;
+        const sim = grp.similarity != null ? grp.similarity : null;
         html += '<div class="gal-dup-group" data-gid="' + gi + '">';
         html += '<div class="gal-dup-group-header">';
         html += '<span class="gal-dup-group-toggle">\u25BC</span>';
-        html += '<span class="gal-dup-group-count">' + grp.length + ' similar</span>';
+        html += '<span class="gal-dup-group-count">' + imgs.length + ' images' + (sim != null ? ' \u00B7 ' + sim + '% similar' : '') + '</span>';
         html += '<button class="gal-dup-select-rest" data-gid="' + gi + '">Select all but first</button>';
         html += '</div>';
         html += '<div class="gal-dup-items">';
-        grp.forEach((item, ii) => {
+        imgs.forEach((item, ii) => {
             const thumbUrl = API_BASE + "/thumb/" + item.id + "?v=" + item.fphash;
             html += '<label class="gal-dup-item">';
             html += '<input type="checkbox" class="gal-dup-item-check" data-img-id="' + item.id + '" />';
@@ -1569,7 +1642,7 @@ async function deleteSelectedDuplicates() {
     });
     // Collapse groups that now have 0 or 1 items left
     document.querySelectorAll(".gal-dup-group").forEach(g => {
-        const remaining = g.querySelectorAll(".gal-dup-item").length;
+        const remaining = g.querySelectorAll(".gal-dup-item-check").length;
         if (remaining <= 1) g.remove();
     });
     updateDupSelectionCount();
@@ -1666,8 +1739,15 @@ function toggleFolderIdx(idx) { const key = _folderPaths[idx]; G.openFolders[key
 function getFolderTotal() { if (!G.filter.folder) return G.stats.total_images || 0; let c = 0; G.folders.forEach(f => { if (f.folder === G.filter.folder || f.folder.indexOf(G.filter.folder + "\\") === 0) c += f.image_count; }); return c || G.filteredTotal; }
 function buildTagsHtml(allCount) {
     let h = '<div class="gal-tag-item' + (G.filter.character === "" ? " active" : "") + '" data-tag="__all"><span>All</span><span class="count">' + allCount + '</span></div>';
+    // Rating pseudo-tags (negative ids from server)
+    const ratingTags = G.characters.filter(c => c.id < 0);
+    const charTags = G.characters.filter(c => c.id >= 0);
+    if (ratingTags.length) {
+        h += '<div class="gal-tag-letter" style="opacity:0.7">\u2605 Ratings</div>';
+        ratingTags.forEach(c => { h += '<div class="gal-tag-item' + (G.filter.character === c.name ? " active" : "") + ' gal-rating-tag" data-tag="' + esc(c.name) + '" data-rating="' + (-c.id) + '"><span>' + esc(c.name) + '</span><span class="count">' + c.image_count + '</span></div>'; });
+    }
     const unknowns = [], grouped = {};
-    G.characters.forEach(c => { if (c.name.toLowerCase() === "unknown") { unknowns.push(c); return; } let first = c.name.charAt(0).toUpperCase(); if (!/[A-Z]/.test(first)) first = "#"; if (!grouped[first]) grouped[first] = []; grouped[first].push(c); });
+    charTags.forEach(c => { if (c.name.toLowerCase() === "unknown") { unknowns.push(c); return; } let first = c.name.charAt(0).toUpperCase(); if (!/[A-Z]/.test(first)) first = "#"; if (!grouped[first]) grouped[first] = []; grouped[first].push(c); });
     unknowns.forEach(c => { h += '<div class="gal-tag-item' + (G.filter.character === c.name ? " active" : "") + '" data-tag="' + esc(c.name) + '"><span>' + esc(c.name) + '</span><span class="count">' + c.image_count + '</span></div>'; });
     Object.keys(grouped).sort().forEach(letter => { const isOpen = G.openTagGroups[letter] !== false;
         h += '<div class="gal-tag-letter" data-letter="' + letter + '"><span class="tl-arrow' + (isOpen ? " open" : "") + '" data-tga="' + letter + '">\u25B6</span>' + letter + '</div>';
@@ -1677,7 +1757,7 @@ function buildTagsHtml(allCount) {
     return h;
 }
 function renderTagList() { const el = G._container.querySelector("#gal-tag-list"); if (el) el.innerHTML = buildTagsHtml(getFolderTotal()); }
-function updateTagActive() { G._container.querySelectorAll(".gal-tag-item").forEach(el => el.classList.toggle("active", el.dataset.tag === (G.filter.character || "__all"))); }
+function updateTagActive() { G._container.querySelectorAll(".gal-tag-item").forEach(el => { if (el.dataset.rating) { el.classList.toggle("active", parseInt(el.dataset.rating) === G.filter.rating); } else { el.classList.toggle("active", el.dataset.tag === (G.filter.character || "__all")); } }); }
 function updateFolderActive() { G._container.querySelectorAll(".gal-tree-toggle").forEach(el => { const idx = el.dataset.fidx; if (idx !== undefined) el.classList.toggle("active", _folderPaths[parseInt(idx)] === G.filter.folder); }); }
 function clickFolder(idx, e) {
     const fp = _folderPaths[idx];
@@ -1740,13 +1820,14 @@ function cardMediaHtml(img) {
     if (ext === "gif") return '<img src="' + u + '" alt="' + esc(img.filename) + '" loading="lazy" ' + dragAttrs + '/><span class="video-badge">GIF</span>';
     return '<img src="' + u + '" alt="' + esc(img.filename) + '" loading="lazy" ' + dragAttrs + '/>';
 }
+function _cardRatingBadge(img) { return img.rating > 0 ? '<span class="gal-rating-badge">★' + (img.rating > 1 ? img.rating : '') + '</span>' : ''; }
 function renderMainContent() {
-    let h = '<div class="gal-grid" id="gal-grid">' + G.images.map(img => { const sel = G.selectedImages.has(img.id) ? " selected" : ""; return '<div class="gal-card' + sel + '" data-id="' + img.id + '"><div class="img-wrap">' + cardMediaHtml(img) + '</div><div class="card-info"><div class="card-filename">' + esc(img.filename) + '</div><div class="card-folder"><span class="gal-tree-icon">' + IC.folder + '</span> ' + esc(img.folder) + '</div></div></div>'; }).join("") + '</div>';
+    let h = '<div class="gal-grid" id="gal-grid">' + G.images.map(img => { const sel = G.selectedImages.has(img.id) ? " selected" : ""; return '<div class="gal-card' + sel + '" data-id="' + img.id + '"><div class="img-wrap">' + cardMediaHtml(img) + _cardRatingBadge(img) + '</div><div class="card-info"><div class="card-filename">' + esc(img.filename) + '</div><div class="card-folder"><span class="gal-tree-icon">' + IC.folder + '</span> ' + esc(img.folder) + '</div></div></div>'; }).join("") + '</div>';
     if (!G.images.length) h = '<div class="gal-empty"><div style="opacity:0.12">' + IC.image + '</div><div data-i18n="gallery.empty.images">' + _t('gallery.empty.images', 'No images found.') + '</div></div>';
     if (!G.allLoaded && G.images.length) h += '<div class="gal-load-more"><div id="gal-load-trigger"><span class="gal-spinner"></span></div></div>';
     return h;
 }
-function appendGalleryItems(items) { const g = G._container.querySelector("#gal-grid"); if (!g) return; const ids = new Set(); g.querySelectorAll(".gal-card").forEach(el => ids.add(el.dataset.id)); items.forEach(img => { if (ids.has(String(img.id))) return; const d = document.createElement("div"); d.className = "gal-card"; d.dataset.id = img.id; d.innerHTML = '<div class="img-wrap">' + cardMediaHtml(img) + '</div><div class="card-info"><div class="card-filename">' + esc(img.filename) + '</div><div class="card-folder"><span class="gal-tree-icon">' + IC.folder + '</span> ' + esc(img.folder) + '</div></div>'; g.appendChild(d); }); if (G.allLoaded) { const lt = G._container.querySelector("#gal-load-trigger"); if (lt && lt.parentElement) lt.parentElement.remove(); } else setupInfiniteScroll(); }
+function appendGalleryItems(items) { const g = G._container.querySelector("#gal-grid"); if (!g) return; const ids = new Set(); g.querySelectorAll(".gal-card").forEach(el => ids.add(el.dataset.id)); items.forEach(img => { if (ids.has(String(img.id))) return; const d = document.createElement("div"); d.className = "gal-card"; d.dataset.id = img.id; d.innerHTML = '<div class="img-wrap">' + cardMediaHtml(img) + _cardRatingBadge(img) + '</div><div class="card-info"><div class="card-filename">' + esc(img.filename) + '</div><div class="card-folder"><span class="gal-tree-icon">' + IC.folder + '</span> ' + esc(img.folder) + '</div></div>'; g.appendChild(d); }); if (G.allLoaded) { const lt = G._container.querySelector("#gal-load-trigger"); if (lt && lt.parentElement) lt.parentElement.remove(); } else setupInfiniteScroll(); }
 
 // ========================================================================
 // DETAIL VIEW
@@ -1791,7 +1872,7 @@ function showDetailOverlay() {
     else if (img.is_video) mediaHtml = '<div style="display:flex;flex-direction:column;align-items:center;gap:16px"><img src="' + API_BASE + '/thumb/' + img.id + '?h=' + img.fphash + '" style="max-width:80%;max-height:70vh;border-radius:8px;object-fit:contain"/><button class="gal-btn-primary" data-action="open-file" data-img-id="' + img.id + '" style="padding:10px 28px">' + IC.play + ' Open in Player</button></div>';
     else mediaHtml = '<img id="gal-detail-img" src="' + mediaSrc + '" alt="' + esc(img.filename) + '"/>';
     const hasCanvas = typeof displayOnCanvas === "function";
-    ov.innerHTML = '<div class="gal-detail-img-area" id="gal-detail-img-area">' + mediaHtml + '</div><div class="gal-detail-sidebar"><div class="gal-detail-panel"><input class="gal-detail-filename" id="gal-rename-input" value="' + esc(img.filename) + '"' + (eph ? ' readonly' : '') + ' />' + (eph ? '' : '<div class="gal-detail-folder"><span class="gal-tree-icon">' + IC.folder + '</span> ' + esc(img.folder) + '</div>') + '' + (img.width ? '<div class="gal-detail-dims">' + img.width + ' \u00d7 ' + img.height + ' px</div>' : '') + '<div class="gal-detail-actions">' + (eph ? '' : '<button class="gal-detail-btn" data-action="explorer" data-img-id="' + img.id + '">' + IC.explorer + " " + _t("gallery.detail.browse", "Browse") + '</button>') + '<button class="gal-detail-btn" data-action="copy-image" data-img-id="' + img.id + '">&#x1F4CB; ' + _t("gallery.detail.copy", "Copy") + '</button><button class="gal-detail-btn" data-action="download-image" data-img-id="' + img.id + '">&#x2B07; ' + _t("gallery.detail.save", "Save") + '</button>' + (hasCanvas ? '<span class="gal-detail-btn-split"><button class="gal-detail-btn accent split-main" data-action="send-canvas" data-img-id="' + img.id + '">' + IC.canvas + " " + _t("gallery.detail.sendToCanvas", "Send to Canvas") + '</button><button class="gal-detail-btn accent split-arrow" data-action="send-canvas-menu" data-img-id="' + img.id + '" title="' + _t("gallery.detail.choosePromptVersion", "Choose prompt version") + '">▾</button></span>' : '') + '' + (eph ? '' : '<span class="gal-detail-sep"></span><button class="gal-detail-btn" data-action="strip-metadata" data-img-id="' + img.id + '">' + IC.stripMeta + " " + _t("gallery.toolbar.stripMetadata", "Strip metadata") + '</button><button class="gal-detail-btn" data-action="convert" data-img-id="' + img.id + '">' + IC.convert + " " + _t("gallery.detail.convert", "Convert...") + '</button><button class="gal-detail-btn danger" data-action="delete" data-img-id="' + img.id + '">' + IC.trash + " " + _t("gallery.toolbar.delete", "Delete") + '</button>') + '</div>' + (eph ? '' : '<div class="gal-detail-chars" id="gal-detail-chars">' + buildDetailTagsHtml(img.id, img.characters || []) + '</div>') + '<div class="gal-detail-nav"><button class="gal-detail-btn nav" data-action="prev" ' + (G.currentImageIndex <= 0 ? "disabled" : "") + '>' + IC.chevLeft + '</button><button class="gal-btn" data-action="back" style="flex:1">Back</button><button class="gal-detail-btn nav" data-action="next" ' + (G.currentImageIndex >= list.length - 1 ? "disabled" : "") + '>' + IC.chevRight + '</button></div></div><div class="gal-meta-panel" id="gal-meta-panel"><div class="gal-meta-section-title" data-i18n="gallery.metadata.title">' + _t("gallery.metadata.title", "Metadata") + '</div><div class="gal-meta-empty" data-i18n="gallery.metadata.loading">' + _t("gallery.metadata.loading", "Loading...") + '</div></div></div>';
+    ov.innerHTML = '<div class="gal-detail-img-area" id="gal-detail-img-area">' + mediaHtml + '</div><div class="gal-detail-sidebar"><div class="gal-detail-panel"><input class="gal-detail-filename" id="gal-rename-input" value="' + esc(img.filename) + '"' + (eph ? ' readonly' : '') + ' />' + (eph ? '' : '<div class="gal-detail-folder"><span class="gal-tree-icon">' + IC.folder + '</span> ' + esc(img.folder) + '</div>') + '' + (img.width ? '<div class="gal-detail-dims">' + img.width + ' \u00d7 ' + img.height + ' px</div>' : '') + (eph ? '' : '<div class="gal-detail-rating" id="gal-detail-rating">' + _buildStarRatingHtml(img.rating || 0, img.id) + '</div>') + '<div class="gal-detail-actions">' + (eph ? '' : '<button class="gal-detail-btn" data-action="explorer" data-img-id="' + img.id + '">' + IC.explorer + " " + _t("gallery.detail.browse", "Browse") + '</button>') + '<button class="gal-detail-btn" data-action="copy-image" data-img-id="' + img.id + '">&#x1F4CB; ' + _t("gallery.detail.copy", "Copy") + '</button><button class="gal-detail-btn" data-action="download-image" data-img-id="' + img.id + '">&#x2B07; ' + _t("gallery.detail.save", "Save") + '</button>' + (hasCanvas ? '<span class="gal-detail-btn-split"><button class="gal-detail-btn accent split-main" data-action="send-canvas" data-img-id="' + img.id + '">' + IC.canvas + " " + _t("gallery.detail.sendToCanvas", "Send to Canvas") + '</button><button class="gal-detail-btn accent split-arrow" data-action="send-canvas-menu" data-img-id="' + img.id + '" title="' + _t("gallery.detail.choosePromptVersion", "Choose prompt version") + '">▾</button></span>' : '') + '' + (eph ? '' : '<span class="gal-detail-sep"></span><button class="gal-detail-btn" data-action="find-similar" data-img-id="' + img.id + '">' + IC.duplicate + ' Find Similar</button><button class="gal-detail-btn" data-action="strip-metadata" data-img-id="' + img.id + '">' + IC.stripMeta + " " + _t("gallery.toolbar.stripMetadata", "Strip metadata") + '</button><button class="gal-detail-btn" data-action="convert" data-img-id="' + img.id + '">' + IC.convert + " " + _t("gallery.detail.convert", "Convert...") + '</button><button class="gal-detail-btn danger" data-action="delete" data-img-id="' + img.id + '">' + IC.trash + " " + _t("gallery.toolbar.delete", "Delete") + '</button>') + '</div>' + (eph ? '' : '<div class="gal-detail-chars" id="gal-detail-chars">' + buildDetailTagsHtml(img.id, img.characters || []) + '</div>') + '<div class="gal-detail-nav"><button class="gal-detail-btn nav" data-action="prev" ' + (G.currentImageIndex <= 0 ? "disabled" : "") + '>' + IC.chevLeft + '</button><button class="gal-btn" data-action="back" style="flex:1">Back</button><button class="gal-detail-btn nav" data-action="next" ' + (G.currentImageIndex >= list.length - 1 ? "disabled" : "") + '>' + IC.chevRight + '</button></div></div><div class="gal-meta-panel" id="gal-meta-panel"><div class="gal-meta-section-title" data-i18n="gallery.metadata.title">' + _t("gallery.metadata.title", "Metadata") + '</div><div class="gal-meta-empty" data-i18n="gallery.metadata.loading">' + _t("gallery.metadata.loading", "Loading...") + '</div></div></div>';
     document.body.appendChild(ov); G.detailZoom = 1; G.detailPan = { x: 0, y: 0 };
     _wireDetailEvents(ov, img); setTimeout(() => loadMetadata(img), 50);
 }
@@ -1849,10 +1930,11 @@ function _wireDetailEvents(ov, img) {
             return;
         }
         if (act === "explorer") api("/image/" + id + "/open-explorer", { method: "POST" });
+        else if (act === "find-similar") openSimilarModal(id);
         else if (act === "send-canvas") sendToCanvas(id);
         else if (act === "send-canvas-menu") { e.stopPropagation(); hideCtx(); const r = a.getBoundingClientRect(); _buildCtxMenu([{ icon: IC.canvas, label: "Send to Canvas — raw prompt", fn: () => sendToCanvas(id, "raw") }, { icon: IC.canvas, label: "Send to Canvas — resolved prompt", fn: () => sendToCanvas(id, "resolved") }], r.left, r.bottom + 2); }
         else if (act === "strip-metadata") stripMetaFromDetail(id); else if (act === "convert") convertFromCtx(id); else if (act === "delete") deleteImage(id); else if (act === "open-file") api("/image/" + id + "/open-file", { method: "POST" }); else if (act === "copy-image") copyImageToClipboard(id); else if (act === "download-image") downloadImage(id); else if (act === "prev") prevImage(); else if (act === "next") nextImage(); else if (act === "back") closeDetail(); });
-    ov.addEventListener("click", e => { const pill = e.target.closest("[data-tag-action='remove']"); if (pill) { removeTag(parseInt(pill.dataset.imgId), pill.dataset.tag); return; } if (e.target.closest("#gal-add-tag-toggle")) toggleAddTag(); });
+    ov.addEventListener("click", e => { const pill = e.target.closest("[data-tag-action='remove']"); if (pill) { removeTag(parseInt(pill.dataset.imgId), pill.dataset.tag); return; } if (e.target.closest("#gal-add-tag-toggle")) toggleAddTag(); const star = e.target.closest(".gal-star"); if (star) { const imgId = parseInt(star.dataset.imgId), v = parseInt(star.dataset.v); const cur = parseInt(star.dataset.cur); setRating(imgId, v === cur ? 0 : v); return; } });
     const ai = ov.querySelector("#gal-add-tag-input"); if (ai) { ai.addEventListener("keydown", e => { if (e.key === "Enter") addTag(G.currentImageId); if (e.key === "Escape") toggleAddTag(); }); attachAutocomplete(ai, { mode: "tag", getItems: getCharItems }); }
     if (!img.is_video) setupDetailZoom(ov); else { const vid = ov.querySelector("#gal-detail-video"); if (vid) { vid.volume = G.volume; vid.addEventListener("volumechange", () => { G.volume = vid.volume; localStorage.setItem("gal_volume", String(vid.volume)); }); } }
     // External drag-out from the lightbox: the <img> src is already the
@@ -2392,7 +2474,7 @@ function wireGlobalEvents() {
     if (_evtController) _evtController.abort();
     _evtController = new AbortController();
     const sig = { signal: _evtController.signal };
-    c.addEventListener("click", e => { const ti = e.target.closest(".gal-tag-item"); if (ti) { filterByCharacter(ti.dataset.tag === "__all" ? "" : ti.dataset.tag); return; } const tl = e.target.closest(".gal-tag-letter"); if (tl) { const l = tl.dataset.letter; G.openTagGroups[l] = G.openTagGroups[l] === false; const grp = c.querySelector('.gal-tag-group[data-tag-group="' + l + '"]'); const arr = c.querySelector('[data-tga="' + l + '"]'); if (grp) grp.classList.toggle("open", G.openTagGroups[l] !== false); if (arr) arr.classList.toggle("open", G.openTagGroups[l] !== false); } }, sig);
+    c.addEventListener("click", e => { const ti = e.target.closest(".gal-tag-item"); if (ti) { if (ti.dataset.rating) { filterByRating(parseInt(ti.dataset.rating)); } else { filterByCharacter(ti.dataset.tag === "__all" ? "" : ti.dataset.tag); } return; } const tl = e.target.closest(".gal-tag-letter"); if (tl) { const l = tl.dataset.letter; G.openTagGroups[l] = G.openTagGroups[l] === false; const grp = c.querySelector('.gal-tag-group[data-tag-group="' + l + '"]'); const arr = c.querySelector('[data-tga="' + l + '"]'); if (grp) grp.classList.toggle("open", G.openTagGroups[l] !== false); if (arr) arr.classList.toggle("open", G.openTagGroups[l] !== false); } }, sig);
     c.addEventListener("click", e => { const ar = e.target.closest("[data-toggle-folder]"); if (ar) { e.stopPropagation(); toggleFolderIdx(parseInt(ar.dataset.toggleFolder)); return; } const fc = e.target.closest("[data-click-folder]"); if (fc) { clickFolder(parseInt(fc.dataset.clickFolder), e); return; } const t = e.target.closest(".gal-tree-toggle"); if (t && !ar && !fc) { const idx = parseInt(t.dataset.fidx); if (!isNaN(idx)) clickFolder(idx, e); } }, sig);
     c.addEventListener("dblclick", e => { const t = e.target.closest(".gal-tree-toggle"); if (!t) return; const idx = parseInt(t.dataset.fidx); if (isNaN(idx)) return; const fp = _folderPaths[idx]; if (!fp) return; const node = findFolderNode(fp); if (node && Object.keys(node.children).length > 0) { e.preventDefault(); toggleFolderIdx(idx); } }, sig);
     c.addEventListener("contextmenu", e => { const t = e.target.closest(".gal-tree-toggle"); if (t) { const idx = parseInt(t.dataset.fidx); if (!isNaN(idx)) showFolderCtx(e, idx); } }, sig);
