@@ -1746,6 +1746,7 @@ function displayOnCanvas(imgSrc, opts) {
       return;
     }
 
+    try {
     const Core = window.StudioCore;
     const S = Core.state;
     S.lastResult = imgSrc;
@@ -1842,6 +1843,9 @@ function displayOnCanvas(imgSrc, opts) {
         }
       }
     } catch (e) { /* Develop not loaded yet; ignore */ }
+    } finally {
+      if (bitmap) bitmap.close();
+    }
   })();
 }
 

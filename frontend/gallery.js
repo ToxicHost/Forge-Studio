@@ -1285,11 +1285,15 @@ async function copyImageToClipboard(imgId) {
         let pngBlob = blob;
         if (blob.type !== "image/png") {
             const bmp = await createImageBitmap(blob);
-            const canvas = document.createElement("canvas");
-            canvas.width = bmp.width; canvas.height = bmp.height;
-            const ctx = canvas.getContext("2d", { colorSpace: "srgb" });
-            ctx.drawImage(bmp, 0, 0);
-            pngBlob = await new Promise(r => canvas.toBlob(r, "image/png"));
+            try {
+                const canvas = document.createElement("canvas");
+                canvas.width = bmp.width; canvas.height = bmp.height;
+                const ctx = canvas.getContext("2d", { colorSpace: "srgb" });
+                ctx.drawImage(bmp, 0, 0);
+                pngBlob = await new Promise(r => canvas.toBlob(r, "image/png"));
+            } finally {
+                bmp.close();
+            }
         }
         await navigator.clipboard.write([new ClipboardItem({ "image/png": pngBlob })]);
         toast("Copied" + (img ? " " + img.filename : "") + " to clipboard", "success");
@@ -1906,10 +1910,14 @@ function _wireDetailEvents(ov, img) {
                         let pngBlob = blob;
                         if (blob.type !== "image/png") {
                             const bmp = await createImageBitmap(blob);
-                            const canvas = document.createElement("canvas");
-                            canvas.width = bmp.width; canvas.height = bmp.height;
-                            canvas.getContext("2d", { colorSpace: "srgb" }).drawImage(bmp, 0, 0);
-                            pngBlob = await new Promise(r => canvas.toBlob(r, "image/png"));
+                            try {
+                                const canvas = document.createElement("canvas");
+                                canvas.width = bmp.width; canvas.height = bmp.height;
+                                canvas.getContext("2d", { colorSpace: "srgb" }).drawImage(bmp, 0, 0);
+                                pngBlob = await new Promise(r => canvas.toBlob(r, "image/png"));
+                            } finally {
+                                bmp.close();
+                            }
                         }
                         await navigator.clipboard.write([new ClipboardItem({ "image/png": pngBlob })]);
                         toast("Copied to clipboard", "success");

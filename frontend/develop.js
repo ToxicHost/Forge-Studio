@@ -1179,14 +1179,24 @@ function _proxyScale(w, h) {
     return 0.5;
 }
 
+// Reused across slider-drag frames so we don't allocate a new GPU texture
+// per call. Reallocated only when the proxy dimensions change (i.e. when
+// the document is resized).
+var _proxyTmp = null;
+var _proxyTmpW = 0;
+var _proxyTmpH = 0;
+
 function _applyDevelopProxy(ctx, w, h, p) {
     var scale = _proxyScale(w, h);
     if (scale >= 1) { _applyDevelopFull(ctx, w, h, p); return; }
     var pw = Math.max(1, Math.round(w * scale));
     var ph = Math.max(1, Math.round(h * scale));
-    var tmp = document.createElement("canvas");
-    tmp.width = pw; tmp.height = ph;
-    var tx = tmp.getContext("2d", { colorSpace: "srgb" });
+    if (!_proxyTmp || _proxyTmpW !== pw || _proxyTmpH !== ph) {
+        _proxyTmp = document.createElement("canvas");
+        _proxyTmp.width = pw; _proxyTmp.height = ph;
+        _proxyTmpW = pw; _proxyTmpH = ph;
+    }
+    var tx = _proxyTmp.getContext("2d", { colorSpace: "srgb" });
     tx.imageSmoothingEnabled = true;
     tx.drawImage(ctx.canvas, 0, 0, pw, ph);
     _applyDevelopFull(tx, pw, ph, p);
@@ -1194,7 +1204,7 @@ function _applyDevelopProxy(ctx, w, h, p) {
     var prevSmoothing = ctx.imageSmoothingEnabled;
     ctx.imageSmoothingEnabled = true;
     ctx.clearRect(0, 0, w, h);
-    ctx.drawImage(tmp, 0, 0, pw, ph, 0, 0, w, h);
+    ctx.drawImage(_proxyTmp, 0, 0, pw, ph, 0, 0, w, h);
     ctx.imageSmoothingEnabled = prevSmoothing;
 }
 

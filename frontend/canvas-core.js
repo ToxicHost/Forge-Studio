@@ -3401,7 +3401,7 @@ function compositeForLive(targetW, targetH) {
 
 /**
  * Set the AI preview image. Decodes base64 and stores for compositing.
- * Flicker-free: uses createImageBitmap for off-main-thread decode.
+ * The preview canvas is reused across updates.
  */
 function setLivePreview(imageB64) {
     if (!imageB64) return;
