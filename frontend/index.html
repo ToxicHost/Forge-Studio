@@ -1029,8 +1029,9 @@
     "canvas-ui.js", "app.js", "module-system.js", "studio-tour.js", "studio-docs.js", "tag-complete.js",
     "lora-browser.js", "wildcard-browser.js"
   ];
-  // Optional modules — loaded if available, silently skipped if not
-  const optionalScripts = ["develop.js", "video-lab.js", "workshop.js", "lexicon.js", "education.js", "codex.js", "studio-showme.js", "gallery.js", "module-tours.js"];
+  // Optional modules — loaded if available, silently skipped if not.
+  // debug.js exposes window.StudioDebug.* — dev-tools-only, no UI.
+  const optionalScripts = ["develop.js", "video-lab.js", "workshop.js", "lexicon.js", "education.js", "codex.js", "studio-showme.js", "gallery.js", "module-tours.js", "debug.js"];
   const v = "4.7.3";
   window.__STUDIO_V = v;
   for (const s of scripts) {
