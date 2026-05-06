@@ -1730,27 +1730,29 @@ function displayOnCanvas(imgSrc, opts) {
 
   if (!window.StudioCore) return;
 
-  // createImageBitmap with colorSpaceConversion:"default" + sRGB everywhere
-  // (layer canvases, display canvas) is the combination that finally produces
-  // canvas pixels that match the saved export on Firefox mode-2 calibrated
-  // wide-gamut setups.
+  // createImageBitmap with colorSpaceConversion:"none" preserves the source
+  // JPEG bytes through the canvas → export roundtrip. On Firefox + calibrated
+  // wide-gamut display this means the saved export pixel-matches the original
+  // autosave (e.g. (160,88,47) stays (160,88,47) instead of drifting to
+  // (148,92,51), which is what "default" produced — a lossy sRGB↔display ICC
+  // roundtrip baked into Firefox's image pipeline).
   //
-  // Why "default" works here: with the destination-canvas colorSpace explicitly
-  // sRGB, "default" performs a source-sRGB → destination-sRGB conversion, which
-  // is a no-op — the canvas buffer ends up with raw sRGB pixel values, same as
-  // the export. With "none", on at least one Firefox + calibrated mode-2 setup,
-  // the bitmap arrived in display-profile space and the canvas eyedropper read
-  // values that didn't match the export.
+  // Trade-off: with "none" the canvas in Firefox mode 2 will look slightly
+  // oversaturated visually compared to the export viewed in another app,
+  // because Firefox doesn't apply the display ICC to the sRGB-tagged canvas
+  // the way it does to <img> elements. We accept that — the export bytes are
+  // the artifact users actually keep, and they must match what the model
+  // produced. The canvas being a less-color-accurate working preview is the
+  // smaller cost.
   //
-  // The original concern that motivated "none" — display-ICC bake at decode
-  // surviving to a browser-side JPEG encode — is gone: exportFlattened sends
-  // PNG to the backend, so there's no browser encode pass to compound onto.
+  // Do not change this back to "default" without solving the export drift
+  // first — see PR #141 / handoff doc for the full bisection.
   (async () => {
     let bitmap;
     try {
       const resp = await fetch(imgSrc);
       const blob = await resp.blob();
-      bitmap = await createImageBitmap(blob, { colorSpaceConversion: "default" });
+      bitmap = await createImageBitmap(blob, { colorSpaceConversion: "none" });
     } catch (e) {
       console.error("[Studio] displayOnCanvas: failed to load bitmap", e);
       return;
