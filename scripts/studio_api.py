@@ -3714,8 +3714,12 @@ def setup_studio_routes(app: FastAPI):
     # Auto-update: GitHub API (no git required)
     # ------------------------------------------------------------------
 
+    # Sync handler — _github_get blocks on urllib.request.urlopen. Declaring as
+    # async would put that blocking I/O on the FastAPI event loop and stall the
+    # whole server. FastAPI runs sync `def` handlers in a threadpool, which is
+    # the correct place for blocking work.
     @app.get("/studio/api/check-update")
-    async def check_update():
+    def check_update():
         global _current_version
         _current_version = _read_version()
 
@@ -3757,15 +3761,24 @@ def setup_studio_routes(app: FastAPI):
             "changelog": changelog,
         })
 
+    # Sync handler — see check_update note. urllib.request.urlopen, zipfile
+    # extraction, and shutil.copy2 all block. As `async def` they would freeze
+    # the event loop for the full duration of the update (download + extract +
+    # copy can take 30–120s), which on the user-facing side looks like the
+    # "Updating..." toast hanging forever because no other request can be
+    # processed in the meantime. Plain `def` runs in FastAPI's threadpool.
     @app.post("/studio/api/update")
-    async def apply_update():
+    def apply_update():
+        print(f"{TAG} Update requested")
         zip_url = f"https://github.com/{_GITHUB_OWNER}/{_GITHUB_REPO}/archive/refs/heads/{_GITHUB_BRANCH}.zip"
 
         try:
             # Download zip to temp file
+            print(f"{TAG} Downloading {zip_url}")
             req = urllib.request.Request(zip_url, headers={"User-Agent": "ForgeStudio-Updater"})
             with urllib.request.urlopen(req, timeout=120) as resp:
                 zip_data = resp.read()
+            print(f"{TAG} Downloaded {len(zip_data)} bytes")
         except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError) as e:
             return JSONResponse({"ok": False, "error": f"Download failed: {e}"})
 
