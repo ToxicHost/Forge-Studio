@@ -21,25 +21,25 @@
  * OCIO. Don't add those without a concrete use case that needs them.
  *
  *   1. EVERY 2D canvas context in the codebase MUST be created with
- *      `getContext("2d", { colorSpace: "srgb" })`. Layer canvases, mask,
- *      stroke buffer, region overlays, temp/cache canvases, the export
- *      offscreen — all sRGB. CI greps for `getContext("2d")` without
- *      colorSpace; if you add one, that grep will fail.
+ *      `getContext("2d", { colorSpace: "srgb" })` — including the display
+ *      canvas. Layer canvases, mask, stroke buffer, region overlays,
+ *      temp/cache canvases, the export offscreen, the on-screen canvas:
+ *      all sRGB. The OS color manager handles sRGB→display conversion via
+ *      the monitor ICC profile, which works correctly on every display
+ *      including wide-gamut. We tried `display-p3` on the display canvas;
+ *      on at least one wide-gamut setup the browser re-tagged the buffer
+ *      as P3 without converting sRGB→P3, so sRGB pixel values rendered
+ *      through P3 primaries and the canvas no longer matched the
+ *      (correctly sRGB-tagged) export. Don't reintroduce.
  *
- *   2. The DISPLAY canvas (S.ctx, the on-screen one) is the single
- *      exception: `colorSpace: "display-p3"`. This is purely a rendering
- *      nicety so wide-gamut monitors don't have to clamp. All compositing
- *      math still happens on sRGB offscreen buffers; the P3 canvas only
- *      receives the final blit. On sRGB displays it's a no-op.
- *
- *   3. EXPORT is lossless to the backend. exportFlattened() always returns
+ *   2. EXPORT is lossless to the backend. exportFlattened() always returns
  *      `data:image/png;...` regardless of the user's chosen output format.
  *      The backend does the single, intentional lossy encode (JPEG/WebP)
  *      with the appropriate ICC profile. Encoding lossy on the frontend
  *      causes a double-encode and visibly degrades color (this was
  *      Moritz's "duller and yellow" bug; do not reintroduce).
  *
- *   4. BACKEND tags every save with sRGB ICC (_SRGB_ICC in studio_api.py).
+ *   3. BACKEND tags every save with sRGB ICC (_SRGB_ICC in studio_api.py).
  *      It does NOT currently convert non-sRGB inputs — if a user ever
  *      drags a P3-tagged file in, that needs profileToProfile conversion
  *      before tagging. Until then, this is fine because all canvas-side
@@ -3522,10 +3522,16 @@ function resizeCanvas(nw, nh) {
 function boot(canvasElement) {
     if (S.ready) return;
     S.canvas = canvasElement;
-    // display-p3 lets the browser use the full P3 gamut when rendering to
-    // wide-gamut displays. All pixel work happens on sRGB offscreen buffers;
-    // only the final blit to the display canvas uses P3. No-op on sRGB displays.
-    S.ctx = S.canvas.getContext("2d", { colorSpace: "display-p3" });
+    // sRGB on the display canvas. Lets the OS color manager handle
+    // sRGB→display conversion via the monitor ICC profile, which works
+    // correctly on every display. The earlier display-p3 setting assumed
+    // the browser would do sRGB→P3 conversion when drawing layers to the
+    // display canvas; in practice on at least one wide-gamut setup the
+    // browser re-tagged the buffer as P3 without converting the values,
+    // so sRGB pixel values rendered through P3 primaries and looked
+    // visibly oversaturated — the canvas no longer matched the (correct)
+    // sRGB export.
+    S.ctx = S.canvas.getContext("2d", { colorSpace: "srgb" });
     S.canvas.width = 800; S.canvas.height = 600;
 
     // Initial layers
