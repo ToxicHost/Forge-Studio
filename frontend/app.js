@@ -1710,6 +1710,20 @@ function buildCNJson() {
 // CANVAS DISPLAY
 // ═══════════════════════════════════════════
 
+// Temporary diagnostic switch for the canvas-import bitmap decode mode.
+// Production default is "none" (export byte-fidelity); maintainers can opt in
+// to "default" via localStorage to test the visual-baseline candidate without
+// affecting other users. Any value other than the literal string "default"
+// resolves to "none". Not a long-term API — see window.StudioDebug.sampleColorPipeline.
+function _studioDecodeMode() {
+  try {
+    const mode = localStorage.getItem("studio-debug-decode-mode");
+    return mode === "default" ? "default" : "none";
+  } catch (e) {
+    return "none";
+  }
+}
+
 function displayOnCanvas(imgSrc, opts) {
   opts = opts || {};
   // Hide any stale preview thumbnail
@@ -1730,28 +1744,33 @@ function displayOnCanvas(imgSrc, opts) {
 
   if (!window.StudioCore) return;
 
-  // colorSpaceConversion:"none" preserves source pixel values through the
-  // canvas → export roundtrip. The MDN/WHATWG spec for "default" describes
-  // implementation-specific behavior; on Firefox + a calibrated wide-gamut
-  // display, "default" was observed to drift exported pixels (e.g. (160,88,47)
-  // → (148,92,51)), consistent with a lossy sRGB ↔ display-profile roundtrip
-  // baked somewhere into the createImageBitmap → drawImage → toDataURL chain.
+  // colorSpaceConversion default is "none" — preserves source pixel values
+  // through the canvas → export roundtrip so the saved file is byte-faithful
+  // to the model output. This is the conservative production behavior.
   //
-  // Trade-off accepted: with "none" the canvas may render slightly more
-  // saturated than the same image opened in another app on Firefox mode-2
-  // calibrated displays, because Firefox doesn't apply the display ICC to
-  // sRGB-tagged canvases the way it does to <img> elements. The working
-  // preview is the smaller cost; the export bytes (the artifact users keep)
-  // are the priority and stay byte-faithful to the model output.
+  // Diagnostic opt-in: maintainers can flip to "default" via dev-tools to
+  // test whether ImageBitmap "default" produces a canvas that matches the
+  // result-preview <img> visual baseline:
   //
-  // Do NOT flip back to "default" without first identifying where the bytes
-  // shift in the pipeline — see window.StudioDebug.sampleColorPipeline().
+  //   localStorage.setItem("studio-debug-decode-mode", "default");
+  //   // reload Studio
+  //
+  // Reset:
+  //   localStorage.removeItem("studio-debug-decode-mode");
+  //   // reload Studio
+  //
+  // This is NOT yet promoted to a default — it's a switch for narrow
+  // testing without forcing candidate behavior on every user. See
+  // window.StudioDebug.sampleColorPipelineSet() for the diagnostic that
+  // shows where pixel values shift through the pipeline.
+  const decodeMode = _studioDecodeMode();
+  console.info("[Studio] Canvas decode mode:", decodeMode);
   (async () => {
     let bitmap;
     try {
       const resp = await fetch(imgSrc);
       const blob = await resp.blob();
-      bitmap = await createImageBitmap(blob, { colorSpaceConversion: "none" });
+      bitmap = await createImageBitmap(blob, { colorSpaceConversion: decodeMode });
     } catch (e) {
       console.error("[Studio] displayOnCanvas: failed to load bitmap", e);
       return;
