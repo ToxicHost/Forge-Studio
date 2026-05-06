@@ -54,6 +54,12 @@
  *      byte-faithful regardless; the discrepancy is in the working
  *      preview only.
  *
+ *      Diagnostic-only switch: maintainers can flip the decode mode for
+ *      testing via `localStorage.setItem("studio-debug-decode-mode",
+ *      "default")` (then reload). This is NOT a promoted default — it
+ *      exists to let Moritz/diagnostics test the candidate behavior
+ *      without affecting other users.
+ *
  *   3. BACKEND tags every save with sRGB ICC (_SRGB_ICC in studio_api.py).
  *      It does NOT currently convert non-sRGB inputs — if a user ever
  *      drags a P3-tagged file in, that needs profileToProfile conversion

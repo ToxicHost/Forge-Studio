@@ -188,14 +188,27 @@
       sExp = await _decodeIntoSrgb(expBlob, "none");
     } catch (e) { /* leave sExp null */ }
 
-    // "Gen Result" layer (most recent generation result, when present).
-    var genLayer = null;
-    if (S.layers) {
-      for (var i = S.layers.length - 1; i >= 0; i--) {
-        if (S.layers[i] && S.layers[i].name === "Gen Result") { genLayer = S.layers[i]; break; }
+    // Active paint layer — the layer most-recently affected by Send-to-Canvas
+    // (displayOnCanvas always sets S.activeLayerIdx to the layer it just
+    // populated). Falls back to the topmost paint layer if activeLayerIdx
+    // points at something else (e.g. an adjustment or mask layer). Don't
+    // hardcode the name — gallery sends use "Output", manual imports use
+    // "Imported", pipeline results use "Gen Result".
+    var activeLayer = null;
+    if (S.layers && S.layers.length) {
+      var ai = (typeof S.activeLayerIdx === "number") ? S.activeLayerIdx : -1;
+      if (ai >= 0 && ai < S.layers.length
+          && S.layers[ai] && S.layers[ai].type === "paint" && S.layers[ai].canvas) {
+        activeLayer = S.layers[ai];
+      } else {
+        for (var li = S.layers.length - 1; li >= 0; li--) {
+          var L = S.layers[li];
+          if (L && L.type === "paint" && L.canvas) { activeLayer = L; break; }
+        }
       }
     }
-    var genCtx = (genLayer && genLayer.ctx) || null;
+    var activeCtx = (activeLayer && activeLayer.ctx) || null;
+    var activeName = (activeLayer && activeLayer.name) || "(none)";
 
     // Display canvas. S.canvas is at viewport size with a zoom transform; map
     // document coords through the zoom to read the corresponding screen pixel.
@@ -217,7 +230,7 @@
       rows.push(_row(sm.label, "1. source via <img> element",   sImg  ? _safeRGBA(sImg.ctx,  sm.x, sm.y) : NULL_RGBA));
       rows.push(_row(sm.label, "2. source via ImageBitmap 'none'", sNone ? _safeRGBA(sNone.ctx, sm.x, sm.y) : NULL_RGBA));
       rows.push(_row(sm.label, "3. source via ImageBitmap 'default'", sDef  ? _safeRGBA(sDef.ctx,  sm.x, sm.y) : NULL_RGBA));
-      rows.push(_row(sm.label, "4. 'Gen Result' layer",         _safeRGBA(genCtx, sm.x, sm.y)));
+      rows.push(_row(sm.label, "4. active paint layer (" + activeName + ")", _safeRGBA(activeCtx, sm.x, sm.y)));
       rows.push(_row(sm.label, "5. S.ctx display buffer",        displaySample));
       rows.push(_row(sm.label, "6. export composite (pre-toDataURL)", _safeRGBA(composite.ctx, sm.x, sm.y)));
       rows.push(_row(sm.label, "7. exported PNG re-decoded 'none'",   sExp ? _safeRGBA(sExp.ctx, sm.x, sm.y) : NULL_RGBA));
