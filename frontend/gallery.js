@@ -2371,13 +2371,65 @@ async function loadMetadata(img) {
         // A1111 writes "Denoising strength" for both img2img and HiRes Fix.
         // Disambiguate by looking for sibling HiRes fields.
         const denoiseLabel = (m.hires_upscaler || m.hires_steps || m.hires_upscale) ? "HiRes Denoise" : "Denoise";
-        for (const [k, l0] of ord) { if (m[k] != null && m[k] !== "") { has = true; const l = (k === "denoising") ? denoiseLabel : l0; const isPrompt = k === "prompt" || k === "negative_prompt"; const valHtml = isPrompt ? '<textarea class="gal-meta-value prompt" readonly>' + esc(String(m[k])) + '</textarea>' : '<div class="gal-meta-value">' + esc(String(m[k])) + '</div>'; h += '<div class="gal-meta-row"><div class="gal-meta-label">' + l + '</div>' + valHtml + '</div>';
-            if (k === "prompt" && resolvedPrompt && resolvedPrompt.trim() !== String(m[k]).trim()) { h += '<div class="gal-meta-row"><div class="gal-meta-label">' + _t("gallery.metadata.resolved", "Resolved") + '</div><textarea class="gal-meta-value prompt" readonly>' + esc(resolvedPrompt) + '</textarea></div>'; }
-        } }
+        for (const [k, l0] of ord) {
+            if (m[k] == null || m[k] === "") continue;
+            has = true;
+            const l = (k === "denoising") ? denoiseLabel : l0;
+            const isPrompt = k === "prompt" || k === "negative_prompt";
+            if (isPrompt) {
+                const hasResolved = k === "prompt" && resolvedPrompt && resolvedPrompt.trim() !== String(m[k]).trim();
+                const copyLbl = _t("gallery.metadata.copy", "Copy");
+                const showLbl = _t("gallery.metadata.showResolved", "Show resolved");
+                h += '<div class="gal-meta-row"><div class="gal-meta-label">' + l + '</div>'
+                  + '<div class="gal-meta-value-wrap">'
+                  + '<div class="gal-meta-value prompt">' + esc(String(m[k])) + '</div>'
+                  + '<div class="gal-meta-actions">'
+                  + '<button class="gal-meta-btn" data-meta-act="copy">' + copyLbl + '</button>'
+                  + (hasResolved ? '<button class="gal-meta-btn" data-meta-act="toggle-resolved">' + showLbl + '</button>' : '')
+                  + '</div></div></div>';
+                if (hasResolved) {
+                    h += '<div class="gal-meta-row gal-meta-resolved" hidden><div class="gal-meta-label">' + _t("gallery.metadata.resolved", "Resolved") + '</div>'
+                      + '<div class="gal-meta-value-wrap">'
+                      + '<div class="gal-meta-value prompt">' + esc(resolvedPrompt) + '</div>'
+                      + '<div class="gal-meta-actions">'
+                      + '<button class="gal-meta-btn" data-meta-act="copy">' + copyLbl + '</button>'
+                      + '</div></div></div>';
+                }
+            } else {
+                h += '<div class="gal-meta-row"><div class="gal-meta-label">' + l + '</div><div class="gal-meta-value">' + esc(String(m[k])) + '</div></div>';
+            }
+        }
         const skip = new Set(["file_size","error","raw_parameters","raw_infotext","comfyui_prompt","comfyui_workflow","pixel_x","pixel_y","orientation","x_resolution","y_resolution","resolution_unit","date_digitized","date_original","date_time","color_space","sensing_method","spectral_sensitivity","gain_control","file_source","serial_number","digital_zoom","max_aperture","exposure_bias","exposure_mode","exposure_program","metering_mode","scene_type","contrast","saturation","sharpness","white_balance","subject_distance","shutter_speed","aperture","lens_info","ExifOffset","tag_34665","_source","created_at"].concat(ord.map(o => o[0])));
         Object.keys(m).forEach(k => { if (!skip.has(k) && m[k] != null && m[k] !== "") { has = true; h += '<div class="gal-meta-row"><div class="gal-meta-label">' + esc(prettyLabel(k)) + '</div><div class="gal-meta-value">' + esc(String(m[k]).substring(0, 500)) + '</div></div>'; } });
         if (!has) h += '<div class="gal-meta-empty">' + _t("gallery.metadata.notFound", "No metadata found.") + '</div>'; p.innerHTML = h;
+        if (!p._metaWired) { p.addEventListener("click", _onMetaPanelClick); p._metaWired = true; }
     } catch { p.innerHTML = '<div class="gal-meta-section-title">' + _t("gallery.metadata.title", "Metadata") + '</div><div class="gal-meta-empty">' + _t("gallery.metadata.loadFailed", "Could not load.") + '</div>'; }
+}
+
+function _onMetaPanelClick(e) {
+    const btn = e.target.closest(".gal-meta-btn");
+    if (!btn) return;
+    const act = btn.dataset.metaAct;
+    if (act === "copy") {
+        const valueEl = btn.closest(".gal-meta-value-wrap")?.querySelector(".gal-meta-value");
+        if (!valueEl) return;
+        navigator.clipboard.writeText(valueEl.textContent).then(
+            () => toast(_t("gallery.metadata.copied", "Copied"), "success"),
+            () => toast(_t("gallery.metadata.copyFailed", "Copy failed"))
+        );
+    } else if (act === "toggle-resolved") {
+        const panel = btn.closest("#gal-meta-panel");
+        const row = panel?.querySelector(".gal-meta-resolved");
+        if (!row) return;
+        const hidden = row.hasAttribute("hidden");
+        if (hidden) {
+            row.removeAttribute("hidden");
+            btn.textContent = _t("gallery.metadata.hideResolved", "Hide resolved");
+        } else {
+            row.setAttribute("hidden", "");
+            btn.textContent = _t("gallery.metadata.showResolved", "Show resolved");
+        }
+    }
 }
 
 // ========================================================================

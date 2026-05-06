@@ -10,6 +10,41 @@
  * getElementById, querySelector, addEventListener, or manipulates layout.
  *
  * Exposes window.StudioCore — the contract Phase 2 (canvas-ui.js) binds to.
+ *
+ * ─────────────────────────────────────────────────────────────────────────
+ * COLORSPACE CONTRACT
+ * ─────────────────────────────────────────────────────────────────────────
+ * Studio's use case is sRGB end-to-end: generative models (SD, Flux, WAN)
+ * output sRGB, exports go to disk tagged sRGB, and monitors display sRGB
+ * via the OS color manager. The pipeline is built around that and nothing
+ * fancier — no wide-gamut working space, no per-image ICC awareness, no
+ * OCIO. Don't add those without a concrete use case that needs them.
+ *
+ *   1. EVERY 2D canvas context in the codebase MUST be created with
+ *      `getContext("2d", { colorSpace: "srgb" })`. Layer canvases, mask,
+ *      stroke buffer, region overlays, temp/cache canvases, the export
+ *      offscreen — all sRGB. CI greps for `getContext("2d")` without
+ *      colorSpace; if you add one, that grep will fail.
+ *
+ *   2. The DISPLAY canvas (S.ctx, the on-screen one) is the single
+ *      exception: `colorSpace: "display-p3"`. This is purely a rendering
+ *      nicety so wide-gamut monitors don't have to clamp. All compositing
+ *      math still happens on sRGB offscreen buffers; the P3 canvas only
+ *      receives the final blit. On sRGB displays it's a no-op.
+ *
+ *   3. EXPORT is lossless to the backend. exportFlattened() always returns
+ *      `data:image/png;...` regardless of the user's chosen output format.
+ *      The backend does the single, intentional lossy encode (JPEG/WebP)
+ *      with the appropriate ICC profile. Encoding lossy on the frontend
+ *      causes a double-encode and visibly degrades color (this was
+ *      Moritz's "duller and yellow" bug; do not reintroduce).
+ *
+ *   4. BACKEND tags every save with sRGB ICC (_SRGB_ICC in studio_api.py).
+ *      It does NOT currently convert non-sRGB inputs — if a user ever
+ *      drags a P3-tagged file in, that needs profileToProfile conversion
+ *      before tagging. Until then, this is fine because all canvas-side
+ *      paths are sRGB by construction.
+ * ─────────────────────────────────────────────────────────────────────────
  */
 (function () {
 "use strict";
@@ -3160,7 +3195,12 @@ function exportFlattened(mime) {
         x.drawImage(L.canvas, 0, 0);
     }
     _applyDevelop(x, S.W, S.H, S.developParams);
-    return c.toDataURL(mime || "image/png");
+    // Always encode as PNG for lossless transfer to the backend. The mime
+    // arg above only controls the white-bg fill (JPEG/WebP have no alpha);
+    // format conversion is the backend's job. Encoding lossy here would
+    // double-compress when the backend re-encodes to JPEG/WebP, which
+    // visibly desaturates and warm-shifts colors.
+    return c.toDataURL("image/png");
 }
 
 // ========================================================================

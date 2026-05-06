@@ -3455,10 +3455,11 @@ async function _ctxSaveCanvas(fmt) {
         }
     } catch (e) {
         console.error("[StudioUI] Save failed:", e);
-        // Fallback: client-side download
+        // Fallback: client-side download. dataUrl is always PNG now, so the
+        // file extension must match regardless of the user's chosen format.
         const a = document.createElement("a");
         a.href = dataUrl;
-        a.download = `studio_${Date.now()}.${fmt === "jpeg" ? "jpg" : fmt}`;
+        a.download = `studio_${Date.now()}.png`;
         document.body.appendChild(a); a.click();
         setTimeout(() => document.body.removeChild(a), 100);
         if (window.showToast) window.showToast(`Saved locally (server unavailable)`, "info");
