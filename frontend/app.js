@@ -1730,22 +1730,20 @@ function displayOnCanvas(imgSrc, opts) {
 
   if (!window.StudioCore) return;
 
-  // createImageBitmap with colorSpaceConversion:"default" lets the browser
-  // tag the bitmap with its source color space (sRGB for our backend JPEGs/PNGs)
-  // so that the subsequent drawImage chain — sRGB layer canvas → display-p3
-  // display canvas — performs the spec'd sRGB→P3 conversion on the final
-  // blit. With "none" the bitmap arrives untagged in some browsers, the
-  // chain skips conversion, and sRGB byte values end up rendered through
-  // P3 primaries (visibly oversaturated on wide-gamut/calibrated displays).
-  // The original "none" was chosen to avoid a second ICC pass at export time;
-  // that's no longer a concern now that exportFlattened sends PNG to the
-  // backend and the browser does no encoding pass.
+  // createImageBitmap with colorSpaceConversion:"none" preserves raw pixel
+  // values — no display-ICC bake at decode time. This is critical: the same
+  // bytes that arrive here are what the backend gets on export (PNG-to-backend
+  // path) and tags as sRGB. If we let the browser color-manage at decode
+  // ("default"), Firefox mode-2 calibrated displays bake their monitor ICC
+  // into the buffer and the export comes out dull/shifted when re-opened.
+  // Keep "none" — and the display canvas (S.ctx) must stay sRGB-tagged so the
+  // OS color manager renders it correctly without a P3 detour (see canvas-core.js).
   (async () => {
     let bitmap;
     try {
       const resp = await fetch(imgSrc);
       const blob = await resp.blob();
-      bitmap = await createImageBitmap(blob, { colorSpaceConversion: "default" });
+      bitmap = await createImageBitmap(blob, { colorSpaceConversion: "none" });
     } catch (e) {
       console.error("[Studio] displayOnCanvas: failed to load bitmap", e);
       return;
