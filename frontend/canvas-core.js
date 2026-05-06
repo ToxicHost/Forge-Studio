@@ -3160,7 +3160,12 @@ function exportFlattened(mime) {
         x.drawImage(L.canvas, 0, 0);
     }
     _applyDevelop(x, S.W, S.H, S.developParams);
-    return c.toDataURL(mime || "image/png");
+    // Always encode as PNG for lossless transfer to the backend. The mime
+    // arg above only controls the white-bg fill (JPEG/WebP have no alpha);
+    // format conversion is the backend's job. Encoding lossy here would
+    // double-compress when the backend re-encodes to JPEG/WebP, which
+    // visibly desaturates and warm-shifts colors.
+    return c.toDataURL("image/png");
 }
 
 // ========================================================================
