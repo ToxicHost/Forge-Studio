@@ -1730,27 +1730,28 @@ function displayOnCanvas(imgSrc, opts) {
 
   if (!window.StudioCore) return;
 
-  // createImageBitmap with colorSpaceConversion:"default" + sRGB everywhere
-  // (layer canvases, display canvas) is the combination that finally produces
-  // canvas pixels that match the saved export on Firefox mode-2 calibrated
-  // wide-gamut setups.
+  // colorSpaceConversion:"none" preserves source pixel values through the
+  // canvas → export roundtrip. The MDN/WHATWG spec for "default" describes
+  // implementation-specific behavior; on Firefox + a calibrated wide-gamut
+  // display, "default" was observed to drift exported pixels (e.g. (160,88,47)
+  // → (148,92,51)), consistent with a lossy sRGB ↔ display-profile roundtrip
+  // baked somewhere into the createImageBitmap → drawImage → toDataURL chain.
   //
-  // Why "default" works here: with the destination-canvas colorSpace explicitly
-  // sRGB, "default" performs a source-sRGB → destination-sRGB conversion, which
-  // is a no-op — the canvas buffer ends up with raw sRGB pixel values, same as
-  // the export. With "none", on at least one Firefox + calibrated mode-2 setup,
-  // the bitmap arrived in display-profile space and the canvas eyedropper read
-  // values that didn't match the export.
+  // Trade-off accepted: with "none" the canvas may render slightly more
+  // saturated than the same image opened in another app on Firefox mode-2
+  // calibrated displays, because Firefox doesn't apply the display ICC to
+  // sRGB-tagged canvases the way it does to <img> elements. The working
+  // preview is the smaller cost; the export bytes (the artifact users keep)
+  // are the priority and stay byte-faithful to the model output.
   //
-  // The original concern that motivated "none" — display-ICC bake at decode
-  // surviving to a browser-side JPEG encode — is gone: exportFlattened sends
-  // PNG to the backend, so there's no browser encode pass to compound onto.
+  // Do NOT flip back to "default" without first identifying where the bytes
+  // shift in the pipeline — see window.StudioDebug.sampleColorPipeline().
   (async () => {
     let bitmap;
     try {
       const resp = await fetch(imgSrc);
       const blob = await resp.blob();
-      bitmap = await createImageBitmap(blob, { colorSpaceConversion: "default" });
+      bitmap = await createImageBitmap(blob, { colorSpaceConversion: "none" });
     } catch (e) {
       console.error("[Studio] displayOnCanvas: failed to load bitmap", e);
       return;

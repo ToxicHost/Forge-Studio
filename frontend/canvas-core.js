@@ -39,9 +39,20 @@
  *      causes a double-encode and visibly degrades color (this was
  *      Moritz's "duller and yellow" bug; do not reintroduce). Likewise,
  *      `createImageBitmap` for incoming generated images uses
- *      `colorSpaceConversion: "none"` so the display ICC is not baked into
- *      the buffer at decode time — that would make the export dull/shifted
- *      when re-opened on calibrated displays.
+ *      `colorSpaceConversion: "none"` so the source pixel values survive
+ *      the canvas → export roundtrip without a lossy sRGB ↔ display-profile
+ *      conversion. The "default" option was tried and observed to drift
+ *      exported pixels on Firefox + calibrated wide-gamut setups; don't
+ *      flip back without first running window.StudioDebug.sampleColorPipeline()
+ *      to identify where the bytes change.
+ *
+ *      Known visual trade-off: on Firefox mode-2 calibrated wide-gamut
+ *      displays, the canvas may appear slightly more saturated than the
+ *      same image displayed via an `<img>` element or saved file viewed
+ *      in another app, because Firefox doesn't apply the display ICC to
+ *      sRGB-tagged canvases the way it does to images. The export is
+ *      byte-faithful regardless; the discrepancy is in the working
+ *      preview only.
  *
  *   3. BACKEND tags every save with sRGB ICC (_SRGB_ICC in studio_api.py).
  *      It does NOT currently convert non-sRGB inputs — if a user ever
