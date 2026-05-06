@@ -1730,17 +1730,22 @@ function displayOnCanvas(imgSrc, opts) {
 
   if (!window.StudioCore) return;
 
-  // createImageBitmap with colorSpaceConversion:"none" loads raw pixel values
-  // without applying the display ICC profile. new Image() + drawImage would
-  // bake ICC-converted values into the canvas buffer, causing a second ICC
-  // pass when the exported file is opened — producing wrong colors on
-  // calibrated displays.
+  // createImageBitmap with colorSpaceConversion:"default" lets the browser
+  // tag the bitmap with its source color space (sRGB for our backend JPEGs/PNGs)
+  // so that the subsequent drawImage chain — sRGB layer canvas → display-p3
+  // display canvas — performs the spec'd sRGB→P3 conversion on the final
+  // blit. With "none" the bitmap arrives untagged in some browsers, the
+  // chain skips conversion, and sRGB byte values end up rendered through
+  // P3 primaries (visibly oversaturated on wide-gamut/calibrated displays).
+  // The original "none" was chosen to avoid a second ICC pass at export time;
+  // that's no longer a concern now that exportFlattened sends PNG to the
+  // backend and the browser does no encoding pass.
   (async () => {
     let bitmap;
     try {
       const resp = await fetch(imgSrc);
       const blob = await resp.blob();
-      bitmap = await createImageBitmap(blob, { colorSpaceConversion: "none" });
+      bitmap = await createImageBitmap(blob, { colorSpaceConversion: "default" });
     } catch (e) {
       console.error("[Studio] displayOnCanvas: failed to load bitmap", e);
       return;
