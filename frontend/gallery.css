@@ -716,15 +716,32 @@
   border-radius: var(--radius-sm);
   border: 1px solid var(--border-subtle);
   font-family: var(--mono);
-  user-select: text;
-  cursor: text;
-  display: block;
-  width: 100%;
-  box-sizing: border-box;
-  resize: none;
-  color: var(--text-2);
-  line-height: 1.5;
-  outline: none;
+}
+.gal-meta-value-wrap {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  flex: 1;
+  min-width: 0;
+}
+.gal-meta-actions {
+  display: flex;
+  gap: 4px;
+  align-items: center;
+}
+.gal-meta-btn {
+  font-size: 10px;
+  padding: 2px 8px;
+  background: transparent;
+  color: var(--text-3);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  cursor: pointer;
+  font-family: var(--font);
+}
+.gal-meta-btn:hover {
+  background: var(--bg-hover);
+  color: var(--text-1);
 }
 .gal-meta-empty {
   color: var(--text-4);
