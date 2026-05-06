@@ -3431,7 +3431,7 @@ def setup_studio_routes(app: FastAPI):
     class SaveImageRequest(BaseModel):
         image_b64: str
         format: str = "png"          # png | jpeg | webp
-        quality: int = 95            # for jpeg/webp
+        quality: int = 80            # for jpeg/webp; matches GenerateRequest.save_quality default
         subfolder: str = ""          # optional subfolder under output dir
         filename: Optional[str] = None  # optional custom filename (without ext)
         metadata: Optional[str] = None  # infotext to embed (PNG tEXt, JPEG/WebP EXIF UserComment)

@@ -3442,7 +3442,7 @@ async function _ctxSaveCanvas(fmt) {
         const result = await window.API.saveImage({
             image_b64: dataUrl,
             format: fmt,
-            quality: 95,
+            quality: State?.saveQuality ?? 95,
             metadata: metadata,
             filename: docName,
         });
