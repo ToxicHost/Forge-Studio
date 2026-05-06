@@ -1730,20 +1730,27 @@ function displayOnCanvas(imgSrc, opts) {
 
   if (!window.StudioCore) return;
 
-  // createImageBitmap with colorSpaceConversion:"none" preserves raw pixel
-  // values — no display-ICC bake at decode time. This is critical: the same
-  // bytes that arrive here are what the backend gets on export (PNG-to-backend
-  // path) and tags as sRGB. If we let the browser color-manage at decode
-  // ("default"), Firefox mode-2 calibrated displays bake their monitor ICC
-  // into the buffer and the export comes out dull/shifted when re-opened.
-  // Keep "none" — and the display canvas (S.ctx) must stay sRGB-tagged so the
-  // OS color manager renders it correctly without a P3 detour (see canvas-core.js).
+  // createImageBitmap with colorSpaceConversion:"default" + sRGB everywhere
+  // (layer canvases, display canvas) is the combination that finally produces
+  // canvas pixels that match the saved export on Firefox mode-2 calibrated
+  // wide-gamut setups.
+  //
+  // Why "default" works here: with the destination-canvas colorSpace explicitly
+  // sRGB, "default" performs a source-sRGB → destination-sRGB conversion, which
+  // is a no-op — the canvas buffer ends up with raw sRGB pixel values, same as
+  // the export. With "none", on at least one Firefox + calibrated mode-2 setup,
+  // the bitmap arrived in display-profile space and the canvas eyedropper read
+  // values that didn't match the export.
+  //
+  // The original concern that motivated "none" — display-ICC bake at decode
+  // surviving to a browser-side JPEG encode — is gone: exportFlattened sends
+  // PNG to the backend, so there's no browser encode pass to compound onto.
   (async () => {
     let bitmap;
     try {
       const resp = await fetch(imgSrc);
       const blob = await resp.blob();
-      bitmap = await createImageBitmap(blob, { colorSpaceConversion: "none" });
+      bitmap = await createImageBitmap(blob, { colorSpaceConversion: "default" });
     } catch (e) {
       console.error("[Studio] displayOnCanvas: failed to load bitmap", e);
       return;
