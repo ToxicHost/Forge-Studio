@@ -1587,15 +1587,30 @@ def _build_txt2img_obj(gp, studio_outdir, batch_seed, cn_units=None, extension_a
 # =========================================================================
 
 def _clip_to_mask(result, canvas_img, mask_img, ip):
-    """Composite result onto original canvas using the inpaint mask.
-    Clips any changes that leaked outside the masked area."""
+    """Clip stray pixel changes outside the inpaint mask.
+
+    Forge's process_images already composites the result using the
+    blurred mask internally (modules/processing.py:1094 apply_overlay).
+    Our job is only to catch encoder/decoder leakage outside the mask
+    — NOT to redo the blur transition. Re-blurring here squares the
+    transition (M·M = M²) and washes out high mask_blur settings (e.g.
+    a 50% transition pixel collapses to 25%, killing the soft edge).
+
+    We dilate the binary mask so the clip boundary sits fully outside
+    Forge's Gaussian tail (~3σ from the edge), then binarize. The
+    composite is then pass-through where Forge already composited and
+    only clips leaks beyond the dilated boundary.
+    """
     try:
         from PIL import ImageFilter
         orig = canvas_img.convert("RGB").resize(result.size, Image.LANCZOS)
         msk = mask_img.convert("L").resize(result.size, Image.LANCZOS)
         blur = getattr(ip, 'mask_blur', 4) if ip else 4
         if blur > 0:
-            msk = msk.filter(ImageFilter.GaussianBlur(radius=blur))
+            # 3× radius covers the full Gaussian tail; binarize to make
+            # the composite pass-through inside the clip boundary.
+            msk = msk.filter(ImageFilter.GaussianBlur(radius=blur * 3))
+            msk = msk.point(lambda v: 255 if v > 1 else 0)
         return Image.composite(result, orig, msk)
     except Exception as e:
         print(f"[Studio] Mask composite error: {e}")
@@ -2311,21 +2326,26 @@ def run_generation(
                 # leaked outside the inpaint mask.
                 if has_mask and mask_img and canvas_img and not is_txt2img:
                     try:
-                        from PIL import ImageFilter
-                        _orig = canvas_img.convert("RGB").resize(result.size, Image.LANCZOS)
-                        _msk = mask_img.convert("L").resize(result.size, Image.LANCZOS)
-                        _blur = getattr(ip, 'mask_blur', 4) if ip else 4
-                        if _blur > 0:
-                            _msk = _msk.filter(ImageFilter.GaussianBlur(radius=_blur))
-                        result = Image.composite(result, _orig, _msk)
+                        # Clip is dilated-binary (see _clip_to_mask) — avoids
+                        # the M² double-composite that washes out high
+                        # mask_blur values.
+                        result = _clip_to_mask(result, canvas_img, mask_img, ip)
                         # HP V2: brush mask is white where VAE was inpainted
                         # (we want float there). Invert so blend_mask is
                         # white *outside* the brush — that's where the
                         # canvas (original, non-VAE) pixels live and the
                         # float buffer doesn't represent them. Develop will
-                        # then read canvas uint8 in those regions.
+                        # then read canvas uint8 in those regions. The blend
+                        # mask wants the SOFT mask (it's a compositing ratio
+                        # with intentional gradients), separate from the
+                        # dilated-binary clip mask used above.
                         if high_precision:
-                            inv = 1.0 - (np.asarray(_msk, dtype=np.float32) / 255.0)
+                            from PIL import ImageFilter
+                            _soft_msk = mask_img.convert("L").resize(result.size, Image.LANCZOS)
+                            _blur = getattr(ip, 'mask_blur', 4) if ip else 4
+                            if _blur > 0:
+                                _soft_msk = _soft_msk.filter(ImageFilter.GaussianBlur(radius=_blur))
+                            inv = 1.0 - (np.asarray(_soft_msk, dtype=np.float32) / 255.0)
                             _hp_or_into_blend_mask(inv)
                     except Exception as _ce:
                         print(f"[Studio] Post-process mask composite error: {_ce}")
@@ -2360,18 +2380,20 @@ def run_generation(
                                 _hp_or_into_blend_mask(_ad_blend)
                         else:
                             result = ad_ret
-                        # Final mask composite — clips any AD overshoot
+                        # Final mask composite — clips any AD overshoot.
+                        # Dilated-binary clip via _clip_to_mask (HP blend mask
+                        # uses the soft version separately, see comment in the
+                        # post-process composite above).
                         if has_mask and mask_img and canvas_img and not is_txt2img:
                             try:
-                                from PIL import ImageFilter
-                                _orig2 = canvas_img.convert("RGB").resize(result.size, Image.LANCZOS)
-                                _msk2 = mask_img.convert("L").resize(result.size, Image.LANCZOS)
-                                _blur2 = getattr(ip, 'mask_blur', 4) if ip else 4
-                                if _blur2 > 0:
-                                    _msk2 = _msk2.filter(ImageFilter.GaussianBlur(radius=_blur2))
-                                result = Image.composite(result, _orig2, _msk2)
+                                result = _clip_to_mask(result, canvas_img, mask_img, ip)
                                 if high_precision:
-                                    inv2 = 1.0 - (np.asarray(_msk2, dtype=np.float32) / 255.0)
+                                    from PIL import ImageFilter
+                                    _soft_msk2 = mask_img.convert("L").resize(result.size, Image.LANCZOS)
+                                    _blur2 = getattr(ip, 'mask_blur', 4) if ip else 4
+                                    if _blur2 > 0:
+                                        _soft_msk2 = _soft_msk2.filter(ImageFilter.GaussianBlur(radius=_blur2))
+                                    inv2 = 1.0 - (np.asarray(_soft_msk2, dtype=np.float32) / 255.0)
                                     _hp_or_into_blend_mask(inv2)
                             except Exception as _ce2:
                                 print(f"[Studio] Post-AD mask composite error: {_ce2}")
