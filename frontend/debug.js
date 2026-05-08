@@ -5,6 +5,7 @@
 //
 //   window.StudioDebug.sampleColorPipeline(x, y, sourceUrl?)
 //   window.StudioDebug.sampleColorPipelineSet(samples, sourceUrl?)
+//   window.StudioDebug.sampleSavePath(x, y, format?, opts?)
 //
 // Both sample one document-space coordinate (or many) through the canvas →
 // export pipeline at six observation points and emit an RGBA report. Used to
@@ -284,7 +285,131 @@
     return _runPipeline(_normalizeSamples(samples), sourceUrl);
   }
 
+  // ----------------------------------------------------------------------
+  // Save-path diagnostic
+  //
+  //   window.StudioDebug.sampleSavePath(x, y, format?, options?)
+  //
+  // Sends the current gallery selection's base64 to the backend's
+  // /studio/api/debug/sample_save_path endpoint, which mirrors the
+  // /studio/save_image PIL pipeline (Image.open → optional convert("RGB") →
+  // save with icc_profile=_SRGB_ICC, no file output) and reports RGB +
+  // ICC at three checkpoints. Optionally fetches the on-disk autosave
+  // file to include as a "compare" baseline.
+  //
+  // Output: console.table + console.log markdown + clipboard copy +
+  // returns { result, rows, markdown }.
+  //
+  // Privacy: never logs source URLs, file paths, prompts, filenames, or
+  // image bytes. Only RGB triples, modes, sizes, ICC sizes, ICC profile
+  // descriptions ("sRGB IEC61966-2.1", "Display P3", etc.).
+  // ----------------------------------------------------------------------
+
+  function _stagesFromResponse(r) {
+    var rows = [];
+    function row(stage, s) {
+      if (!s) return;
+      var rgba = s.rgba || [];
+      var icc = s.icc || {};
+      rows.push({
+        stage: stage,
+        x: s.x, y: s.y,
+        r: rgba[0] != null ? rgba[0] : null,
+        g: rgba[1] != null ? rgba[1] : null,
+        b: rgba[2] != null ? rgba[2] : null,
+        a: rgba[3] != null ? rgba[3] : null,
+        mode: s.mode,
+        size: (s.size || []).join("x"),
+        icc: icc.present ? ((icc.description || "?") + " (" + icc.size + "B)") : "none",
+      });
+    }
+    row("input (pre-save)", r.input);
+    row("after save+reopen", r.after_save_reopen);
+    row("compare (autosave file)", r.compare);
+    return rows;
+  }
+
+  function _savePathMarkdown(r, rows) {
+    var lines = [];
+    lines.push("### Studio save-path diagnostic");
+    lines.push("");
+    lines.push("**Format:** " + r.format);
+    lines.push("");
+    lines.push("| Stage | x | y | R | G | B | A | Mode | Size | ICC |");
+    lines.push("|---|---:|---:|---:|---:|---:|---:|---|---|---|");
+    rows.forEach(function (row) {
+      lines.push("| " + row.stage + " | " + row.x + " | " + row.y + " | "
+        + (row.r != null ? row.r : "-") + " | "
+        + (row.g != null ? row.g : "-") + " | "
+        + (row.b != null ? row.b : "-") + " | "
+        + (row.a != null ? row.a : "-") + " | "
+        + (row.mode || "-") + " | "
+        + (row.size || "-") + " | "
+        + row.icc + " |");
+    });
+    return lines.join("\n");
+  }
+
+  async function _fetchAsDataUrl(url) {
+    var resp = await fetch(url);
+    var blob = await resp.blob();
+    return await new Promise(function (resolve, reject) {
+      var reader = new FileReader();
+      reader.onload = function () { resolve(reader.result); };
+      reader.onerror = reject;
+      reader.readAsDataURL(blob);
+    });
+  }
+
+  async function sampleSavePath(x, y, format, opts) {
+    opts = opts || {};
+    format = format || "png";
+    var State = window.State;
+    var idx = (opts.idx != null) ? opts.idx
+      : (State && State.selectedOutputIdx != null ? State.selectedOutputIdx : 0);
+    var source = opts.image_b64
+      || (State && State.outputImagesB64 && State.outputImagesB64[idx])
+      || null;
+    if (!source) throw new Error("[StudioDebug] no gallery selection (or pass opts.image_b64)");
+
+    // Best-effort: pull the autosave file's bytes as a compare baseline.
+    var compareB64 = opts.compare_b64 || null;
+    if (!compareB64) {
+      var fileUrl = (State && State.outputImages && State.outputImages[idx]) || null;
+      if (fileUrl) {
+        try { compareB64 = await _fetchAsDataUrl(fileUrl); }
+        catch (e) { /* compare just won't be present */ }
+      }
+    }
+
+    var apiBase = (window.API && window.API.base) || "";
+    var resp = await fetch(apiBase + "/studio/api/debug/sample_save_path", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({
+        image_b64: source,
+        format: format,
+        quality: (opts.quality != null) ? opts.quality : 95,
+        x: (x != null) ? (x | 0) : null,
+        y: (y != null) ? (y | 0) : null,
+        compare_b64: compareB64,
+      }),
+    });
+    var result = await resp.json();
+    if (result.error) throw new Error("[StudioDebug] " + result.error);
+
+    var rows = _stagesFromResponse(result);
+    try { console.table(rows); } catch (e) { console.log(rows); }
+    var markdown = _savePathMarkdown(result, rows);
+    console.log(markdown);
+    if (navigator.clipboard && typeof navigator.clipboard.writeText === "function") {
+      navigator.clipboard.writeText(markdown).catch(function () { /* clipboard denied */ });
+    }
+    return { result: result, rows: rows, markdown: markdown };
+  }
+
   window.StudioDebug = window.StudioDebug || {};
   window.StudioDebug.sampleColorPipeline = sampleColorPipeline;
   window.StudioDebug.sampleColorPipelineSet = sampleColorPipelineSet;
+  window.StudioDebug.sampleSavePath = sampleSavePath;
 })();

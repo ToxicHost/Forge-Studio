@@ -3523,6 +3523,104 @@ def setup_studio_routes(app: FastAPI):
             return JSONResponse({"error": str(e)}, status_code=500)
 
     # ------------------------------------------------------------------
+    # Save-path diagnostic
+    # ------------------------------------------------------------------
+    # Mirrors /studio/save_image's PIL pipeline (Image.open → optional
+    # convert("RGB") → save with icc_profile=_SRGB_ICC) and reports RGB
+    # samples + ICC metadata at three checkpoints: input, after-save-and-
+    # reopen, and an optional compare reference (e.g. the original auto-
+    # save file). No file is written to the user's output dir; the temp
+    # file is deleted before the response returns. No paths, prompts, or
+    # filenames are logged — only sizes, modes, RGB triples, and (when
+    # present) the human-readable ICC profile description.
+
+    class SampleSavePathRequest(BaseModel):
+        image_b64: str
+        format: str = "png"
+        quality: int = 95
+        x: Optional[int] = None
+        y: Optional[int] = None
+        compare_b64: Optional[str] = None  # optional second image to sample alongside
+
+    def _strip_b64_prefix(b: str) -> str:
+        return b.split(",", 1)[1] if ("," in b and b.startswith("data:")) else b
+
+    def _icc_summary(icc_bytes):
+        if not icc_bytes:
+            return {"present": False, "size": 0, "description": None}
+        desc = None
+        try:
+            from PIL import ImageCms
+            profile = ImageCms.ImageCmsProfile(io.BytesIO(icc_bytes))
+            desc = (ImageCms.getProfileDescription(profile) or "").strip() or None
+        except Exception:
+            pass
+        return {"present": True, "size": len(icc_bytes), "description": desc}
+
+    def _sample_pil(img, x, y):
+        w, h = img.size
+        cx = w // 2 if x is None else max(0, min(int(x), w - 1))
+        cy = h // 2 if y is None else max(0, min(int(y), h - 1))
+        px = img.getpixel((cx, cy))
+        if isinstance(px, int):
+            px = (px,)
+        return {
+            "x": cx,
+            "y": cy,
+            "rgba": list(px),
+            "mode": img.mode,
+            "size": [w, h],
+            "icc": _icc_summary(img.info.get("icc_profile")),
+        }
+
+    @app.post("/studio/api/debug/sample_save_path")
+    def debug_sample_save_path(req: SampleSavePathRequest):
+        try:
+            src = Image.open(io.BytesIO(base64.b64decode(_strip_b64_prefix(req.image_b64))))
+            src.load()
+            input_sample = _sample_pil(src, req.x, req.y)
+
+            # Mirror save_image's per-format kwargs (no metadata, since we
+            # don't want to perturb pixel values with extra chunks).
+            fmt = (req.format or "png").lower()
+            save_kwargs = {}
+            img_to_save = src
+            if fmt == "jpeg":
+                img_to_save = src.convert("RGB")
+                save_kwargs = {"quality": req.quality, "optimize": True}
+            elif fmt == "webp":
+                save_kwargs = {"quality": req.quality}
+
+            tmp_fd, tmp_path = tempfile.mkstemp(suffix=f".{fmt}")
+            os.close(tmp_fd)
+            try:
+                img_to_save.save(tmp_path, icc_profile=_SRGB_ICC, **save_kwargs)
+                roundtrip = Image.open(tmp_path)
+                roundtrip.load()
+                after_sample = _sample_pil(roundtrip, req.x, req.y)
+            finally:
+                try:
+                    os.unlink(tmp_path)
+                except Exception:
+                    pass
+
+            compare_sample = None
+            if req.compare_b64:
+                cmp_img = Image.open(io.BytesIO(base64.b64decode(_strip_b64_prefix(req.compare_b64))))
+                cmp_img.load()
+                compare_sample = _sample_pil(cmp_img, req.x, req.y)
+
+            return {
+                "format": fmt,
+                "input": input_sample,
+                "after_save_reopen": after_sample,
+                "compare": compare_sample,
+            }
+        except Exception as e:
+            log.exception("Save-path diagnostic failed")
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    # ------------------------------------------------------------------
     # Blueprint Bridge — discovery
     # ------------------------------------------------------------------
 
