@@ -278,6 +278,48 @@ const State = {
 
 
 // ═══════════════════════════════════════════
+// OUTPUT SOURCE PICKER
+// ═══════════════════════════════════════════
+//
+// State.outputImages[idx] is a same-origin /file= URL when the image
+// was autosaved (which is the source of truth on disk). State.output
+// ImagesB64[idx] is the cached base64 we received in the generation
+// response — but on Firefox + calibrated wide-gamut, decoding from a
+// data URL produces drifted pixel values vs decoding the same bytes
+// fetched from disk via the /file= URL. Autosave + result-preview <img>
+// (which uses the file URL) read correct; data-URL paths read drifted.
+//
+// Pick the file URL whenever it exists. Fall back to the b64 only for
+// outputs that don't have a saved file (Live Painting results, unsaved
+// outputs).
+function _pickOutputSource(idx) {
+  const fileUrl = (State.outputImages && State.outputImages[idx]) || null;
+  if (typeof fileUrl === "string" && fileUrl.indexOf("/file=") !== -1) return fileUrl;
+  const b64 = (State.outputImagesB64 && State.outputImagesB64[idx]) || null;
+  if (b64) return b64;
+  return fileUrl || null;
+}
+
+// Backend save endpoints (/studio/save_image, /studio/export_exr) want a
+// base64 data URL. When _pickOutputSource returns a /file= URL, fetch
+// it fresh from disk and convert — this is the byte-faithful source,
+// avoiding the cached b64 that drifts on the affected setups.
+async function _resolveOutputAsB64(idx) {
+  const src = _pickOutputSource(idx);
+  if (!src) return null;
+  if (src.startsWith("data:")) return src;
+  const resp = await fetch(src);
+  const blob = await resp.blob();
+  return await new Promise((resolve, reject) => {
+    const r = new FileReader();
+    r.onload = () => resolve(r.result);
+    r.onerror = reject;
+    r.readAsDataURL(blob);
+  });
+}
+
+
+// ═══════════════════════════════════════════
 // LIVE PAINTING
 // ═══════════════════════════════════════════
 // Completion-triggered img2img loop adapted from Krita AI Diffusion.
@@ -1431,7 +1473,7 @@ async function doGenerate() {
       _showResultPreview(0);
 
       // Store last result on engine state for Send to Lab etc (use data URL version)
-      if (window.StudioCore) window.StudioCore.state.lastResult = (State.outputImagesB64 || State.outputImages)[0];
+      if (window.StudioCore) window.StudioCore.state.lastResult = _pickOutputSource(0);
 
       // Store resolved seed for recycle button (don't auto-fill — default is random)
       if (result.seed > 0) {
@@ -2291,8 +2333,11 @@ function bindUI() {
 
   // Output gallery actions
   document.getElementById("outputToCanvas")?.addEventListener("click", () => {
-    // Use data URL version for canvas drawing (file URLs can't be drawn to canvas due to CORS)
-    const img = (State.outputImagesB64 || State.outputImages)[State.selectedOutputIdx];
+    // Prefer the same-origin /file= URL when present — autosave is the source
+    // of truth on disk; the cached base64 has been observed to drift on Firefox
+    // + calibrated wide-gamut. Same-origin file URLs draw to canvas fine (no
+    // CORS issue) since they're served by Forge's own /file= route.
+    const img = _pickOutputSource(State.selectedOutputIdx);
     const fpath = State.outputFloatPaths[State.selectedOutputIdx] || "";
     const mpath = State.outputMaskPaths[State.selectedOutputIdx] || "";
     if (img) displayOnCanvas(img, { newLayer: true, layerName: "Output", undoLabel: "Send to canvas", floatPath: fpath, maskPath: mpath });
@@ -2376,7 +2421,7 @@ function bindUI() {
         const action = me.target.dataset?.action;
         if (!action) return;
         menu.remove();
-        const imgSrc = (State.outputImagesB64 || State.outputImages)[idx];
+        const imgSrc = _pickOutputSource(idx);
         const fpath = State.outputFloatPaths[idx] || "";
         const mpath = State.outputMaskPaths[idx] || "";
         if (action === "canvas" && imgSrc) {
@@ -2454,7 +2499,7 @@ function bindUI() {
     // Check if released over canvas area
     const canvasArea = document.getElementById("canvasArea");
     if (canvasArea && canvasArea.contains(e.target)) {
-      const img = (State.outputImagesB64 || State.outputImages)[idx];
+      const img = _pickOutputSource(idx);
       const fpath = State.outputFloatPaths[idx] || "";
       const mpath = State.outputMaskPaths[idx] || "";
       if (img) displayOnCanvas(img, { newLayer: true, layerName: "Output", undoLabel: "Drag to canvas", floatPath: fpath, maskPath: mpath });
@@ -2524,7 +2569,10 @@ function bindUI() {
     if (idx == null || idx < 0) return;
     const floatPath = State.outputFloatPaths[idx] || "";
     const maskPath  = State.outputMaskPaths[idx]  || "";
-    const imgSrc = (State.outputImagesB64 || State.outputImages)[idx];
+    // Backend wants image_b64. Pull from the saved /file= URL when one
+    // exists (byte-faithful to disk); fall back to the cached base64 only
+    // for unsaved outputs.
+    const imgSrc = await _resolveOutputAsB64(idx);
     if (!floatPath && !imgSrc) return;
     // Float sidecar requires accurate dims so the backend can reshape it.
     // Probe the corresponding image (any of the parallel sources) for its
@@ -2577,7 +2625,11 @@ function bindUI() {
   // can offer "Save to Gallery" (drops in the watched outputs root) in
   // addition to the format-specific download targets.
   async function _saveSelectedOutput(fmt, toGallery) {
-    const imgSrc = (State.outputImagesB64 || State.outputImages)[State.selectedOutputIdx];
+    // Saved /file= URL takes precedence over the cached base64 — see
+    // _pickOutputSource. /studio/save_image needs a base64 string, so
+    // resolve via _resolveOutputAsB64 which fetches the file fresh when
+    // the source is a URL.
+    const imgSrc = await _resolveOutputAsB64(State.selectedOutputIdx);
     if (!imgSrc) return;
     const infotext = State.embedMetadata
       ? (State.outputInfotexts[State.selectedOutputIdx] || "")
