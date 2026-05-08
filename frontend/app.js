@@ -1710,20 +1710,6 @@ function buildCNJson() {
 // CANVAS DISPLAY
 // ═══════════════════════════════════════════
 
-// Temporary diagnostic switch for the canvas-import bitmap decode mode.
-// Production default is "none" (export byte-fidelity); maintainers can opt in
-// to "default" via localStorage to test the visual-baseline candidate without
-// affecting other users. Any value other than the literal string "default"
-// resolves to "none". Not a long-term API — see window.StudioDebug.sampleColorPipeline.
-function _studioDecodeMode() {
-  try {
-    const mode = localStorage.getItem("studio-debug-decode-mode");
-    return mode === "default" ? "default" : "none";
-  } catch (e) {
-    return "none";
-  }
-}
-
 function displayOnCanvas(imgSrc, opts) {
   opts = opts || {};
   // Hide any stale preview thumbnail
@@ -1744,35 +1730,30 @@ function displayOnCanvas(imgSrc, opts) {
 
   if (!window.StudioCore) return;
 
-  // colorSpaceConversion default is "none" — preserves source pixel values
-  // through the canvas → export roundtrip so the saved file is byte-faithful
-  // to the model output. This is the conservative production behavior.
+  // Use HTMLImageElement to load the source. The diagnostic in
+  // window.StudioDebug.sampleColorPipeline confirmed that the <img>
+  // decode path produces values matching the autosave baseline on
+  // Firefox + calibrated wide-gamut, while createImageBitmap (with
+  // either "none" or "default") drifts the values. The result-preview
+  // overlay also uses an <img>, so this brings Send-to-Canvas in line
+  // with what users perceive as the "correct" rendering.
   //
-  // Diagnostic opt-in: maintainers can flip to "default" via dev-tools to
-  // test whether ImageBitmap "default" produces a canvas that matches the
-  // result-preview <img> visual baseline:
-  //
-  //   localStorage.setItem("studio-debug-decode-mode", "default");
-  //   // reload Studio
-  //
-  // Reset:
-  //   localStorage.removeItem("studio-debug-decode-mode");
-  //   // reload Studio
-  //
-  // This is NOT yet promoted to a default — it's a switch for narrow
-  // testing without forcing candidate behavior on every user. See
-  // window.StudioDebug.sampleColorPipelineSet() for the diagnostic that
-  // shows where pixel values shift through the pipeline.
-  const decodeMode = _studioDecodeMode();
-  console.info("[Studio] Canvas decode mode:", decodeMode);
+  // Don't reintroduce createImageBitmap here without re-running the
+  // diagnostic on the affected configuration.
   (async () => {
-    let bitmap;
+    const img = new Image();
+    img.src = imgSrc;
     try {
-      const resp = await fetch(imgSrc);
-      const blob = await resp.blob();
-      bitmap = await createImageBitmap(blob, { colorSpaceConversion: decodeMode });
+      if (typeof img.decode === "function") {
+        await img.decode();
+      } else {
+        await new Promise((resolve, reject) => {
+          img.onload = resolve;
+          img.onerror = () => reject(new Error("image load failed"));
+        });
+      }
     } catch (e) {
-      console.error("[Studio] displayOnCanvas: failed to load bitmap", e);
+      console.error("[Studio] displayOnCanvas: failed to load image", e);
       return;
     }
 
@@ -1782,8 +1763,8 @@ function displayOnCanvas(imgSrc, opts) {
     S.lastResult = imgSrc;
 
     // Resize canvas to match the output image (handles hires fix)
-    const outW = bitmap.width;
-    const outH = bitmap.height;
+    const outW = img.naturalWidth || img.width;
+    const outH = img.naturalHeight || img.height;
 
     // Save undo BEFORE resize so the snapshot captures pre-resize state
     // at the correct dimensions. _restoreStructural already handles
@@ -1815,7 +1796,7 @@ function displayOnCanvas(imgSrc, opts) {
         // User-initiated send: always create a new layer on top
         const layerName = opts.layerName || "Imported";
         const newL = Core.makeLayer(layerName, "paint");
-        newL.ctx.drawImage(bitmap, 0, 0, S.W, S.H);
+        newL.ctx.drawImage(img, 0, 0, S.W, S.H);
         S.layers.push(newL);
         S.activeLayerIdx = S.layers.length - 1;
       } else {
@@ -1829,13 +1810,13 @@ function displayOnCanvas(imgSrc, opts) {
             S.layers.push(genLayer);
           }
           genLayer.ctx.clearRect(0, 0, S.W, S.H);
-          genLayer.ctx.drawImage(bitmap, 0, 0, S.W, S.H);
+          genLayer.ctx.drawImage(img, 0, 0, S.W, S.H);
           genLayer.visible = true;
           S.activeLayerIdx = S.layers.length - 1;
         } else {
           // Create new Gen Result layer at the top of the stack
           genLayer = Core.makeLayer("Gen Result", "paint");
-          genLayer.ctx.drawImage(bitmap, 0, 0, S.W, S.H);
+          genLayer.ctx.drawImage(img, 0, 0, S.W, S.H);
           S.layers.push(genLayer);
           S.activeLayerIdx = S.layers.length - 1;
         }
@@ -1873,8 +1854,8 @@ function displayOnCanvas(imgSrc, opts) {
         }
       }
     } catch (e) { /* Develop not loaded yet; ignore */ }
-    } finally {
-      if (bitmap) bitmap.close();
+    } catch (e) {
+      console.error("[Studio] displayOnCanvas: render error", e);
     }
   })();
 }
