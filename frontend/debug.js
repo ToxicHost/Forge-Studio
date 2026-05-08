@@ -6,6 +6,7 @@
 //   window.StudioDebug.sampleColorPipeline(x, y, sourceUrl?)
 //   window.StudioDebug.sampleColorPipelineSet(samples, sourceUrl?)
 //   window.StudioDebug.sampleSavePath(x, y, format?, opts?)
+//   window.StudioDebug.downloadRawCanvasPng(filename?)
 //
 // Both sample one document-space coordinate (or many) through the canvas →
 // export pipeline at six observation points and emit an RGBA report. Used to
@@ -412,4 +413,35 @@
   window.StudioDebug.sampleColorPipeline = sampleColorPipeline;
   window.StudioDebug.sampleColorPipelineSet = sampleColorPipelineSet;
   window.StudioDebug.sampleSavePath = sampleSavePath;
+
+  // ----------------------------------------------------------------------
+  // Raw canvas PNG download — bypass /studio/save_image entirely
+  //
+  //   window.StudioDebug.downloadRawCanvasPng(filename?)
+  //
+  // Triggers a direct browser download of StudioCore.exportFlattened
+  // ("image/png"). No backend roundtrip, no Pillow re-encode. Use this to
+  // isolate whether desaturation lives in the canvas serialization (this
+  // file == backend-exported file → fix exportFlattened) or in the
+  // backend save path (this file is correct, backend file desat → fix
+  // /studio/save_image).
+  // ----------------------------------------------------------------------
+  function downloadRawCanvasPng(filename) {
+    if (!window.StudioCore || typeof window.StudioCore.exportFlattened !== "function") {
+      throw new Error("[StudioDebug] StudioCore.exportFlattened not available");
+    }
+    var dataUrl = window.StudioCore.exportFlattened("image/png");
+    if (!dataUrl) throw new Error("[StudioDebug] exportFlattened returned no data");
+    var a = document.createElement("a");
+    a.href = dataUrl;
+    a.download = filename || ("studio-raw-canvas-" + Date.now() + ".png");
+    document.body.appendChild(a);
+    a.click();
+    setTimeout(function () {
+      try { document.body.removeChild(a); } catch (e) { /* ignore */ }
+    }, 100);
+    console.info("[StudioDebug] downloaded raw canvas PNG — no backend roundtrip");
+  }
+
+  window.StudioDebug.downloadRawCanvasPng = downloadRawCanvasPng;
 })();
