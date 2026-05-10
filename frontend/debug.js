@@ -5,6 +5,7 @@
 //
 //   window.StudioDebug.sampleColorPipeline(x, y, sourceUrl?)
 //   window.StudioDebug.sampleColorPipelineSet(samples, sourceUrl?)
+//   window.StudioDebug.sampleColorPipelineGrid(grid?, sourceUrl?)  // 3x3 grid by default — no coords needed
 //
 // Both sample one document-space coordinate (or many) through the canvas →
 // export pipeline at six observation points and emit an RGBA report. Used to
@@ -30,9 +31,21 @@
     if (explicitSourceUrl) return explicitSourceUrl;
     var State = window.State;
     if (!State) return null;
+    // Prefer the global picker from app.js — it returns the saved /file=
+    // URL when present (the byte-faithful source), falling back to the
+    // cached b64 only for unsaved outputs.
+    if (typeof window._pickOutputSource === "function") {
+      var picked = window._pickOutputSource(
+        (State.selectedOutputIdx != null) ? State.selectedOutputIdx : 0
+      );
+      if (picked) return picked;
+    }
+    // Fallback: per-index, file URL first then b64. Never use
+    // `(B64 || URLs)[idx]` — both arrays are truthy so that always
+    // collapses to the b64 array regardless of contents.
     var idx = (State.selectedOutputIdx != null) ? State.selectedOutputIdx : 0;
-    return (State.outputImagesB64 && State.outputImagesB64[idx])
-        || (State.outputImages && State.outputImages[idx])
+    return (State.outputImages && State.outputImages[idx])
+        || (State.outputImagesB64 && State.outputImagesB64[idx])
         || null;
   }
 
@@ -165,6 +178,41 @@
       return { label: s.label, x: s.x, y: s.y };
     }));
 
+    // Stage 0: backend Pillow sample of the on-disk file. Only runs when
+    // the source is a saved file URL (not a data: URL) — for unsaved
+    // outputs there's nothing for the backend to read. Provides ground
+    // truth: pixel values straight from disk via PIL, ICC-normalized to
+    // sRGB if the file carries a non-sRGB profile.
+    var backendByLabel = null;
+    if (sourceUrl && sourceUrl.indexOf("data:") !== 0) {
+      try {
+        var apiBase = (window.API && window.API.base) || "";
+        var br = await fetch(apiBase + "/studio/sample_image_pixels", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({
+            source: sourceUrl,
+            samples: samplesNorm.map(function (s) {
+              return { label: s.label, x: s.x, y: s.y };
+            }),
+          }),
+        });
+        var bjson = await br.json();
+        if (bjson && bjson.ok) {
+          backendByLabel = {};
+          (bjson.samples || []).forEach(function (bs) {
+            backendByLabel[bs.label] = bs;
+          });
+          meta.backend = {
+            width: bjson.width,
+            height: bjson.height,
+            mode: bjson.mode,
+            icc: bjson.icc,
+          };
+        }
+      } catch (e) { /* leave backendByLabel null */ }
+    }
+
     // Decode source ONCE per path (independent of sample count). Three paths:
     //   <img>     — same as the result-preview overlay
     //   "none"    — current production decode for Send-to-Canvas
@@ -227,6 +275,17 @@
         displaySample = _safeRGBA(S.ctx, sx, sy);
       }
 
+      // Stage 0: backend Pillow sample of the on-disk file (skipped for
+      // data: URL sources). Compare against stages 1-7 to isolate where
+      // browser decode/draw paths diverge from the byte-faithful disk.
+      var backendRgba = NULL_RGBA;
+      if (backendByLabel && backendByLabel[sm.label]) {
+        var bs = backendByLabel[sm.label];
+        if (!bs.error) {
+          backendRgba = { r: bs.r, g: bs.g, b: bs.b, a: bs.a };
+        }
+      }
+      rows.push(_row(sm.label, "0. backend/Pillow autosave file", backendRgba));
       rows.push(_row(sm.label, "1. source via <img> element",   sImg  ? _safeRGBA(sImg.ctx,  sm.x, sm.y) : NULL_RGBA));
       rows.push(_row(sm.label, "2. source via ImageBitmap 'none'", sNone ? _safeRGBA(sNone.ctx, sm.x, sm.y) : NULL_RGBA));
       rows.push(_row(sm.label, "3. source via ImageBitmap 'default'", sDef  ? _safeRGBA(sDef.ctx,  sm.x, sm.y) : NULL_RGBA));
@@ -284,7 +343,31 @@
     return _runPipeline(_normalizeSamples(samples), sourceUrl);
   }
 
+  // Auto-sample an N×N grid spread across the canvas. Skips picking
+  // coordinates entirely — just runs and reports. Default 3×3 (9 points,
+  // sampled at 1/4, 1/2, 3/4 of each axis). Pass an integer for a denser
+  // or sparser spread.
+  function sampleColorPipelineGrid(grid, sourceUrl) {
+    var n = (grid && grid > 0) ? Math.floor(grid) : 3;
+    var S = window.StudioCore && window.StudioCore.state;
+    if (!S) throw new Error("[StudioDebug] StudioCore not loaded");
+    var W = S.W || 0, H = S.H || 0;
+    if (W <= 0 || H <= 0) throw new Error("[StudioDebug] no document on canvas");
+    var samples = [];
+    for (var iy = 1; iy <= n; iy++) {
+      for (var ix = 1; ix <= n; ix++) {
+        samples.push({
+          label: "(" + ix + "," + iy + ")",
+          x: Math.round(W * ix / (n + 1)),
+          y: Math.round(H * iy / (n + 1)),
+        });
+      }
+    }
+    return _runPipeline(_normalizeSamples(samples), sourceUrl);
+  }
+
   window.StudioDebug = window.StudioDebug || {};
   window.StudioDebug.sampleColorPipeline = sampleColorPipeline;
   window.StudioDebug.sampleColorPipelineSet = sampleColorPipelineSet;
+  window.StudioDebug.sampleColorPipelineGrid = sampleColorPipelineGrid;
 })();
