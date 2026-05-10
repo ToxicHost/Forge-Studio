@@ -489,16 +489,31 @@ body {
   contain: strict;
 }
 
-/* Explicit stacking so canvas-image-preview.js's <img>/checker layers
- * (z-index 0 and 1) sit BENEATH the display canvas (UI overlay).
- * Without this, the unpositioned canvas paints under positioned siblings
- * regardless of DOM order — that's PR #152's cursor-disappears bug. */
+/* Explicit stacking. The display canvas (#studio-canvas) is the UI
+ * overlay layer at z-index 2 — cursor, wet stroke, marching ants,
+ * transform handles, masks. The WebGL preview surface
+ * (#studio-canvas-webgl-preview) sits at z-index 0 below it and renders
+ * the document texture when "Match gallery preview colors" is on. The
+ * display canvas must be positioned for z-index to apply; without this
+ * rule the unpositioned canvas paints under positioned siblings
+ * regardless of DOM order — PR #152's cursor-disappears bug. */
 #studio-canvas {
   position: absolute;
   left: 0;
   top: 0;
   z-index: 2;
   display: block;
+}
+
+#studio-canvas-webgl-preview {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 0;
+  display: none;
+  pointer-events: none;
+  user-select: none;
+  background: transparent;
 }
 
 .canvas-grid {

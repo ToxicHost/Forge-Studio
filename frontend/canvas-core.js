@@ -3252,26 +3252,55 @@ function exportMask() {
     return c.toDataURL("image/png");
 }
 
-function exportFlattened(mime) {
-    const c = _createCanvas(S.W, S.H);
-    const x = c.getContext("2d", { colorSpace: "srgb" });
-    if (mime === "image/jpeg" || mime === "image/webp") {
-        x.fillStyle = "#ffffff"; x.fillRect(0, 0, S.W, S.H);
+// Shared flatten logic used by both exportFlattened (saved files) and
+// getFlattenedImageData (WebGL preview texture source). Keeping the
+// compositing path in one place means saved files and live preview
+// always agree on layer order, blend modes, adjustments, and Develop —
+// no drift between what the user sees and what gets saved.
+function _renderFlattenedToContext(ctx, options) {
+    options = options || {};
+    if (options.whiteBackground) {
+        ctx.fillStyle = "#ffffff";
+        ctx.fillRect(0, 0, S.W, S.H);
     }
     for (const L of S.layers) {
         if (!L.visible) continue;
-        if (L.type === "adjustment") { _applyAdjustment(x, S.W, S.H, L); continue; }
-        x.globalCompositeOperation = L.blendMode || "source-over";
-        x.globalAlpha = L.opacity;
-        x.drawImage(L.canvas, 0, 0);
+        if (L.type === "adjustment") { _applyAdjustment(ctx, S.W, S.H, L); continue; }
+        ctx.globalCompositeOperation = L.blendMode || "source-over";
+        ctx.globalAlpha = L.opacity;
+        ctx.drawImage(L.canvas, 0, 0);
     }
-    _applyDevelop(x, S.W, S.H, S.developParams);
+    ctx.globalAlpha = 1; ctx.globalCompositeOperation = "source-over";
+    if (options.applyDevelop !== false) {
+        _applyDevelop(ctx, S.W, S.H, S.developParams);
+    }
+}
+
+function exportFlattened(mime) {
+    const c = _createCanvas(S.W, S.H);
+    const x = c.getContext("2d", { colorSpace: "srgb" });
+    _renderFlattenedToContext(x, {
+        whiteBackground: mime === "image/jpeg" || mime === "image/webp",
+        applyDevelop: true,
+    });
     // Always encode as PNG for lossless transfer to the backend. The mime
     // arg above only controls the white-bg fill (JPEG/WebP have no alpha);
     // format conversion is the backend's job. Encoding lossy here would
     // double-compress when the backend re-encodes to JPEG/WebP, which
     // visibly desaturates and warm-shifts colors.
     return c.toDataURL("image/png");
+}
+
+// Canonical flattened RGBA pixels (preserves alpha, no white bg, no UI
+// overlays, no checker). Develop is applied — same path as
+// exportFlattened — so the WebGL preview texture matches the saved
+// file's pixels exactly. Returns an ImageData whose .data is a
+// Uint8ClampedArray ready for gl.texImage2D / gl.texSubImage2D.
+function getFlattenedImageData() {
+    const c = _createCanvas(S.W, S.H);
+    const x = c.getContext("2d", { colorSpace: "srgb" });
+    _renderFlattenedToContext(x, { applyDevelop: true });
+    return x.getImageData(0, 0, S.W, S.H);
 }
 
 // ========================================================================
@@ -3666,6 +3695,7 @@ window.StudioCore = {
     exportCanvas,
     exportMask,
     exportFlattened,
+    getFlattenedImageData,
     serializeRegions,
     isCanvasBlank,
 
