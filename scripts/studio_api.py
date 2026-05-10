@@ -3523,6 +3523,154 @@ def setup_studio_routes(app: FastAPI):
             return JSONResponse({"error": str(e)}, status_code=500)
 
     # ------------------------------------------------------------------
+    # Color diagnostic — Pillow-decoded pixel sampling
+    # ------------------------------------------------------------------
+    # Maintainer-only diagnostic. Resolves a /file= URL or absolute path
+    # to a local image, opens it with Pillow, optionally converts to
+    # sRGB (if the file carries a non-sRGB ICC), and returns RGB(A)
+    # samples at the requested document-space coordinates. This is the
+    # ground-truth comparison point against the various browser-side
+    # decode paths that the StudioDebug.sampleColorPipelineSet diagnostic
+    # already covers.
+    #
+    # Privacy: never returns or logs paths, prompts, filenames, or image
+    # bytes. Errors are reported with generic strings only.
+
+    class _PixelSample(BaseModel):
+        label: str = ""
+        x: int
+        y: int
+
+    class SampleImagePixelsRequest(BaseModel):
+        source: str
+        samples: List[_PixelSample] = []
+
+    def _resolve_diagnostic_source_path(source: str):
+        """Same security model as serve_local_file: parse the path out of
+        a /file= URL, resolve absolute, and require it to live under one
+        of the allowed output roots. Returns None if invalid/disallowed."""
+        if not source:
+            return None
+        raw = source
+        # Pull out the path portion after /file=
+        if "/file=" in raw:
+            raw = raw.split("/file=", 1)[1]
+        try:
+            from urllib.parse import unquote
+            raw = unquote(raw)
+        except Exception:
+            pass
+        for sep in ("?", "#"):
+            if sep in raw:
+                raw = raw.split(sep, 1)[0]
+        try:
+            resolved = Path(raw)
+            if not resolved.is_absolute():
+                resolved = Path.cwd() / resolved
+            resolved = resolved.resolve()
+        except Exception:
+            return None
+        allowed_roots = [str(Path.cwd().resolve())]
+        try:
+            _outdir = shared.opts.data.get("outdir_samples", "") or shared.opts.data.get("outdir_img2img_samples", "")
+            if _outdir:
+                allowed_roots.append(str(Path(_outdir).resolve()))
+            for _key in ("outdir_txt2img_samples", "outdir_img2img_samples", "outdir_save"):
+                _d = shared.opts.data.get(_key, "")
+                if _d:
+                    allowed_roots.append(str(Path(_d).resolve()))
+                    allowed_roots.append(str(Path(_d).resolve().parent))
+        except Exception:
+            pass
+        resolved_str = str(resolved)
+        if not any(resolved_str.startswith(root) for root in allowed_roots):
+            return None
+        if not resolved.is_file():
+            return None
+        return resolved
+
+    @app.post("/studio/sample_image_pixels")
+    def sample_image_pixels(req: SampleImagePixelsRequest):
+        path = _resolve_diagnostic_source_path(req.source)
+        if path is None:
+            return JSONResponse({"ok": False, "error": "source not accessible"}, status_code=400)
+        try:
+            img = Image.open(str(path))
+            img.load()
+        except Exception:
+            print(f"{TAG} Failed backend color sample (open)")
+            return JSONResponse({"ok": False, "error": "open failed"}, status_code=500)
+
+        # ICC handling: if the file carries a non-sRGB profile, convert to
+        # sRGB for sampling so the returned values are in the same space
+        # as the rest of the diagnostic stages. If no ICC, treat as sRGB.
+        icc_bytes = img.info.get("icc_profile")
+        icc_present = bool(icc_bytes)
+        icc_desc = None
+        converted_to_srgb = False
+        if icc_bytes:
+            try:
+                from PIL import ImageCms
+                src_profile = ImageCms.ImageCmsProfile(io.BytesIO(icc_bytes))
+                icc_desc = (ImageCms.getProfileDescription(src_profile) or "").strip() or None
+                # Heuristic: only convert when the description doesn't
+                # mention sRGB. This avoids a no-op roundtrip on already-
+                # sRGB tagged files (the common case for autosaves).
+                if icc_desc and "sRGB" not in icc_desc and "srgb" not in icc_desc.lower():
+                    try:
+                        srgb_profile = ImageCms.ImageCmsProfile(io.BytesIO(_SRGB_ICC))
+                        target_mode = "RGBA" if img.mode in ("RGBA", "LA", "PA") else "RGB"
+                        img = ImageCms.profileToProfile(img, src_profile, srgb_profile, outputMode=target_mode)
+                        converted_to_srgb = True
+                    except Exception:
+                        print(f"{TAG} Failed ICC conversion during color sample")
+            except Exception:
+                pass
+
+        # Convert to RGBA for consistent sampling (4-tuple always).
+        try:
+            img_rgba = img.convert("RGBA")
+        except Exception:
+            print(f"{TAG} Failed backend color sample (convert)")
+            return JSONResponse({"ok": False, "error": "convert failed"}, status_code=500)
+
+        w, h = img_rgba.size
+        sample_results = []
+        for s in (req.samples or []):
+            try:
+                cx = max(0, min(int(s.x), w - 1))
+                cy = max(0, min(int(s.y), h - 1))
+                px = img_rgba.getpixel((cx, cy))
+                if isinstance(px, int):
+                    px = (px, px, px, 255)
+                while len(px) < 4:
+                    px = (*px, 255)
+                sample_results.append({
+                    "label": s.label or f"pt({cx},{cy})",
+                    "x": cx, "y": cy,
+                    "r": px[0], "g": px[1], "b": px[2], "a": px[3],
+                })
+            except Exception:
+                sample_results.append({
+                    "label": s.label,
+                    "x": s.x, "y": s.y,
+                    "error": "sample failed",
+                })
+
+        return {
+            "ok": True,
+            "width": w,
+            "height": h,
+            "mode": img.mode,
+            "icc": {
+                "present": icc_present,
+                "description": icc_desc,
+                "converted_to_srgb": converted_to_srgb,
+            },
+            "samples": sample_results,
+        }
+
+    # ------------------------------------------------------------------
     # Blueprint Bridge — discovery
     # ------------------------------------------------------------------
 
