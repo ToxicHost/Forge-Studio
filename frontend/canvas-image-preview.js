@@ -198,6 +198,20 @@
     }, DEBOUNCE_MS);
   }
 
+  // Force-refresh path: cancel any pending debounce, invalidate the
+  // version cache so the next _refreshNow actually re-encodes, fire
+  // immediately. Used on stroke commit / pointerup, where any latency
+  // between releasing the brush and seeing the stroke baked into the
+  // preview is jarring. brush commit doesn't bump _compositeVersion
+  // (it just modifies the layer canvas in place), so the version-gated
+  // _maybeRefresh wouldn't catch it on its own.
+  function refreshNow() {
+    if (!_enabled) return;
+    if (_refreshTimer) { clearTimeout(_refreshTimer); _refreshTimer = null; }
+    _lastPreviewVersion = -1;
+    _refreshNow();
+  }
+
   function hide() {
     if (_img) _img.style.display = "none";
     if (_checker) _checker.style.display = "none";
@@ -236,6 +250,26 @@
       return ret;
     };
     _hookInstalled = true;
+  }
+
+  // Wrap Core.commitStroke so brush/eraser release triggers an
+  // immediate (non-debounced, non-version-gated) preview refresh. The
+  // user's just-released stroke needs to land on the preview without
+  // the ~50 ms _maybeRefresh latency.
+  function _hookCommitStroke() {
+    var Core = window.StudioCore;
+    if (!Core || typeof Core.commitStroke !== "function") {
+      setTimeout(_hookCommitStroke, 250);
+      return;
+    }
+    if (Core._cipCommitHooked) return;
+    Core._cipCommitHooked = true;
+    var orig = Core.commitStroke;
+    Core.commitStroke = function () {
+      var ret = orig.apply(this, arguments);
+      if (_enabled) refreshNow();
+      return ret;
+    };
   }
 
   // --- public API -------------------------------------------------------
@@ -280,6 +314,7 @@
     _injectStyles();
     _ensureLayers();
     _hookRedraw();
+    _hookCommitStroke();
 
     var toggle = document.getElementById("toggleCanvasColorPreview");
     if (toggle) {
@@ -302,6 +337,7 @@
     setEnabled: setEnabled,
     isEnabled: isEnabled,
     refresh: refresh,
+    refreshNow: refreshNow,
     hide: hide,
   };
 
