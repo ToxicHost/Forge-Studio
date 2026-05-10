@@ -37,28 +37,19 @@
  *      The backend does the single, intentional lossy encode (JPEG/WebP)
  *      with the appropriate ICC profile. Encoding lossy on the frontend
  *      causes a double-encode and visibly degrades color (this was
- *      Moritz's "duller and yellow" bug; do not reintroduce). Likewise,
- *      `createImageBitmap` for incoming generated images uses
- *      `colorSpaceConversion: "none"` so the source pixel values survive
- *      the canvas → export roundtrip without a lossy sRGB ↔ display-profile
- *      conversion. The "default" option was tried and observed to drift
- *      exported pixels on Firefox + calibrated wide-gamut setups; don't
- *      flip back without first running window.StudioDebug.sampleColorPipeline()
- *      to identify where the bytes change.
+ *      Moritz's "duller and yellow" bug; do not reintroduce).
  *
- *      Known visual trade-off: on Firefox mode-2 calibrated wide-gamut
- *      displays, the canvas may appear slightly more saturated than the
- *      same image displayed via an `<img>` element or saved file viewed
- *      in another app, because Firefox doesn't apply the display ICC to
- *      sRGB-tagged canvases the way it does to images. The export is
- *      byte-faithful regardless; the discrepancy is in the working
- *      preview only.
- *
- *      Diagnostic-only switch: maintainers can flip the decode mode for
- *      testing via `localStorage.setItem("studio-debug-decode-mode",
- *      "default")` (then reload). This is NOT a promoted default — it
- *      exists to let Moritz/diagnostics test the candidate behavior
- *      without affecting other users.
+ *      For Send-to-Canvas of saved Studio outputs, displayOnCanvas uses
+ *      backend raw RGBA + putImageData (POST /studio/image_pixels) so
+ *      the canvas receives the same pixels Pillow reads from disk. The
+ *      `<img>`/ImageBitmap browser decode paths color-manage pixels
+ *      during decode on calibrated Firefox setups (chromatically
+ *      desaturating reds/oranges before drawImage); raw-pixel import
+ *      bypasses that. `<img>` is kept as a fallback for non-file-backed
+ *      sources (Live Painting, drag/drop, unsaved data URLs) and when
+ *      /studio/image_pixels is unreachable. Diagnosed via
+ *      window.StudioDebug.sampleColorPipelineGrid; don't change the
+ *      import path without re-running it.
  *
  *   3. BACKEND tags every save with sRGB ICC (_SRGB_ICC in studio_api.py).
  *      It does NOT currently convert non-sRGB inputs — if a user ever

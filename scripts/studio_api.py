@@ -3671,6 +3671,83 @@ def setup_studio_routes(app: FastAPI):
         }
 
     # ------------------------------------------------------------------
+    # Raw-pixel canvas import
+    # ------------------------------------------------------------------
+    # POST /studio/image_pixels resolves a same-origin /file= URL to a
+    # trusted Studio output, decodes with Pillow, ICC-converts to sRGB if
+    # needed, and returns raw RGBA bytes via application/octet-stream
+    # with X-Width / X-Height / X-Color-Profile headers. The frontend
+    # builds an ImageData from the bytes and putImageData onto the layer
+    # canvas — this bypasses the browser's image decode path entirely,
+    # so Firefox's display-ICC bake (the source of the chromatic
+    # desaturation Moritz hit) doesn't get a chance to mutate pixels
+    # before they land on the canvas.
+    #
+    # Privacy: never returns or logs paths/prompts/filenames/image bytes.
+
+    class ImagePixelsRequest(BaseModel):
+        source: str
+
+    @app.post("/studio/image_pixels")
+    def studio_image_pixels(req: ImagePixelsRequest):
+        path = _resolve_diagnostic_source_path(req.source)
+        if path is None:
+            print(f"{TAG} Rejected untrusted pixel import source")
+            return JSONResponse({"error": "source not accessible"}, status_code=400)
+        try:
+            img = Image.open(str(path))
+            img.load()
+        except Exception:
+            print(f"{TAG} Failed pixel import (open)")
+            return JSONResponse({"error": "open failed"}, status_code=500)
+
+        profile_state = "missing"
+        icc = img.info.get("icc_profile")
+        if icc:
+            try:
+                from PIL import ImageCms
+                src_profile = ImageCms.ImageCmsProfile(io.BytesIO(icc))
+                desc = (ImageCms.getProfileDescription(src_profile) or "").strip()
+                if desc and ("sRGB" in desc or "srgb" in desc.lower()):
+                    img = img.convert("RGBA")
+                    profile_state = "srgb"
+                else:
+                    try:
+                        dst_profile = ImageCms.ImageCmsProfile(io.BytesIO(_SRGB_ICC))
+                        img = ImageCms.profileToProfile(
+                            img, src_profile, dst_profile, outputMode="RGBA"
+                        )
+                        profile_state = "converted"
+                    except Exception:
+                        print(f"{TAG} Failed ICC conversion during pixel import")
+                        img = img.convert("RGBA")
+                        profile_state = "unknown"
+            except Exception:
+                # ICC bytes present but unparseable; treat as sRGB to keep
+                # the import alive rather than failing the whole call.
+                img = img.convert("RGBA")
+                profile_state = "unknown"
+        else:
+            img = img.convert("RGBA")
+            profile_state = "missing"
+
+        try:
+            raw = img.tobytes()
+        except Exception:
+            print(f"{TAG} Failed pixel import (tobytes)")
+            return JSONResponse({"error": "encode failed"}, status_code=500)
+
+        return Response(
+            content=raw,
+            media_type="application/octet-stream",
+            headers={
+                "X-Width": str(img.width),
+                "X-Height": str(img.height),
+                "X-Color-Profile": profile_state,
+            },
+        )
+
+    # ------------------------------------------------------------------
     # Blueprint Bridge — discovery
     # ------------------------------------------------------------------
 

@@ -1752,6 +1752,42 @@ function buildCNJson() {
 // CANVAS DISPLAY
 // ═══════════════════════════════════════════
 
+// Same-origin /file= URL — eligible for the raw-pixel import path that
+// bypasses browser image decode entirely.
+function _isStudioFileSource(src) {
+  return typeof src === "string" && src.indexOf("/file=") !== -1;
+}
+
+// Fetches raw RGBA bytes from /studio/image_pixels (Pillow-decoded,
+// ICC-converted to sRGB on the backend). Returns { width, height,
+// imageData, profile }. Throws on any failure so the caller falls back
+// to <img> + drawImage.
+async function _loadServerImagePixels(src) {
+  const resp = await fetch(API.base + "/studio/image_pixels", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ source: src }),
+  });
+  if (!resp.ok) throw new Error("pixel import failed: " + resp.status);
+  const w = parseInt(resp.headers.get("X-Width"), 10);
+  const h = parseInt(resp.headers.get("X-Height"), 10);
+  if (!Number.isFinite(w) || !Number.isFinite(h) || w <= 0 || h <= 0) {
+    throw new Error("pixel import missing dimensions");
+  }
+  const buf = await resp.arrayBuffer();
+  const bytes = new Uint8ClampedArray(buf);
+  if (bytes.length !== w * h * 4) {
+    throw new Error("pixel import byte length mismatch (expected "
+      + (w * h * 4) + ", got " + bytes.length + ")");
+  }
+  return {
+    width: w,
+    height: h,
+    imageData: new ImageData(bytes, w, h),
+    profile: resp.headers.get("X-Color-Profile") || "unknown",
+  };
+}
+
 function displayOnCanvas(imgSrc, opts) {
   opts = opts || {};
   // Hide any stale preview thumbnail
@@ -1772,31 +1808,46 @@ function displayOnCanvas(imgSrc, opts) {
 
   if (!window.StudioCore) return;
 
-  // Use HTMLImageElement to load the source. The diagnostic in
-  // window.StudioDebug.sampleColorPipeline confirmed that the <img>
-  // decode path produces values matching the autosave baseline on
-  // Firefox + calibrated wide-gamut, while createImageBitmap (with
-  // either "none" or "default") drifts the values. The result-preview
-  // overlay also uses an <img>, so this brings Send-to-Canvas in line
-  // with what users perceive as the "correct" rendering.
+  // For saved Studio outputs, use backend raw RGBA + putImageData so the
+  // canvas receives the same pixels Pillow reads from the autosave file.
+  // Browser image decode paths (<img> / ImageBitmap "default") apply
+  // Firefox's display ICC during decode on calibrated mode-2 setups, which
+  // chromatically desaturates pixels before they ever reach drawImage —
+  // confirmed via window.StudioDebug.sampleColorPipelineGrid as the source
+  // of Moritz's canvas/export desaturation.
   //
-  // Don't reintroduce createImageBitmap here without re-running the
-  // diagnostic on the affected configuration.
+  // Falls back to <img> + drawImage for sources that aren't file-backed
+  // (Live Painting results, unsaved data URLs, drag/drop external images)
+  // or when /studio/image_pixels is unreachable.
   (async () => {
-    const img = new Image();
-    img.src = imgSrc;
-    try {
-      if (typeof img.decode === "function") {
-        await img.decode();
-      } else {
-        await new Promise((resolve, reject) => {
-          img.onload = resolve;
-          img.onerror = () => reject(new Error("image load failed"));
-        });
+    let decoded = null;
+    let imgEl = null;
+
+    if (_isStudioFileSource(imgSrc)) {
+      try {
+        decoded = await _loadServerImagePixels(imgSrc);
+      } catch (e) {
+        console.warn("[Studio] Raw pixel import failed, falling back to image import:", e.message || e);
+        decoded = null;
       }
-    } catch (e) {
-      console.error("[Studio] displayOnCanvas: failed to load image", e);
-      return;
+    }
+
+    if (!decoded) {
+      imgEl = new Image();
+      imgEl.src = imgSrc;
+      try {
+        if (typeof imgEl.decode === "function") {
+          await imgEl.decode();
+        } else {
+          await new Promise((resolve, reject) => {
+            imgEl.onload = resolve;
+            imgEl.onerror = () => reject(new Error("image load failed"));
+          });
+        }
+      } catch (e) {
+        console.error("[Studio] displayOnCanvas: failed to load image", e);
+        return;
+      }
     }
 
     try {
@@ -1804,9 +1855,11 @@ function displayOnCanvas(imgSrc, opts) {
     const S = Core.state;
     S.lastResult = imgSrc;
 
-    // Resize canvas to match the output image (handles hires fix)
-    const outW = img.naturalWidth || img.width;
-    const outH = img.naturalHeight || img.height;
+    // Resize canvas to match the output image (handles hires fix). Raw
+    // path uses the backend's reported dims; <img> path uses the decoded
+    // image's natural dims.
+    const outW = decoded ? decoded.width  : (imgEl.naturalWidth  || imgEl.width);
+    const outH = decoded ? decoded.height : (imgEl.naturalHeight || imgEl.height);
 
     // Save undo BEFORE resize so the snapshot captures pre-resize state
     // at the correct dimensions. _restoreStructural already handles
@@ -1833,12 +1886,19 @@ function displayOnCanvas(imgSrc, opts) {
     StatusBar.setDimensions(paramW, paramH);
     if (window._syncARToSize) window._syncARToSize(paramW, paramH);
 
+    // Unified writer — raw path uses putImageData (1:1, no scaling, no
+    // browser color management); fallback uses drawImage as before.
+    const writePixels = (ctx) => {
+      if (decoded) ctx.putImageData(decoded.imageData, 0, 0);
+      else ctx.drawImage(imgEl, 0, 0, S.W, S.H);
+    };
+
     if (S.layers.length > 0) {
       if (opts.newLayer) {
         // User-initiated send: always create a new layer on top
         const layerName = opts.layerName || "Imported";
         const newL = Core.makeLayer(layerName, "paint");
-        newL.ctx.drawImage(img, 0, 0, S.W, S.H);
+        writePixels(newL.ctx);
         S.layers.push(newL);
         S.activeLayerIdx = S.layers.length - 1;
       } else {
@@ -1852,13 +1912,13 @@ function displayOnCanvas(imgSrc, opts) {
             S.layers.push(genLayer);
           }
           genLayer.ctx.clearRect(0, 0, S.W, S.H);
-          genLayer.ctx.drawImage(img, 0, 0, S.W, S.H);
+          writePixels(genLayer.ctx);
           genLayer.visible = true;
           S.activeLayerIdx = S.layers.length - 1;
         } else {
           // Create new Gen Result layer at the top of the stack
           genLayer = Core.makeLayer("Gen Result", "paint");
-          genLayer.ctx.drawImage(img, 0, 0, S.W, S.H);
+          writePixels(genLayer.ctx);
           S.layers.push(genLayer);
           S.activeLayerIdx = S.layers.length - 1;
         }
