@@ -29,13 +29,25 @@ function syncCanvasToViewport() {
     // If the viewport is hidden (e.g. on Workshop tab), rect is 0×0 —
     // don't resize the display canvas to 100×100. Just bail out.
     if (rect.width < 10 || rect.height < 10) return;
-    const w = Math.max(100, Math.round(rect.width));
-    const h = Math.max(100, Math.round(rect.height));
-    if (S.canvas.width !== w || S.canvas.height !== h) {
-        S.canvas.width = w; S.canvas.height = h;
-        S.canvas.style.width = w + "px";
-        S.canvas.style.height = h + "px";
+    const cssW = Math.max(100, Math.round(rect.width));
+    const cssH = Math.max(100, Math.round(rect.height));
+    // Backing buffer is CSS × DPR for HiDPI sharpness. Capped at 3 so
+    // 4K @ 4× DPR doesn't quadruple memory. zoom.scale / zoom.ox /
+    // zoom.oy stay in CSS units; applyDisplayTransform() applies the
+    // DPR multiplier when drawing to the display canvas.
+    const dpr = Math.max(1, Math.min(3, window.devicePixelRatio || 1));
+    const bufW = Math.round(cssW * dpr);
+    const bufH = Math.round(cssH * dpr);
+    if (S.canvas.width !== bufW || S.canvas.height !== bufH
+            || S.viewportCssW !== cssW || S.viewportCssH !== cssH) {
+        S.canvas.width = bufW;
+        S.canvas.height = bufH;
+        S.canvas.style.width = cssW + "px";
+        S.canvas.style.height = cssH + "px";
         S.canvas.style.display = "block";
+        S.displayDpr = dpr;
+        S.viewportCssW = cssW;
+        S.viewportCssH = cssH;
         C.composite();
     }
 }
@@ -259,7 +271,7 @@ function drawCursor() {
         S.tool === "text" || S.tool === "ellipse" || S.tool === "lasso" ||
         S.tool === "polylasso" || S.tool === "maglasso" || S.studioMode === "img2img") return;
     const c = S.ctx, z = S.zoom;
-    c.setTransform(z.scale, 0, 0, z.scale, z.ox, z.oy);
+    C.applyDisplayTransform(c);
     const pr = C.brushPx() / 2;
     const lw = 2 / z.scale, lwThin = 1 / z.scale;
     c.save();
@@ -353,7 +365,7 @@ function drawMarchingAnts(c) {
     if (!S.selection.active || !S.selection.mask) return;
     c.save();
     const z = S.zoom;
-    c.setTransform(z.scale, 0, 0, z.scale, z.ox, z.oy);
+    C.applyDisplayTransform(c);
     const lw = 1 / z.scale, dash = 6 / z.scale;
 
     if (S.selection._isLasso && S.selection._contour) {
@@ -447,7 +459,7 @@ function drawTransformHandles(c) {
 
     // ── Perspective mode: grid-based rendering ──
     if (S.transform.perspective && S.transform.grid) {
-        c.setTransform(z.scale, 0, 0, z.scale, z.ox, z.oy);
+        C.applyDisplayTransform(c);
         const grid = S.transform.grid;
         const srcRect = { x: 0, y: 0, w: S.transform.canvas.width, h: S.transform.canvas.height };
         const opacity = S.layers[S.transform.layerIdx]?.opacity ?? 1;
@@ -468,7 +480,7 @@ function drawTransformHandles(c) {
 
     // ── Warp mode: MLS deformation ──
     if (S.transform.warp && S.transform.warpGrid && S.transform.warpOrigGrid) {
-        c.setTransform(z.scale, 0, 0, z.scale, z.ox, z.oy);
+        C.applyDisplayTransform(c);
         const srcRect = { x: 0, y: 0, w: S.transform.canvas.width, h: S.transform.canvas.height };
         const opacity = S.layers[S.transform.layerIdx]?.opacity ?? 1;
         const evalGrid = C.mlsEvalGrid(
@@ -493,7 +505,7 @@ function drawTransformHandles(c) {
     }
 
     // ── Affine mode ──
-    c.setTransform(z.scale, 0, 0, z.scale, z.ox, z.oy);
+    C.applyDisplayTransform(c);
     const rot = S.transform.rotation || 0;
     const fh = S.transform.flipH, fv = S.transform.flipV;
     const skX = S.transform.skewX || 0, skY = S.transform.skewY || 0;
@@ -549,7 +561,7 @@ function _redraw() {
     // Grid overlay — drawn in document space on top of composited layers
     if (S.showGrid) {
         const z = S.zoom;
-        c.setTransform(z.scale, 0, 0, z.scale, z.ox, z.oy);
+        C.applyDisplayTransform(c);
         c.save();
         c.strokeStyle = "rgba(255,255,255,0.07)";
         c.lineWidth = 1 / z.scale;
@@ -568,7 +580,7 @@ function _redraw() {
     // Selection drag preview
     if (S.selection.dragging && (S.tool === "select" || S.tool === "ellipse") && S.selection.rect) {
         const z = S.zoom, r = S.selection.rect;
-        c.setTransform(z.scale, 0, 0, z.scale, z.ox, z.oy);
+        C.applyDisplayTransform(c);
         c.save();
         c.strokeStyle = "rgba(100,180,255,0.6)"; c.lineWidth = 1 / z.scale;
         c.setLineDash([4 / z.scale, 4 / z.scale]);
@@ -587,7 +599,7 @@ function _redraw() {
     // Poly lasso in-progress
     if (S._polyPoints && S._polyPoints.length > 0) {
         const z = S.zoom;
-        c.setTransform(z.scale, 0, 0, z.scale, z.ox, z.oy);
+        C.applyDisplayTransform(c);
         c.save(); c.strokeStyle = "#fff"; c.lineWidth = 1 / z.scale; c.setLineDash([3 / z.scale, 3 / z.scale]);
         c.beginPath(); c.moveTo(S._polyPoints[0].x, S._polyPoints[0].y);
         for (let i = 1; i < S._polyPoints.length; i++) c.lineTo(S._polyPoints[i].x, S._polyPoints[i].y);
@@ -600,7 +612,7 @@ function _redraw() {
     // Freehand lasso in-progress
     if (S.tool === "lasso" && S.selection.dragging && S.selection.lassoPoints && S.selection.lassoPoints.length > 1) {
         const z = S.zoom, pts = S.selection.lassoPoints;
-        c.setTransform(z.scale, 0, 0, z.scale, z.ox, z.oy);
+        C.applyDisplayTransform(c);
         c.save(); c.strokeStyle = "rgba(100,180,255,0.6)"; c.lineWidth = 1 / z.scale; c.setLineDash([4 / z.scale, 4 / z.scale]);
         c.beginPath(); c.moveTo(pts[0].x, pts[0].y);
         for (let i = 1; i < pts.length; i++) c.lineTo(pts[i].x, pts[i].y);
@@ -610,7 +622,7 @@ function _redraw() {
     // Magnetic lasso in-progress
     if (S._magAnchors && S._magAnchors.length > 0) {
         const z = S.zoom;
-        c.setTransform(z.scale, 0, 0, z.scale, z.ox, z.oy);
+        C.applyDisplayTransform(c);
         c.save();
         // Draw committed paths (solid)
         c.strokeStyle = "#4af"; c.lineWidth = 1.5 / z.scale; c.setLineDash([]);
@@ -645,7 +657,7 @@ function _redraw() {
     // Restore zoom transform + safe composite state so Firefox's WebRender
     // compositor doesn't re-rasterize at identity (1:1) during layer transactions
     const _z = S.zoom;
-    c.setTransform(_z.scale, 0, 0, _z.scale, _z.ox, _z.oy);
+    C.applyDisplayTransform(c);
     c.globalAlpha = 1;
     c.globalCompositeOperation = "source-over";
 
@@ -750,9 +762,10 @@ function bindCanvas() {
             const dx = e.clientX - S.zoom.panStartX;
             const dy = e.clientY - S.zoom.panStartY;
             if (Math.abs(dx) > 3 || Math.abs(dy) > 3) S.zoom._panMoved = true;
-            const r = cv.getBoundingClientRect();
-            S.zoom.ox = S.zoom.panOxStart + (e.clientX - S.zoom.panStartX) * (cv.width / r.width);
-            S.zoom.oy = S.zoom.panOyStart + (e.clientY - S.zoom.panStartY) * (cv.height / r.height);
+            // zoom.ox/oy are in CSS pixels, same as pointer deltas — no
+            // buffer multiplication needed.
+            S.zoom.ox = S.zoom.panOxStart + dx;
+            S.zoom.oy = S.zoom.panOyStart + dy;
             _redraw();
         }
     });
@@ -1244,7 +1257,7 @@ function bindCanvas() {
             // Draw crop preview
             C.composite();
             const c = S.ctx, z = S.zoom, r = S.selection.rect;
-            c.setTransform(z.scale, 0, 0, z.scale, z.ox, z.oy);
+            C.applyDisplayTransform(c);
             c.save();
             c.fillStyle = "rgba(0,0,0,0.5)";
             c.fillRect(0, 0, S.W, r.y);
@@ -1266,7 +1279,7 @@ function bindCanvas() {
             S._gradientEnd = { x: p.x, y: p.y };
             C.composite();
             const c = S.ctx, z = S.zoom;
-            c.setTransform(z.scale, 0, 0, z.scale, z.ox, z.oy);
+            C.applyDisplayTransform(c);
             c.save(); c.strokeStyle = "rgba(255,255,255,0.5)"; c.lineWidth = 1 / z.scale;
             c.setLineDash([4 / z.scale, 4 / z.scale]);
             c.beginPath(); c.moveTo(S._gradientStart.x, S._gradientStart.y); c.lineTo(p.x, p.y); c.stroke();
@@ -1286,7 +1299,7 @@ function bindCanvas() {
             S._shapeEnd = { x: ex, y: ey };
             C.composite();
             const c = S.ctx, z = S.zoom;
-            c.setTransform(z.scale, 0, 0, z.scale, z.ox, z.oy);
+            C.applyDisplayTransform(c);
             c.save();
             c.strokeStyle = C.drawColor(); c.fillStyle = C.drawColor();
             c.lineWidth = C.brushPx(); c.globalAlpha = S.brushOpacity;
@@ -4451,15 +4464,19 @@ function bootUI() {
     // Manual resize on window resize only — no persistent ResizeObserver
     // (ResizeObserver was causing composite glitches on pointer events)
     window.addEventListener("resize", () => {
-        // Preserve user's zoom/pan across resize: scale ox/oy by canvas dimension ratio
-        const oldCW = S.canvas ? S.canvas.width : 0;
-        const oldCH = S.canvas ? S.canvas.height : 0;
+        // Preserve user's zoom/pan across resize. zoom is in CSS units, so
+        // scale ox/oy by the CSS dim ratio — NOT the buffer ratio. That
+        // matters because devicePixelRatio can change (e.g. moving the
+        // window between monitors with different scaling) and we don't
+        // want the doc to visually shift just because the buffer changed.
+        const oldCSSW = S.viewportCssW || (S.canvas ? S.canvas.clientWidth : 0);
+        const oldCSSH = S.viewportCssH || (S.canvas ? S.canvas.clientHeight : 0);
         syncCanvasToViewport();
-        if (S.canvas && oldCW > 0 && oldCH > 0) {
-            const rx = S.canvas.width / oldCW;
-            const ry = S.canvas.height / oldCH;
-            S.zoom.ox *= rx;
-            S.zoom.oy *= ry;
+        const newCSSW = S.viewportCssW || (S.canvas ? S.canvas.clientWidth : 0);
+        const newCSSH = S.viewportCssH || (S.canvas ? S.canvas.clientHeight : 0);
+        if (oldCSSW > 0 && oldCSSH > 0 && newCSSW > 0 && newCSSH > 0) {
+            S.zoom.ox *= (newCSSW / oldCSSW);
+            S.zoom.oy *= (newCSSH / oldCSSH);
         }
         updateStatus(); _redraw();
     });

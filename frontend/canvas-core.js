@@ -87,6 +87,20 @@ function getTempCanvas(key, w, h) {
     return tc;
 }
 
+// Apply the document → display-canvas transform on `ctx`. Use this in place
+// of `ctx.setTransform(z.scale, 0, 0, z.scale, z.ox, z.oy)` when drawing to
+// the on-screen display canvas, so HiDPI backing buffers (CSS × devicePixel
+// Ratio) are correctly scaled.
+//
+// zoom.scale / zoom.ox / zoom.oy are stored in CSS pixels (DPR-independent);
+// the buffer is sized CSS × DPR by syncCanvasToViewport, so the multiplier
+// here turns the CSS-unit transform into one that fills the larger buffer.
+function applyDisplayTransform(ctx) {
+    const z = S.zoom;
+    const dpr = S.displayDpr || 1;
+    ctx.setTransform(z.scale * dpr, 0, 0, z.scale * dpr, z.ox * dpr, z.oy * dpr);
+}
+
 // ========================================================================
 // STATE
 // ========================================================================
@@ -1497,9 +1511,11 @@ function addColor(hex) {
 function zoomAt(screenX, screenY, factor) {
     const z = S.zoom;
     if (!S.canvas) return;
+    // CSS-pixel coords on the canvas (zoom is stored in CSS units; the DPR
+    // multiplier is applied at draw time by applyDisplayTransform).
     const r = S.canvas.getBoundingClientRect();
-    const ex = (screenX - r.left) / r.width * S.canvas.width;
-    const ey = (screenY - r.top) / r.height * S.canvas.height;
+    const ex = screenX - r.left;
+    const ey = screenY - r.top;
     const newScale = Math.min(16, Math.max(0.1, z.scale * factor));
     z.ox = ex - (ex - z.ox) / z.scale * newScale;
     z.oy = ey - (ey - z.oy) / z.scale * newScale;
@@ -1508,7 +1524,11 @@ function zoomAt(screenX, screenY, factor) {
 
 function zoomFit() {
     if (!S.canvas) return;
-    const cw = S.canvas.width, ch = S.canvas.height;
+    // Fit math runs in CSS dims so the visual layout doesn't change with
+    // HiDPI buffers. viewportCssW/H are stamped by syncCanvasToViewport;
+    // fall back to the canvas style box if they aren't yet.
+    const cw = S.viewportCssW || parseFloat(S.canvas.style.width) || S.canvas.width;
+    const ch = S.viewportCssH || parseFloat(S.canvas.style.height) || S.canvas.height;
     if (!cw || !ch || !S.W || !S.H) {
         S.zoom.scale = 1; S.zoom.ox = 0; S.zoom.oy = 0; return;
     }
@@ -1519,13 +1539,14 @@ function zoomFit() {
     S.zoom.oy = (ch - S.H * scale) / 2;
 }
 
-// Screen coordinates → document coordinates
+// Screen coordinates → document coordinates. Pointer events deliver CSS
+// pixels; zoom is stored in CSS pixels; no DPR multiplication needed here.
 function screenToDoc(screenX, screenY) {
     const z = S.zoom;
     if (!S.canvas) return { x: 0, y: 0 };
     const r = S.canvas.getBoundingClientRect();
-    const canvasX = (screenX - r.left) / r.width * S.canvas.width;
-    const canvasY = (screenY - r.top) / r.height * S.canvas.height;
+    const canvasX = screenX - r.left;
+    const canvasY = screenY - r.top;
     return {
         x: (canvasX - z.ox) / z.scale,
         y: (canvasY - z.oy) / z.scale
@@ -3001,7 +3022,7 @@ function composite(dirtyOnly) {
         if (d.x1 >= d.x0 && d.y1 >= d.y0) {
             c.setTransform(1, 0, 0, 1, 0, 0);
             c.putImageData(_compositeCache, 0, 0);
-            c.setTransform(z.scale, 0, 0, z.scale, z.ox, z.oy);
+            applyDisplayTransform(c);
             const onMask = S.editingMask;
             const col = onMask ? S.maskColor : S.color;
             const img = alphaMapToImageData(col);
@@ -3015,7 +3036,7 @@ function composite(dirtyOnly) {
             c.globalCompositeOperation = "source-over";
             c.drawImage(S.stroke.canvas, 0, 0);
             c.globalAlpha = 1; c.globalCompositeOperation = "source-over";
-            c.setTransform(z.scale, 0, 0, z.scale, z.ox, z.oy);
+            applyDisplayTransform(c);
             return;
         }
     }
@@ -3048,7 +3069,7 @@ function composite(dirtyOnly) {
     c.fillStyle = S._voidColor;
     c.fillRect(0, 0, S.canvas.width, S.canvas.height);
 
-    c.setTransform(z.scale, 0, 0, z.scale, z.ox, z.oy);
+    applyDisplayTransform(c);
 
     // Smoothing on for moderate zoom (matches Lightroom feel); switch to
     // nearest-neighbor only at very high pixel-peeping zoom (>= 8x), where
@@ -3071,7 +3092,7 @@ function composite(dirtyOnly) {
         _drawGrid(c, w, h, z);
         c.setTransform(1, 0, 0, 1, 0, 0);
         try { _compositeCache = c.getImageData(0, 0, S.canvas.width, S.canvas.height); } catch (e) { _compositeCache = null; }
-        c.setTransform(z.scale, 0, 0, z.scale, z.ox, z.oy);
+        applyDisplayTransform(c);
         // Draw stroke overlay on top for display
         c.globalAlpha = S.brushOpacity;
         c.globalCompositeOperation = "source-over";
@@ -3082,7 +3103,7 @@ function composite(dirtyOnly) {
         _drawGrid(c, w, h, z);
         c.setTransform(1, 0, 0, 1, 0, 0);
         try { _compositeCache = c.getImageData(0, 0, S.canvas.width, S.canvas.height); } catch (e) { _compositeCache = null; }
-        c.setTransform(z.scale, 0, 0, z.scale, z.ox, z.oy);
+        applyDisplayTransform(c);
         c.globalAlpha = S.mask.opacity;
         c.globalCompositeOperation = "source-over";
         c.drawImage(strokeDrawCanvas, 0, 0);
@@ -3107,7 +3128,7 @@ function composite(dirtyOnly) {
     // doesn't re-rasterize at identity during layer transactions (Firefox WebRender)
     c.globalAlpha = 1;
     c.globalCompositeOperation = "source-over";
-    c.setTransform(z.scale, 0, 0, z.scale, z.ox, z.oy);
+    applyDisplayTransform(c);
 }
 
 // ========================================================================
@@ -3628,6 +3649,7 @@ window.StudioCore = {
     zoomAt,
     zoomFit,
     screenToDoc,
+    applyDisplayTransform,
 
     // Layers
     makeLayer,

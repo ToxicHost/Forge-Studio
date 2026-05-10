@@ -258,16 +258,18 @@
     var activeCtx = (activeLayer && activeLayer.ctx) || null;
     var activeName = (activeLayer && activeLayer.name) || "(none)";
 
-    // Display canvas. S.canvas is at viewport size with a zoom transform; map
-    // document coords through the zoom to read the corresponding screen pixel.
+    // Display canvas. zoom is stored in CSS pixels; the backing buffer is
+    // CSS × DPR (HiDPI). Multiply by DPR to land on a buffer pixel that
+    // getImageData can read.
     var z = S.zoom || { scale: 1, ox: 0, oy: 0 };
+    var dpr = S.displayDpr || 1;
     var displayCanvas = S.canvas;
 
     var rows = [];
     for (var j = 0; j < samplesNorm.length; j++) {
       var sm = samplesNorm[j];
-      var sx = Math.round(sm.x * z.scale + z.ox);
-      var sy = Math.round(sm.y * z.scale + z.oy);
+      var sx = Math.round((sm.x * z.scale + z.ox) * dpr);
+      var sy = Math.round((sm.y * z.scale + z.oy) * dpr);
       var displaySample = NULL_RGBA;
       if (S.ctx && displayCanvas
           && sx >= 0 && sy >= 0
