@@ -34,6 +34,9 @@
 //   window.StudioCanvasWebGLPreview.renderNow()
 //   window.StudioCanvasWebGLPreview.markViewDirty()
 //   window.StudioCanvasWebGLPreview.markPixelsDirty()
+//   window.StudioCanvasWebGLPreview.beginLiveCanvasFallback(reason?)
+//   window.StudioCanvasWebGLPreview.endLiveCanvasFallback(reason?)
+//   window.StudioCanvasWebGLPreview.isLiveCanvasFallbackActive()
 //   window.StudioCanvasWebGLPreview.dispose()
 //
 // Off by default. Toggle: Settings → Canvas → "Match gallery preview
@@ -49,6 +52,16 @@
 
   var _enabled = false;
   var _initFailed = false;
+
+  // Temporary fallback mode for continuous heavy tools (smudge, blur,
+  // pixelate, dodge, liquify, clone). Independent of the user toggle —
+  // when these tools start dragging, canvas-ui calls
+  // beginLiveCanvasFallback() to route the document display back through
+  // Canvas 2D so the user sees per-frame edits without waiting for the
+  // full WebGL texture re-upload. On pointer-up the fallback ends, we
+  // refresh the texture once, and WebGL takes over again at rest.
+  // Never persisted. Never flips the user toggle.
+  var _liveFallback = false;
 
   var _glCanvas = null;
   var _gl = null;
@@ -343,6 +356,9 @@
 
   function renderNow() {
     if (!_enabled || !_gl) return;
+    // Live-fallback mode: Canvas 2D is responsible for the document
+    // display right now. Don't touch the texture or the GL surface.
+    if (_liveFallback) return;
     var Core = window.StudioCore;
     var S = Core && Core.state;
     if (!S || !S.W || !S.H) return;
@@ -403,6 +419,55 @@
     _scheduleRender();
   }
 
+  // --- live-canvas fallback --------------------------------------------
+  //
+  // Temporary display routing for continuous heavy tools (smudge/blur/
+  // pixelate/dodge/liquify/clone) that mutate layer pixels every frame.
+  // Re-uploading the whole flattened document texture at 60 fps is too
+  // slow for those, so canvas-ui calls beginLiveCanvasFallback() at
+  // drag-start and endLiveCanvasFallback() at drag-stop. While active,
+  // the WebGL surface hides and S.imagePreviewActive is false so
+  // canvas-core.js composite() draws the document onto S.ctx normally.
+  // On end, the texture refreshes once and WebGL takes over again.
+  //
+  // The user's "Match gallery preview colors" toggle is untouched —
+  // _enabled, the storage key, and the visual toggle state all stay
+  // exactly where they were. This is purely a render routing detour.
+
+  function beginLiveCanvasFallback(reason) {
+    if (!_enabled || _liveFallback) return;
+    _liveFallback = true;
+    if (_rafId) { cancelAnimationFrame(_rafId); _rafId = 0; }
+    var Core = window.StudioCore;
+    if (Core && Core.state) Core.state.imagePreviewActive = false;
+    _hideCanvas();
+    var UI = window.StudioUI;
+    if (UI && UI.redraw) UI.redraw();
+  }
+
+  function endLiveCanvasFallback(reason) {
+    if (!_liveFallback) return;
+    _liveFallback = false;
+    if (!_enabled) return;
+    var Core = window.StudioCore;
+    if (Core && Core.state) Core.state.imagePreviewActive = true;
+    _showCanvas();
+    // The just-committed layer pixels need to land in the WebGL texture
+    // before we hand display back from Canvas 2D. Force an immediate
+    // upload + render so there's no visual gap.
+    _pixelsDirty = true;
+    _viewDirty = true;
+    try { renderNow(); }
+    catch (e) { console.warn(TAG, "post-fallback render failed:", e && e.message ? e.message : e); }
+    // Trigger a Canvas 2D redraw so the overlay's document blit (drawn
+    // while fallback was active) gets cleared — composite() respects the
+    // imagePreviewActive flag we just re-set to true.
+    var UI = window.StudioUI;
+    if (UI && UI.redraw) UI.redraw();
+  }
+
+  function isLiveCanvasFallbackActive() { return _liveFallback; }
+
   // --- redraw hook ------------------------------------------------------
   //
   // StudioUI.onAfterRedraw fires for every internal _redraw() call (wheel
@@ -412,6 +477,11 @@
 
   function _onAfterRedraw() {
     if (!_enabled) return;
+    // While Canvas 2D is taking over (live-fallback for heavy tools),
+    // canvas-core.js is drawing the document on S.ctx each frame and
+    // bumping _compositeVersion. Skip both texture upload and GL render
+    // so we don't queue work that endLiveCanvasFallback will redo.
+    if (_liveFallback) return;
     var Core = window.StudioCore;
     var v = (Core && typeof Core.getCompositeVersion === "function")
       ? Core.getCompositeVersion() : 0;
@@ -548,6 +618,9 @@
     renderNow: renderNow,
     markViewDirty: markViewDirty,
     markPixelsDirty: markPixelsDirty,
+    beginLiveCanvasFallback: beginLiveCanvasFallback,
+    endLiveCanvasFallback: endLiveCanvasFallback,
+    isLiveCanvasFallbackActive: isLiveCanvasFallbackActive,
     dispose: dispose,
   };
 

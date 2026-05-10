@@ -799,6 +799,28 @@ function bindCanvas() {
         _redraw();
     }, { passive: false });
 
+    // Tools whose per-frame mutation cost makes a full WebGL document
+    // texture re-upload too slow for live feedback. While dragging one
+    // of these, the WebGL preview hides and Canvas 2D draws the document
+    // normally; on release WebGL refreshes once and resumes.
+    const WEBGL_LIVE_FALLBACK_TOOLS = new Set([
+      "smudge", "blur", "pixelate", "dodge", "liquify", "clone",
+    ]);
+
+    function _beginWebGLLiveFallbackIfNeeded() {
+      if (!WEBGL_LIVE_FALLBACK_TOOLS.has(S.tool)) return;
+      var P = window.StudioCanvasWebGLPreview;
+      if (P && typeof P.beginLiveCanvasFallback === "function") {
+        try { P.beginLiveCanvasFallback(S.tool); } catch (e) { /* ignore */ }
+      }
+    }
+    function _endWebGLLiveFallback() {
+      var P = window.StudioCanvasWebGLPreview;
+      if (P && typeof P.endLiveCanvasFallback === "function") {
+        try { P.endLiveCanvasFallback(S.tool); } catch (e) { /* ignore */ }
+      }
+    }
+
     // === DRAWING / TOOLS ===
     cv.addEventListener("pointerdown", e => {
         if (e.button !== 0) return;
@@ -1024,6 +1046,7 @@ function bindCanvas() {
             if (!S._cloneSource) return;
             if (!S._cloneOffset) S._cloneOffset = { dx: S._cloneSource.x - p.x, dy: S._cloneSource.y - p.y };
             C.saveUndo("Clone stamp"); S.drawing = true;
+            _beginWebGLLiveFallbackIfNeeded();
             S.stroke.points = [];
             S.stroke.lx = p.x; S.stroke.ly = p.y; S.stroke.lp = p.pressure;
             cv.setPointerCapture(e.pointerId);
@@ -1033,6 +1056,7 @@ function bindCanvas() {
         // Liquify
         if (S.tool === "liquify") {
             C.saveUndo("Liquify"); S.drawing = true;
+            _beginWebGLLiveFallbackIfNeeded();
             S.stroke.points = []; S.stroke.lx = p.x; S.stroke.ly = p.y; S.stroke.lp = p.pressure;
             S.stroke._liquifyDist = 0; // accumulated distance for spacing
             cv.setPointerCapture(e.pointerId);
@@ -1077,6 +1101,7 @@ function bindCanvas() {
         if (p.x < 0 || p.y < 0 || p.x >= S.W || p.y >= S.H) return;
         C.saveUndo();
         S.drawing = true; cv.setPointerCapture(e.pointerId);
+        _beginWebGLLiveFallbackIfNeeded();
         const T = C.drawTarget();
         if (S.tool === "smudge") { S.stroke.points = []; C.smudgeInit(T.ctx, p.x, p.y); S.stroke.lx = p.x; S.stroke.ly = p.y; S.stroke.lp = p.pressure; }
         else if (S.tool === "blur") { S.stroke.points = []; C.blurAt(T.ctx, p.x, p.y, p.pressure); S.stroke.lx = p.x; S.stroke.ly = p.y; S.stroke.lp = p.pressure; }
@@ -1416,6 +1441,7 @@ function bindCanvas() {
         // Liquify up — clear snapshot and spacing state
         if (S.tool === "liquify" && S.drawing) {
             S.drawing = false;
+            _endWebGLLiveFallback();
             S._liquifySnapshot = null;
             S.stroke._liquifyDist = 0;
             try { cv.releasePointerCapture(e.pointerId); } catch (_) {}
@@ -1424,6 +1450,7 @@ function bindCanvas() {
         // Clone up
         if (S.tool === "clone" && S.drawing) {
             S.drawing = false;
+            _endWebGLLiveFallback();
             try { cv.releasePointerCapture(e.pointerId); } catch (_) {}
             renderHistoryPanel(); _redraw(); return;
         }
@@ -1435,6 +1462,7 @@ function bindCanvas() {
             if (S.tool === "brush" && !S.editingMask) C.addColor(S.color);
         }
         S.drawing = false;
+        _endWebGLLiveFallback();
         _redraw();
         renderLayerPanel();
         renderHistoryPanel();
@@ -1451,7 +1479,7 @@ function bindCanvas() {
             if (window.Live && Live.active) Live.onCanvasChanged();
         }
         if (S.selection.dragging) { S.selection.dragging = false; S.selection.lassoPoints = null; }
-        S.drawing = false; C.cursorPos = { x: -1, y: -1 }; _redraw();
+        S.drawing = false; _endWebGLLiveFallback(); C.cursorPos = { x: -1, y: -1 }; _redraw();
     });
 
     // Drag-and-drop: handled by app.js on .canvas-area (resizes canvas,
