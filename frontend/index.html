@@ -803,7 +803,7 @@
             <div class="setting-group">
               <div class="setting-group-title" data-i18n="settings.canvas.title">Canvas</div>
               <div class="setting-row"><span class="setting-label" data-i18n="settings.canvas.showGrid">Show grid</span><div class="toggle-track" id="toggleGrid"><div class="toggle-knob"></div></div></div>
-              <div class="setting-row" title="Routes the on-screen canvas display through an &lt;img&gt; element instead of the &lt;canvas&gt; render path, so document colors match the gallery preview / saved file on color-managed Firefox setups. The display canvas continues to draw cursor / selection / brush stroke as a transparent overlay. Does not change exported pixels."><span class="setting-label">Match gallery preview colors</span><div class="toggle-track" id="toggleCanvasColorPreview"><div class="toggle-knob"></div></div></div>
+              <div class="setting-row" title="Routes the on-screen canvas display through a WebGL surface so document colors match the gallery preview / saved file on color-managed Firefox setups. The display canvas continues to draw cursor / selection / brush stroke as a transparent overlay. Does not change exported pixels. Falls back to the standard canvas if WebGL is unavailable."><span class="setting-label">Match gallery preview colors</span><div class="toggle-track" id="toggleCanvasColorPreview"><div class="toggle-knob"></div></div></div>
               <!-- Pen pressure is now on the brush context bar -->
             </div>
             <div class="setting-group">
@@ -1032,7 +1032,7 @@
   ];
   // Optional modules — loaded if available, silently skipped if not.
   // debug.js exposes window.StudioDebug.* — dev-tools-only, no UI.
-  const optionalScripts = ["develop.js", "video-lab.js", "workshop.js", "lexicon.js", "education.js", "codex.js", "studio-showme.js", "gallery.js", "module-tours.js", "debug.js", "canvas-image-preview.js"];
+  const optionalScripts = ["develop.js", "video-lab.js", "workshop.js", "lexicon.js", "education.js", "codex.js", "studio-showme.js", "gallery.js", "module-tours.js", "debug.js", "canvas-webgl-preview.js"];
   const v = "4.7.3";
   window.__STUDIO_V = v;
   for (const s of scripts) {

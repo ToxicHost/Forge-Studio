@@ -799,6 +799,34 @@ function bindCanvas() {
         _redraw();
     }, { passive: false });
 
+    // Tools whose live preview depends on revealing existing canvas
+    // pixels (eraser uncovers what was underneath; smudge/blur/etc.
+    // sample current pixels every frame). The full WebGL document
+    // texture re-upload at commit-time isn't fast enough for live
+    // feedback on these — Canvas 2D handles the document during the
+    // drag, then WebGL refreshes once on release.
+    const WEBGL_LIVE_FALLBACK_TOOLS = new Set([
+      "eraser", "smudge", "blur", "pixelate", "dodge", "liquify", "clone",
+    ]);
+
+    function _beginWebGLLiveFallbackIfNeeded() {
+      var P = window.StudioCanvasWebGLPreview;
+      if (!P || typeof P.isEnabled !== "function" || !P.isEnabled()) return;
+      // Mask / region painting also depends on live visual reveal of the
+      // underlying document — fall back regardless of which tool is
+      // active when in those modes.
+      var destructiveTool = WEBGL_LIVE_FALLBACK_TOOLS.has(S.tool);
+      var maskOrRegionEdit = !!S.editingMask || !!S.regionMode;
+      if (!destructiveTool && !maskOrRegionEdit) return;
+      try { P.beginLiveCanvasFallback(S.tool); } catch (e) { /* ignore */ }
+    }
+    function _endWebGLLiveFallback() {
+      var P = window.StudioCanvasWebGLPreview;
+      if (P && typeof P.endLiveCanvasFallback === "function") {
+        try { P.endLiveCanvasFallback(S.tool); } catch (e) { /* ignore */ }
+      }
+    }
+
     // === DRAWING / TOOLS ===
     cv.addEventListener("pointerdown", e => {
         if (e.button !== 0) return;
@@ -1024,6 +1052,7 @@ function bindCanvas() {
             if (!S._cloneSource) return;
             if (!S._cloneOffset) S._cloneOffset = { dx: S._cloneSource.x - p.x, dy: S._cloneSource.y - p.y };
             C.saveUndo("Clone stamp"); S.drawing = true;
+            _beginWebGLLiveFallbackIfNeeded();
             S.stroke.points = [];
             S.stroke.lx = p.x; S.stroke.ly = p.y; S.stroke.lp = p.pressure;
             cv.setPointerCapture(e.pointerId);
@@ -1033,6 +1062,7 @@ function bindCanvas() {
         // Liquify
         if (S.tool === "liquify") {
             C.saveUndo("Liquify"); S.drawing = true;
+            _beginWebGLLiveFallbackIfNeeded();
             S.stroke.points = []; S.stroke.lx = p.x; S.stroke.ly = p.y; S.stroke.lp = p.pressure;
             S.stroke._liquifyDist = 0; // accumulated distance for spacing
             cv.setPointerCapture(e.pointerId);
@@ -1048,6 +1078,7 @@ function bindCanvas() {
         if (S.regionMode && C.activeRegion() && (S.tool === "brush" || S.tool === "eraser")) {
             C.saveUndo("Region paint: " + C.activeRegion().name);
             S.drawing = true; cv.setPointerCapture(e.pointerId);
+            _beginWebGLLiveFallbackIfNeeded();
             if (S.tool === "eraser") C.regionEraseMove(p.x, p.y, p.x, p.y);
             else C.regionPaintAt(p.x, p.y);
             S.stroke.lx = p.x; S.stroke.ly = p.y;
@@ -1077,6 +1108,7 @@ function bindCanvas() {
         if (p.x < 0 || p.y < 0 || p.x >= S.W || p.y >= S.H) return;
         C.saveUndo();
         S.drawing = true; cv.setPointerCapture(e.pointerId);
+        _beginWebGLLiveFallbackIfNeeded();
         const T = C.drawTarget();
         if (S.tool === "smudge") { S.stroke.points = []; C.smudgeInit(T.ctx, p.x, p.y); S.stroke.lx = p.x; S.stroke.ly = p.y; S.stroke.lp = p.pressure; }
         else if (S.tool === "blur") { S.stroke.points = []; C.blurAt(T.ctx, p.x, p.y, p.pressure); S.stroke.lx = p.x; S.stroke.ly = p.y; S.stroke.lp = p.pressure; }
@@ -1416,6 +1448,7 @@ function bindCanvas() {
         // Liquify up — clear snapshot and spacing state
         if (S.tool === "liquify" && S.drawing) {
             S.drawing = false;
+            _endWebGLLiveFallback();
             S._liquifySnapshot = null;
             S.stroke._liquifyDist = 0;
             try { cv.releasePointerCapture(e.pointerId); } catch (_) {}
@@ -1424,6 +1457,7 @@ function bindCanvas() {
         // Clone up
         if (S.tool === "clone" && S.drawing) {
             S.drawing = false;
+            _endWebGLLiveFallback();
             try { cv.releasePointerCapture(e.pointerId); } catch (_) {}
             renderHistoryPanel(); _redraw(); return;
         }
@@ -1435,6 +1469,7 @@ function bindCanvas() {
             if (S.tool === "brush" && !S.editingMask) C.addColor(S.color);
         }
         S.drawing = false;
+        _endWebGLLiveFallback();
         _redraw();
         renderLayerPanel();
         renderHistoryPanel();
@@ -1451,7 +1486,22 @@ function bindCanvas() {
             if (window.Live && Live.active) Live.onCanvasChanged();
         }
         if (S.selection.dragging) { S.selection.dragging = false; S.selection.lassoPoints = null; }
-        S.drawing = false; C.cursorPos = { x: -1, y: -1 }; _redraw();
+        S.drawing = false; _endWebGLLiveFallback(); C.cursorPos = { x: -1, y: -1 }; _redraw();
+    });
+
+    // Pointercancel + window blur: belt-and-suspenders for WebGL live
+    // fallback. The pointerup / pointerleave handlers above already end
+    // the fallback in normal flows, but if the OS interrupts a drag
+    // (window switch, tablet driver hiccup, dialog popup mid-stroke) we
+    // can otherwise stay stuck in Canvas 2D mode after the user expects
+    // WebGL back. Calling end is a no-op when no fallback is active.
+    cv.addEventListener("pointercancel", () => {
+        if (S.drawing) S.drawing = false;
+        _endWebGLLiveFallback();
+    });
+    window.addEventListener("blur", () => {
+        if (S.drawing) S.drawing = false;
+        _endWebGLLiveFallback();
     });
 
     // Drag-and-drop: handled by app.js on .canvas-area (resizes canvas,
