@@ -5,6 +5,7 @@
 //
 //   window.StudioDebug.sampleColorPipeline(x, y, sourceUrl?)
 //   window.StudioDebug.sampleColorPipelineSet(samples, sourceUrl?)
+//   window.StudioDebug.sampleColorPipelineGrid(grid?, sourceUrl?)  // 3x3 grid by default — no coords needed
 //
 // Both sample one document-space coordinate (or many) through the canvas →
 // export pipeline at six observation points and emit an RGBA report. Used to
@@ -342,7 +343,31 @@
     return _runPipeline(_normalizeSamples(samples), sourceUrl);
   }
 
+  // Auto-sample an N×N grid spread across the canvas. Skips picking
+  // coordinates entirely — just runs and reports. Default 3×3 (9 points,
+  // sampled at 1/4, 1/2, 3/4 of each axis). Pass an integer for a denser
+  // or sparser spread.
+  function sampleColorPipelineGrid(grid, sourceUrl) {
+    var n = (grid && grid > 0) ? Math.floor(grid) : 3;
+    var S = window.StudioCore && window.StudioCore.state;
+    if (!S) throw new Error("[StudioDebug] StudioCore not loaded");
+    var W = S.W || 0, H = S.H || 0;
+    if (W <= 0 || H <= 0) throw new Error("[StudioDebug] no document on canvas");
+    var samples = [];
+    for (var iy = 1; iy <= n; iy++) {
+      for (var ix = 1; ix <= n; ix++) {
+        samples.push({
+          label: "(" + ix + "," + iy + ")",
+          x: Math.round(W * ix / (n + 1)),
+          y: Math.round(H * iy / (n + 1)),
+        });
+      }
+    }
+    return _runPipeline(_normalizeSamples(samples), sourceUrl);
+  }
+
   window.StudioDebug = window.StudioDebug || {};
   window.StudioDebug.sampleColorPipeline = sampleColorPipeline;
   window.StudioDebug.sampleColorPipelineSet = sampleColorPipelineSet;
+  window.StudioDebug.sampleColorPipelineGrid = sampleColorPipelineGrid;
 })();
