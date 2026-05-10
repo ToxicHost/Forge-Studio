@@ -3132,9 +3132,24 @@ function composite(dirtyOnly) {
         c.drawImage(strokeDrawCanvas, 0, 0);
         c.globalAlpha = 1; c.globalCompositeOperation = "source-over";
     } else {
-        _composite2D(c, w, h, z, eraserActive, AL, strokeDrawCanvas, showMask);
+        // Default brush path. In normal mode the wet stroke gets baked
+        // into _compBuffer inside _composite2D and reaches S.ctx via the
+        // _compBuffer blit. In image-preview mode that blit is gated off,
+        // so we instead pass `null` for the stroke (so _compBuffer stays
+        // pure document — that's what the <img> preview displays via
+        // exportFlattened) and draw the stroke explicitly on `c` after.
+        // The display canvas is a transparent UI overlay over the preview
+        // <img> in this mode, so the stroke renders above the preview.
+        var passStroke = S.imagePreviewActive ? null : strokeDrawCanvas;
+        _composite2D(c, w, h, z, eraserActive, AL, passStroke, showMask);
         _drawGrid(c, w, h, z);
         _compositeCache = null;
+        if (S.imagePreviewActive && strokeDrawCanvas) {
+            c.globalAlpha = S.brushOpacity;
+            c.globalCompositeOperation = "source-over";
+            c.drawImage(strokeDrawCanvas, 0, 0);
+            c.globalAlpha = 1; c.globalCompositeOperation = "source-over";
+        }
     }
 
     // UI overlays
