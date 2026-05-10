@@ -2967,7 +2967,14 @@ function _composite2D(c, w, h, z, eraserActive, AL, strokeDrawCanvas, showMask) 
     }
 
     c.globalAlpha = 1; c.globalCompositeOperation = "source-over";
-    c.drawImage(_compBuffer, 0, 0);
+    // Image-preview mode (S.imagePreviewActive) routes the document
+    // composite to an <img> element above the canvas instead — see
+    // window.StudioCanvasImagePreview. The display canvas in that mode
+    // is a transparent UI overlay only, so skip the doc blit. _compBuffer
+    // is still built (the preview module reads from it).
+    if (!S.imagePreviewActive) {
+        c.drawImage(_compBuffer, 0, 0);
+    }
 
     if (showMask) {
         c.globalCompositeOperation = "source-over";
@@ -3017,7 +3024,13 @@ function composite(dirtyOnly) {
         return true;
     })();
 
-    if (_canUseDirtyFastPath) {
+    // Skip the dirty-rect fast path when image-preview mode is active. The
+    // fast path's whole point is to avoid rebuilding _compBuffer during a
+    // brush stroke by re-blitting a cached snapshot of the display canvas;
+    // in image-preview mode the display canvas isn't holding the document
+    // anyway, so the cache is irrelevant and we fall through to the full
+    // path (which still builds _compBuffer for the preview <img>).
+    if (_canUseDirtyFastPath && !S.imagePreviewActive) {
         const d = S.stroke.dirty;
         if (d.x1 >= d.x0 && d.y1 >= d.y0) {
             c.setTransform(1, 0, 0, 1, 0, 0);
@@ -3063,11 +3076,18 @@ function composite(dirtyOnly) {
         strokeDrawCanvas = S.stroke.canvas;
     }
 
-    // Background fill — reads --bg-void from CSS so themes apply
+    // Background fill — reads --bg-void from CSS so themes apply.
+    // In image-preview mode S.canvas is a transparent UI-only overlay over
+    // the <img>, so clear (don't fill) and skip the checker — those visuals
+    // are baked into the <img> source by the preview module instead.
     c.setTransform(1, 0, 0, 1, 0, 0);
-    if (!S._voidColor) S._voidColor = getComputedStyle(document.documentElement).getPropertyValue("--bg-void").trim() || "#1e2130";
-    c.fillStyle = S._voidColor;
-    c.fillRect(0, 0, S.canvas.width, S.canvas.height);
+    if (S.imagePreviewActive) {
+        c.clearRect(0, 0, S.canvas.width, S.canvas.height);
+    } else {
+        if (!S._voidColor) S._voidColor = getComputedStyle(document.documentElement).getPropertyValue("--bg-void").trim() || "#1e2130";
+        c.fillStyle = S._voidColor;
+        c.fillRect(0, 0, S.canvas.width, S.canvas.height);
+    }
 
     applyDisplayTransform(c);
 
@@ -3078,10 +3098,12 @@ function composite(dirtyOnly) {
     if (c.imageSmoothingEnabled) c.imageSmoothingQuality = "high";
 
     // Clip checkerboard to exact document bounds — prevents subpixel bleed at edges
-    c.save();
-    c.beginPath(); c.rect(0, 0, w, h); c.clip();
-    checker(c, w, h);
-    c.restore();
+    if (!S.imagePreviewActive) {
+        c.save();
+        c.beginPath(); c.rect(0, 0, w, h); c.clip();
+        checker(c, w, h);
+        c.restore();
+    }
 
     // Cache for dirty-rect during brush: capture base composite WITHOUT stroke
     // Only when no visible layers above active (same guard as dirty fast path)
