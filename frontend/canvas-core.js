@@ -275,6 +275,7 @@ let _compBufCache = null;
 let _compBufCacheVer = -1;
 let _compositeVersion = 0;
 function markCompositeDirty() { _compositeVersion++; }
+function getCompositeVersion() { return _compositeVersion; }
 
 // Stroke angle tracking (for follow-stroke rotation)
 let _sa = 0, _saSmooth = 0;
@@ -3798,7 +3799,8 @@ window.StudioCore = {
     // Composite cache invalidation — call from any code path that mutates
     // layers, develop params, regions, masks, or canvas dims. Cursor moves
     // do NOT bump this, so they hit the cache and skip the pipeline.
-    markCompositeDirty
+    markCompositeDirty,
+    getCompositeVersion,
 };
 
 console.log("[StudioCore] Module loaded — Phase 1 clean engine");

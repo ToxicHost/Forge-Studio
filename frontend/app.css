@@ -489,7 +489,15 @@ body {
   contain: strict;
 }
 
+/* Explicit stacking so canvas-image-preview.js's <img>/checker layers
+ * (z-index 0 and 1) sit BENEATH the display canvas (UI overlay).
+ * Without this, the unpositioned canvas paints under positioned siblings
+ * regardless of DOM order — that's PR #152's cursor-disappears bug. */
 #studio-canvas {
+  position: absolute;
+  left: 0;
+  top: 0;
+  z-index: 2;
   display: block;
 }
 
