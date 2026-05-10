@@ -799,20 +799,26 @@ function bindCanvas() {
         _redraw();
     }, { passive: false });
 
-    // Tools whose per-frame mutation cost makes a full WebGL document
-    // texture re-upload too slow for live feedback. While dragging one
-    // of these, the WebGL preview hides and Canvas 2D draws the document
-    // normally; on release WebGL refreshes once and resumes.
+    // Tools whose live preview depends on revealing existing canvas
+    // pixels (eraser uncovers what was underneath; smudge/blur/etc.
+    // sample current pixels every frame). The full WebGL document
+    // texture re-upload at commit-time isn't fast enough for live
+    // feedback on these — Canvas 2D handles the document during the
+    // drag, then WebGL refreshes once on release.
     const WEBGL_LIVE_FALLBACK_TOOLS = new Set([
-      "smudge", "blur", "pixelate", "dodge", "liquify", "clone",
+      "eraser", "smudge", "blur", "pixelate", "dodge", "liquify", "clone",
     ]);
 
     function _beginWebGLLiveFallbackIfNeeded() {
-      if (!WEBGL_LIVE_FALLBACK_TOOLS.has(S.tool)) return;
       var P = window.StudioCanvasWebGLPreview;
-      if (P && typeof P.beginLiveCanvasFallback === "function") {
-        try { P.beginLiveCanvasFallback(S.tool); } catch (e) { /* ignore */ }
-      }
+      if (!P || typeof P.isEnabled !== "function" || !P.isEnabled()) return;
+      // Mask / region painting also depends on live visual reveal of the
+      // underlying document — fall back regardless of which tool is
+      // active when in those modes.
+      var destructiveTool = WEBGL_LIVE_FALLBACK_TOOLS.has(S.tool);
+      var maskOrRegionEdit = !!S.editingMask || !!S.regionMode;
+      if (!destructiveTool && !maskOrRegionEdit) return;
+      try { P.beginLiveCanvasFallback(S.tool); } catch (e) { /* ignore */ }
     }
     function _endWebGLLiveFallback() {
       var P = window.StudioCanvasWebGLPreview;
@@ -1072,6 +1078,7 @@ function bindCanvas() {
         if (S.regionMode && C.activeRegion() && (S.tool === "brush" || S.tool === "eraser")) {
             C.saveUndo("Region paint: " + C.activeRegion().name);
             S.drawing = true; cv.setPointerCapture(e.pointerId);
+            _beginWebGLLiveFallbackIfNeeded();
             if (S.tool === "eraser") C.regionEraseMove(p.x, p.y, p.x, p.y);
             else C.regionPaintAt(p.x, p.y);
             S.stroke.lx = p.x; S.stroke.ly = p.y;
@@ -1480,6 +1487,21 @@ function bindCanvas() {
         }
         if (S.selection.dragging) { S.selection.dragging = false; S.selection.lassoPoints = null; }
         S.drawing = false; _endWebGLLiveFallback(); C.cursorPos = { x: -1, y: -1 }; _redraw();
+    });
+
+    // Pointercancel + window blur: belt-and-suspenders for WebGL live
+    // fallback. The pointerup / pointerleave handlers above already end
+    // the fallback in normal flows, but if the OS interrupts a drag
+    // (window switch, tablet driver hiccup, dialog popup mid-stroke) we
+    // can otherwise stay stuck in Canvas 2D mode after the user expects
+    // WebGL back. Calling end is a no-op when no fallback is active.
+    cv.addEventListener("pointercancel", () => {
+        if (S.drawing) S.drawing = false;
+        _endWebGLLiveFallback();
+    });
+    window.addEventListener("blur", () => {
+        if (S.drawing) S.drawing = false;
+        _endWebGLLiveFallback();
     });
 
     // Drag-and-drop: handled by app.js on .canvas-area (resizes canvas,
