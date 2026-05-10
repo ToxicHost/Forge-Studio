@@ -198,33 +198,30 @@
     }, DEBOUNCE_MS);
   }
 
-  // Force-refresh path: cancel any pending debounce, invalidate the
-  // version cache so the next _refreshNow actually re-encodes, fire
-  // immediately. Used on stroke commit / pointerup, where any latency
-  // between releasing the brush and seeing the stroke baked into the
-  // preview is jarring. brush commit doesn't bump _compositeVersion
-  // (it just modifies the layer canvas in place), so the version-gated
-  // _maybeRefresh wouldn't catch it on its own.
-  function refreshNow() {
-    if (!_enabled) return;
-    if (_refreshTimer) { clearTimeout(_refreshTimer); _refreshTimer = null; }
-    _lastPreviewVersion = -1;
-    _refreshNow();
-  }
-
   function hide() {
     if (_img) _img.style.display = "none";
     if (_checker) _checker.style.display = "none";
   }
 
+  function show() {
+    if (!_enabled) return;
+    if (_img) _img.style.display = "block";
+    if (_checker) _checker.style.display = "block";
+  }
+
   // --- redraw hook ------------------------------------------------------
   //
-  // Called after every StudioUI.redraw. Always updates positions (cheap;
-  // pan/zoom/resize). Only schedules a PNG re-encode when the canonical
-  // composite version actually advances — cursor moves, marching ants,
-  // hover state, etc. don't bump the version, so they won't thrash
-  // exportFlattened.
-  function _maybeRefresh() {
+  // Use StudioUI.onAfterRedraw — the in-file _redraw() function in
+  // canvas-ui.js doesn't go through window.StudioUI.redraw, so wrapping
+  // that property only catches external callers. Wheel zoom / pan /
+  // hover / stroke-frame all call the local _redraw, and onAfterRedraw
+  // is the registered hook that fires for every path.
+  //
+  // Always updates positions (cheap; pan/zoom/resize). Only schedules a
+  // PNG re-encode when the canonical composite version actually advances.
+  // Cursor moves, marching ants, hover state, etc. don't bump the version
+  // so they won't thrash exportFlattened.
+  function _onAfterRedraw() {
     if (!_enabled) return;
     _positionLayers();
     var Core = window.StudioCore;
@@ -236,26 +233,23 @@
     _scheduleRefresh();
   }
 
-  function _hookRedraw() {
+  function _hookOnAfterRedraw() {
     if (_hookInstalled) return;
     var UI = window.StudioUI;
-    if (!UI || typeof UI.redraw !== "function") {
-      setTimeout(_hookRedraw, 250);
+    if (!UI || typeof UI.onAfterRedraw !== "function") {
+      setTimeout(_hookOnAfterRedraw, 250);
       return;
     }
-    var orig = UI.redraw;
-    UI.redraw = function () {
-      var ret = orig.apply(this, arguments);
-      _maybeRefresh();
-      return ret;
-    };
+    UI.onAfterRedraw(_onAfterRedraw);
     _hookInstalled = true;
   }
 
-  // Wrap Core.commitStroke so brush/eraser release triggers an
-  // immediate (non-debounced, non-version-gated) preview refresh. The
-  // user's just-released stroke needs to land on the preview without
-  // the ~50 ms _maybeRefresh latency.
+  // Wraps Core.commitStroke so brush/eraser release triggers an
+  // immediate (non-debounced, non-version-gated) preview refresh.
+  // commitStroke doesn't bump _compositeVersion (it just writes pixels
+  // into the layer canvas in place), so the version-gated _onAfterRedraw
+  // wouldn't catch it on its own — preview img would appear to lag the
+  // moment the user releases the mouse.
   function _hookCommitStroke() {
     var Core = window.StudioCore;
     if (!Core || typeof Core.commitStroke !== "function") {
@@ -288,7 +282,6 @@
     } else {
       _injectStyles();
       _ensureLayers();
-      // Force regenerate on first enable, regardless of version.
       _lastPreviewVersion = -1;
       _refreshNow();
       var UI2 = window.StudioUI;
@@ -298,8 +291,40 @@
 
   function isEnabled() { return _enabled; }
 
+  // Force-refresh path: cancel any pending debounce, invalidate the
+  // version cache so the next encode actually runs, fire immediately.
+  // Used on stroke commit and any other site that wants instant preview
+  // sync without going through the debounce.
+  function refreshNow() {
+    if (!_enabled) return;
+    if (_refreshTimer) { clearTimeout(_refreshTimer); _refreshTimer = null; }
+    var Core = window.StudioCore;
+    _lastPreviewVersion = (Core && typeof Core.getCompositeVersion === "function")
+      ? Core.getCompositeVersion() : 0;
+    _refreshNow();
+  }
+
+  // Cheap, immediate. Updates only the CSS rect of the preview image
+  // and checker layer. No re-encode. Call this for view-only changes
+  // (zoom, pan, viewport resize) when you can't rely on the redraw
+  // hook for some reason.
+  function positionNow() {
+    if (!_enabled) return;
+    _positionLayers();
+  }
+
+  // Public wrapper around _scheduleRefresh — for callers that want a
+  // debounced refresh without invalidating the version cache.
+  function scheduleRefresh() {
+    if (!_enabled) return;
+    _scheduleRefresh();
+  }
+
+  // Refresh wrapper that invalidates the version cache and schedules
+  // (debounced). Equivalent to refreshNow but debounced — useful for
+  // noisy update streams.
   function refresh() {
-    // External callers force-refresh by invalidating the cache.
+    if (!_enabled) return;
     _lastPreviewVersion = -1;
     _scheduleRefresh();
   }
@@ -313,7 +338,7 @@
 
     _injectStyles();
     _ensureLayers();
-    _hookRedraw();
+    _hookOnAfterRedraw();
     _hookCommitStroke();
 
     var toggle = document.getElementById("toggleCanvasColorPreview");
@@ -336,9 +361,13 @@
   window.StudioCanvasImagePreview = {
     setEnabled: setEnabled,
     isEnabled: isEnabled,
+    positionNow: positionNow,
+    refreshNow: refreshNow,
+    scheduleRefresh: scheduleRefresh,
     refresh: refresh,
     refreshNow: refreshNow,
     hide: hide,
+    show: show,
   };
 
   if (document.readyState === "loading") {
