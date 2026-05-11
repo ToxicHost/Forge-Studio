@@ -3986,6 +3986,35 @@ def setup_studio_routes(app: FastAPI):
             "changelog": changelog,
         })
 
+    # Phase progress state for the polling endpoint below. Single
+    # global because only one update can be in flight at a time —
+    # apply_update is gated by FastAPI's per-route concurrency in
+    # practice (one user, one click), and a second call while busy
+    # would just overwrite the dict.
+    #
+    # Phases / pct correspond to the update-dialog states the
+    # frontend renders:
+    #   idle / 0       — no update in flight
+    #   checking / 5   — pre-flight (currently brief)
+    #   downloading / 10 → 35
+    #   extracting / 35 → 60
+    #   copying / 60 → 85
+    #   finishing / 85 → 95
+    #   restart / 100  — done, restart required
+    #   error / 0      — failed
+    _update_progress = {"phase": "idle", "pct": 0, "message": ""}
+
+    def _set_update_phase(phase: str, pct: int, message: str = ""):
+        _update_progress["phase"] = phase
+        _update_progress["pct"] = pct
+        _update_progress["message"] = message
+
+    @app.get("/studio/api/update-status")
+    def update_status():
+        # Snapshot copy — the dict is mutated from the threadpool
+        # worker during apply_update.
+        return JSONResponse(dict(_update_progress))
+
     # Sync handler — see check_update note. urllib.request.urlopen, zipfile
     # extraction, and shutil.copy2 all block. As `async def` they would freeze
     # the event loop for the full duration of the update (download + extract +
@@ -3995,19 +4024,24 @@ def setup_studio_routes(app: FastAPI):
     @app.post("/studio/api/update")
     def apply_update():
         print(f"{TAG} Update requested")
+        _set_update_phase("checking", 5, "Checking update")
+
         zip_url = f"https://github.com/{_GITHUB_OWNER}/{_GITHUB_REPO}/archive/refs/heads/{_GITHUB_BRANCH}.zip"
 
         try:
             # Download zip to temp file
             print(f"{TAG} Downloading {zip_url}")
+            _set_update_phase("downloading", 10, "Downloading")
             req = urllib.request.Request(zip_url, headers={"User-Agent": "ForgeStudio-Updater"})
             with urllib.request.urlopen(req, timeout=120) as resp:
                 zip_data = resp.read()
             print(f"{TAG} Downloaded {len(zip_data)} bytes")
         except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError) as e:
+            _set_update_phase("error", 0, f"Download failed")
             return JSONResponse({"ok": False, "error": f"Download failed: {e}"})
 
         try:
+            _set_update_phase("extracting", 35, "Extracting")
             with tempfile.TemporaryDirectory() as tmp:
                 zip_path = Path(tmp) / "update.zip"
                 zip_path.write_bytes(zip_data)
@@ -4018,10 +4052,12 @@ def setup_studio_routes(app: FastAPI):
                 # GitHub zips have a top-level folder like Forge-Studio-main/
                 extracted = [d for d in Path(tmp).iterdir() if d.is_dir() and d.name != "__MACOSX"]
                 if len(extracted) != 1:
+                    _set_update_phase("error", 0, "Unexpected zip structure")
                     return JSONResponse({"ok": False, "error": "Unexpected zip structure"})
 
                 src = extracted[0]
 
+                _set_update_phase("copying", 60, "Copying files")
                 # Copy extracted files over the extension directory
                 # Skip version.json from source (we write our own)
                 for item in src.rglob("*"):
@@ -4035,8 +4071,10 @@ def setup_studio_routes(app: FastAPI):
                         shutil.copy2(str(item), str(dest))
 
         except (zipfile.BadZipFile, OSError) as e:
+            _set_update_phase("error", 0, "Extract failed")
             return JSONResponse({"ok": False, "error": f"Extract failed: {e}"})
 
+        _set_update_phase("finishing", 95, "Finishing")
         # Get the commit hash we just installed
         data = _github_get(f"/commits/{_GITHUB_BRANCH}")
         new_sha = data.get("sha", "") if data else ""
@@ -4045,6 +4083,7 @@ def setup_studio_routes(app: FastAPI):
             global _current_version
             _current_version = new_sha
 
+        _set_update_phase("restart", 100, "Restart required")
         print(f"{TAG} Updated to {new_sha[:8]}")
         return JSONResponse({
             "ok": True,
