@@ -489,7 +489,7 @@ function _getLutA(p) {
 // PHASE A.5 — White Balance (Lab-space)
 //
 // Convert linear RGB → XYZ (D65) → Lab, shift the b* axis (blue↔yellow)
-// by `temperature * 0.3` and the a* axis (green↔magenta) by `-tint * 0.15`,
+// by `temperature * 0.3` and the a* axis (green↔magenta) by `tint * 0.15`,
 // then convert back. Lab is perceptually uniform, so a temperature shift
 // adjusts colour without inadvertently darkening or brightening the image,
 // the way RGB-multiplier WB does.
@@ -517,7 +517,18 @@ function _applyWhiteBalance(rLin, gLin, bLin, n, p) {
     }
 
     // Full-resolution Lab path.
-    var aShift = -tint * 0.15;
+    //
+    // Sign convention: positive tint = magenta direction (matches the
+    // CSS slider gradient — green on the left, magenta on the right —
+    // and the drag-time RGB path above). The Lab a* axis is
+    // negative=green / positive=red+magenta, so positive tint maps
+    // to a positive aShift directly (no negation). The earlier
+    // `aShift = -tint * 0.15` formulation pushed the image toward
+    // green when the user dragged toward the magenta side of the
+    // bar — the drag-path RGB shortcut produced the correct
+    // direction, which is why the bug only showed up on the
+    // committed full-res render.
+    var aShift =  tint * 0.15;
     var bShift =  temp * 0.3;
     var invX = 1 / _LAB_WHITE_X, invZ = 1 / _LAB_WHITE_Z;
     var aDelta = aShift / 500;
@@ -3844,9 +3855,9 @@ function _samplePreDevelopRegion(cx, cy, radius) {
 
 // White-balance pick: compute Temperature + Tint slider values that
 // neutralize the picked pixel in Lab space. The pipeline shifts:
-//   new_a* = a* - tint * 0.15
+//   new_a* = a* + tint * 0.15
 //   new_b* = b* + temperature * 0.3
-// To null both axes:  tint = a*/0.15, temperature = -b*/0.3.
+// To null both axes:  tint = -a*/0.15, temperature = -b*/0.3.
 // (WB stays a slider adjustment so the user can fine-tune from the
 // picked neutral — only Whites/Blacks are stored as separate calibration.)
 function _applyWBPick(px) {
@@ -3861,7 +3872,11 @@ function _applyWBPick(px) {
     var fz = _labF(Z / _LAB_WHITE_Z);
     var aStar = 500 * (fx - fy);
     var bStar = 200 * (fy - fz);
-    var tint = aStar / 0.15;
+    // Negate aStar so a magenta-cast pixel (positive a*) writes a
+    // negative tint, which under the new aShift = +tint * 0.15
+    // convention drags the image toward green and neutralizes the
+    // cast. Mirrors the temperature negation just below.
+    var tint = -aStar / 0.15;
     var temp = -bStar / 0.3;
     if (temp < -100) temp = -100; else if (temp > 100) temp = 100;
     if (tint < -100) tint = -100; else if (tint > 100) tint = 100;
