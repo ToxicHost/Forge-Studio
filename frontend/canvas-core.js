@@ -3617,6 +3617,129 @@ function resizeCanvas(nw, nh) {
 }
 
 // ========================================================================
+// FULL RESET
+// ========================================================================
+// Rebuild the engine state to a clean baseline. Used by the Reset
+// Canvas button so a single call brings the document back to a known
+// blank state without leaving stale side state behind.
+//
+// Clears: layers, masks, regions, selection, transform, undo/redo,
+// stroke buffers, clone source, dirty flags, composite cache. Leaves
+// clipboard alone (the user may want to paste back) and leaves zoom
+// state alone (a Reset shouldn't yank the viewport).
+//
+// If `width` / `height` are passed and differ from the current
+// document, the engine resizes first via the existing resizeCanvas
+// path so the rebuilt layers come up at the correct dimensions.
+function resetCanvasState(opts) {
+    opts = opts || {};
+    const targetW = (opts.width  | 0) || S.W;
+    const targetH = (opts.height | 0) || S.H;
+
+    // Empty undo/redo first so resizeCanvas's stack-trim code below
+    // doesn't run over arrays we're about to discard anyway.
+    S.undoStack.length = 0;
+    S.redoStack.length = 0;
+
+    // Resize the document if requested. resizeCanvas is the existing
+    // code path for changing dimensions — it preserves layer pixels,
+    // but we overwrite them with a fresh stack right after.
+    if (targetW !== S.W || targetH !== S.H) {
+        resizeCanvas(targetW, targetH);
+    }
+
+    // Selection / marching-ants / poly + magnetic lasso scratch state.
+    selectionClear();
+    if (S.selection) {
+        S.selection.lassoPoints = null;
+        S.selection._isLasso = false;
+        S.selection._isEllipse = false;
+        S.selection._isMaskBased = false;
+        S.selection._contour = null;
+    }
+    S._polyPoints = null;
+    S._magAnchors = null;
+
+    // Transform.
+    if (S.transform) {
+        S.transform.active = false;
+        S.transform.bounds = null;
+        S.transform.originalData = null;
+        S.transform.layerIdx = -1;
+        S.transform.canvas = null;
+        S.transform.ctx = null;
+        S.transform.dragMode = null;
+        S.transform.dragStart = null;
+        S.transform.origDragBounds = null;
+        S.transform.rotation = 0;
+        S.transform.flipH = false;
+        S.transform.flipV = false;
+        S.transform.aspectLock = false;
+        S.transform.skewX = 0;
+        S.transform.skewY = 0;
+        S.transform.skewMode = false;
+        S.transform.perspective = false;
+        S.transform.grid = null;
+        S.transform.dragGridPt = null;
+        S.transform.warp = false;
+        S.transform.warpGrid = null;
+        S.transform.warpOrigGrid = null;
+    }
+
+    // Regions.
+    S.regions = [];
+    S.activeRegionId = null;
+    S.regionMode = false;
+    S._nextRegionId = 1;
+
+    // Mask.
+    if (S.mask && S.mask.ctx) S.mask.ctx.clearRect(0, 0, S.W, S.H);
+    S.editingMask = false;
+
+    // Stroke buffers.
+    if (S.stroke && S.stroke.ctx) S.stroke.ctx.clearRect(0, 0, S.W, S.H);
+    if (S.stroke) {
+        S.stroke.points = [];
+        S.stroke.stampPoints = [];
+        S.stroke.alphaMap = null;
+        S.stroke.dirty = { x0: 0, y0: 0, x1: 0, y1: 0 };
+        S.stroke._cachedImg = null;
+    }
+
+    // Clone source / smudge buffer.
+    S._cloneSource = null;
+    S._cloneOffset = null;
+    S.smudgeBuffer = null;
+
+    // Live preview — if the engine kept any committed pixels around.
+    if (S.livePreview) {
+        S.livePreview.active = false;
+        if (S.livePreview.canvas && S.livePreview.ctx) {
+            S.livePreview.ctx.clearRect(0, 0, S.livePreview.canvas.width, S.livePreview.canvas.height);
+        }
+    }
+
+    S.drawing = false;
+    S._canvasDirty = false;
+
+    // Rebuild the layer stack to the boot baseline (one white
+    // reference background + one empty paint layer; paint is active).
+    S.layers.length = 0;
+    const refLayer = makeLayer("Background", "reference");
+    refLayer.ctx.fillStyle = "#fff";
+    refLayer.ctx.fillRect(0, 0, S.W, S.H);
+    S.layers.push(refLayer);
+    S.layers.push(makeLayer("Layer 1", "paint"));
+    S.activeLayerIdx = 1;
+
+    // Invalidate the composite + develop caches so the next composite
+    // recomputes from the fresh layer stack instead of serving the
+    // pre-reset buffer (canvas-core's _compBufCache and _devBufCache
+    // are both keyed on _compositeVersion).
+    markCompositeDirty();
+}
+
+// ========================================================================
 // BOOT
 // ========================================================================
 function boot(canvasElement) {
@@ -3709,6 +3832,7 @@ window.StudioCore = {
 
     // Resize
     resizeCanvas,
+    resetCanvasState,
 
     // Mode
     applyMode,
