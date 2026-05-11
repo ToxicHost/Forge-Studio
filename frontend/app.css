@@ -493,7 +493,7 @@ body {
  * overlay layer at z-index 2 — cursor, wet stroke, marching ants,
  * transform handles, masks. The WebGL preview surface
  * (#studio-canvas-webgl-preview) sits at z-index 0 below it and renders
- * the document texture when "Match gallery preview colors" is on. The
+ * the document texture when "GPU canvas preview" is on. The
  * display canvas must be positioned for z-index to apply; without this
  * rule the unpositioned canvas paints under positioned siblings
  * regardless of DOM order — PR #152's cursor-disappears bug. */

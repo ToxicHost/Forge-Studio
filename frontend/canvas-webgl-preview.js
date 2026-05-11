@@ -39,8 +39,9 @@
 //   window.StudioCanvasWebGLPreview.isLiveCanvasFallbackActive()
 //   window.StudioCanvasWebGLPreview.dispose()
 //
-// Off by default. Toggle: Settings → Canvas → "Match gallery preview
-// colors" (same toggle id from PR #155).
+// On by default for fresh installs; explicit user opt-out is respected.
+// Toggle: Settings → Canvas → "GPU canvas preview" (same toggle id from
+// PR #155).
 
 (function () {
   "use strict";
@@ -75,6 +76,8 @@
 
   var _docTexture = null;
   var _texW = 0, _texH = 0;
+  var _texMagFilter = 0; // last-applied TEXTURE_MAG_FILTER (NEAREST or LINEAR)
+  var _texMinFilter = 0; // last-applied TEXTURE_MIN_FILTER
 
   var _viewDirty = true;
   var _pixelsDirty = true;
@@ -88,8 +91,17 @@
   // --- persistence ------------------------------------------------------
 
   function _readEnabled() {
-    try { return localStorage.getItem(STORAGE_KEY) === "1"; }
-    catch (e) { return false; }
+    // Default-on for fresh installs (no saved value). Respect explicit
+    // user opt-out / opt-in if present. Anything other than "0" is
+    // treated as on so the WebGL backend is the default display path.
+    try {
+      var raw = localStorage.getItem(STORAGE_KEY);
+      if (raw === "0") return false;
+      if (raw === "1") return true;
+      return true;
+    } catch (e) {
+      return true;
+    }
   }
   function _writeEnabled(on) {
     try { localStorage.setItem(STORAGE_KEY, on ? "1" : "0"); }
@@ -262,8 +274,15 @@
     gl.bindTexture(gl.TEXTURE_2D, _docTexture);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    // Filters get reassigned dynamically per frame in renderNow() based on
+    // S.zoom.scale: NEAREST when zoomed in so pixels stay crisp, LINEAR
+    // when zoomed out so downscaled previews stay smooth. Seed with
+    // NEAREST mag (the visible-pixel case) and LINEAR min as a sensible
+    // starting state before the first render.
     gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
-    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+    _texMinFilter = gl.LINEAR;
+    _texMagFilter = gl.NEAREST;
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
     gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
 
@@ -342,8 +361,15 @@
     gl.enableVertexAttribArray(aPosLoc);
     gl.vertexAttribPointer(aPosLoc, 2, gl.FLOAT, false, 0, 0);
 
+    // Canvas 2D's applyDisplayTransform multiplies offset by DPR and the
+    // browser rounds the resulting device-pixel translate. Match that here
+    // so toggling WebGL on/off at high zoom doesn't shift the document by
+    // a subpixel — round to the device-pixel grid in CSS space.
+    var snappedOx = Math.round(z.ox * dpr) / dpr;
+    var snappedOy = Math.round(z.oy * dpr) / dpr;
+
     gl.uniform2f(uniforms.uDocSize, S.W, S.H);
-    gl.uniform2f(uniforms.uOffset, z.ox, z.oy);
+    gl.uniform2f(uniforms.uOffset, snappedOx, snappedOy);
     gl.uniform1f(uniforms.uScale, z.scale);
     gl.uniform2f(uniforms.uViewSize, viewCssW, viewCssH);
     if (uniforms.uTex) {
@@ -378,6 +404,23 @@
     var dpr = S.displayDpr || 1;
     var viewCssW = S.viewportCssW || _glCanvas.clientWidth || 0;
     var viewCssH = S.viewportCssH || _glCanvas.clientHeight || 0;
+
+    // Pick texture filters based on display scale. At >= 1x we want crisp
+    // pixel edges (zoomed in), below 1x we want smooth downscale. This is
+    // display-only — source/layer pixels and export are untouched.
+    var wantMag = (z.scale >= 1) ? gl.NEAREST : gl.LINEAR;
+    var wantMin = (z.scale >= 1) ? gl.NEAREST : gl.LINEAR;
+    if (wantMag !== _texMagFilter || wantMin !== _texMinFilter) {
+      gl.bindTexture(gl.TEXTURE_2D, _docTexture);
+      if (wantMag !== _texMagFilter) {
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, wantMag);
+        _texMagFilter = wantMag;
+      }
+      if (wantMin !== _texMinFilter) {
+        gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, wantMin);
+        _texMinFilter = wantMin;
+      }
+    }
 
     gl.viewport(0, 0, _glCanvas.width, _glCanvas.height);
     gl.disable(gl.BLEND);
@@ -430,7 +473,7 @@
   // canvas-core.js composite() draws the document onto S.ctx normally.
   // On end, the texture refreshes once and WebGL takes over again.
   //
-  // The user's "Match gallery preview colors" toggle is untouched —
+  // The user's "GPU canvas preview" toggle is untouched —
   // _enabled, the storage key, and the visual toggle state all stay
   // exactly where they were. This is purely a render routing detour.
 
@@ -535,13 +578,17 @@
     if (_glCanvas) _glCanvas.style.display = "none";
   }
 
-  function setEnabled(on) {
+  function setEnabled(on, opts) {
     on = !!on;
+    var silent = !!(opts && opts.silent);
     if (on === _enabled) return;
 
     if (on) {
       if (!_initGL()) {
-        if (typeof window.showToast === "function") {
+        // Single toast only when the user explicitly toggles on and it
+        // fails — boot-time auto-enable on a WebGL-less device stays
+        // silent so users aren't nagged every reload.
+        if (!silent && typeof window.showToast === "function") {
           window.showToast("WebGL preview unavailable — using standard canvas", "warning");
         }
         return;
@@ -605,10 +652,12 @@
     }
 
     if (_readEnabled()) {
-      // Restore previous user preference. If WebGL init fails the
-      // setEnabled call surfaces a toast and bails — the toggle stays
-      // visually off.
-      setEnabled(true);
+      // Default-on for fresh installs or restore explicit opt-in. Pass
+      // silent so a WebGL-less device doesn't toast on every boot; the
+      // app falls back to Canvas 2D and the toggle visually reflects
+      // whatever _enabled ends up being.
+      setEnabled(true, { silent: true });
+      if (toggle) toggle.classList.toggle("on", _enabled);
     }
   }
 
