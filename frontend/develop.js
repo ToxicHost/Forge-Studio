@@ -3476,33 +3476,26 @@ function syncPanel() {
 // ========================================================================
 function _renderHistogram() {
     if (!_histCanvas) return;
-    var S = _S(); if (!S || !S.canvas) return;
+    var C = window.StudioCore;
+    var S = _S(); if (!S || !C || typeof C.getFlattenedImageData !== "function") return;
     var hctx = _histCanvas.getContext("2d", { colorSpace: "srgb" });
     var W = _histCanvas.width, H = _histCanvas.height;
     hctx.clearRect(0, 0, W, H);
 
-    // Sample the displayed canvas — already includes Develop output.
-    var src = S.canvas;
-    var sw = src.width, sh = src.height;
-    if (!sw || !sh) return;
-    var sctx;
-    try { sctx = src.getContext("2d", { colorSpace: "srgb" }); } catch (e) { return; }
-    // Compute the image's rect inside the display canvas so we can ignore
-    // the surrounding "void" padding that the display canvas paints. Inside
-    // the image rect, alpha=0 pixels count as bin 0 (the user sees them
-    // against the dark backdrop and expects the histogram to reflect that);
-    // outside the image rect, padding pixels are excluded entirely.
-    var z = S.zoom || { scale: 1, ox: 0, oy: 0 };
-    var rx0 = Math.max(0, Math.floor(z.ox));
-    var ry0 = Math.max(0, Math.floor(z.oy));
-    var rx1 = Math.min(sw, Math.ceil(z.ox + S.W * z.scale));
-    var ry1 = Math.min(sh, Math.ceil(z.oy + S.H * z.scale));
-    if (rx1 <= rx0 || ry1 <= ry0) { rx0 = 0; ry0 = 0; rx1 = sw; ry1 = sh; }
-    var rw = rx1 - rx0, rh = ry1 - ry0;
+    // Sample the canonical developed flattened pixels from the engine
+    // rather than reading back the on-screen canvas. With the WebGL
+    // preview turned on, S.canvas is just the UI overlay — it no
+    // longer contains the document image, so the previous getImageData
+    // path returned an empty histogram. getFlattenedImageData runs the
+    // same Develop pipeline that the WebGL texture comes from, so the
+    // bars match what the user sees.
     var sample;
-    try { sample = sctx.getImageData(rx0, ry0, rw, rh); } catch (e) { return; }
+    try { sample = C.getFlattenedImageData({ applyDevelop: true }); }
+    catch (e) { return; }
+    if (!sample || !sample.data) return;
     var sd = sample.data;
-    var pixelCount = rw * rh;
+    var pixelCount = (sample.width | 0) * (sample.height | 0);
+    if (!pixelCount) return;
     // Skip sampling: every Nth pixel for canvases > 1MP. nSkip=1 below 1MP,
     // 2 at 2MP, 5 at 4MP — keeps the histogram cost ~constant per frame.
     var nSkip = 1 + (pixelCount >> 20);
@@ -3510,11 +3503,10 @@ function _renderHistogram() {
     var sampleCount = 0;
     var step = nSkip * 4;
     for (var idx = 0, total = pixelCount * 4; idx < total; idx += step) {
-        // We're already inside the image rect, so alpha=0 means a
-        // transparent pixel within the image bounds (e.g. a layer mask or
-        // erased area). The user sees those rendered against the dark
-        // canvas backdrop — count them as bin-0 in all channels so the
-        // histogram matches what they see, instead of disappearing.
+        // alpha=0 pixels (layer masks, erased areas) read as fully
+        // transparent; the user sees them against the dark canvas
+        // backdrop, so count them as bin-0 in all channels to keep the
+        // histogram visually consistent with the on-screen image.
         binsR[sd[idx]]++; binsG[sd[idx + 1]]++; binsB[sd[idx + 2]]++;
         sampleCount++;
     }
@@ -3648,8 +3640,8 @@ function _undoReset() {
 //     Lightroom's WB picker.
 //
 // All pickers read the PRE-DEVELOP composite (so already-applied develop
-// settings don't double-count). We reuse _buildBeforeBuffer() from the
-// before/after split feature for that.
+// settings don't double-count) via
+// StudioCore.getFlattenedImageData({applyDevelop: false}).
 //
 // The canvas-ui pointerdown handler bails out when StudioModules.activeId
 // is "develop" (so brush tools stay inert). To capture the pick click we
@@ -3812,23 +3804,34 @@ function _onPickClick(e) {
 
 function _samplePreDevelopRegion(cx, cy, radius) {
     var S = _S(); if (!S) return null;
-    var buf = _buildBeforeBuffer();
-    if (!buf) return null;
+    var C = window.StudioCore;
+    if (!C || typeof C.getFlattenedImageData !== "function") return null;
+    // Pre-develop pixels come straight from the engine flatten — same
+    // path the Before/After overlay reads from. Avoiding the old
+    // _buildBeforeBuffer canvas hand-roll means the eyedroppers now
+    // work whether the WebGL preview is on or off (S.canvas is no
+    // longer a guaranteed pixel source under WebGL preview).
+    var img;
+    try { img = C.getFlattenedImageData({ applyDevelop: false }); }
+    catch (e) { return null; }
+    if (!img || !img.data) return null;
+    var W = img.width, H = img.height;
     var x0 = Math.max(0, cx - radius);
     var y0 = Math.max(0, cy - radius);
-    var x1 = Math.min(S.W - 1, cx + radius);
-    var y1 = Math.min(S.H - 1, cy + radius);
-    var w = x1 - x0 + 1, h = y1 - y0 + 1;
-    if (w <= 0 || h <= 0) return null;
-    var img;
-    try { img = buf.getContext("2d", { colorSpace: "srgb" }).getImageData(x0, y0, w, h); }
-    catch (e) { return null; }
-    var d = img.data, n = w * h;
-    var rs = 0, gs = 0, bs = 0;
-    for (var i = 0; i < n; i++) {
-        var p = i * 4;
-        rs += d[p]; gs += d[p + 1]; bs += d[p + 2];
+    var x1 = Math.min(W - 1, cx + radius);
+    var y1 = Math.min(H - 1, cy + radius);
+    if (x1 < x0 || y1 < y0) return null;
+    var d = img.data;
+    var rs = 0, gs = 0, bs = 0, n = 0;
+    for (var y = y0; y <= y1; y++) {
+        var row = y * W;
+        for (var x = x0; x <= x1; x++) {
+            var p = (row + x) * 4;
+            rs += d[p]; gs += d[p + 1]; bs += d[p + 2];
+            n++;
+        }
     }
+    if (!n) return null;
     return {
         r:  (rs / n) / 255,
         g:  (gs / n) / 255,
@@ -4068,24 +4071,51 @@ function _installRedrawHook() {
     _afterRedrawHookInstalled = true;
 }
 
-function _buildBeforeBuffer() {
-    var S = _S(); if (!S || !S.canvas) return null;
-    var C = window.StudioCore; if (!C) return null;
-    // Render layers without develop into a doc-resolution canvas.
-    var c = document.createElement("canvas");
-    c.width = S.W; c.height = S.H;
-    var x = c.getContext("2d", { colorSpace: "srgb" });
-    x.fillStyle = "#ffffff"; x.fillRect(0, 0, S.W, S.H);
+// Return pre-develop pixels as an ImageData (for WebGL upload) and
+// the matching off-screen canvas (for the Canvas 2D fallback overlay).
+// Both views go through the same engine flatten path so they're
+// guaranteed to agree, and so the WebGL preview backend doesn't need
+// its own layer compositor.
+function _buildBeforeView() {
+    var S = _S(); if (!S) return null;
+    var C = window.StudioCore;
+    if (!C || typeof C.getFlattenedImageData !== "function") return null;
+    var img;
+    try { img = C.getFlattenedImageData({ applyDevelop: false }); }
+    catch (e) { return null; }
+    if (!img || !img.data) return null;
+    return img;
+}
+
+// Snapshot of the layer stack used to detect layer-affecting changes
+// while Before/After is active. Pixel edits within a layer aren't
+// caught directly here but they push undo entries, so the stack
+// length doubles as a "did anything in the document change" signal.
+function _layerSignature(S) {
+    if (!S || !S.layers) return "";
+    var parts = [];
     for (var i = 0; i < S.layers.length; i++) {
         var L = S.layers[i];
-        if (!L.visible) continue;
-        if (L.type === "adjustment") { if (C._applyAdjustment) C._applyAdjustment(x, S.W, S.H, L); continue; }
-        x.globalCompositeOperation = L.blendMode || "source-over";
-        x.globalAlpha = L.opacity;
-        if (L.canvas) x.drawImage(L.canvas, 0, 0);
+        parts.push((L.id || "") + ":" + (L.visible ? 1 : 0) + ":" + (L.opacity || 1) + ":" + (L.blendMode || "") + ":" + (L.type || ""));
     }
-    x.globalCompositeOperation = "source-over"; x.globalAlpha = 1;
-    return c;
+    return parts.join("|");
+}
+function _undoStackLength(S) {
+    return (S && S.undoStack) ? S.undoStack.length : 0;
+}
+
+// Per-toggle-on baseline. _developBeforeImg is the cached pre-develop
+// pixel buffer that gets re-uploaded to WebGL or re-blitted in 2D
+// fallback. _splitLayerSig + _splitUndoBaseline let us notice when
+// layers change while B/A is active and rebuild lazily.
+var _developBeforeImg = null;
+var _splitLayerSig = "";
+var _splitUndoBaseline = 0;
+
+function _invalidateBefore() {
+    _developBeforeImg = null;
+    _splitLayerSig = "";
+    _splitUndoBaseline = 0;
 }
 
 function _ensureSplitElements() {
@@ -4118,6 +4148,14 @@ function _onSplitDragStart(e) {
         var rect = S.canvas.getBoundingClientRect();
         var x = ev.clientX - rect.left;
         _splitPos = Math.max(0.02, Math.min(0.98, x / Math.max(1, rect.width)));
+        // Push the new position through to WebGL when it's the active
+        // display backend so the GPU split tracks the cursor without
+        // a doc-pixel re-upload. The 2D fallback path picks up the
+        // new _splitPos through the next _redrawNow → overlay redraw.
+        var W = window.StudioCanvasWebGLPreview;
+        if (W && typeof W.setDevelopSplit === "function" && W.isEnabled && W.isEnabled()) {
+            W.setDevelopSplit({ active: true, splitPos: _splitPos });
+        }
         _redrawNow();
     }
     function up() {
@@ -4128,37 +4166,104 @@ function _onSplitDragStart(e) {
     document.addEventListener("mouseup", up);
 }
 
+// Return true when WebGL is the active display backend AND its
+// split rendering is in use. develop.js picks render paths off this
+// so the Canvas 2D overlay isn't double-drawing the before half.
+function _webglSplitInUse() {
+    var W = window.StudioCanvasWebGLPreview;
+    return !!(W && typeof W.setDevelopSplit === "function"
+        && typeof W.isEnabled === "function" && W.isEnabled());
+}
+
+// Rebuild the cached before image whenever the layer signature or
+// undo-stack length drifts from the snapshot we took at toggle-on.
+// Layer add/remove, visibility/opacity/blend-mode changes update the
+// signature; paint strokes / structural ops push undo entries. Together
+// they catch the "something changed in the document" case the handoff
+// flagged. Pure develop-slider changes don't bump either, so dragging
+// sliders keeps the cached before pixels stable.
+function _refreshBeforeIfStale() {
+    var S = _S(); if (!S) return false;
+    var sig = _layerSignature(S);
+    var undoLen = _undoStackLength(S);
+    if (!_developBeforeImg || sig !== _splitLayerSig || undoLen !== _splitUndoBaseline) {
+        _developBeforeImg = _buildBeforeView();
+        _splitLayerSig = sig;
+        _splitUndoBaseline = undoLen;
+        return true;
+    }
+    return false;
+}
+
 function _renderSplitOverlay() {
     if (!_splitActive) return;
-    var S = _S(); if (!S || !S.canvas || !S.ctx) return;
-    var beforeBuf = S._developBeforeBuf;
-    if (!beforeBuf) {
-        beforeBuf = _buildBeforeBuffer();
-        S._developBeforeBuf = beforeBuf;
+    var S = _S(); if (!S || !S.canvas) return;
+
+    // WebGL backend path: the GPU draws both sides via the split
+    // texture upload + scissor in canvas-webgl-preview.js. We just
+    // ensure the before texture is fresh + position the DOM line/
+    // labels. No Canvas 2D blit here — the overlay canvas above the
+    // WebGL surface is transparent for the document area.
+    if (_webglSplitInUse()) {
+        var rebuilt = _refreshBeforeIfStale();
+        var W = window.StudioCanvasWebGLPreview;
+        if (rebuilt && _developBeforeImg) {
+            W.setDevelopSplit({ active: true, splitPos: _splitPos, beforeImageData: _developBeforeImg });
+        } else {
+            W.setDevelopSplit({ active: true, splitPos: _splitPos });
+        }
+        _positionSplitChrome(S);
+        return;
     }
-    if (!beforeBuf) return;
+
+    // Canvas 2D fallback path. Build the before pixels off the same
+    // engine flatten the WebGL path uses, then putImageData into a
+    // throwaway canvas so drawImage can pick it up under the existing
+    // zoom transform.
+    if (!S.ctx) return;
+    _refreshBeforeIfStale();
+    if (!_developBeforeImg) return;
+    var fallback = S._developBeforeBuf;
+    if (!fallback || fallback._sigKey !== _splitLayerSig + ":" + _splitUndoBaseline) {
+        fallback = document.createElement("canvas");
+        fallback.width = _developBeforeImg.width;
+        fallback.height = _developBeforeImg.height;
+        fallback.getContext("2d", { colorSpace: "srgb" }).putImageData(_developBeforeImg, 0, 0);
+        fallback._sigKey = _splitLayerSig + ":" + _splitUndoBaseline;
+        S._developBeforeBuf = fallback;
+    }
     var ctx = S.ctx;
     var z = S.zoom;
     var splitX = _splitPos * S.canvas.width;
     ctx.save();
-    // Draw the "before" buffer on the left side using the same zoom transform
-    // the compositor uses, clipped to splitX in display space.
     ctx.setTransform(1, 0, 0, 1, 0, 0);
     ctx.beginPath();
     ctx.rect(0, 0, splitX, S.canvas.height);
     ctx.clip();
     ctx.setTransform(z.scale, 0, 0, z.scale, z.ox, z.oy);
-    ctx.drawImage(beforeBuf, 0, 0);
+    ctx.drawImage(fallback, 0, 0);
     ctx.restore();
 
-    // Position the split line + labels in viewport coordinates. Both labels
-    // hug the split line: AFTER sits 8px to its right, BEFORE sits 8px to
-    // its left (right-edge anchored). The previous approach pinned BEFORE
-    // to the canvas element's left edge, which lands far off in the void
-    // area when the document is zoomed-to-fit and centered.
+    _positionSplitChrome(S);
+}
+
+function _positionSplitChrome(S) {
+    // Position the split line + labels in viewport (CSS) coordinates.
+    // Both labels hug the split line: AFTER sits 8px to its right,
+    // BEFORE sits 8px to its left (right-edge anchored). The previous
+    // approach pinned BEFORE to the canvas element's left edge, which
+    // lands far off in the void area when the document is
+    // zoomed-to-fit and centered.
+    //
+    // _splitPos is a 0..1 fraction of canvas width — multiply by the
+    // CSS-pixel rect width (NOT S.canvas.width, which is the device-
+    // pixel backing buffer) so the line lands at the same physical
+    // location at any DPR. This used to mix device pixels with
+    // CSS-pixel rect.left and offset the line on HiDPI displays.
     _ensureSplitElements();
     var rect = S.canvas.getBoundingClientRect();
-    var lineX = rect.left + splitX;
+    var splitCssX = _splitPos * rect.width;
+    var lineX = rect.left + splitCssX;
     _splitLine.style.left = (lineX - 1) + "px";
     _splitLine.style.top = rect.top + "px";
     _splitLine.style.height = rect.height + "px";
@@ -4174,16 +4279,26 @@ function _renderSplitOverlay() {
 function _toggleBeforeAfter() {
     _splitActive = !_splitActive;
     _beforeAfterBtn.classList.toggle("active", _splitActive);
+    var W = window.StudioCanvasWebGLPreview;
     if (_splitActive) {
         _ensureSplitElements();
         _installRedrawHook();
-        var S = _S(); if (S) S._developBeforeBuf = null; // rebuild fresh
+        // Force a fresh before-image build on the next overlay tick.
+        _invalidateBefore();
+        var S = _S(); if (S) S._developBeforeBuf = null;
         _redrawNow();
     } else {
         if (_splitLine) _splitLine.classList.remove("visible");
         if (_splitLabelL) _splitLabelL.classList.remove("visible");
         if (_splitLabelR) _splitLabelR.classList.remove("visible");
         var S2 = _S(); if (S2) S2._developBeforeBuf = null;
+        _invalidateBefore();
+        // Tell the WebGL backend to drop its split state — it keeps
+        // the cached before texture around for cheap re-toggle, but
+        // stops scissor-rendering it.
+        if (W && typeof W.setDevelopSplit === "function") {
+            W.setDevelopSplit({ active: false });
+        }
         _redrawNow();
     }
 }
@@ -4245,6 +4360,14 @@ if (window.StudioModules) {
             if (_splitLabelR) _splitLabelR.classList.remove("visible");
             var S = _S();
             if (S) S._developBeforeBuf = null;
+            _invalidateBefore();
+            _splitActive = false;
+            // Stop the GPU split so the next module's redraws don't
+            // fight the cached scissor pass.
+            var W = window.StudioCanvasWebGLPreview;
+            if (W && typeof W.setDevelopSplit === "function") {
+                W.setDevelopSplit({ active: false });
+            }
             // Resize the canvas back now that toolstrip + panel-right are
             // visible again.
             var UI = window.StudioUI;

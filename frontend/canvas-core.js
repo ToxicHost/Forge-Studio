@@ -3292,14 +3292,28 @@ function exportFlattened(mime) {
 }
 
 // Canonical flattened RGBA pixels (preserves alpha, no white bg, no UI
-// overlays, no checker). Develop is applied — same path as
+// overlays, no checker). Develop is applied by default — same path as
 // exportFlattened — so the WebGL preview texture matches the saved
 // file's pixels exactly. Returns an ImageData whose .data is a
 // Uint8ClampedArray ready for gl.texImage2D / gl.texSubImage2D.
-function getFlattenedImageData() {
+//
+// Options:
+//   applyDevelop (default true)   — pass false to get pre-develop
+//     pixels. Used by Develop's Before/After split + the eyedropper
+//     samplers, which both need the layer composite without the
+//     adjustment pipeline.
+//   whiteBackground (default false) — fill the doc with white before
+//     compositing. Mirrors the JPEG/WebP export path.
+//
+// Existing zero-arg callers (the WebGL preview texture upload) keep
+// receiving developed flattened pixels exactly as before.
+function getFlattenedImageData(options) {
+    const opts = options || {};
+    const applyDevelop = opts.applyDevelop !== false;
+    const whiteBackground = !!opts.whiteBackground;
     const c = _createCanvas(S.W, S.H);
     const x = c.getContext("2d", { colorSpace: "srgb" });
-    _renderFlattenedToContext(x, { applyDevelop: true });
+    _renderFlattenedToContext(x, { applyDevelop: applyDevelop, whiteBackground: whiteBackground });
     return x.getImageData(0, 0, S.W, S.H);
 }
 
