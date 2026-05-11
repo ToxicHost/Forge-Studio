@@ -985,12 +985,20 @@ async function populateDropdowns() {
     // default wins and the user's saved choice is silently discarded.
     const _pickPrev = (el) => el.dataset.pendingValue || el.value;
 
-    // Model selector in settings
+    // Model selector in settings.
+    //
+    // The native option's `value` keeps Forge's full title (with the
+    // trailing [hash] suffix Forge expects when matching the
+    // checkpoint). The visible label drops the hash — long titles
+    // were both crowding the trigger and making model rows hard to
+    // scan in the dropdown. The hash is still available in the
+    // PNG/JPEG metadata that Forge writes alongside the image.
+    const _stripModelHash = (s) => String(s || "").replace(/\s*\[[0-9a-fA-F]{8,16}\]\s*$/, "");
     const modelSelect = document.getElementById("paramModel");
     if (modelSelect) {
       const prev = _pickPrev(modelSelect);
       modelSelect.innerHTML = models.map(m =>
-        `<option value="${m.title}">${m.title}</option>`
+        `<option value="${m.title}">${_stripModelHash(m.title)}</option>`
       ).join("");
       restoreSelection(modelSelect, prev);
       delete modelSelect.dataset.pendingValue;
@@ -1051,14 +1059,15 @@ async function populateDropdowns() {
       delete upscaleModel.dataset.pendingValue;
     }
 
-    // Hires Fix checkpoint dropdown
+    // Hires Fix checkpoint dropdown — same hash-stripping treatment
+    // as the main model selector. Value retains Forge's full title.
     const hrCheckpoint = document.getElementById("paramHrCheckpoint");
     if (hrCheckpoint) {
       const prev = _pickPrev(hrCheckpoint);
       hrCheckpoint.innerHTML =
         '<option value="Same">Same</option>' +
         models.map(m =>
-          `<option value="${m.title}">${m.title}</option>`
+          `<option value="${m.title}">${_stripModelHash(m.title)}</option>`
         ).join("");
       restoreSelection(hrCheckpoint, prev);
       delete hrCheckpoint.dataset.pendingValue;
