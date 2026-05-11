@@ -60,6 +60,7 @@ const API = {
   // Auto-update
   checkUpdate:   ()       => API.get("/studio/api/check-update"),
   applyUpdate:   ()       => API.post("/studio/api/update", {}),
+  updateStatus:  ()       => API.get("/studio/api/update-status"),
 
   // Live Painting
   liveStart:     ()       => API.post("/studio/live/start", {}),
@@ -904,14 +905,57 @@ const UpdateBanner = {
   },
 
   async _applyUpdate() {
-    showToast(I18N.t("toast.updating", "Updating..."), "info");
+    // Render an in-place progress dialog instead of the old single
+    // "Updating..." toast. The backend POST /studio/api/update is
+    // synchronous and can take 30–120s; while it runs, we poll
+    // GET /studio/api/update-status every 500ms for the current
+    // phase + percentage and keep the UI live.
+    const dlg = this._showProgressDialog();
+
+    const PHASE_LABELS = {
+      idle: "Preparing",
+      checking: "Checking update",
+      downloading: "Downloading",
+      extracting: "Extracting",
+      copying: "Copying files",
+      finishing: "Finishing",
+      restart: "Restart required",
+      error: "Update failed",
+    };
+    const renderPhase = (phase, pct, message) => {
+      const label = PHASE_LABELS[phase] || message || "Updating";
+      dlg.label.textContent = label;
+      const safePct = Math.max(0, Math.min(100, Number(pct) || 0));
+      dlg.bar.style.width = safePct + "%";
+      dlg.pct.textContent = safePct + "%";
+    };
+    renderPhase("checking", 5);
+
+    let stopPolling = false;
+    const poll = async () => {
+      while (!stopPolling) {
+        try {
+          const s = await API.updateStatus();
+          if (s && s.phase) renderPhase(s.phase, s.pct, s.message);
+        } catch (_) { /* transient — keep polling */ }
+        await new Promise(r => setTimeout(r, 500));
+      }
+    };
+    poll();
+
     try {
       const res = await API.applyUpdate();
+      stopPolling = true;
       if (!res.ok) {
+        renderPhase("error", 0, res.error || "Update failed");
         showToast(res.error || "Update failed", "error");
+        // Leave the dialog open briefly so the user sees the failure.
+        setTimeout(() => dlg.overlay.remove(), 2500);
         return;
       }
-      // Replace banner with restart notice
+      renderPhase("restart", 100);
+      // Replace dialog with a restart notice banner.
+      dlg.overlay.remove();
       this.hide();
       const banner = document.createElement("div");
       banner.className = "update-banner update-restart-banner";
@@ -925,8 +969,35 @@ const UpdateBanner = {
       document.body.appendChild(banner);
       this._el = banner;
     } catch (e) {
+      stopPolling = true;
+      renderPhase("error", 0, e.message);
       showToast(I18N.t("toast.updateFailed", "Update failed: {error}", {error: e.message}), "error");
+      setTimeout(() => dlg.overlay.remove(), 2500);
     }
+  },
+
+  _showProgressDialog() {
+    // Minimal modal: phase label, percentage, and a progress bar.
+    // No cancel button — the backend update is non-cancellable and
+    // killing it mid-extract would leave a half-applied tree.
+    const overlay = document.createElement("div");
+    overlay.className = "update-dialog-overlay";
+    overlay.innerHTML = `
+      <div class="update-dialog">
+        <div class="update-dialog-title">Updating Forge Studio</div>
+        <div class="update-dialog-phase">Preparing</div>
+        <div class="update-dialog-bar-track"><div class="update-dialog-bar-fill"></div></div>
+        <div class="update-dialog-pct">0%</div>
+        <div class="update-dialog-hint">Please don't close the browser. The server will need a restart when this finishes.</div>
+      </div>
+    `;
+    document.body.appendChild(overlay);
+    return {
+      overlay,
+      label: overlay.querySelector(".update-dialog-phase"),
+      bar:   overlay.querySelector(".update-dialog-bar-fill"),
+      pct:   overlay.querySelector(".update-dialog-pct"),
+    };
   },
 
   async check() {
