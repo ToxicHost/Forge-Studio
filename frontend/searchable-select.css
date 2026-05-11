@@ -57,10 +57,12 @@
 }
 
 .ssel-panel {
+  /* Width is locked to the trigger's width by JS at open time so the
+     panel doesn't balloon past its column when long option labels
+     show up. The min/max-width JS sets overrides the defaults below. */
   position: fixed;
   z-index: 400;
-  min-width: 240px;
-  max-width: 480px;
+  min-width: 200px;
   background: var(--bg-surface, #1a1a1a);
   border: 1px solid var(--border, #333);
   border-radius: var(--radius, 6px);

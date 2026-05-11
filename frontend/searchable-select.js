@@ -276,14 +276,32 @@ function attach(select, opts) {
         listEl = panel.querySelector(".ssel-list");
         searchEl = panel.querySelector(".ssel-search");
 
-        // Position below the trigger; right-edge clamp so a wide
-        // panel doesn't shoot off-screen on a narrow column.
+        // Lock the panel to the trigger's width and let the option list
+        // ellipsize anything longer instead of growing the whole panel
+        // when long names appear (model titles with [hash] suffixes
+        // were ballooning the dropdown past the side panel boundary
+        // when the canvas wasn't full size). A floor prevents tiny
+        // triggers (icon-only buttons) from creating an unusable
+        // ~30px-wide list. A separate cap on the list height uses the
+        // viewport space below the trigger so users on shorter windows
+        // can still see more of the list.
         const r = trigger.getBoundingClientRect();
-        const minWidth = Math.max(r.width, 240);
-        panel.style.minWidth = minWidth + "px";
-        const maxLeft = window.innerWidth - 8 - panel.offsetWidth;
+        const lockedWidth = Math.max(r.width, 200);
+        panel.style.width = lockedWidth + "px";
+        panel.style.minWidth = lockedWidth + "px";
+        panel.style.maxWidth = lockedWidth + "px";
+        const maxLeft = window.innerWidth - 8 - lockedWidth;
         panel.style.left = Math.max(8, Math.min(r.left, maxLeft)) + "px";
         panel.style.top = (r.bottom + 4) + "px";
+
+        // Reserve room for the search row + a little padding, then
+        // give the rest of the available viewport height to the
+        // option list so a small Studio window doesn't truncate the
+        // list to the CSS-default 320px.
+        const searchRowHeight = 38;
+        const viewportPadding = 12;
+        const available = Math.max(160, window.innerHeight - r.bottom - viewportPadding - searchRowHeight);
+        listEl.style.maxHeight = available + "px";
 
         trigger.classList.add("ssel-trigger-open");
         _renderList();
