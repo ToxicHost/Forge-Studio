@@ -496,7 +496,32 @@ async function bulkDeleteSelected() {
     await Promise.all([loadImagesReset(), loadCharacters(), loadFolders(), loadStats()]);
     renderMain(); renderTagList(); renderFolderSidebar();
 }
-async function bulkOpenExplorer() { for (const id of Array.from(G.selectedImages)) await api("/image/" + id + "/open-explorer", { method: "POST" }); }
+// Open the OS file browser at the saved image's location. Wraps the
+// fire-and-forget POST in awaited error handling so a 404 (file moved/
+// deleted off disk) or a 500 (xdg-open missing on Linux, etc.) surfaces
+// as a generic toast instead of a button that silently does nothing.
+// Generic message — never echoes the server-side filepath.
+async function _openInExplorerSafe(id) {
+    if (!Number.isFinite(id)) { toast("Couldn't open file location", "warning"); return; }
+    try {
+        const r = await api("/image/" + id + "/open-explorer", { method: "POST" });
+        if (r && r.error) toast("Couldn't open file location", "warning");
+    } catch (_) { toast("Couldn't open file location", "warning"); }
+}
+// Same wrapper for "open in default app" — used by the Open in Player
+// button on video rows.
+async function _openFileSafe(id) {
+    if (!Number.isFinite(id)) { toast("Couldn't open file", "warning"); return; }
+    try {
+        const r = await api("/image/" + id + "/open-file", { method: "POST" });
+        if (r && r.error) toast("Couldn't open file", "warning");
+    } catch (_) { toast("Couldn't open file", "warning"); }
+}
+async function bulkOpenExplorer() {
+    for (const id of Array.from(G.selectedImages)) {
+        await _openInExplorerSafe(id);
+    }
+}
 async function bulkRenameSelected() {
     const n = G.selectedImages.size; if (!n) return;
     const hint = '<b>_</b> connects name parts \u2192 John_Doe = <i>John Doe</i><br><b>+ - ,</b> separate characters \u2192 John_Doe+Jane = <i>John Doe, Jane</i>' + (n > 1 ? "<br>" + n + " files will be numbered." : "");
@@ -1879,7 +1904,17 @@ function showDetailOverlay() {
     else if (img.is_video) mediaHtml = '<div style="display:flex;flex-direction:column;align-items:center;gap:16px"><img src="' + API_BASE + '/thumb/' + img.id + '?h=' + img.fphash + '" style="max-width:80%;max-height:70vh;border-radius:8px;object-fit:contain"/><button class="gal-btn-primary" data-action="open-file" data-img-id="' + img.id + '" style="padding:10px 28px">' + IC.play + ' Open in Player</button></div>';
     else mediaHtml = '<img id="gal-detail-img" src="' + mediaSrc + '" alt="' + esc(img.filename) + '"/>';
     const hasCanvas = typeof displayOnCanvas === "function";
-    ov.innerHTML = '<div class="gal-detail-img-area" id="gal-detail-img-area">' + mediaHtml + '</div><div class="gal-detail-sidebar"><div class="gal-detail-panel"><input class="gal-detail-filename" id="gal-rename-input" value="' + esc(img.filename) + '"' + (eph ? ' readonly' : '') + ' />' + (eph ? '' : '<div class="gal-detail-folder"><span class="gal-tree-icon">' + IC.folder + '</span> ' + esc(img.folder) + '</div>') + '' + (img.width ? '<div class="gal-detail-dims">' + img.width + ' \u00d7 ' + img.height + ' px</div>' : '') + (eph ? '' : '<div class="gal-detail-rating" id="gal-detail-rating">' + _buildStarRatingHtml(img.rating || 0, img.id) + '</div>') + '<div class="gal-detail-actions">' + (eph ? '' : '<button class="gal-detail-btn" data-action="explorer" data-img-id="' + img.id + '">' + IC.explorer + " " + _t("gallery.detail.browse", "Browse") + '</button>') + '<button class="gal-detail-btn" data-action="copy-image" data-img-id="' + img.id + '">&#x1F4CB; ' + _t("gallery.detail.copy", "Copy") + '</button><button class="gal-detail-btn" data-action="download-image" data-img-id="' + img.id + '">&#x2B07; ' + _t("gallery.detail.save", "Save") + '</button>' + (hasCanvas ? '<span class="gal-detail-btn-split"><button class="gal-detail-btn accent split-main" data-action="send-canvas" data-img-id="' + img.id + '">' + IC.canvas + " " + _t("gallery.detail.sendToCanvas", "Send to Canvas") + '</button><button class="gal-detail-btn accent split-arrow" data-action="send-canvas-menu" data-img-id="' + img.id + '" title="' + _t("gallery.detail.choosePromptVersion", "Choose prompt version") + '">▾</button></span>' : '') + '' + (eph ? '' : '<span class="gal-detail-sep"></span><button class="gal-detail-btn" data-action="find-similar" data-img-id="' + img.id + '">' + IC.duplicate + ' Find Similar</button><button class="gal-detail-btn" data-action="strip-metadata" data-img-id="' + img.id + '">' + IC.stripMeta + " " + _t("gallery.toolbar.stripMetadata", "Strip metadata") + '</button><button class="gal-detail-btn" data-action="convert" data-img-id="' + img.id + '">' + IC.convert + " " + _t("gallery.detail.convert", "Convert...") + '</button><button class="gal-detail-btn danger" data-action="delete" data-img-id="' + img.id + '">' + IC.trash + " " + _t("gallery.toolbar.delete", "Delete") + '</button>') + '</div>' + (eph ? '' : '<div class="gal-detail-chars" id="gal-detail-chars">' + buildDetailTagsHtml(img.id, img.characters || []) + '</div>') + '<div class="gal-detail-nav"><button class="gal-detail-btn nav" data-action="prev" ' + (G.currentImageIndex <= 0 ? "disabled" : "") + '>' + IC.chevLeft + '</button><button class="gal-btn" data-action="back" style="flex:1">Back</button><button class="gal-detail-btn nav" data-action="next" ' + (G.currentImageIndex >= list.length - 1 ? "disabled" : "") + '>' + IC.chevRight + '</button></div></div><div class="gal-meta-panel" id="gal-meta-panel"><div class="gal-meta-section-title" data-i18n="gallery.metadata.title">' + _t("gallery.metadata.title", "Metadata") + '</div><div class="gal-meta-empty" data-i18n="gallery.metadata.loading">' + _t("gallery.metadata.loading", "Loading...") + '</div></div></div>';
+    // Send-to-Canvas split dropdown surfaces the raw/resolved prompt
+    // menu, which only applies to DB-backed images that store both
+    // forms. For ephemeral (just-generated, not yet saved) rows the
+    // dropdown opens nothing — render the plain Send button without
+    // the arrow so it doesn't look like a wired action that's broken.
+    const sendCanvasHtml = hasCanvas
+        ? (eph
+            ? '<button class="gal-detail-btn accent" data-action="send-canvas" data-img-id="' + img.id + '">' + IC.canvas + " " + _t("gallery.detail.sendToCanvas", "Send to Canvas") + '</button>'
+            : '<span class="gal-detail-btn-split"><button class="gal-detail-btn accent split-main" data-action="send-canvas" data-img-id="' + img.id + '">' + IC.canvas + " " + _t("gallery.detail.sendToCanvas", "Send to Canvas") + '</button><button class="gal-detail-btn accent split-arrow" data-action="send-canvas-menu" data-img-id="' + img.id + '" title="' + _t("gallery.detail.choosePromptVersion", "Choose prompt version") + '">▾</button></span>')
+        : '';
+    ov.innerHTML ='<div class="gal-detail-img-area" id="gal-detail-img-area">' + mediaHtml + '</div><div class="gal-detail-sidebar"><div class="gal-detail-panel"><input class="gal-detail-filename" id="gal-rename-input" value="' + esc(img.filename) + '"' + (eph ? ' readonly' : '') + ' />' + (eph ? '' : '<div class="gal-detail-folder"><span class="gal-tree-icon">' + IC.folder + '</span> ' + esc(img.folder) + '</div>') + '' + (img.width ? '<div class="gal-detail-dims">' + img.width + ' \u00d7 ' + img.height + ' px</div>' : '') + (eph ? '' : '<div class="gal-detail-rating" id="gal-detail-rating">' + _buildStarRatingHtml(img.rating || 0, img.id) + '</div>') + '<div class="gal-detail-actions">' + (eph ? '' : '<button class="gal-detail-btn" data-action="explorer" data-img-id="' + img.id + '">' + IC.explorer + " " + _t("gallery.detail.browse", "Browse") + '</button>') + '<button class="gal-detail-btn" data-action="copy-image" data-img-id="' + img.id + '">&#x1F4CB; ' + _t("gallery.detail.copy", "Copy") + '</button><button class="gal-detail-btn" data-action="download-image" data-img-id="' + img.id + '">&#x2B07; ' + _t("gallery.detail.save", "Save") + '</button>' + sendCanvasHtml + '' + (eph ? '' : '<span class="gal-detail-sep"></span><button class="gal-detail-btn" data-action="find-similar" data-img-id="' + img.id + '">' + IC.duplicate + ' Find Similar</button><button class="gal-detail-btn" data-action="strip-metadata" data-img-id="' + img.id + '">' + IC.stripMeta + " " + _t("gallery.toolbar.stripMetadata", "Strip metadata") + '</button><button class="gal-detail-btn" data-action="convert" data-img-id="' + img.id + '">' + IC.convert + " " + _t("gallery.detail.convert", "Convert...") + '</button><button class="gal-detail-btn danger" data-action="delete" data-img-id="' + img.id + '">' + IC.trash + " " + _t("gallery.toolbar.delete", "Delete") + '</button>') + '</div>' + (eph ? '' : '<div class="gal-detail-chars" id="gal-detail-chars">' + buildDetailTagsHtml(img.id, img.characters || []) + '</div>') + '<div class="gal-detail-nav"><button class="gal-detail-btn nav" data-action="prev" ' + (G.currentImageIndex <= 0 ? "disabled" : "") + '>' + IC.chevLeft + '</button><button class="gal-btn" data-action="back" style="flex:1">Back</button><button class="gal-detail-btn nav" data-action="next" ' + (G.currentImageIndex >= list.length - 1 ? "disabled" : "") + '>' + IC.chevRight + '</button></div></div><div class="gal-meta-panel" id="gal-meta-panel"><div class="gal-meta-section-title" data-i18n="gallery.metadata.title">' + _t("gallery.metadata.title", "Metadata") + '</div><div class="gal-meta-empty" data-i18n="gallery.metadata.loading">' + _t("gallery.metadata.loading", "Loading...") + '</div></div></div>';
     document.body.appendChild(ov); G.detailZoom = 1; G.detailPan = { x: 0, y: 0 };
     _wireDetailEvents(ov, img); setTimeout(() => loadMetadata(img), 50);
 }
@@ -1940,11 +1975,11 @@ function _wireDetailEvents(ov, img) {
             // exist in ephemeral mode (buttons are hidden) — ignore.
             return;
         }
-        if (act === "explorer") api("/image/" + id + "/open-explorer", { method: "POST" });
+        if (act === "explorer") _openInExplorerSafe(id);
         else if (act === "find-similar") openSimilarModal(id);
         else if (act === "send-canvas") sendToCanvas(id);
         else if (act === "send-canvas-menu") { e.stopPropagation(); hideCtx(); const r = a.getBoundingClientRect(); _buildCtxMenu([{ icon: IC.canvas, label: "Send to Canvas — raw prompt", fn: () => sendToCanvas(id, "raw") }, { icon: IC.canvas, label: "Send to Canvas — resolved prompt", fn: () => sendToCanvas(id, "resolved") }], r.left, r.bottom + 2); }
-        else if (act === "strip-metadata") stripMetaFromDetail(id); else if (act === "convert") convertFromCtx(id); else if (act === "delete") deleteImage(id); else if (act === "open-file") api("/image/" + id + "/open-file", { method: "POST" }); else if (act === "copy-image") copyImageToClipboard(id); else if (act === "download-image") downloadImage(id); else if (act === "prev") prevImage(); else if (act === "next") nextImage(); else if (act === "back") closeDetail(); });
+        else if (act === "strip-metadata") stripMetaFromDetail(id); else if (act === "convert") convertFromCtx(id); else if (act === "delete") deleteImage(id); else if (act === "open-file") _openFileSafe(id); else if (act === "copy-image") copyImageToClipboard(id); else if (act === "download-image") downloadImage(id); else if (act === "prev") prevImage(); else if (act === "next") nextImage(); else if (act === "back") closeDetail(); });
     ov.addEventListener("click", e => { const pill = e.target.closest("[data-tag-action='remove']"); if (pill) { removeTag(parseInt(pill.dataset.imgId), pill.dataset.tag); return; } if (e.target.closest("#gal-add-tag-toggle")) toggleAddTag(); const star = e.target.closest(".gal-star"); if (star) { const imgId = parseInt(star.dataset.imgId), v = parseInt(star.dataset.v); const cur = parseInt(star.dataset.cur); setRating(imgId, v === cur ? 0 : v); return; } });
     const ai = ov.querySelector("#gal-add-tag-input"); if (ai) { ai.addEventListener("keydown", e => { if (e.key === "Enter") addTag(G.currentImageId); if (e.key === "Escape") toggleAddTag(); }); attachAutocomplete(ai, { mode: "tag", getItems: getCharItems }); }
     if (!img.is_video) setupDetailZoom(ov); else { const vid = ov.querySelector("#gal-detail-video"); if (vid) { vid.volume = G.volume; vid.addEventListener("volumechange", () => { G.volume = vid.volume; localStorage.setItem("gal_volume", String(vid.volume)); }); } }
