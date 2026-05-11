@@ -2178,12 +2178,20 @@ async function upgradeByHash(hash) {
     const cur = G.navContext[startIdx];
     if (!cur || cur.hash !== hash || !cur.ephemeral) return;
 
-    // Splice resolved row in. Keep b64Url so the image src stays
-    // identical and the browser doesn't re-fetch /full/{id}.
-    const upgraded = { ...cur, ...resolved, ephemeral: false, b64Url: cur.b64Url };
-    G.navContext[startIdx] = upgraded;
+    // Mutate the existing slot in place rather than replacing it
+    // with a fresh object. _wireDetailEvents (in showDetailOverlay)
+    // captured the original `img` reference and switches its action
+    // dispatch off `img.ephemeral` — including whether the Browse
+    // button is wired through to /open-explorer or routed to the
+    // ephemeral "ignore" branch. Replacing G.navContext[startIdx]
+    // with a new object would leave the click handler's closure
+    // pointing at the old, still-ephemeral copy, so Browse (and
+    // Strip / Convert / Delete added by _upgradeOverlayInPlace)
+    // would render in the DOM but silently no-op when clicked. By
+    // mutating `cur` directly the closure sees the live upgrade.
+    Object.assign(cur, resolved, { ephemeral: false, b64Url: cur.b64Url });
     G.currentImageId = resolved.id;
-    _upgradeOverlayInPlace(upgraded);
+    _upgradeOverlayInPlace(cur);
 }
 // Surgical DOM updates that turn an ephemeral overlay into a DB-backed
 // one without touching the image area or re-rendering the metadata
