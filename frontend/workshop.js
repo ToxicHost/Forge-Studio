@@ -510,6 +510,45 @@ async function loadModelStockForRow(rowIdx) {
 // RECIPE → CHAIN ASSEMBLY
 // ========================================================================
 
+// Capture the merge board state as a JSON-safe snapshot. Rides
+// along on /chain POSTs and lands on the resulting journal entry
+// at recipe.workshop_board. "Import Recipe" prefers this payload
+// when present — it preserves row references (rowId / ref tokens
+// like __R0__), the useBlockWeights flag, per-row VAE bakes, and
+// every method-specific param without trying to reverse-engineer
+// them out of the resolved-filename per-step recipe summary.
+//
+// Only persisted-friendly fields go in. Transient UI state like
+// row.expanded is skipped; it has no meaning across an import.
+function _buildBoardSnapshot() {
+    return {
+        rows: WS.rows.map(r => ({
+            id: r.id,
+            primary: r.primary,
+            secondary: r.secondary,
+            tertiary: r.tertiary,
+            method: r.method,
+            alpha: r.alpha,
+            density: r.density,
+            dropRate: r.dropRate,
+            cosineShift: r.cosineShift,
+            eta: r.eta,
+            useBlockWeights: r.useBlockWeights,
+            blockWeights: r.blockWeights,
+            bakeVae: r.bakeVae,
+            vae: r.vae,
+            outputName: r.outputName,
+        })),
+        recipeLoras: WS.recipeLoras
+            .filter(l => l.filename)
+            .map(l => ({ filename: l.filename, strength: l.strength })),
+        recipeVae: WS.recipeVae,
+        outputName: WS.outputName,
+        saveFp16: WS.saveFp16,
+        saveIntermediates: WS.saveIntermediates,
+    };
+}
+
 function _buildRecipeChain() {
     /**
      * Walks the board into a chain of backend steps:
@@ -720,9 +759,20 @@ async function startMerge() {
         // undefined.
         const siChecked = !!(_els.saveIntermediates && _els.saveIntermediates.checked);
         WS.saveIntermediates = siChecked;
+        // Send a snapshot of the merge board alongside the step list
+        // so the journal entry can faithfully round-trip back into
+        // the board via "Import Recipe". The step list alone loses
+        // row references (model_a/b end up as their resolved
+        // filenames after _resolve_variable), so without the
+        // snapshot a multi-row chain restores as disconnected rows.
+        const board = _buildBoardSnapshot();
         await fetchJSON(API + "/chain", {
             method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ steps: chainSteps, save_intermediates: siChecked }),
+            body: JSON.stringify({
+                steps: chainSteps,
+                save_intermediates: siChecked,
+                workshop_board: board,
+            }),
         });
     } catch (e) {
         WS.merging = false; WS.status = "error"; WS.error = e.message; _renderProgress(); _setMergeButtonState(false);
@@ -928,93 +978,376 @@ function _cardRecipeSummary(e) {
 // surfaced for import because the files behind them are deleted.
 // For everything else (note entries, unknown types, missing name)
 // the helper returns null so the import UI can hide itself.
-function _journalEntryModelFilename(entry) {
-    if (!entry || !entry.name) return null;
-    if (entry.type === "note") return null;
-    if (typeof entry.name !== "string") return null;
-    // Only .safetensors checkpoints are valid in the merge board's
-    // primary/secondary/tertiary slots. The journal can also contain
-    // entries pointing at LoRA / VAE artifacts via future flows; an
-    // extension-check keeps those out without needing a separate
-    // entry-type taxonomy.
-    if (!/\.safetensors$/i.test(entry.name)) return null;
-    return entry.name;
+// True when a journal entry carries enough recipe data to restore
+// something meaningful onto the merge board. Drives whether the
+// "Import Recipe" action appears on the card and detail surfaces.
+function _journalEntryIsImportable(entry) {
+    if (!entry) return false;
+    if (entry.type === "note") return false;
+    const r = entry.recipe || {};
+    // Preferred shape — the chain pipeline now stores a faithful
+    // board snapshot alongside the per-step summary.
+    if (r.workshop_board && Array.isArray(r.workshop_board.rows)) return true;
+    // Older chain entries still carry a per-step summary we can
+    // partially reconstruct from.
+    if ((r.type === "chain" || entry.type === "chain") && Array.isArray(r.steps) && r.steps.length) return true;
+    // Single bake entries.
+    if (r.operation === "lora_bake" || r.operation === "vae_bake") return true;
+    // Single merge — at minimum a method + the two source models.
+    if (r.method && r.model_a && r.model_b) return true;
+    return false;
 }
 
-function _journalEntryHasImportableModel(entry) {
-    const fn = _journalEntryModelFilename(entry);
-    if (!fn) return false;
-    return WS.models.some(m => m.filename === fn);
-}
-
-// Render the "Use as Primary / Secondary / Tertiary" button cluster
-// for a journal entry. `where` is "detail" or "card" and selects a
-// pre-set sizing class so both surfaces use shared styles without
-// fighting each other. Returns an empty string when the entry isn't
-// importable (LoRA-only flows, deleted intermediates, notes, etc.).
+// Render the single "Import Recipe" action for an importable
+// journal entry. Used on both card and detail surfaces; size is
+// driven by a CSS variant class so the two layouts stay distinct
+// without separate templates. Returns "" when the entry has no
+// importable recipe data so the import row collapses cleanly.
 function _importActionsHtml(entry, where) {
-    if (!_journalEntryModelFilename(entry)) return "";
+    if (!_journalEntryIsImportable(entry)) return "";
     const id = _esc(entry.id);
     const wherePart = where === "card" ? " ws-je-import-card" : " ws-je-import-detail";
-    const label = where === "card" ? "Use in" : "Send to active row";
     return '<div class="ws-je-section ws-je-import' + wherePart + '">'
-        + '<div class="ws-je-section-label">' + label + '</div>'
         + '<div class="ws-je-import-row">'
-        + '<button class="ws-je-import-btn" data-action="useAsPrimary"   data-id="' + id + '">Use as Primary</button>'
-        + '<button class="ws-je-import-btn" data-action="useAsSecondary" data-id="' + id + '">Use as Secondary</button>'
-        + '<button class="ws-je-import-btn" data-action="useAsTertiary"  data-id="' + id + '">Use as Tertiary</button>'
+        + '<button class="ws-je-import-btn ws-je-import-primary" data-action="importRecipe" data-id="' + id + '">Import Recipe</button>'
         + '</div>'
         + '</div>';
 }
 
-// Push a journal entry's saved model into the active row's slot.
-// `slot` is "primary" | "secondary" | "tertiary". Goes through one
-// model-list refresh + retry if the filename isn't found, so a
-// recent merge that hasn't been picked up by the asset rescan
-// still lands on the row instead of silently failing. Mirrors the
-// per-slot side effects (inspect, preflight, compatibility,
-// auto-diff buttons, final-row output rename) that a manual
-// dropdown change would have triggered.
-async function _importJournalModelToActiveSlot(entry, slot) {
-    const filename = _journalEntryModelFilename(entry);
-    if (!filename) return;
-    if (!_journalEntryHasImportableModel(entry)) {
-        // One automatic refresh before giving up — covers the common
-        // race where the user clicks import seconds after the chain
-        // finished but before the rescan ran.
-        try { await loadModels(); } catch (_) {}
-        if (!_journalEntryHasImportableModel(entry)) {
-            if (window.showToast) window.showToast(_t("workshop.toast.modelUnavailable", "Model file is no longer available"), "error");
-            return;
-        }
+// ---- Recipe importer -------------------------------------------------
+//
+// Replace the current merge board with the recipe a journal entry
+// represents. The handoff specifies "replaces the current board"; we
+// don't attempt to merge into the existing rows, and we don't run the
+// recipe automatically.
+//
+// Restore order of preference:
+//   1. recipe.workshop_board — full-fidelity snapshot the frontend
+//      now ships with /chain calls.
+//   2. recipe.type === "chain" (or entry.type === "chain") — older
+//      chains: reconstruct from the per-step summary. Refs are lost
+//      so multi-row chains restore as a sequence of disconnected
+//      rows but Method / alpha / block weights survive.
+//   3. recipe.operation === "lora_bake" / "vae_bake" — single bake
+//      entry. Becomes a one-row bake-only board.
+//   4. recipe.method / model_a / model_b — single /merge entry.
+//      Becomes one merge row.
+//
+// Missing assets (model / LoRA / VAE filenames not present in
+// WS.models / WS.loras / WS.vaes after one refresh) are blanked out
+// of the imported state instead of blocking the import. A summary
+// toast tells the user how many references couldn't be matched.
+
+async function _importJournalRecipe(entry) {
+    if (!entry || !_journalEntryIsImportable(entry)) return;
+
+    // Refresh the asset lists once before deciding something is
+    // missing. Covers the common case of an entry referencing a
+    // freshly-merged file that hasn't been picked up by the disk
+    // scanner yet.
+    try {
+        await Promise.all([loadModels(), loadLoras(), loadVaes()]);
+    } catch (_) { /* fall through — caller's compare handles gaps */ }
+
+    const r = entry.recipe || {};
+    let restored;
+    if (r.workshop_board && Array.isArray(r.workshop_board.rows)) {
+        restored = _restoreFromBoardSnapshot(r.workshop_board);
+    } else if (r.type === "chain" || entry.type === "chain") {
+        restored = _restoreFromChainSteps(r.steps || []);
+    } else if (r.operation === "lora_bake") {
+        restored = _restoreFromLoraBake(r);
+    } else if (r.operation === "vae_bake") {
+        restored = _restoreFromVaeBake(r);
+    } else if (r.method && r.model_a && r.model_b) {
+        restored = _restoreFromSingleMerge(r);
+    } else {
+        return;
     }
-    const rowIdx = WS.activeRow;
-    const row = WS.rows[rowIdx];
-    if (!row) return;
-    row[slot] = filename;
+    if (!restored || !restored.rows || !restored.rows.length) return;
 
-    // Rebuild the row so the dropdown reflects the new value and
-    // the searchable-select wrapper repaints its trigger label.
-    _renderRows();
-    _setActiveRow(rowIdx);
-
-    // Same downstream work the per-slot change handlers do — keep
-    // the inspector, preflight, compatibility, and final-row output
-    // name in sync. Calls are no-ops on inactive rows by themselves.
+    // Apply to WS state. We replace the row stack outright; the
+    // board-replace behavior is the chosen UX per the handoff.
+    WS.rows = restored.rows;
+    WS.activeRow = 0;
+    WS.recipeLoras = restored.recipeLoras.length
+        ? restored.recipeLoras
+        : [{ filename: null, strength: 1.0 }];   // keep one empty row visible
+    WS.recipeVae = restored.recipeVae || null;
+    WS.outputName = restored.outputName || "";
+    WS.saveFp16 = restored.saveFp16 !== undefined ? !!restored.saveFp16 : true;
+    WS.saveIntermediates = !!restored.saveIntermediates;
     WS.compatibility = null;
     WS.healthScan = null;
-    if (slot === "primary") inspectModel(_isConcreteModel(filename) ? filename : null, "A");
-    else if (slot === "secondary") inspectModel(_isConcreteModel(filename) ? filename : null, "B");
+
+    // Sync the global control DOM that lives outside _renderRows().
+    if (_els.outputName) _els.outputName.value = WS.outputName;
+    if (_els.fp16) _els.fp16.checked = WS.saveFp16;
+    if (_els.saveIntermediates) _els.saveIntermediates.checked = WS.saveIntermediates;
+
+    _renderRows();
+    _renderRecipeLoras();
+    _populateGlobalVaeSelect();
+    _setActiveRow(0);
+
+    const firstRow = WS.rows[0];
+    if (firstRow) {
+        inspectModel(_isConcreteModel(firstRow.primary) ? firstRow.primary : null, "A");
+        inspectModel(_isConcreteModel(firstRow.secondary) ? firstRow.secondary : null, "B");
+    }
     runPreflight();
     runCompatibility();
     _updateActionButtons();
-    _updateRowAutoDiffButtons(rowIdx);
     _recomputeFinalRowOutputName();
 
-    const slotLabel = slot.charAt(0).toUpperCase() + slot.slice(1);
+    // Surface a summary. The recipe restoration helpers track how
+    // many referenced files couldn't be matched against the current
+    // asset lists; report that count so the user knows why fields
+    // are blank.
+    const missing = restored.missingCount | 0;
     if (window.showToast) {
-        window.showToast("Sent to Row " + (rowIdx + 1) + " · " + slotLabel, "success");
+        const msg = missing
+            ? "Recipe imported with " + missing + " missing asset" + (missing === 1 ? "" : "s")
+            : "Recipe imported";
+        window.showToast(msg, missing ? "warning" : "success");
     }
+
+    // Move the user to the Recipe tab so the imported state is
+    // immediately visible. _els.tabs is a NodeList (querySelectorAll)
+    // so spread into an array before .find — NodeList.find isn't
+    // available everywhere. Falls back gracefully if the tab DOM
+    // shape changes.
+    const tabs = _els.tabs ? Array.from(_els.tabs) : [];
+    const recipeTab = tabs.find(t => t.dataset && t.dataset.tab === "recipe");
+    if (recipeTab) recipeTab.click();
+
+    _closeHistoryDetail();
+}
+
+// ---- Recipe restoration helpers --------------------------------------
+//
+// Each helper returns
+//   { rows, recipeLoras, recipeVae, outputName, saveFp16,
+//     saveIntermediates, missingCount }
+// where rows is a fresh _newRow()-shaped array. The caller swaps
+// these onto WS verbatim.
+
+function _isKnownModel(filename) {
+    return !!(filename && WS.models.some(m => m.filename === filename));
+}
+function _isKnownLora(filename) {
+    return !!(filename && WS.loras.some(l => l.filename === filename));
+}
+function _isKnownVae(filename) {
+    return !!(filename && WS.vaes.some(v => v.filename === filename));
+}
+
+function _resolveModelOrNull(filename, missing) {
+    if (!filename) return null;
+    if (_isKnownModel(filename)) return filename;
+    missing.count += 1;
+    return null;
+}
+function _resolveLoraEntries(loras, missing) {
+    if (!Array.isArray(loras)) return [];
+    const out = [];
+    for (const l of loras) {
+        if (!l || !l.filename) continue;
+        if (_isKnownLora(l.filename)) {
+            out.push({ filename: l.filename, strength: typeof l.strength === "number" ? l.strength : 1.0 });
+        } else {
+            missing.count += 1;
+        }
+    }
+    return out;
+}
+function _resolveVaeOrNull(filename, missing) {
+    if (!filename) return null;
+    if (_isKnownVae(filename)) return filename;
+    missing.count += 1;
+    return null;
+}
+
+function _restoreFromBoardSnapshot(board) {
+    const missing = { count: 0 };
+    const rows = (board.rows || []).map(snap => {
+        const row = _newRow();
+        row.primary   = _resolveModelOrNull(snap.primary, missing);
+        row.secondary = _resolveModelOrNull(snap.secondary, missing);
+        row.tertiary  = _resolveModelOrNull(snap.tertiary, missing);
+        if (snap.method) row.method = snap.method;
+        if (typeof snap.alpha === "number") row.alpha = snap.alpha;
+        if (typeof snap.density === "number") row.density = snap.density;
+        if (typeof snap.dropRate === "number") row.dropRate = snap.dropRate;
+        if (typeof snap.cosineShift === "number") row.cosineShift = snap.cosineShift;
+        if (typeof snap.eta === "number") row.eta = snap.eta;
+        row.useBlockWeights = !!snap.useBlockWeights;
+        row.blockWeights = snap.blockWeights || null;
+        row.bakeVae = !!snap.bakeVae;
+        row.vae = snap.bakeVae ? _resolveVaeOrNull(snap.vae, missing) : (snap.vae || null);
+        if (!row.vae && snap.bakeVae && snap.vae) row.bakeVae = false;
+        row.outputName = snap.outputName || "";
+        return row;
+    });
+    return {
+        rows: rows.length ? rows : [_newRow()],
+        recipeLoras: _resolveLoraEntries(board.recipeLoras, missing),
+        recipeVae: _resolveVaeOrNull(board.recipeVae, missing),
+        outputName: board.outputName || "",
+        saveFp16: board.saveFp16 !== undefined ? !!board.saveFp16 : true,
+        saveIntermediates: !!board.saveIntermediates,
+        missingCount: missing.count,
+    };
+}
+
+function _restoreFromSingleMerge(recipe) {
+    const missing = { count: 0 };
+    const row = _newRow();
+    row.primary   = _resolveModelOrNull(recipe.model_a, missing);
+    row.secondary = _resolveModelOrNull(recipe.model_b, missing);
+    if (recipe.model_c) row.tertiary = _resolveModelOrNull(recipe.model_c, missing);
+    if (recipe.method) row.method = recipe.method;
+    if (typeof recipe.alpha === "number") row.alpha = recipe.alpha;
+    if (typeof recipe.density === "number") row.density = recipe.density;
+    if (typeof recipe.drop_rate === "number") row.dropRate = recipe.drop_rate;
+    if (typeof recipe.cosine_shift === "number") row.cosineShift = recipe.cosine_shift;
+    if (typeof recipe.eta === "number") row.eta = recipe.eta;
+    row.blockWeights = recipe.block_weights || null;
+    row.useBlockWeights = !!recipe.block_weights;
+    return {
+        rows: [row],
+        recipeLoras: [],
+        recipeVae: null,
+        outputName: "",
+        saveFp16: recipe.fp16 !== undefined ? !!recipe.fp16 : true,
+        saveIntermediates: false,
+        missingCount: missing.count,
+    };
+}
+
+function _restoreFromLoraBake(recipe) {
+    const missing = { count: 0 };
+    const row = _newRow();
+    row.primary = _resolveModelOrNull(recipe.checkpoint, missing);
+    return {
+        rows: [row],
+        recipeLoras: _resolveLoraEntries(recipe.loras, missing),
+        recipeVae: null,
+        outputName: "",
+        saveFp16: recipe.fp16 !== undefined ? !!recipe.fp16 : true,
+        saveIntermediates: false,
+        missingCount: missing.count,
+    };
+}
+
+function _restoreFromVaeBake(recipe) {
+    const missing = { count: 0 };
+    const row = _newRow();
+    row.primary = _resolveModelOrNull(recipe.checkpoint, missing);
+    return {
+        rows: [row],
+        recipeLoras: [],
+        recipeVae: _resolveVaeOrNull(recipe.vae, missing),
+        outputName: "",
+        saveFp16: recipe.fp16 !== undefined ? !!recipe.fp16 : true,
+        saveIntermediates: false,
+        missingCount: missing.count,
+    };
+}
+
+// Fallback path for chain entries that pre-date workshop_board.
+// Walks the per-step summary in best-effort order: merge steps
+// become rows, a vae_bake step that immediately follows a merge
+// becomes that row's per-row bake, lora_bake / vae_bake landing at
+// the end of the chain restore as the global recipeLoras /
+// recipeVae. Row references (model_a/b stored as resolved
+// filenames) are lost — there's no way to tell whether a step's
+// model_a was originally __O1__ vs the literal merged file. We
+// leave those as the resolved filename and the user can re-wire
+// from the dropdowns if they care.
+function _restoreFromChainSteps(steps) {
+    const missing = { count: 0 };
+    const rows = [];
+    const recipeLoras = [];
+    let recipeVae = null;
+    let outputName = "";
+    let saveFp16 = true;
+    const stepsLen = steps.length;
+
+    // First pass: build a quick index of step → step type so we can
+    // decide whether a vae_bake belongs to the row above it or to
+    // the global recipe (when it's the last step).
+    for (let i = 0; i < stepsLen; i++) {
+        const s = steps[i];
+        if (!s) continue;
+        if (s.fp16 !== undefined) saveFp16 = !!s.fp16;
+        if (s.type === "merge") {
+            const row = _newRow();
+            row.primary   = _resolveModelOrNull(s.model_a, missing);
+            row.secondary = _resolveModelOrNull(s.model_b, missing);
+            if (s.model_c) row.tertiary = _resolveModelOrNull(s.model_c, missing);
+            if (s.method) row.method = s.method;
+            if (typeof s.alpha === "number") row.alpha = s.alpha;
+            if (typeof s.density === "number") row.density = s.density;
+            if (typeof s.drop_rate === "number") row.dropRate = s.drop_rate;
+            if (typeof s.cosine_shift === "number") row.cosineShift = s.cosine_shift;
+            if (typeof s.eta === "number") row.eta = s.eta;
+            row.blockWeights = s.block_weights || null;
+            row.useBlockWeights = !!s.block_weights;
+            // Step-level output_name lives on the row when keep-
+            // intermediates was on at chain time. The flag itself
+            // isn't preserved in the step summary; the caller
+            // restores it as false (safest default).
+            if (s.output_name) row.outputName = s.output_name;
+            rows.push(row);
+        } else if (s.type === "vae_bake") {
+            // Attach to the immediately preceding merge row when one
+            // exists AND this isn't the chain's final step. The
+            // final step's vae_bake is the global recipeVae.
+            const isFinal = i === stepsLen - 1;
+            const prevWasMerge = i > 0 && steps[i - 1] && steps[i - 1].type === "merge";
+            if (!isFinal && prevWasMerge && rows.length) {
+                const row = rows[rows.length - 1];
+                row.bakeVae = true;
+                row.vae = _resolveVaeOrNull(s.vae, missing);
+                if (!row.vae) row.bakeVae = false;
+            } else {
+                recipeVae = _resolveVaeOrNull(s.vae, missing);
+            }
+        } else if (s.type === "lora_bake") {
+            const isFinal = i === stepsLen - 1
+                || (i === stepsLen - 2 && steps[stepsLen - 1] && steps[stepsLen - 1].type === "vae_bake");
+            if (isFinal) {
+                for (const item of _resolveLoraEntries(s.loras, missing)) {
+                    recipeLoras.push(item);
+                }
+            } else {
+                // Mid-chain lora_bake — we can't represent that on
+                // the board's global recipe surface today. Count
+                // each LoRA as a missing reference so the user is
+                // told their bake step couldn't be restored.
+                missing.count += Array.isArray(s.loras) ? s.loras.length : 1;
+            }
+        }
+        // Unknown step types fall through; the per-step summary will
+        // still be visible in the detail panel even if we can't
+        // restore them.
+
+        // Carry forward an output_name on the chain's final step as
+        // the global output name (matches how _buildRecipeChain
+        // assigns it).
+        if (i === stepsLen - 1 && s.output_name) outputName = s.output_name;
+    }
+
+    return {
+        rows: rows.length ? rows : [_newRow()],
+        recipeLoras,
+        recipeVae,
+        outputName,
+        saveFp16,
+        saveIntermediates: false,
+        missingCount: missing.count,
+    };
 }
 
 function _renderJournal() {
@@ -1228,23 +1561,19 @@ function _bindJournalEvents() {
         });
     });
 
-    // Send-to-board buttons live on both card and detail surfaces;
-    // wire them once here using a single delegated handler off the
-    // journal list element. data-action values are useAsPrimary /
-    // useAsSecondary / useAsTertiary.
+    // Import Recipe button — lives on both the card and the detail
+    // surface. Stop propagation so clicking the card-mounted button
+    // doesn't also pop the detail overlay open under it. The detail-
+    // overlay binding wires its own copy with an extra
+    // _closeHistoryDetail() so the user sees the row populate.
     _els.journalList.querySelectorAll(".ws-je-import-btn").forEach(btn => {
         btn.addEventListener("click", async (ev) => {
             ev.stopPropagation();
+            if (btn.dataset.action !== "importRecipe") return;
             const id = btn.dataset.id;
-            const action = btn.dataset.action;
-            const slot = action === "useAsPrimary" ? "primary"
-                : action === "useAsSecondary" ? "secondary"
-                : action === "useAsTertiary" ? "tertiary"
-                : null;
-            if (!slot) return;
             const entry = WS.journalEntries.find(e => e.id === id);
             if (!entry) return;
-            await _importJournalModelToActiveSlot(entry, slot);
+            await _importJournalRecipe(entry);
         });
     });
 }
@@ -1382,23 +1711,18 @@ function _bindHistoryDetailEvents() {
         });
     }
 
-    // Use-as-Primary / Secondary / Tertiary buttons. Same handler
-    // shape as the card-surface wiring in _bindJournalEvents; closes
-    // the detail overlay so the user sees the row populate.
+    // Import Recipe button inside the detail overlay. Same shape as
+    // the card-surface wiring in _bindJournalEvents; _importJournal-
+    // Recipe itself calls _closeHistoryDetail when it's done so the
+    // user lands back on the Recipe tab with the imported board.
     overlay.querySelectorAll(".ws-je-import-btn").forEach(btn => {
         btn.addEventListener("click", async (ev) => {
             ev.stopPropagation();
+            if (btn.dataset.action !== "importRecipe") return;
             const id = btn.dataset.id;
-            const action = btn.dataset.action;
-            const slot = action === "useAsPrimary" ? "primary"
-                : action === "useAsSecondary" ? "secondary"
-                : action === "useAsTertiary" ? "tertiary"
-                : null;
-            if (!slot) return;
             const entry = WS.journalEntries.find(e => e.id === id);
             if (!entry) return;
-            await _importJournalModelToActiveSlot(entry, slot);
-            _closeHistoryDetail();
+            await _importJournalRecipe(entry);
         });
     });
 }

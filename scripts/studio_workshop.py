@@ -3003,7 +3003,8 @@ def _resolve_variable(value: str, outputs: dict) -> Optional[str]:
     return outputs[step_num]
 
 
-def run_chain(steps: list, save_intermediates: bool = False):
+def run_chain(steps: list, save_intermediates: bool = False,
+              workshop_board: Optional[dict] = None):
     """Execute a multi-step merge chain.
 
     Each step is a dict with:
@@ -3013,6 +3014,13 @@ def run_chain(steps: list, save_intermediates: bool = False):
 
     Variables: __O1__, __O2__, etc. reference previous step outputs.
     Intermediates are auto-deleted unless save_intermediates is True.
+
+    workshop_board is an optional client-side snapshot of the merge
+    board state at submit time. Stored verbatim on the resulting
+    journal entry so the importer can rehydrate rows / refs /
+    bakes with full fidelity (the per-step recipe summary loses
+    row references because model_a/b are persisted as their
+    resolved filenames).
     """
     global _merge_state, _chain_in_progress
     _cancel_event.clear()
@@ -3136,6 +3144,7 @@ def run_chain(steps: list, save_intermediates: bool = False):
         _journal_add_chain(
             results, elapsed, save_intermediates,
             os.path.basename(final_output) if final_output else None,
+            workshop_board=workshop_board,
         )
 
     except Exception as e:
@@ -3349,7 +3358,8 @@ def _journal_add_entry(entry: dict):
 
 
 def _journal_add_chain(results: list, elapsed: float, save_intermediates: bool,
-                       final_filename: Optional[str] = None):
+                       final_filename: Optional[str] = None,
+                       workshop_board: Optional[dict] = None):
     """Auto-add journal entries for a completed chain.
 
     When intermediates are kept on disk, every step gets its own journal
@@ -3358,6 +3368,14 @@ def _journal_add_chain(results: list, elapsed: float, save_intermediates: bool,
     entry that catalogues the whole recipe; the journal then mirrors the
     files actually present on disk instead of pointing at phantom
     intermediates that were auto-deleted.
+
+    workshop_board, when provided, is the client-side board snapshot
+    used by the frontend's "Import Recipe" round-trip. It rides
+    along on the combined chain entry so a future import can restore
+    rows / row-output refs / global bakes / output name with full
+    fidelity. Per-step entries (save_intermediates=True) don't get it
+    because each step is independently restorable from its own
+    recipe shape.
     """
     if save_intermediates:
         for r in results:
@@ -3388,11 +3406,19 @@ def _journal_add_chain(results: list, elapsed: float, save_intermediates: bool,
         recipe["filename"] = r.get("filename", "")
         steps_summary.append(recipe)
 
+    chain_recipe = {
+        "type": "chain",
+        "steps": steps_summary,
+        "final": last.get("recipe", {}),
+    }
+    if workshop_board:
+        chain_recipe["workshop_board"] = workshop_board
+
     entry = {
         "id": f"chain_{int(time.time())}",
         "name": name,
         "type": "chain",
-        "recipe": {"type": "chain", "steps": steps_summary, "final": last.get("recipe", {})},
+        "recipe": chain_recipe,
         "date": datetime.now(timezone.utc).isoformat(),
         "elapsed": elapsed,
         "rating": 0,
@@ -4267,6 +4293,16 @@ def setup_workshop_routes(app: FastAPI):
     class ChainRequest(BaseModel):
         steps: List[ChainStep]
         save_intermediates: bool = False
+        # Optional board-recipe snapshot the frontend sends alongside
+        # the step list. Stored verbatim on the journal entry so a
+        # later "Import Recipe" round-trip can restore rows / global
+        # LoRAs / global VAE / output name / fp16 / Keep
+        # Intermediates with full fidelity — the per-step summary
+        # alone loses row references (model_a/b are stored as their
+        # resolved filenames). Optional so older clients keep working;
+        # the importer falls back to the per-step summary when this
+        # is absent.
+        workshop_board: Optional[Dict[str, Any]] = None
 
     @app.post("/studio/workshop/chain")
     async def workshop_chain(req: ChainRequest):
@@ -4288,7 +4324,7 @@ def setup_workshop_routes(app: FastAPI):
 
         thread = Thread(
             target=run_chain,
-            args=(steps_data, req.save_intermediates),
+            args=(steps_data, req.save_intermediates, req.workshop_board),
             daemon=True,
         )
         thread.start()

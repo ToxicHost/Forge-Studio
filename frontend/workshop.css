@@ -1815,46 +1815,42 @@
 
 /* Use-as-{Primary,Secondary,Tertiary} import cluster. Lives on both
    the card surface (compact, fits in the limited info row) and the
-   detail overlay (full-size buttons next to the existing actions).
-   The shared button class keeps the styling consistent. */
+   detail overlay (next to the existing actions). The single button
+   reads as a primary action — accent border + accent text on hover
+   — so the user clearly understands it does something substantial. */
 .ws-je-import {
     margin-top: 8px;
 }
 .ws-je-import-row {
     display: flex;
     gap: 6px;
-    flex-wrap: wrap;
 }
 .ws-je-import-btn {
     flex: 1 1 auto;
-    padding: 4px 8px;
+    padding: 5px 10px;
     background: var(--bg-raised);
-    border: 1px solid var(--border-subtle);
+    border: 1px solid var(--accent-dim, var(--border-subtle));
     border-radius: var(--radius-sm);
-    color: var(--text-3);
+    color: var(--accent, var(--text-2));
     font-family: var(--font);
     font-size: 10px;
     cursor: pointer;
     transition: all 0.12s;
     white-space: nowrap;
+    font-weight: 500;
 }
 .ws-je-import-btn:hover {
-    color: var(--accent);
+    color: #fff;
+    background: var(--accent);
     border-color: var(--accent);
 }
-/* Card-surface variant — tighter padding + shorter button labels via
-   abbreviated text (the buttons keep their longer aria-label).
-   Hidden section label on cards to save vertical space. */
+/* Card-surface variant — tighter padding so the button doesn't
+   overflow the limited info row beneath the filename + date. */
 .ws-je-import-card {
     margin-top: 6px;
 }
-.ws-je-import-card .ws-je-section-label {
-    font-size: 9px;
-    color: var(--text-4);
-    margin-bottom: 2px;
-}
 .ws-je-import-card .ws-je-import-btn {
-    padding: 2px 6px;
+    padding: 3px 8px;
     font-size: 9px;
 }
 
