@@ -3985,29 +3985,70 @@ function bindUI() {
     if (el) el.addEventListener("change", _updateHiresWarning);
   });
 
-  // Clear canvas
+  // Reset canvas — rebuild engine state to a clean baseline. Prior
+  // behavior just clear-rect'd the existing layer canvases, which left
+  // the layer stack, undo/redo stacks, regions, masks, transform, and
+  // selection lying around. Now the single Core.resetCanvasState helper
+  // rebuilds everything; the button only orchestrates dimensions and
+  // post-reset UI refresh.
+  //
+  // Dimension priority per handoff: Saved Defaults > Last Session
+  // baseline > factory 768. Both saved-defaults and session-restore
+  // populate _resolvedDefaults at boot, so reading paramWidth/Height
+  // off that cached object covers the first two cases. _resolvedDefaults
+  // is undefined on a totally fresh install with no session toggle, in
+  // which case we fall through to the factory size.
   document.getElementById("clearCanvas")?.addEventListener("click", () => {
     if (State.generating) return;
-    if (!window.StudioCore) return;
-    const S = window.StudioCore.state;
-    // Clear all paint layers
-    for (const L of S.layers) {
-      if (L.type === "paint") {
-        L.ctx.clearRect(0, 0, S.W, S.H);
-      }
-      if (L.type === "reference") {
-        L.ctx.fillStyle = "#ffffff";
-        L.ctx.fillRect(0, 0, S.W, S.H);
+    const Core = window.StudioCore;
+    if (!Core) return;
+
+    let targetW = 768, targetH = 768;
+    if (_resolvedDefaults && _resolvedDefaults.paramWidth && _resolvedDefaults.paramHeight) {
+      targetW = parseInt(_resolvedDefaults.paramWidth) || 768;
+      targetH = parseInt(_resolvedDefaults.paramHeight) || 768;
+    } else {
+      // No saved baseline at all — fall back to the current paramWidth/
+      // Height inputs (the user's working session) so a Reset on a
+      // 1024-wide doc doesn't surprise-shrink to 768.
+      const wEl = document.getElementById("paramWidth");
+      const hEl = document.getElementById("paramHeight");
+      if (wEl && hEl) {
+        targetW = parseInt(wEl.value) || 768;
+        targetH = parseInt(hEl.value) || 768;
       }
     }
-    // Clear mask
-    if (S.mask?.ctx) S.mask.ctx.clearRect(0, 0, S.W, S.H);
-    // Bump the developed-buffer cache version so the next composite() picks up
-    // the cleared layers instead of returning the stale post-develop buffer
-    // (which would keep displaying the previous image until something else
-    // mutates state — paint stroke, slider drag, etc. — and bumps the version).
-    window.StudioCore.markCompositeDirty?.();
-    window.StudioCore.composite();
+
+    Core.resetCanvasState({ width: targetW, height: targetH });
+
+    // Sync the param inputs back to the dimensions we just locked in
+    // (resetCanvasState may have triggered a resizeCanvas).
+    const wEl = document.getElementById("paramWidth");
+    const hEl = document.getElementById("paramHeight");
+    if (wEl) wEl.value = targetW;
+    if (hEl) hEl.value = targetH;
+
+    // UI refresh: layer panel, history panel, region panel.
+    const UI = window.StudioUI;
+    if (UI) {
+      UI.renderLayerPanel?.();
+      UI.renderHistoryPanel?.();
+      UI.renderRegionPanel?.();
+      UI.syncCanvasToViewport?.();
+    }
+
+    // WebGL preview re-upload after the layer stack rebuild. The
+    // version bump in resetCanvasState already invalidates its
+    // cache, but call markPixelsDirty explicitly so the texture
+    // refresh kicks off on the next frame instead of waiting for
+    // the next user input.
+    const WGL = window.StudioCanvasWebGLPreview;
+    if (WGL && typeof WGL.markPixelsDirty === "function") WGL.markPixelsDirty();
+
+    Core.zoomFit?.();
+    Core.composite();
+    if (UI && UI.redraw) UI.redraw();
+
     showToast(I18N.t("toast.canvasCleared", "Canvas cleared"), "info");
   });
 
