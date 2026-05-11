@@ -3487,6 +3487,12 @@ function syncPanel() {
 // ========================================================================
 function _renderHistogram() {
     if (!_histCanvas) return;
+    // Develop chrome must not do work while the panel is hidden —
+    // even if a stale callback (e.g. the activate path's first
+    // syncPanel scheduling another histogram pass) tries to draw,
+    // the Canvas mode user shouldn't pay for the flatten readback
+    // or see a histogram update under the hood.
+    if (!isDevelopPanelVisible()) return;
     var C = window.StudioCore;
     var S = _S(); if (!S || !C || typeof C.getFlattenedImageData !== "function") return;
     var hctx = _histCanvas.getContext("2d", { colorSpace: "srgb" });
@@ -4075,6 +4081,15 @@ function _savePreset() {
 var _afterRedrawHookInstalled = false;
 
 function _afterRedrawHook() {
+    // The redraw hook is installed once and fires for every Canvas
+    // redraw (Develop or not). Drop straight out when Develop isn't
+    // visible so a normal Canvas session never pays the cost of
+    // probing B/A state. If split chrome is somehow still lit up
+    // (race between deactivate and a queued redraw), clean it.
+    if (!isDevelopPanelVisible()) {
+        if (_splitActive) clearDevelopChrome("afterRedrawOutsideDevelop");
+        return;
+    }
     if (_splitActive) _renderSplitOverlay();
 }
 
@@ -4133,6 +4148,38 @@ function _invalidateBefore() {
     _splitUndoBaseline = 0;
 }
 
+// Single point of truth for tearing down every piece of Develop-only
+// chrome. Called from:
+//   - The B/A button "off" branch (user-driven toggle).
+//   - _renderSplitOverlay when it notices Develop is no longer active.
+//   - The drag handler when Develop deactivates mid-drag.
+//   - _afterRedrawHook when a stray redraw fires after Develop left.
+//   - The module deactivate() callback.
+//
+// Always safe to call from outside Develop — every step is guarded so
+// running the helper on a clean Canvas is a no-op. The reason string
+// is for future telemetry / log breadcrumbs; not used today.
+function clearDevelopChrome(reason) {
+    _splitActive = false;
+    if (_beforeAfterBtn) _beforeAfterBtn.classList.remove("active");
+    if (_splitLine) _splitLine.classList.remove("visible");
+    if (_splitLabelL) _splitLabelL.classList.remove("visible");
+    if (_splitLabelR) _splitLabelR.classList.remove("visible");
+    _invalidateBefore();
+    var S = _S();
+    if (S) S._developBeforeBuf = null;
+    // Drop the WebGL scissor pass so the next non-Develop redraw
+    // doesn't carry the split over into normal Canvas mode. The
+    // backend keeps the cached before-texture around for cheap
+    // re-enable, but stops rendering it.
+    var W = window.StudioCanvasWebGLPreview;
+    if (W && typeof W.setDevelopSplit === "function") {
+        W.setDevelopSplit({ active: false });
+    }
+    var UI = window.StudioUI;
+    if (UI && UI.redraw) UI.redraw();
+}
+
 function _ensureSplitElements() {
     if (!_splitLine) {
         _splitLine = document.createElement("div");
@@ -4157,8 +4204,18 @@ function _ensureSplitElements() {
 }
 
 function _onSplitDragStart(e) {
+    if (!isDevelopPanelVisible()) return;
     e.preventDefault();
     function move(ev) {
+        // Develop deactivated mid-drag (e.g. user clicked the Canvas
+        // tab while still holding the divider). Detach our listeners
+        // and route through the shared teardown so we don't keep
+        // dragging an invisible split line around the normal Canvas.
+        if (!isDevelopPanelVisible()) {
+            up();
+            clearDevelopChrome("dragOutsideDevelop");
+            return;
+        }
         var S = _S(); if (!S || !S.canvas) return;
         var rect = S.canvas.getBoundingClientRect();
         var x = ev.clientX - rect.left;
@@ -4212,6 +4269,14 @@ function _refreshBeforeIfStale() {
 
 function _renderSplitOverlay() {
     if (!_splitActive) return;
+    // Develop went away under us — common when the user navigates
+    // back to Canvas while B/A was on. clearDevelopChrome drops the
+    // WebGL scissor, hides the DOM line/labels, and requests one
+    // last redraw so any residual 2D fallback blit clears too.
+    if (!isDevelopPanelVisible()) {
+        clearDevelopChrome("renderOutsideDevelop");
+        return;
+    }
     var S = _S(); if (!S || !S.canvas) return;
 
     // WebGL backend path: the GPU draws both sides via the split
@@ -4292,30 +4357,29 @@ function _positionSplitChrome(S) {
 }
 
 function _toggleBeforeAfter() {
-    _splitActive = !_splitActive;
-    _beforeAfterBtn.classList.toggle("active", _splitActive);
-    var W = window.StudioCanvasWebGLPreview;
-    if (_splitActive) {
-        _ensureSplitElements();
-        _installRedrawHook();
-        // Force a fresh before-image build on the next overlay tick.
-        _invalidateBefore();
-        var S = _S(); if (S) S._developBeforeBuf = null;
-        _redrawNow();
-    } else {
-        if (_splitLine) _splitLine.classList.remove("visible");
-        if (_splitLabelL) _splitLabelL.classList.remove("visible");
-        if (_splitLabelR) _splitLabelR.classList.remove("visible");
-        var S2 = _S(); if (S2) S2._developBeforeBuf = null;
-        _invalidateBefore();
-        // Tell the WebGL backend to drop its split state — it keeps
-        // the cached before texture around for cheap re-toggle, but
-        // stops scissor-rendering it.
-        if (W && typeof W.setDevelopSplit === "function") {
-            W.setDevelopSplit({ active: false });
-        }
-        _redrawNow();
+    // Defensive: B/A is a Develop-only feature. If the button gets
+    // fired from outside Develop (programmatic click, keyboard
+    // shortcut wired elsewhere, stale event after deactivate), make
+    // sure no split chrome leaks onto the normal Canvas.
+    if (!isDevelopPanelVisible()) {
+        clearDevelopChrome("toggleOutsideDevelop");
+        return;
     }
+    if (_splitActive) {
+        // User clicked B/A while it was on — turn it off through the
+        // shared teardown so the chrome, the cached before pixels,
+        // and the WebGL scissor pass all drop together.
+        clearDevelopChrome("userToggleOff");
+        return;
+    }
+    _splitActive = true;
+    if (_beforeAfterBtn) _beforeAfterBtn.classList.add("active");
+    _ensureSplitElements();
+    _installRedrawHook();
+    // Force a fresh before-image build on the next overlay tick.
+    _invalidateBefore();
+    var S = _S(); if (S) S._developBeforeBuf = null;
+    _redrawNow();
 }
 
 // ========================================================================
@@ -4369,20 +4433,13 @@ if (window.StudioModules) {
         deactivate: function () {
             document.body.classList.remove("develop-active");
             _hidePanel();
-            // Tear down before/after split overlay if open
-            if (_splitLine) _splitLine.classList.remove("visible");
-            if (_splitLabelL) _splitLabelL.classList.remove("visible");
-            if (_splitLabelR) _splitLabelR.classList.remove("visible");
-            var S = _S();
-            if (S) S._developBeforeBuf = null;
-            _invalidateBefore();
-            _splitActive = false;
-            // Stop the GPU split so the next module's redraws don't
-            // fight the cached scissor pass.
-            var W = window.StudioCanvasWebGLPreview;
-            if (W && typeof W.setDevelopSplit === "function") {
-                W.setDevelopSplit({ active: false });
-            }
+            // Single teardown for every Develop-only UI surface —
+            // split line + labels, B/A button highlight, cached
+            // before pixels, 2D fallback buffer on S, and the
+            // WebGL scissor pass. The helper is safe to call from
+            // outside Develop, so it doubles as the cleanup path
+            // for any redraw / drag that fires after we've left.
+            clearDevelopChrome("deactivate");
             // Resize the canvas back now that toolstrip + panel-right are
             // visible again.
             var UI = window.StudioUI;
