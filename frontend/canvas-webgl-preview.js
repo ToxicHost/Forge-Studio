@@ -79,6 +79,18 @@
   var _texMagFilter = 0; // last-applied TEXTURE_MAG_FILTER (NEAREST or LINEAR)
   var _texMinFilter = 0; // last-applied TEXTURE_MIN_FILTER
 
+  // Develop "Before/After" split state. The before texture holds
+  // pre-develop layer pixels; the after texture is the existing
+  // _docTexture. While active, renderNow draws the after texture as
+  // usual, then re-renders the same quad with the before texture
+  // bound and a gl.scissor clip to the left of _developSplitPos.
+  // Split position is in canvas-display coordinates (0..1 of the
+  // GL canvas width) — matches the Canvas 2D fallback's semantics.
+  var _beforeTexture = null;
+  var _beforeTexW = 0, _beforeTexH = 0;
+  var _developSplitActive = false;
+  var _developSplitPos = 0.5;
+
   var _viewDirty = true;
   var _pixelsDirty = true;
   var _rafId = 0;
@@ -286,6 +298,11 @@
     gl.pixelStorei(gl.UNPACK_FLIP_Y_WEBGL, false);
     gl.pixelStorei(gl.UNPACK_PREMULTIPLY_ALPHA_WEBGL, false);
 
+    // Allocate the Before/After texture lazily on the first
+    // setDevelopSplit({beforeImageData}) call so users who never
+    // open Develop don't pay for a texture they won't use. Same
+    // wrap/filter setup happens in _ensureBeforeTexture().
+
     _gl = gl;
     _refreshVoidColor();
     return true;
@@ -297,7 +314,11 @@
     try { _gl.deleteProgram(_checkerProgram); } catch (e) {}
     try { _gl.deleteBuffer(_quadBuffer); } catch (e) {}
     try { _gl.deleteTexture(_docTexture); } catch (e) {}
+    try { if (_beforeTexture) _gl.deleteTexture(_beforeTexture); } catch (e) {}
     _docProgram = _checkerProgram = _quadBuffer = _docTexture = null;
+    _beforeTexture = null;
+    _beforeTexW = _beforeTexH = 0;
+    _developSplitActive = false;
     _docUniforms = _checkerUniforms = null;
     _gl = null;
     _isGL2 = false;
@@ -306,6 +327,38 @@
   }
 
   // --- texture upload ---------------------------------------------------
+
+  function _ensureBeforeTexture() {
+    if (!_gl || _beforeTexture) return;
+    var gl = _gl;
+    _beforeTexture = gl.createTexture();
+    gl.bindTexture(gl.TEXTURE_2D, _beforeTexture);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_S, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_WRAP_T, gl.CLAMP_TO_EDGE);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MIN_FILTER, gl.LINEAR);
+    gl.texParameteri(gl.TEXTURE_2D, gl.TEXTURE_MAG_FILTER, gl.NEAREST);
+  }
+
+  // Upload pre-develop pixels into the before-texture. Caller passes
+  // an ImageData-shaped object (anything with .width/.height/.data —
+  // the develop module hands us the result of
+  // StudioCore.getFlattenedImageData({applyDevelop:false})).
+  function _uploadBeforeTexture(imgData) {
+    if (!_gl || !imgData || !imgData.data) return;
+    _ensureBeforeTexture();
+    var gl = _gl;
+    var w = imgData.width | 0, h = imgData.height | 0;
+    if (!w || !h) return;
+    gl.bindTexture(gl.TEXTURE_2D, _beforeTexture);
+    if (_beforeTexW !== w || _beforeTexH !== h) {
+      gl.texImage2D(gl.TEXTURE_2D, 0, gl.RGBA, w, h, 0,
+        gl.RGBA, gl.UNSIGNED_BYTE, imgData.data);
+      _beforeTexW = w; _beforeTexH = h;
+    } else {
+      gl.texSubImage2D(gl.TEXTURE_2D, 0, 0, 0, w, h,
+        gl.RGBA, gl.UNSIGNED_BYTE, imgData.data);
+    }
+  }
 
   function _uploadTexture() {
     if (!_gl) return;
@@ -353,7 +406,7 @@
 
   // --- render -----------------------------------------------------------
 
-  function _drawQuad(program, uniforms, S, z, dpr, viewCssW, viewCssH) {
+  function _drawQuad(program, uniforms, S, z, dpr, viewCssW, viewCssH, texOverride) {
     var gl = _gl;
     gl.useProgram(program);
     var aPosLoc = gl.getAttribLocation(program, "aPos");
@@ -374,7 +427,7 @@
     gl.uniform2f(uniforms.uViewSize, viewCssW, viewCssH);
     if (uniforms.uTex) {
       gl.activeTexture(gl.TEXTURE0);
-      gl.bindTexture(gl.TEXTURE_2D, _docTexture);
+      gl.bindTexture(gl.TEXTURE_2D, texOverride || _docTexture);
       gl.uniform1i(uniforms.uTex, 0);
     }
     gl.drawArrays(gl.TRIANGLES, 0, 6);
@@ -436,6 +489,24 @@
     gl.enable(gl.BLEND);
     gl.blendFunc(gl.SRC_ALPHA, gl.ONE_MINUS_SRC_ALPHA);
     _drawQuad(_docProgram, _docUniforms, S, z, dpr, viewCssW, viewCssH);
+
+    // Develop Before/After split — re-render the same doc quad with
+    // the before-texture bound, but with gl.scissor restricting the
+    // draw to the left half of the canvas (in device pixels). The
+    // after texture stays on the right side untouched. The split
+    // line + labels are positioned by develop.js as DOM overlays so
+    // their CSS handles font/contrast independently.
+    if (_developSplitActive && _beforeTexture) {
+      var splitDeviceX = Math.round(_developSplitPos * _glCanvas.width);
+      if (splitDeviceX > 0) {
+        gl.enable(gl.SCISSOR_TEST);
+        // gl.scissor uses bottom-left origin in device pixels; we
+        // want a left-anchored band the full canvas height.
+        gl.scissor(0, 0, splitDeviceX, _glCanvas.height);
+        _drawQuad(_docProgram, _docUniforms, S, z, dpr, viewCssW, viewCssH, _beforeTexture);
+        gl.disable(gl.SCISSOR_TEST);
+      }
+    }
 
     _viewDirty = false;
   }
@@ -510,6 +581,45 @@
   }
 
   function isLiveCanvasFallbackActive() { return _liveFallback; }
+
+  // --- develop before/after split --------------------------------------
+  //
+  // Public API used by develop.js to drive the split-render path.
+  // Caller hands us:
+  //   active: bool  — true to enable the split, false to clear it.
+  //   splitPos: number 0..1 — fraction of canvas width where the
+  //     split sits. Re-passed every drag tick.
+  //   beforeImageData: ImageData-shaped — pre-develop pixels from
+  //     StudioCore.getFlattenedImageData({applyDevelop:false}).
+  //     Optional on subsequent calls: pass once at toggle-on, omit
+  //     during drag-to-update splitPos so the cached texture stays.
+  //
+  // No-ops gracefully if the WebGL backend isn't initialized — the
+  // caller is expected to fall back to the Canvas 2D split overlay
+  // path in that case.
+  function setDevelopSplit(opts) {
+    opts = opts || {};
+    if (!opts.active) {
+      // Clear the split. Don't free the before texture — keep it
+      // around so re-toggling on doesn't have to re-upload pixels
+      // we may already have. Free happens via dispose().
+      if (_developSplitActive) {
+        _developSplitActive = false;
+        markViewDirty();
+      }
+      return;
+    }
+    if (!_initGL()) return;
+    _developSplitActive = true;
+    if (typeof opts.splitPos === "number" && isFinite(opts.splitPos)) {
+      var p = opts.splitPos;
+      if (p < 0) p = 0; else if (p > 1) p = 1;
+      _developSplitPos = p;
+    }
+    if (opts.beforeImageData) _uploadBeforeTexture(opts.beforeImageData);
+    markViewDirty();
+  }
+  function isDevelopSplitActive() { return _developSplitActive; }
 
   // --- redraw hook ------------------------------------------------------
   //
@@ -670,6 +780,8 @@
     beginLiveCanvasFallback: beginLiveCanvasFallback,
     endLiveCanvasFallback: endLiveCanvasFallback,
     isLiveCanvasFallbackActive: isLiveCanvasFallbackActive,
+    setDevelopSplit: setDevelopSplit,
+    isDevelopSplitActive: isDevelopSplitActive,
     dispose: dispose,
   };
 
