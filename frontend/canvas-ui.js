@@ -1900,6 +1900,70 @@ function smartRotate(angleRad) {
     _redraw();
 }
 
+// Safe rotate entry point used by every UI surface (Transform options
+// bar, layer-row context menu, keyboard shortcut). Routes the rotation
+// to the right place depending on whether a Transform operation is
+// already in progress.
+//
+// PR #160 follow-up: the option-bar buttons used to hit the in-place
+// canvas-core rotate paths directly. When a Transform was active, the
+// active layer's canvas had already been cleared inside the transform
+// bounds (the floating preview lives in S.transform.canvas), so the
+// rotate ran on a half-empty layer — clipping/cropping content and
+// leaving the visible preview untouched. Routing through here keeps
+// pre-commit edits non-destructive: rotation composes with the
+// existing transform's rotation field instead.
+function _safeRotateLayer(angleRad) {
+    const L = C.activeLayer();
+    if (!L || L.type === "adjustment") {
+        if (window.showToast) showToast("Rotate is unavailable on this layer", "info");
+        return;
+    }
+    if (S.transform.active) {
+        // Perspective / warp grids don't compose meaningfully with a
+        // post-hoc rotation — let the user disable the mode first
+        // rather than silently losing their grid setup.
+        if (S.transform.perspective || S.transform.warp) {
+            if (window.showToast) showToast("Disable Perspective/Warp before rotating", "info");
+            return;
+        }
+        S.transform.rotation = (S.transform.rotation || 0) + angleRad;
+        _redraw();
+        return;
+    }
+    smartRotate(angleRad);
+}
+
+// Safe flip entry point. Same routing logic as _safeRotateLayer:
+// while a Transform is active, toggle the transform's flipH/flipV
+// flag so the floating preview reflects the change; otherwise mutate
+// the layer canvas in place via the canvas-core helpers.
+function _safeFlipLayer(opts) {
+    const horizontal = !!(opts && opts.horizontal);
+    const vertical = !!(opts && opts.vertical);
+    if (!horizontal && !vertical) return;
+
+    const L = C.activeLayer();
+    if (!L || L.type === "adjustment") {
+        if (window.showToast) showToast("Flip is unavailable on this layer", "info");
+        return;
+    }
+    if (S.transform.active) {
+        if (S.transform.perspective || S.transform.warp) {
+            if (window.showToast) showToast("Disable Perspective/Warp before flipping", "info");
+            return;
+        }
+        if (horizontal) S.transform.flipH = !S.transform.flipH;
+        if (vertical) S.transform.flipV = !S.transform.flipV;
+        _redraw();
+        return;
+    }
+    if (horizontal) C.flipLayerHorizontal();
+    if (vertical) C.flipLayerVertical();
+    renderLayerPanel();
+    _redraw();
+}
+
 function _commitTransform() {
     if (!S.transform.active) return;
     const L = S.layers[S.transform.layerIdx];
@@ -1935,6 +1999,14 @@ function _commitTransform() {
         L.ctx.drawImage(S.transform.canvas, -b.w / 2, -b.h / 2, b.w, b.h);
         L.ctx.restore();
     }
+    // Bump the composite version so the cached composite buffer
+    // (canvas-core's _compBufCache) and the WebGL preview texture both
+    // refresh on the next redraw. saveStructuralUndo at transform
+    // start bumped the version once (with the cleared bounds rect
+    // baked in); without this second bump, the next composite would
+    // serve that stale cache and the user would see the layer
+    // disappear at commit time.
+    C.markCompositeDirty();
     _resetTransformState();
 }
 
@@ -3437,21 +3509,19 @@ function _showLayerCtxMenu(x, y) {
     const isAdjust = L && L.type === "adjustment";
     const menu = _createCtxMenu();
 
-    const apply = (fn) => () => { fn(); renderLayerPanel(); _redraw(); };
-
     const items = [
-        { label: "Flip Horizontal", shortcut: "Ctrl+Shift+H", action: apply(() => C.flipLayerHorizontal()), disabled: isAdjust },
-        { label: "Flip Vertical",   shortcut: "Ctrl+Shift+V", action: apply(() => C.flipLayerVertical()),   disabled: isAdjust },
+        { label: "Flip Horizontal", shortcut: "Ctrl+Shift+H", action: () => _safeFlipLayer({ horizontal: true }), disabled: isAdjust },
+        { label: "Flip Vertical",   shortcut: "Ctrl+Shift+V", action: () => _safeFlipLayer({ vertical: true }),   disabled: isAdjust },
         { type: "sep" },
-        { label: "Rotate 90° CW",  action: () => smartRotate(Math.PI / 2),  disabled: isAdjust },
-        { label: "Rotate 90° CCW", action: () => smartRotate(-Math.PI / 2), disabled: isAdjust },
-        { label: "Rotate 180°",    action: () => smartRotate(Math.PI),      disabled: isAdjust },
+        { label: "Rotate 90° CW",  action: () => _safeRotateLayer(Math.PI / 2),  disabled: isAdjust },
+        { label: "Rotate 90° CCW", action: () => _safeRotateLayer(-Math.PI / 2), disabled: isAdjust },
+        { label: "Rotate 180°",    action: () => _safeRotateLayer(Math.PI),      disabled: isAdjust },
         { label: "Rotate Arbitrary…", action: () => {
             const ans = prompt("Rotate by how many degrees? (positive = clockwise)", "15");
             if (ans === null) return;
             const deg = parseFloat(ans);
             if (!Number.isFinite(deg)) { if (window.showToast) window.showToast("Invalid angle", "warning"); return; }
-            smartRotate(deg * Math.PI / 180);
+            _safeRotateLayer(deg * Math.PI / 180);
         }, disabled: isAdjust },
     ];
 
@@ -3547,11 +3617,13 @@ function bindKeys() {
         if (e.ctrlKey || e.metaKey) {
             // Ctrl+Shift+V → Flip active layer vertically. Has to come
             // before the Ctrl+V (paste) case below, which returns
-            // unconditionally regardless of shift.
-            if (e.shiftKey && e.key.toLowerCase() === "v" && !S.transform.active) {
+            // unconditionally regardless of shift. Routes through the
+            // safe helper so a Transform-in-progress toggles the
+            // floating preview's flip flag instead of mutating the
+            // (already partially cleared) source layer canvas.
+            if (e.shiftKey && e.key.toLowerCase() === "v") {
                 e.preventDefault();
-                C.flipLayerVertical();
-                renderLayerPanel(); _redraw();
+                _safeFlipLayer({ vertical: true });
                 return;
             }
             switch (e.key.toLowerCase()) {
@@ -3600,11 +3672,13 @@ function bindKeys() {
                     }
                     return;
                 case "h":
-                    if (e.shiftKey && !S.transform.active) {
+                    if (e.shiftKey) {
                         e.preventDefault();
-                        // Ctrl+Shift+H — Flip active layer horizontally
-                        C.flipLayerHorizontal();
-                        renderLayerPanel(); _redraw();
+                        // Ctrl+Shift+H — Flip active layer horizontally.
+                        // Routes through the safe helper so the floating
+                        // Transform preview is updated instead of the
+                        // source layer when a transform is in progress.
+                        _safeFlipLayer({ horizontal: true });
                     }
                     return;
             }
@@ -3688,7 +3762,15 @@ function bindKeys() {
             if (S.transform.active) {
                 e.preventDefault();
                 const L = S.layers[S.transform.layerIdx];
-                if (L && S.transform.originalData) L.ctx.putImageData(S.transform.originalData, 0, 0);
+                if (L && S.transform.originalData) {
+                    L.ctx.putImageData(S.transform.originalData, 0, 0);
+                    // Restoring originalData brings back the cleared
+                    // bounds rect, but the composite cache was built
+                    // from the cleared layer at transform-start. Bump
+                    // the version so the next composite recomputes
+                    // from the restored pixels.
+                    C.markCompositeDirty();
+                }
                 _resetTransformState();
                 _redraw(); return;
             }
@@ -4111,7 +4193,14 @@ function bindToolbar() {
 
     // Transform skew mode toggle
     document.getElementById("tfSkewBtn")?.addEventListener("click", () => {
-        if (S.transform.perspective) return; // can't skew in perspective mode
+        if (!S.transform.active) {
+            if (window.showToast) showToast("Click the canvas to start a transform first", "info");
+            return;
+        }
+        if (S.transform.perspective || S.transform.warp) {
+            if (window.showToast) showToast("Disable Perspective/Warp before enabling Skew", "info");
+            return;
+        }
         S.transform.skewMode = !S.transform.skewMode;
         document.getElementById("tfSkewBtn")?.classList.toggle("active", S.transform.skewMode);
         if (window.showToast) showToast("Skew " + (S.transform.skewMode ? "ON" : "OFF"), "info");
@@ -4120,35 +4209,31 @@ function bindToolbar() {
 
     // Perspective mode toggle
     document.getElementById("tfPerspBtn")?.addEventListener("click", () => {
-        if (!S.transform.active) return;
+        if (!S.transform.active) {
+            if (window.showToast) showToast("Click the canvas to start a transform first", "info");
+            return;
+        }
         _togglePerspective();
     });
 
     // Warp mode toggle
     document.getElementById("tfWarpBtn")?.addEventListener("click", () => {
-        if (!S.transform.active) return;
+        if (!S.transform.active) {
+            if (window.showToast) showToast("Click the canvas to start a transform first", "info");
+            return;
+        }
         _toggleWarp();
     });
 
-    // Flip / rotate the active layer. Flip H/V acts on the layer
-    // pixels in place (dimensions don't change so there's no overflow
-    // case). Rotation goes through smartRotate, which decides between
-    // an in-place rotation (when the rotated content still fits in
-    // the canvas) and a Transform-tool engagement (when it doesn't —
-    // the rotated content extends past the canvas and the user can
-    // pan/scale to position it before committing).
-    function _layerOp(fn) {
-        return () => {
-            fn();
-            renderLayerPanel();
-            _redraw();
-        };
-    }
-    document.getElementById("tfFlipHBtn")?.addEventListener("click", _layerOp(() => C.flipLayerHorizontal()));
-    document.getElementById("tfFlipVBtn")?.addEventListener("click", _layerOp(() => C.flipLayerVertical()));
-    document.getElementById("tfRot90CWBtn")?.addEventListener("click", () => smartRotate(Math.PI / 2));
-    document.getElementById("tfRot90CCWBtn")?.addEventListener("click", () => smartRotate(-Math.PI / 2));
-    document.getElementById("tfRot180Btn")?.addEventListener("click", () => smartRotate(Math.PI));
+    // Flip / rotate the active layer. All entry points (option bar,
+    // layer-row context menu, keyboard) funnel through _safeFlipLayer
+    // and _safeRotateLayer so a Transform-in-progress doesn't get its
+    // floating preview desynced from the underlying layer canvas.
+    document.getElementById("tfFlipHBtn")?.addEventListener("click", () => _safeFlipLayer({ horizontal: true }));
+    document.getElementById("tfFlipVBtn")?.addEventListener("click", () => _safeFlipLayer({ vertical: true }));
+    document.getElementById("tfRot90CWBtn")?.addEventListener("click", () => _safeRotateLayer(Math.PI / 2));
+    document.getElementById("tfRot90CCWBtn")?.addEventListener("click", () => _safeRotateLayer(-Math.PI / 2));
+    document.getElementById("tfRot180Btn")?.addEventListener("click", () => _safeRotateLayer(Math.PI));
     document.getElementById("tfRotArbBtn")?.addEventListener("click", () => {
         const ans = prompt("Rotate by how many degrees? (positive = clockwise)", "15");
         if (ans === null) return;
@@ -4157,7 +4242,7 @@ function bindToolbar() {
             if (window.showToast) showToast("Invalid angle", "warning");
             return;
         }
-        smartRotate(deg * Math.PI / 180);
+        _safeRotateLayer(deg * Math.PI / 180);
     });
 
     // Warp density buttons (3/4/5)
