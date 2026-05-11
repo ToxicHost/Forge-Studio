@@ -712,9 +712,17 @@ async function startMerge() {
         WS.merging = true; WS.status = "running"; WS.progress = 0; WS.error = null; WS.result = null;
         _renderProgress(); _setMergeButtonState(true);
         if (window.showToast) window.showToast(_t("workshop.toast.runningRecipe", "Running " + chainSteps.length + "-step recipe…", { steps: chainSteps.length }), "info");
+        // Re-read the Save Intermediates checkbox right before the
+        // request goes out so a programmatic state drift (e.g. a
+        // missed change event from a keyboard toggle) can't push
+        // stale truthiness onto the backend. Explicit boolean so
+        // the JSON body is always either true or false, never
+        // undefined.
+        const siChecked = !!(_els.saveIntermediates && _els.saveIntermediates.checked);
+        WS.saveIntermediates = siChecked;
         await fetchJSON(API + "/chain", {
             method: "POST", headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ steps: chainSteps, save_intermediates: WS.saveIntermediates }),
+            body: JSON.stringify({ steps: chainSteps, save_intermediates: siChecked }),
         });
     } catch (e) {
         WS.merging = false; WS.status = "error"; WS.error = e.message; _renderProgress(); _setMergeButtonState(false);
@@ -908,6 +916,107 @@ function _cardRecipeSummary(e) {
     return '<div class="ws-history-card-recipe"></div>';
 }
 
+// Return the saved-on-disk model filename a journal entry points at,
+// or null if there's nothing importable. Importable means: the
+// filename exists in the current WS.models list (i.e. the file is
+// still on disk and the user's model browser can see it).
+//
+// For normal merge / lora_bake / vae_bake entries, that's just
+// entry.name. For chain entries (save_intermediates=off), entry.name
+// is the final output the chain landed on; the intermediate step
+// filenames live in entry.recipe.steps and intentionally don't get
+// surfaced for import because the files behind them are deleted.
+// For everything else (note entries, unknown types, missing name)
+// the helper returns null so the import UI can hide itself.
+function _journalEntryModelFilename(entry) {
+    if (!entry || !entry.name) return null;
+    if (entry.type === "note") return null;
+    if (typeof entry.name !== "string") return null;
+    // Only .safetensors checkpoints are valid in the merge board's
+    // primary/secondary/tertiary slots. The journal can also contain
+    // entries pointing at LoRA / VAE artifacts via future flows; an
+    // extension-check keeps those out without needing a separate
+    // entry-type taxonomy.
+    if (!/\.safetensors$/i.test(entry.name)) return null;
+    return entry.name;
+}
+
+function _journalEntryHasImportableModel(entry) {
+    const fn = _journalEntryModelFilename(entry);
+    if (!fn) return false;
+    return WS.models.some(m => m.filename === fn);
+}
+
+// Render the "Use as Primary / Secondary / Tertiary" button cluster
+// for a journal entry. `where` is "detail" or "card" and selects a
+// pre-set sizing class so both surfaces use shared styles without
+// fighting each other. Returns an empty string when the entry isn't
+// importable (LoRA-only flows, deleted intermediates, notes, etc.).
+function _importActionsHtml(entry, where) {
+    if (!_journalEntryModelFilename(entry)) return "";
+    const id = _esc(entry.id);
+    const wherePart = where === "card" ? " ws-je-import-card" : " ws-je-import-detail";
+    const label = where === "card" ? "Use in" : "Send to active row";
+    return '<div class="ws-je-section ws-je-import' + wherePart + '">'
+        + '<div class="ws-je-section-label">' + label + '</div>'
+        + '<div class="ws-je-import-row">'
+        + '<button class="ws-je-import-btn" data-action="useAsPrimary"   data-id="' + id + '">Use as Primary</button>'
+        + '<button class="ws-je-import-btn" data-action="useAsSecondary" data-id="' + id + '">Use as Secondary</button>'
+        + '<button class="ws-je-import-btn" data-action="useAsTertiary"  data-id="' + id + '">Use as Tertiary</button>'
+        + '</div>'
+        + '</div>';
+}
+
+// Push a journal entry's saved model into the active row's slot.
+// `slot` is "primary" | "secondary" | "tertiary". Goes through one
+// model-list refresh + retry if the filename isn't found, so a
+// recent merge that hasn't been picked up by the asset rescan
+// still lands on the row instead of silently failing. Mirrors the
+// per-slot side effects (inspect, preflight, compatibility,
+// auto-diff buttons, final-row output rename) that a manual
+// dropdown change would have triggered.
+async function _importJournalModelToActiveSlot(entry, slot) {
+    const filename = _journalEntryModelFilename(entry);
+    if (!filename) return;
+    if (!_journalEntryHasImportableModel(entry)) {
+        // One automatic refresh before giving up — covers the common
+        // race where the user clicks import seconds after the chain
+        // finished but before the rescan ran.
+        try { await loadModels(); } catch (_) {}
+        if (!_journalEntryHasImportableModel(entry)) {
+            if (window.showToast) window.showToast(_t("workshop.toast.modelUnavailable", "Model file is no longer available"), "error");
+            return;
+        }
+    }
+    const rowIdx = WS.activeRow;
+    const row = WS.rows[rowIdx];
+    if (!row) return;
+    row[slot] = filename;
+
+    // Rebuild the row so the dropdown reflects the new value and
+    // the searchable-select wrapper repaints its trigger label.
+    _renderRows();
+    _setActiveRow(rowIdx);
+
+    // Same downstream work the per-slot change handlers do — keep
+    // the inspector, preflight, compatibility, and final-row output
+    // name in sync. Calls are no-ops on inactive rows by themselves.
+    WS.compatibility = null;
+    WS.healthScan = null;
+    if (slot === "primary") inspectModel(_isConcreteModel(filename) ? filename : null, "A");
+    else if (slot === "secondary") inspectModel(_isConcreteModel(filename) ? filename : null, "B");
+    runPreflight();
+    runCompatibility();
+    _updateActionButtons();
+    _updateRowAutoDiffButtons(rowIdx);
+    _recomputeFinalRowOutputName();
+
+    const slotLabel = slot.charAt(0).toUpperCase() + slot.slice(1);
+    if (window.showToast) {
+        window.showToast("Sent to Row " + (rowIdx + 1) + " · " + slotLabel, "success");
+    }
+}
+
 function _renderJournal() {
     let entries = WS.journalEntries;
     const search = WS.journalSearch.toLowerCase();
@@ -964,6 +1073,7 @@ function _renderJournal() {
             + '<div class="ws-history-card-info">'
             + '<div class="ws-history-card-filename" title="' + _esc(e.name || "") + '">' + _esc(e.name || "Untitled") + '</div>'
             + '<div class="ws-history-card-date">' + _esc(date) + (elapsed ? ' · ' + _esc(elapsed) : '') + '</div>'
+            + _importActionsHtml(e, "card")
             + '</div>'
             + '</div>';
     }
@@ -1069,6 +1179,7 @@ function _renderHistoryDetail() {
         + '<div class="ws-je-section"><div class="ws-je-section-label">Sample Image</div>'
         + '<div class="ws-je-image-area" data-id="' + _esc(e.id) + '">' + imageHtml + '</div>'
         + '</div>'
+        + _importActionsHtml(e, "detail")
         + '<div class="ws-je-actions">'
         + '<button class="ws-je-action-btn ws-je-delete" data-id="' + _esc(e.id) + '">Delete</button>'
         + '</div>'
@@ -1087,10 +1198,13 @@ function _closeHistoryDetail() {
 function _bindJournalEvents() {
     const host = _els.journalList?.parentElement;
 
-    // Card click → open detail overlay (ignore clicks on stars)
+    // Card click → open detail overlay (ignore clicks on stars and
+    // the import-action pill row — those have their own handlers
+    // below and shouldn't also pop the overlay open underneath).
     _els.journalList.querySelectorAll(".ws-history-card").forEach(card => {
         card.addEventListener("click", (ev) => {
             if (ev.target.classList.contains("ws-journal-star")) return;
+            if (ev.target.closest(".ws-je-import")) return;
             const id = card.dataset.id;
             WS.journalExpanded = id;
             _renderHistoryDetail();
@@ -1114,6 +1228,25 @@ function _bindJournalEvents() {
         });
     });
 
+    // Send-to-board buttons live on both card and detail surfaces;
+    // wire them once here using a single delegated handler off the
+    // journal list element. data-action values are useAsPrimary /
+    // useAsSecondary / useAsTertiary.
+    _els.journalList.querySelectorAll(".ws-je-import-btn").forEach(btn => {
+        btn.addEventListener("click", async (ev) => {
+            ev.stopPropagation();
+            const id = btn.dataset.id;
+            const action = btn.dataset.action;
+            const slot = action === "useAsPrimary" ? "primary"
+                : action === "useAsSecondary" ? "secondary"
+                : action === "useAsTertiary" ? "tertiary"
+                : null;
+            if (!slot) return;
+            const entry = WS.journalEntries.find(e => e.id === id);
+            if (!entry) return;
+            await _importJournalModelToActiveSlot(entry, slot);
+        });
+    });
 }
 
 // Bind events inside the detail overlay (re-bound on every render
@@ -1248,6 +1381,26 @@ function _bindHistoryDetailEvents() {
             } catch (e) { console.error(TAG, "Delete failed:", e); }
         });
     }
+
+    // Use-as-Primary / Secondary / Tertiary buttons. Same handler
+    // shape as the card-surface wiring in _bindJournalEvents; closes
+    // the detail overlay so the user sees the row populate.
+    overlay.querySelectorAll(".ws-je-import-btn").forEach(btn => {
+        btn.addEventListener("click", async (ev) => {
+            ev.stopPropagation();
+            const id = btn.dataset.id;
+            const action = btn.dataset.action;
+            const slot = action === "useAsPrimary" ? "primary"
+                : action === "useAsSecondary" ? "secondary"
+                : action === "useAsTertiary" ? "tertiary"
+                : null;
+            if (!slot) return;
+            const entry = WS.journalEntries.find(e => e.id === id);
+            if (!entry) return;
+            await _importJournalModelToActiveSlot(entry, slot);
+            _closeHistoryDetail();
+        });
+    });
 }
 
 // ========================================================================

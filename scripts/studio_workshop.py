@@ -1137,6 +1137,18 @@ _merge_state = {
 }
 _cancel_event = Event()
 
+# Suppress _journal_add_from_merge_state() while a multi-step chain is
+# in flight. The leaf callers (merge_models, bake_lora, bake_vae) auto-
+# write a journal entry at the end of their runs; that's the right
+# behavior for a standalone /merge or /bake_* call, but inside a chain
+# it produces a per-step entry that competes with the combined chain
+# entry _journal_add_chain writes at the end. With save_intermediates
+# off the per-step files are deleted, so those per-step entries point
+# at phantom files. run_chain sets this true on entry / false at exit
+# (and on error) so the combined chain entry is the sole journal write
+# for chained runs.
+_chain_in_progress = False
+
 # Methods that require Model C
 METHODS_NEEDING_C = {"add_difference"}
 # Methods that use task vectors (B - A or B - C)
@@ -3002,9 +3014,13 @@ def run_chain(steps: list, save_intermediates: bool = False):
     Variables: __O1__, __O2__, etc. reference previous step outputs.
     Intermediates are auto-deleted unless save_intermediates is True.
     """
-    global _merge_state
+    global _merge_state, _chain_in_progress
     _cancel_event.clear()
     start = time.time()
+    # Suppress the per-step journal writes that merge_models /
+    # bake_lora / bake_vae would otherwise emit. _journal_add_chain
+    # below is the sole writer for chains.
+    _chain_in_progress = True
 
     total_steps = len(steps)
     outputs = {}  # step_num -> output_path
@@ -3130,6 +3146,12 @@ def run_chain(steps: list, save_intermediates: bool = False):
         _broadcast_workshop_progress()
         print(f"{TAG} Chain error: {e}")
         traceback.print_exc()
+    finally:
+        # Re-enable per-call journaling so a future standalone /merge
+        # or /bake_* request resumes writing its own entry. Done in
+        # finally so an early return on cancel and an exception both
+        # restore the flag.
+        _chain_in_progress = False
 
 
 def _is_step_referenced(step_num: int, params: dict) -> bool:
@@ -3381,7 +3403,18 @@ def _journal_add_chain(results: list, elapsed: float, save_intermediates: bool,
 
 
 def _journal_add_from_merge_state():
-    """Auto-add a journal entry from the current merge state result."""
+    """Auto-add a journal entry from the current merge state result.
+
+    Skipped while a chain is in progress — run_chain owns journaling
+    for chained runs and writes one combined entry via
+    _journal_add_chain. Without this guard, each chain step's leaf
+    operation (merge / bake_lora / bake_vae) would write its own
+    journal entry on top of the combined one, including for
+    intermediate files that get auto-deleted when save_intermediates
+    is off.
+    """
+    if _chain_in_progress:
+        return
     result = _merge_state.get("result")
     if not result:
         return
