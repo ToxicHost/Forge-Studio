@@ -803,7 +803,7 @@
             <div class="setting-group">
               <div class="setting-group-title" data-i18n="settings.canvas.title">Canvas</div>
               <div class="setting-row"><span class="setting-label" data-i18n="settings.canvas.showGrid">Show grid</span><div class="toggle-track" id="toggleGrid"><div class="toggle-knob"></div></div></div>
-              <div class="setting-row" title="Routes the on-screen canvas display through a WebGL surface so document colors match the gallery preview / saved file on color-managed Firefox setups. The display canvas continues to draw cursor / selection / brush stroke as a transparent overlay. Does not change exported pixels. Falls back to the standard canvas if WebGL is unavailable."><span class="setting-label">Match gallery preview colors</span><div class="toggle-track" id="toggleCanvasColorPreview"><div class="toggle-knob"></div></div></div>
+              <div class="setting-row" title="Uses the GPU/WebGL display backend for sharper color-managed canvas preview. Falls back to standard Canvas 2D if unavailable. Does not change exported pixels."><span class="setting-label">GPU canvas preview</span><div class="toggle-track" id="toggleCanvasColorPreview"><div class="toggle-knob"></div></div></div>
               <!-- Pen pressure is now on the brush context bar -->
             </div>
             <div class="setting-group">
