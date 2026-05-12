@@ -55,6 +55,46 @@ def _natural_sort_key(text):
 
 VAE_PREFIX = "first_stage_model."
 
+# Cosmos-Predict2 (Anima) language-model conditioning adapter. These tensors
+# couple the diffusion stack to the external Qwen text encoder. They are
+# checkpoint-specific and must never be averaged across two models — merging
+# them produces total garbage. They also need to stay fp32 so we don't lose
+# precision on the residual scaling factors. The prefix appears both as a
+# top-level key and wrapped under model.diffusion_model., so the helpers
+# below match by substring, not strict startswith.
+LLM_ADAPTER_PREFIX = "llm_adapter."
+
+
+def _is_llm_adapter_key(key: str) -> bool:
+    """True if a key belongs to the Anima LLM adapter (any wrapping)."""
+    return (key.startswith(LLM_ADAPTER_PREFIX)
+            or ".llm_adapter." in key)
+
+
+def _is_protected_fp32_key(key: str, arch: Optional[str] = None) -> bool:
+    """True if a key must stay fp32 on save.
+
+    VAE keys always stay fp32 (legacy invariant). Anima llm_adapter keys
+    also stay fp32 — they hold the conditioning bridge to the Qwen LLM
+    and quantizing them collapses prompts.
+    """
+    if VAE_PREFIX in key:
+        return True
+    if arch == "cosmos" and _is_llm_adapter_key(key):
+        return True
+    return False
+
+
+def _should_copy_from_a_without_merge(key: str, arch: Optional[str]) -> bool:
+    """True if a key should be copied from Model A verbatim, never merged.
+
+    For Cosmos/Anima, the llm_adapter is checkpoint-specific and merging it
+    yields incoherent generations. Copy from A so the merge inherits A's
+    text-conditioning bridge unchanged.
+    """
+    return arch == "cosmos" and _is_llm_adapter_key(key)
+
+
 # =========================================================================
 # ARCHITECTURE DETECTION
 # =========================================================================
@@ -259,6 +299,20 @@ PRESETS = {
             **{f"S{i:02d}": 0.5 for i in range(38)},
         },
     },
+    # Cosmos-Predict2 (Anima). 28 blocks. We don't yet know which blocks own
+    # style vs. composition the way we do for SD, so these are split-half
+    # starter presets, not authoritative style/composition guidance.
+    "cosmos": {
+        "ALL 0.5": None,
+        "Early blocks from B": {
+            **{f"B{i:02d}": 1.0 for i in range(14)},
+            **{f"B{i:02d}": 0.0 for i in range(14, 28)},
+        },
+        "Late blocks from B": {
+            **{f"B{i:02d}": 0.0 for i in range(14)},
+            **{f"B{i:02d}": 1.0 for i in range(14, 28)},
+        },
+    },
 }
 
 
@@ -294,6 +348,10 @@ def compute_cosine_diff(path_a: str, path_b: str, progress_callback=None) -> dic
             sl = f_a.get_slice(key)
             dtype_str = str(sl.get_dtype())
             if "int" in dtype_str or "bool" in dtype_str:
+                continue
+            # Protected keys (Anima llm_adapter) are copied verbatim during
+            # merge, so per-block cosine similarity over them is meaningless.
+            if _should_copy_from_a_without_merge(key, arch):
                 continue
 
             t_a = f_a.get_tensor(key).float().flatten()
@@ -525,6 +583,17 @@ def check_compatibility(path_a: str, path_b: str) -> dict:
                 "type": "arch_match",
                 "text": f"Architecture: {arch_a['details']}",
             })
+            # Cosmos/Anima: surface the llm_adapter policy + preview-build note
+            # so users know what to expect before they commit a long merge.
+            if arch_a["arch"] == "cosmos":
+                info.append({
+                    "type": "cosmos_llm_adapter",
+                    "text": "Cosmos/Anima model detected; llm_adapter keys will be copied from Model A, not merged.",
+                })
+                warnings.append({
+                    "type": "cosmos_preview",
+                    "text": "Anima preview models may not transfer cleanly to future final releases.",
+                })
 
         # Key overlap
         shared = keys_a & keys_b
@@ -1051,9 +1120,13 @@ def _compute_per_key_cosine(path_a: str, path_b: str, key_filter=None) -> dict:
         keys_a = set(f_a.keys())
         keys_b = set(f_b.keys())
         shared_keys = sorted(keys_a & keys_b)
+        arch = detect_architecture(keys_a)["arch"]
 
         for key in shared_keys:
             if key_filter and not key_filter(key):
+                continue
+            # Protected keys are not merged by cosine_adaptive — skip them.
+            if _should_copy_from_a_without_merge(key, arch):
                 continue
 
             sl = f_a.get_slice(key)
@@ -1424,6 +1497,8 @@ def merge_models(
             print(f"{TAG} Architecture: {arch_info['details']}")
             print(f"{TAG} Keys: {key_info}")
 
+            protected_copy_count = 0
+
             for i, key in enumerate(all_keys):
                 if _cancel_event.is_set():
                     _merge_state.update({"status": "cancelled", "active": False})
@@ -1432,6 +1507,28 @@ def merge_models(
 
                 _merge_state["current_key"] = key
                 _merge_state["keys_done"] = i
+
+                # --- Protected keys: copy verbatim from Model A ---
+                # Cosmos/Anima llm_adapter tensors are checkpoint-specific and
+                # must not participate in any merge math (including Add
+                # Difference). Fall back to B or C if A doesn't have it rather
+                # than crashing on KeyError.
+                if _should_copy_from_a_without_merge(key, arch):
+                    if key in keys_a:
+                        t_out = f_a.get_tensor(key)
+                    elif key in keys_b:
+                        t_out = f_b.get_tensor(key)
+                    elif f_c is not None and key in keys_c:
+                        t_out = f_c.get_tensor(key)
+                    else:
+                        continue
+                    protected_copy_count += 1
+                    output_dict[key] = t_out
+                    if i % 50 == 0:
+                        _merge_state["progress"] = i / len(all_keys)
+                        _merge_state["elapsed"] = round(time.time() - start, 1)
+                        _broadcast_workshop_progress()
+                    continue
 
                 # --- Add Difference: 3-model merge ---
                 if method == "add_difference" and f_c is not None:
@@ -1535,9 +1632,9 @@ def merge_models(
                 else:
                     t_out = f_b.get_tensor(key)
 
-                # Downcast — never VAE keys
+                # Downcast — never VAE or llm_adapter keys
                 if save_fp16 and t_out.dtype == torch.float32:
-                    if VAE_PREFIX not in key:
+                    if not _is_protected_fp32_key(key, arch):
                         t_out = t_out.half()
 
                 output_dict[key] = t_out
@@ -1559,6 +1656,8 @@ def merge_models(
         if method == "slerp":
             print(f"{TAG} SLERP: {stats.get('slerp_count', 0)} spherical, "
                   f"{stats.get('lerp_fallback', 0)} LERP fallback")
+        if protected_copy_count:
+            print(f"{TAG} Protected keys: {protected_copy_count} llm_adapter tensors copied from Model A (not merged)")
         if nan_logged:
             print(f"{TAG} NaN guard: {nan_logged} keys had corrupted weights")
         if block_weights:
@@ -1590,6 +1689,9 @@ def merge_models(
             recipe["cosine_shift"] = cosine_shift
         if method == "star":
             recipe["eta"] = eta
+        if arch_info["arch"] == "cosmos":
+            recipe["llm_adapter_policy"] = "Copied from Model A; not merged"
+            recipe["license_note"] = "Inherits CircleStone Labs Non-Commercial + NVIDIA Open Model License"
 
         metadata = {"studio_workshop_recipe": json.dumps(recipe)}
 
@@ -1778,6 +1880,18 @@ def compute_merge_dict(
         stats = {}
 
         for i, key in enumerate(unet_keys):
+            # Protected keys (Anima llm_adapter) are never merged — copy from
+            # A. The merge_memory route blocks cosmos today, but keep this
+            # consistent in case the path is ever exercised directly.
+            if _should_copy_from_a_without_merge(key, arch):
+                if key in keys_a:
+                    output_dict[key] = f_a.get_tensor(key)
+                elif key in keys_b:
+                    output_dict[key] = f_b.get_tensor(key)
+                elif f_c is not None and key in keys_c:
+                    output_dict[key] = f_c.get_tensor(key)
+                continue
+
             # --- Add Difference: 3-model ---
             if method == "add_difference" and f_c is not None:
                 if key in keys_a and key in keys_b and key in keys_c:
@@ -2237,6 +2351,47 @@ def _build_key_map(ckpt_keys: set, lora_keys: set, arch: str) -> dict:
                 lycoris_key = f"lycoris_{inner.replace('.', '_')}"
                 if lycoris_key in lora_bases:
                     key_map[lycoris_key] = ckpt_key
+
+    # === Cosmos-Predict2 (Anima) LoRA formats ===
+    # Cosmos LoRAs ship from several training toolkits with different
+    # naming conventions. RDBT-Anima uses pipe.dit.<inner>, kohya/sd-scripts
+    # variants use model.diffusion_model.<inner> or diffusion_model.<inner>,
+    # and some custom trainers use plain dit.<inner> or just <inner>. Try
+    # them all so we match whichever the LoRA actually uses.
+    if arch == "cosmos":
+        cosmos_prefixes = (
+            "model.diffusion_model.",
+            "diffusion_model.",
+            "pipe.dit.",
+            "dit.",
+        )
+        for ckpt_key in ckpt_keys:
+            if not ckpt_key.endswith(".weight"):
+                continue
+            # Skip llm_adapter — those are never targets for a normal LoRA,
+            # and any LoRA that claims to target them will be flagged in
+            # bake_preflight and ignored at bake time.
+            if _is_llm_adapter_key(ckpt_key):
+                continue
+            # Strip any of the known wrapping prefixes to get the inner key.
+            inner = None
+            for cp in cosmos_prefixes:
+                if ckpt_key.startswith(cp):
+                    inner = ckpt_key[len(cp):-len(".weight")]
+                    break
+            if inner is None:
+                inner = ckpt_key[:-len(".weight")]
+            # Try every candidate LoRA base name a Cosmos training tool
+            # might emit. Direct first, then each wrapping prefix.
+            candidates = [inner]
+            for cp in cosmos_prefixes:
+                candidates.append(f"{cp}{inner}".rstrip("."))
+            # lycoris-style underscore form
+            candidates.append(f"lycoris_{inner.replace('.', '_')}")
+            for cand in candidates:
+                if cand and cand in lora_bases and cand not in key_map:
+                    key_map[cand] = ckpt_key
+                    break
 
     # === Generic: try direct base_name → base_name.weight match ===
     for base in lora_bases:
@@ -2706,6 +2861,9 @@ def bake_lora(
         applied = 0
         errors = 0
 
+        protected_skipped = 0
+        arch = arch_info["arch"]
+
         with safe_open(ckpt_path, framework="pt", device="cpu") as f:
             all_keys = sorted(f.keys())
             _merge_state["keys_total"] = len(all_keys)
@@ -2721,6 +2879,19 @@ def bake_lora(
                 _merge_state["keys_done"] = i
 
                 weight = f.get_tensor(key)
+
+                # Protected keys (Anima llm_adapter): write the checkpoint
+                # tensor through unchanged. The key map already excludes them
+                # for cosmos, but we belt-and-brace here in case a LoRA used
+                # an unusual prefix that slipped through.
+                if _should_copy_from_a_without_merge(key, arch):
+                    protected_skipped += 1
+                    output_dict[key] = weight
+                    if i % 50 == 0:
+                        _merge_state["progress"] = i / len(all_keys)
+                        _merge_state["elapsed"] = round(time.time() - start, 1)
+                        _broadcast_workshop_progress()
+                    continue
 
                 # Apply each LoRA sequentially
                 for lora_dict, ckpt_to_lora, lora_keys, strength in all_lora_data:
@@ -2739,9 +2910,9 @@ def bake_lora(
                             if errors <= 5:
                                 print(f"{TAG} Failed to apply {atype}: {base_name}")
 
-                # Downcast — never VAE keys
+                # Downcast — never VAE or llm_adapter keys
                 if save_fp16 and weight.dtype == torch.float32:
-                    if VAE_PREFIX not in key:
+                    if not _is_protected_fp32_key(key, arch_info["arch"]):
                         weight = weight.half()
 
                 output_dict[key] = weight
@@ -2760,6 +2931,8 @@ def bake_lora(
 
         bake_time = round(time.time() - start, 1)
         print(f"{TAG} Bake math complete in {bake_time}s ({applied} adapters applied, {errors} errors)")
+        if protected_skipped:
+            print(f"{TAG} Protected keys: {protected_skipped} llm_adapter tensors passed through unchanged")
 
         # Metadata
         recipe = {
@@ -2771,6 +2944,10 @@ def bake_lora(
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "workshop_version": VERSION,
         }
+        if arch == "cosmos":
+            recipe["architecture"] = "cosmos"
+            recipe["llm_adapter_policy"] = "Pass-through; LoRA targets on llm_adapter ignored"
+            recipe["license_note"] = "Inherits CircleStone Labs Non-Commercial + NVIDIA Open Model License"
         metadata = {"studio_workshop_recipe": json.dumps(recipe)}
 
         _merge_state.update({"current_key": "(saving...)", "progress": 0.95})
@@ -2910,6 +3087,7 @@ def bake_vae(
 
         with safe_open(ckpt_path, framework="pt", device="cpu") as f:
             all_keys = sorted(f.keys())
+            ckpt_arch = detect_architecture(set(all_keys))["arch"]
             _merge_state["keys_total"] = len(all_keys)
 
             for i, key in enumerate(all_keys):
@@ -2928,9 +3106,9 @@ def bake_vae(
                     replaced += 1
                 else:
                     weight = f.get_tensor(key)
-                    # Downcast non-VAE keys
+                    # Downcast non-protected keys (skip VAE + llm_adapter)
                     if save_fp16 and weight.dtype == torch.float32:
-                        if VAE_PREFIX not in key:
+                        if not _is_protected_fp32_key(key, ckpt_arch):
                             weight = weight.half()
 
                 output_dict[key] = weight
@@ -3800,6 +3978,16 @@ def setup_workshop_routes(app: FastAPI):
                 {"error": f"Method '{req.method}' not implemented. Available: {', '.join(sorted(ALL_METHODS))}"},
                 status_code=400)
 
+        # Cosmos/Anima doesn't go through the model.diffusion_model.* live-swap
+        # path the way SD/SDXL/FLUX/SD3 do, so we don't have a verified way to
+        # hot-swap its weights into a running pipeline. Save-to-Disk is fine;
+        # in-memory Test Merge is disabled until that path is built.
+        if arch_a["arch"] == "cosmos":
+            return JSONResponse({
+                "error": "Test Merge is not supported for Cosmos/Anima models. "
+                         "Use Save to Disk instead."},
+                status_code=400)
+
         # Verify a model is loaded
         try:
             _get_diffusion_model()
@@ -4098,6 +4286,30 @@ def setup_workshop_routes(app: FastAPI):
                                     shape_errors.append(f"{ckpt_key}: up.out={up.shape[0]} vs ckpt.out={ckpt_shape[0]}")
                                 break
 
+            # Cosmos/Anima preflight notices: surface the protection policy
+            # and warn if the LoRA tries to target llm_adapter (those targets
+            # will be silently ignored at bake time).
+            notices = []
+            if arch_info["arch"] == "cosmos":
+                notices.append({
+                    "severity": "info",
+                    "text": "Cosmos/Anima checkpoint: llm_adapter keys are protected and will pass through unchanged.",
+                })
+                lora_llm_adapter_bases = sorted({
+                    k[:-len(s)] for k in lora_keys for s in _LORA_SUFFIXES
+                    if k.endswith(s) and _is_llm_adapter_key(k)
+                })
+                if lora_llm_adapter_bases:
+                    notices.append({
+                        "severity": "warning",
+                        "text": (f"LoRA contains {len(lora_llm_adapter_bases)} llm_adapter target(s); "
+                                 "these will be ignored during bake."),
+                    })
+                notices.append({
+                    "severity": "info",
+                    "text": "Output inherits the CircleStone Labs Non-Commercial + NVIDIA Open Model License.",
+                })
+
             del lora_dict
 
             return {
@@ -4109,6 +4321,7 @@ def setup_workshop_routes(app: FastAPI):
                 "adapter_types": type_counts,
                 "architecture": arch_info,
                 "shape_errors": shape_errors[:5],
+                "notices": notices,
             }
         except Exception as e:
             traceback.print_exc()
