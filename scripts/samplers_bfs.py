@@ -1,5 +1,5 @@
 # samplers_bfs.py
-# BFS — Bandwise Flow Sampler v2.0 (standalone Forge/A1111 sampler)
+# BFS — Bandwise Flow Sampler v2.1 (standalone Forge/A1111 sampler)
 # Packaged with Forge Studio by ToxicHost & Moritz
 # v2 architecture by Claude (Anthropic)
 #
@@ -13,6 +13,11 @@
 #   detail_weight    — extra emphasis on high-frequency bands late in sampling
 #
 # Registers as "BFS (Bandwise Flow)" and "BFS Heun" in the sampler dropdown.
+#
+# v2.1 — 5D latent support for Cosmos/Anima-derived DiT models whose latents
+#         carry a temporal dimension: [B, C, T, H, W]. The temporal dim is
+#         squeezed before the Gaussian pyramid and restored after. No-op for
+#         standard 4D [B, C, H, W] latents (SDXL, Illustrious, etc.).
 
 import torch
 import torch.nn.functional as F
@@ -21,7 +26,7 @@ from dataclasses import dataclass
 from modules import sd_samplers, sd_samplers_common
 from modules.sd_samplers_kdiffusion import KDiffusionSampler
 
-_BFS_VERSION = "2.0"
+_BFS_VERSION = "2.1"
 print(f"[BFS] v{_BFS_VERSION} loaded from:", __file__)
 
 
@@ -108,7 +113,14 @@ def _band_gains(n_bands: int, t: float, structure_w: float, detail_w: float) -> 
 # ========================== Renormalization ==========================
 
 def _l2_norm(t: torch.Tensor, per_channel: bool = False, eps: float = 1e-8) -> torch.Tensor:
-    dims = (2, 3) if per_channel else (1, 2, 3)
+    # 4D [B, C, H, W]: spatial dims are (2, 3), all-but-batch are (1, 2, 3)
+    # 5D would already be squeezed to 4D before reaching here, but guard anyway
+    ndim = t.dim()
+    if ndim == 5:
+        # [B, C, T, H, W] — sum over T, H, W (or C, T, H, W)
+        dims = (3, 4) if per_channel else (1, 2, 3, 4)
+    else:
+        dims = (2, 3) if per_channel else (1, 2, 3)
     return torch.sqrt((t * t).sum(dim=dims, keepdim=True) + eps)
 
 
@@ -154,12 +166,27 @@ def _extract_sigmas(sigmas, kwargs):
 
 
 def _apply_bands(delta: torch.Tensor, params: BFSParams, t: float) -> torch.Tensor:
-    """Decompose delta into frequency bands, apply gain surface, renormalize."""
+    """Decompose delta into frequency bands, apply gain surface, renormalize.
+
+    Handles 5D [B, C, T, H, W] latents from Cosmos/Anima-derived DiT models
+    by squeezing the temporal dimension before the Gaussian pyramid conv2d
+    and restoring it after. No-op for standard 4D [B, C, H, W] latents.
+    """
+    # Squeeze temporal dim for DiT models (Anima, Cosmos-derived)
+    had_temporal = delta.dim() == 5
+    if had_temporal:
+        delta = delta.squeeze(2)
+
     bands = _pyramid_split(delta, params.n_bands)
     gains = _band_gains(params.n_bands, t, params.structure_weight, params.detail_weight)
 
     tuned = sum(g * b for g, b in zip(gains, bands))
-    return _renorm(tuned, delta, per_channel=params.per_channel_norm)
+    result = _renorm(tuned, delta, per_channel=params.per_channel_norm)
+
+    # Restore temporal dim
+    if had_temporal:
+        result = result.unsqueeze(2)
+    return result
 
 
 @torch.no_grad()
