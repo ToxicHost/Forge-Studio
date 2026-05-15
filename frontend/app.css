@@ -941,6 +941,36 @@ body {
 }
 /* FR-003: Extra spacing above first ratio row (after W/H fields) */
 #arBaseButtons { margin-top: 10px; }
+
+/* Workflow Profiles row — compact strip in the Generate panel */
+.workflow-row { display: flex; gap: 4px; align-items: center; margin-top: 6px; flex-wrap: nowrap; }
+.workflow-row .param-select { flex: 1 1 auto; min-width: 0; }
+.workflow-row .ar-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+
+/* Workflow modals (Save dialog + dimensions-resize confirm) */
+.modal-overlay {
+  position: fixed; inset: 0; background: rgba(0,0,0,0.55);
+  display: flex; align-items: center; justify-content: center;
+  z-index: 10000;
+}
+.modal-box {
+  background: var(--bg-1, #1f1f23); color: var(--text-1, #e5e5e5);
+  border: 1px solid var(--border, #333); border-radius: 8px;
+  padding: 18px 20px; min-width: 320px; max-width: 480px;
+  box-shadow: 0 8px 32px rgba(0,0,0,0.45);
+}
+.modal-box h3 { margin: 0 0 12px 0; font-size: 16px; }
+.modal-box p { margin: 0 0 14px 0; color: var(--text-2, #c4c4c4); }
+.modal-box .workflow-field { display: flex; flex-direction: column; gap: 4px; margin-bottom: 10px; font-size: 12px; }
+.modal-box .workflow-field input,
+.modal-box .workflow-field select {
+  background: var(--bg-2, #2a2a30); color: inherit;
+  border: 1px solid var(--border, #444); border-radius: 4px;
+  padding: 6px 8px; font: inherit;
+}
+.modal-box .workflow-checkrow { display: flex; align-items: center; gap: 6px; margin: 4px 0; font-size: 12px; }
+.modal-box .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
+.modal-box .ar-btn.primary { color: var(--accent, #6cf); border-color: var(--accent, #6cf); }
 .ar-btn {
   height: 24px; padding: 0 8px;
   background: var(--bg-input); border: 1px solid var(--border-subtle);
