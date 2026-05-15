@@ -96,6 +96,116 @@ def _should_copy_from_a_without_merge(key: str, arch: Optional[str]) -> bool:
 
 
 # =========================================================================
+# PACKAGE / NAMESPACE CLASSIFICATION (diagnostics only)
+# =========================================================================
+#
+# These helpers attribute every state-dict key to a "package" (core diffusion,
+# text encoder, VAE, LLM adapter, other) so the Inspector can answer the
+# question "what is inside this checkpoint?" without the user opening it in
+# a notebook. They are purely diagnostic — nothing in the merge math reads
+# from them.
+
+_DTYPE_BYTES = {
+    # safetensors-style strings (returned by f.get_slice(k).get_dtype())
+    "F64": 8, "F32": 4, "F16": 2, "BF16": 2,
+    "I64": 8, "I32": 4, "I16": 2, "I8": 1, "U8": 1, "BOOL": 1,
+    # torch dtype repr (str(tensor.dtype))
+    "torch.float64": 8, "torch.float32": 4,
+    "torch.float16": 2, "torch.bfloat16": 2,
+    "torch.int64": 8, "torch.int32": 4, "torch.int16": 2,
+    "torch.int8": 1, "torch.uint8": 1, "torch.bool": 1,
+}
+
+
+def _dtype_bytes_per_element(dtype_str: str) -> int:
+    return _DTYPE_BYTES.get(dtype_str, 0)
+
+
+def _prefix_family(key: str) -> str:
+    """First meaningful segment of a key — used to detect namespace duplication.
+
+    `model.diffusion_model.blocks.0.x` collapses to `model.diffusion_model.blocks`
+    and `blocks.0.x` collapses to `blocks`. If both appear in the same merged
+    output, we have two model bodies coexisting.
+    """
+    if key.startswith("model.diffusion_model."):
+        rest = key[len("model.diffusion_model."):]
+        return "model.diffusion_model." + rest.split(".", 1)[0]
+    return key.split(".", 1)[0]
+
+
+def _package_for_key(key: str, arch: Optional[str]) -> str:
+    """Classify a state-dict key into a coarse package bucket."""
+    if _is_llm_adapter_key(key):
+        return "llm_adapter"
+    if key.startswith(VAE_PREFIX) or ".first_stage_model." in key:
+        return "vae"
+    if "cond_stage_model." in key or "conditioner." in key:
+        return "text_encoder"
+
+    # Diffusion-core classification varies by architecture. Anything not
+    # matched falls through to "other" so the user can spot stray namespaces.
+    if arch == "cosmos":
+        if (".blocks." in key or key.startswith("blocks.")
+                or "adaln_modulation_cross_attn" in key
+                or "patch_embed" in key
+                or "x_embedder" in key
+                or "t_embedder" in key
+                or "time_embed" in key
+                or "final_layer" in key):
+            return "core"
+    elif arch in ("flux1", "flux2", "sd3"):
+        if ("double_blocks." in key or "single_blocks." in key
+                or "joint_blocks." in key
+                or key.startswith("img_in.")
+                or key.startswith("txt_in.")
+                or key.startswith("time_in.")
+                or key.startswith("vector_in.")
+                or key.startswith("guidance_in.")
+                or key.startswith("x_embedder.")
+                or key.startswith("y_embedder.")
+                or key.startswith("t_embedder.")
+                or key.startswith("context_embedder.")
+                or key.startswith("final_layer.")):
+            return "core"
+    elif arch in ("sdxl", "sd15"):
+        if (key.startswith("model.diffusion_model.")
+                or key.startswith("diffusion_model.")):
+            return "core"
+    return "other"
+
+
+def _log_output_breakdown(output_dict, arch: Optional[str]) -> None:
+    """Print package + dtype breakdown for a state dict being written.
+
+    Run immediately before each save_file() call so every Workshop output is
+    self-documenting in the console. Pure diagnostic — never raises and never
+    mutates output_dict.
+    """
+    try:
+        bytes_by_pkg, keys_by_pkg = {}, {}
+        bytes_by_dt, keys_by_dt = {}, {}
+        for key, tensor in output_dict.items():
+            nbytes = tensor.nelement() * tensor.element_size()
+            pkg = _package_for_key(key, arch)
+            dt = str(tensor.dtype)
+            bytes_by_pkg[pkg] = bytes_by_pkg.get(pkg, 0) + nbytes
+            keys_by_pkg[pkg] = keys_by_pkg.get(pkg, 0) + 1
+            bytes_by_dt[dt] = bytes_by_dt.get(dt, 0) + nbytes
+            keys_by_dt[dt] = keys_by_dt.get(dt, 0) + 1
+        print(f"{TAG} Output package breakdown:")
+        for pkg in sorted(bytes_by_pkg, key=lambda p: -bytes_by_pkg[p]):
+            gb = bytes_by_pkg[pkg] / (1024 ** 3)
+            print(f"{TAG}   {pkg}: {keys_by_pkg[pkg]} keys, {gb:.2f} GB")
+        print(f"{TAG} Output dtype breakdown:")
+        for dt in sorted(bytes_by_dt, key=lambda d: -bytes_by_dt[d]):
+            gb = bytes_by_dt[dt] / (1024 ** 3)
+            print(f"{TAG}   {dt}: {keys_by_dt[dt]} keys, {gb:.2f} GB")
+    except Exception as e:
+        print(f"{TAG} (breakdown log failed: {e})")
+
+
+# =========================================================================
 # ARCHITECTURE DETECTION
 # =========================================================================
 
@@ -108,8 +218,33 @@ _RE_JOINT = re.compile(r'joint_blocks\.(\d+)\.')
 _RE_COSMOS = re.compile(r'\.blocks\.(\d+)\.')
 
 
+def _count_extras(keys: set) -> dict:
+    """Count text-encoder, VAE, and LLM-adapter keys present in a state dict.
+
+    Used both by detect_architecture (to enrich its `details` string and
+    return explicit counts) and downstream diagnostics. Cheap single pass.
+    """
+    te = vae = adapter = 0
+    for k in keys:
+        if "cond_stage_model." in k or "conditioner." in k:
+            te += 1
+        if k.startswith(VAE_PREFIX) or ".first_stage_model." in k:
+            vae += 1
+        if _is_llm_adapter_key(k):
+            adapter += 1
+    return {"text_encoder": te, "vae": vae, "llm_adapter": adapter}
+
+
 def detect_architecture(keys: set) -> dict:
     """Detect model architecture from state dict keys."""
+    extras = _count_extras(keys)
+    common = {
+        "has_text_encoder_keys": extras["text_encoder"] > 0,
+        "text_encoder_key_count": extras["text_encoder"],
+        "vae_key_count": extras["vae"],
+        "llm_adapter_key_count": extras["llm_adapter"],
+    }
+
     if any("double_blocks." in k for k in keys):
         double_max = single_max = -1
         for k in keys:
@@ -122,9 +257,11 @@ def detect_architecture(keys: set) -> dict:
         total = n_double + n_single
         if n_double <= 8 and n_single >= 40:
             return {"arch": "flux2", "blocks": total,
-                    "details": f"FLUX.2 ({n_double} double + {n_single} single blocks)"}
+                    "details": f"FLUX.2 ({n_double} double + {n_single} single blocks)",
+                    **common}
         return {"arch": "flux1", "blocks": total,
-                "details": f"FLUX.1 ({n_double} double + {n_single} single blocks)"}
+                "details": f"FLUX.1 ({n_double} double + {n_single} single blocks)",
+                **common}
 
     if any("joint_blocks." in k for k in keys):
         joint_max = -1
@@ -133,7 +270,8 @@ def detect_architecture(keys: set) -> dict:
             if m: joint_max = max(joint_max, int(m.group(1)))
         n_joints = joint_max + 1 if joint_max >= 0 else 0
         return {"arch": "sd3", "blocks": n_joints,
-                "details": f"SD3 MMDiT ({n_joints} joint blocks)"}
+                "details": f"SD3 MMDiT ({n_joints} joint blocks)",
+                **common}
 
     if any("input_blocks." in k for k in keys):
         inp_max = -1
@@ -143,9 +281,11 @@ def detect_architecture(keys: set) -> dict:
         n_inp = inp_max + 1 if inp_max >= 0 else 0
         if n_inp <= 9:
             return {"arch": "sdxl", "blocks": 20,
-                    "details": "SDXL (9+1+9 blocks, dual CLIP)"}
+                    "details": "SDXL (9+1+9 blocks, dual CLIP)",
+                    **common}
         return {"arch": "sd15", "blocks": 26,
-                "details": "SD 1.5 (12+1+12 blocks)"}
+                "details": "SD 1.5 (12+1+12 blocks)",
+                **common}
 
     # Cosmos-Predict2 (Anima, etc.) — adaln_modulation_cross_attn is unique
     if any("adaln_modulation_cross_attn" in k for k in keys):
@@ -154,12 +294,19 @@ def detect_architecture(keys: set) -> dict:
             m = _RE_COSMOS.search(k)
             if m: block_max = max(block_max, int(m.group(1)))
         n_blocks = block_max + 1 if block_max >= 0 else 0
-        has_te = any("cond_stage_model." in k or "conditioner." in k for k in keys)
-        te_note = "bundled TE" if has_te else "external TE+VAE"
+        te_count = extras["text_encoder"]
+        if te_count > 0:
+            # Surface the actual count so the user can tell a 12-key residue
+            # apart from a full 1190-key bundled text encoder at a glance.
+            te_note = f"bundled TE: {te_count} keys"
+        else:
+            te_note = "external TE+VAE"
         return {"arch": "cosmos", "blocks": n_blocks,
-                "details": f"Cosmos-Predict2 ({n_blocks} blocks, {te_note})"}
+                "details": f"Cosmos-Predict2 ({n_blocks} blocks, {te_note})",
+                **common}
 
-    return {"arch": "unknown", "blocks": 0, "details": "Unknown architecture"}
+    return {"arch": "unknown", "blocks": 0,
+            "details": "Unknown architecture", **common}
 
 
 def classify_key(key: str, arch: str) -> str:
@@ -536,14 +683,47 @@ def inspect_model(path: str) -> dict:
             result["model_info"] = mi
         dtype_counts = {}
         block_counts = {}
+        # Package accounting — keys + estimated bytes per coarse bucket plus
+        # a small prefix-family histogram so a duplicate model namespace
+        # (blocks.* + model.diffusion_model.blocks.*) is obvious at a glance.
+        pkg_keys = {}
+        pkg_bytes = {}
+        pkg_prefixes = {}
         for key in keys:
             t = f.get_slice(key)
             dtype_str = str(t.get_dtype())
             dtype_counts[dtype_str] = dtype_counts.get(dtype_str, 0) + 1
             group = classify_key(key, arch_info["arch"])
             block_counts[group] = block_counts.get(group, 0) + 1
+
+            numel = 1
+            for dim in t.get_shape():
+                numel *= dim
+            nbytes = numel * _dtype_bytes_per_element(dtype_str)
+            pkg = _package_for_key(key, arch_info["arch"])
+            pkg_keys[pkg] = pkg_keys.get(pkg, 0) + 1
+            pkg_bytes[pkg] = pkg_bytes.get(pkg, 0) + nbytes
+            fam = _prefix_family(key)
+            pkg_prefixes.setdefault(pkg, {})
+            pkg_prefixes[pkg][fam] = pkg_prefixes[pkg].get(fam, 0) + 1
+
         result["dtypes"] = dtype_counts
         result["block_groups"] = dict(sorted(block_counts.items()))
+        # Emit every known package bucket, even when empty, so the frontend
+        # can decide whether to display a "0 keys" row (useful for spotting
+        # a Cosmos model that surprisingly DOES carry text-encoder keys).
+        result["packages"] = {
+            name: {
+                "keys": pkg_keys.get(name, 0),
+                "bytes": pkg_bytes.get(name, 0),
+                "gb": round(pkg_bytes.get(name, 0) / (1024 ** 3), 3),
+                "prefixes": dict(sorted(
+                    pkg_prefixes.get(name, {}).items(),
+                    key=lambda kv: -kv[1],
+                )),
+            }
+            for name in ("core", "text_encoder", "vae", "llm_adapter", "other")
+        }
     return result
 
 
@@ -594,6 +774,43 @@ def check_compatibility(path_a: str, path_b: str) -> dict:
                     "type": "cosmos_preview",
                     "text": "Anima preview models may not transfer cleanly to future final releases.",
                 })
+
+                # Namespace duplication: one model's core blocks live under
+                # `blocks.*` and the other under `model.diffusion_model.blocks.*`.
+                # merge_models() currently takes the union of keys, so the
+                # output would contain both bodies — that's the prime suspect
+                # behind oversized Anima merges.
+                fams_a = {_prefix_family(k) for k in keys_a}
+                fams_b = {_prefix_family(k) for k in keys_b}
+                bare_a = "blocks" in fams_a
+                wrapped_a = "model.diffusion_model.blocks" in fams_a
+                bare_b = "blocks" in fams_b
+                wrapped_b = "model.diffusion_model.blocks" in fams_b
+                if (bare_a != bare_b) or (wrapped_a != wrapped_b):
+                    warnings.append({
+                        "type": "cosmos_namespace_mismatch",
+                        "text": "Cosmos key namespaces differ between models.",
+                        "detail": ("One model uses blocks.* while the other "
+                                   "uses model.diffusion_model.blocks.*. "
+                                   "Workshop currently copies both sets into "
+                                   "the output instead of merging them, "
+                                   "which produces an oversized checkpoint."),
+                    })
+
+                # Bundled-TE asymmetry — flag specifically for Cosmos so users
+                # know which side carries the extra ~5 GB of text encoder.
+                te_a = arch_a.get("text_encoder_key_count", 0)
+                te_b = arch_b.get("text_encoder_key_count", 0)
+                if (te_a > 0) != (te_b > 0):
+                    warnings.append({
+                        "type": "cosmos_te_asymmetry",
+                        "text": (f"Bundled text encoder: {te_a} keys in A, "
+                                 f"{te_b} keys in B"),
+                        "detail": ("One Cosmos model carries a bundled text "
+                                   "encoder and the other doesn't. The merge "
+                                   "will inherit whichever side has it, "
+                                   "inflating output size by several GB."),
+                    })
 
         # Key overlap
         shared = keys_a & keys_b
@@ -1700,6 +1917,7 @@ def merge_models(
 
         output_size = sum(t.nelement() * t.element_size() for t in output_dict.values()) / (1024**3)
         print(f"{TAG} Saving {len(output_dict)} keys ({output_size:.2f} GB) to {os.path.basename(output_path)}...")
+        _log_output_breakdown(output_dict, arch_info.get("arch"))
 
         save_file(output_dict, output_path, metadata=metadata)
         del output_dict
@@ -2953,6 +3171,7 @@ def bake_lora(
         _merge_state.update({"current_key": "(saving...)", "progress": 0.95})
         _broadcast_workshop_progress()
 
+        _log_output_breakdown(output_dict, arch)
         save_file(output_dict, output_path, metadata=metadata)
         del output_dict
 
@@ -3137,6 +3356,7 @@ def bake_vae(
         _merge_state.update({"current_key": "(saving...)", "progress": 0.95})
         _broadcast_workshop_progress()
 
+        _log_output_breakdown(output_dict, ckpt_arch)
         save_file(output_dict, output_path, metadata=metadata)
         del output_dict
 
