@@ -5,10 +5,13 @@
  * Generate-panel buttons that wrap window.StudioWorkflowState with named
  * persistent profiles. Save / Apply / New Tab / Delete.
  *
- * Apply intentionally NEVER triggers a model load — StudioWorkflowState
- * writes values into the model/VAE/TE selects without dispatching change
- * events, so the next Generate is what loads the model. Same policy as
- * the spec.
+ * Apply triggers a model load when the workflow's checkpoint differs
+ * from what's currently loaded — Forge Studio has no Generate-time
+ * auto-load path, so without firing the dropdown's `change` listener
+ * the model never switches and Generate would silently use the old
+ * checkpoint. StudioWorkflowState dedupes by tracking which model
+ * fields actually changed and dispatching `change` exactly once on
+ * paramModel (which cascades to VAE+TE inside Forge's load listener).
  *
  * Loaded after app.js (needs the API namespace) and either before or
  * after studio-docs.js (only consumes StudioDocs.newDoc).
@@ -256,11 +259,14 @@ async function applySelected() {
   if (hasDims && dirty && dimsDiffer) {
     _confirmApplyWithResize(wf.name, function (choice) {
       if (choice === "cancel") return;
-      WF.applyWorkflowState(wf, { applyDimensions: choice === "resize" });
+      WF.applyWorkflowState(wf, {
+        applyDimensions: choice === "resize",
+        loadModel: true,
+      });
     });
     return;
   }
-  WF.applyWorkflowState(wf, { applyDimensions: hasDims });
+  WF.applyWorkflowState(wf, { applyDimensions: hasDims, loadModel: true });
 }
 
 async function newTabFromSelected() {
@@ -276,7 +282,10 @@ async function newTabFromSelected() {
     catch (e) { console.warn(TAG, "newDoc failed:", e && e.message || e); }
   }
   // A fresh tab is never dirty, so dimensions apply silently.
-  WF.applyWorkflowState(wf, { applyDimensions: WF.workflowHasDimensions(wf) });
+  WF.applyWorkflowState(wf, {
+    applyDimensions: WF.workflowHasDimensions(wf),
+    loadModel: true,
+  });
 }
 
 async function deleteSelected() {

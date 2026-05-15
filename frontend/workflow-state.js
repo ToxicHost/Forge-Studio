@@ -37,9 +37,16 @@ var SCHEMA_VERSION = 1;
 //
 // Optional flags:
 //   dimension: true  — entry is skipped when applyDimensions === false
-//   model:     true  — apply uses .value-only path (NO change dispatch),
-//                      so paramModel / paramVAE / paramTextEncoder do not
-//                      trigger an auto-reload.
+//   model:     true  — entry is a checkpoint/VAE/TE select. Apply writes
+//                      the value silently (no change dispatch), then at
+//                      the end of the apply pass dispatches `change`
+//                      exactly once on whichever model field actually
+//                      changed — paramModel cascades to VAE+TE inside the
+//                      existing load listener (app.js:2905), so we don't
+//                      double-load. Only fires when options.loadModel.
+//   tabExclude: true — entry is skipped during captureWorkflowState when
+//                      mode === "tab". Model fields use this so tab
+//                      switches never reload the global model.
 //   prompt:    true  — entry is the positive prompt textarea
 //   negPrompt: true  — entry is the negative prompt textarea
 
@@ -49,9 +56,11 @@ var FIELD_MAP = {
   negative_prompt: { id: "paramNeg",      type: "textarea", negPrompt: true },
 
   // Model / VAE / TE -------------------------------------------------------
-  model:           { id: "paramModel",       type: "value", model: true },
-  vae:             { id: "paramVAE",         type: "value", model: true },
-  text_encoder:    { id: "paramTextEncoder", type: "value", model: true },
+  // Excluded from tab snapshots: tab switching never reloads the global
+  // model. They are still captured/applied via workflow profiles.
+  model:           { id: "paramModel",       type: "value", model: true, tabExclude: true },
+  vae:             { id: "paramVAE",         type: "value", model: true, tabExclude: true },
+  text_encoder:    { id: "paramTextEncoder", type: "value", model: true, tabExclude: true },
 
   // Sampling ---------------------------------------------------------------
   sampler:    { id: "paramSampler",   type: "value" },
@@ -193,6 +202,7 @@ function captureWorkflowState(options) {
   var includePrompt = options.includePrompt !== false;
   var includeNegativePrompt = options.includeNegativePrompt !== false;
   var includeDimensions = options.includeDimensions !== false;
+  var isTab = options.mode === "tab";
 
   var settings = {};
   for (var key in FIELD_MAP) {
@@ -201,6 +211,7 @@ function captureWorkflowState(options) {
     if (spec.prompt && !includePrompt) continue;
     if (spec.negPrompt && !includeNegativePrompt) continue;
     if (spec.dimension && !includeDimensions) continue;
+    if (spec.tabExclude && isTab) continue;
     var v = _readField(spec);
     if (v !== undefined) settings[key] = v;
   }
@@ -264,19 +275,22 @@ function _writeField(spec, value) {
   if (!el) return { skipped: true };
   switch (spec.type) {
     case "value": {
+      var prev = el.value;
       el.value = value;
       if (spec.model) {
-        // Critical: never dispatch `change` here — listeners at
-        // app.js:2898/2979/3011 trigger async reloads on change.
+        // Write silently — apply pass dispatches `change` exactly once
+        // at the end on whichever model field actually changed, so we
+        // never trigger duplicate reloads from the listeners at
+        // app.js:2905 (paramModel) / :2979 (VAE) / :3018 (TE).
         _refreshSearchable(el);
+        return { applied: true, model: true, changed: prev !== el.value };
+      }
+      if (el.tagName === "SELECT") {
+        _refreshSearchable(el);
+        el.dispatchEvent(new Event("change", { bubbles: true }));
       } else {
-        if (el.tagName === "SELECT") {
-          _refreshSearchable(el);
-          el.dispatchEvent(new Event("change", { bubbles: true }));
-        } else {
-          el.dispatchEvent(new Event("input", { bubbles: true }));
-          el.dispatchEvent(new Event("change", { bubbles: true }));
-        }
+        el.dispatchEvent(new Event("input", { bubbles: true }));
+        el.dispatchEvent(new Event("change", { bubbles: true }));
       }
       return { applied: true };
     }
@@ -337,6 +351,7 @@ function applyWorkflowState(workflowOrSnapshot, options) {
   options = options || {};
   var silent = options.silent === true;
   var applyDimensions = options.applyDimensions !== false;
+  var loadModel = options.loadModel === true;
 
   var norm = _normalize(workflowOrSnapshot);
   if (!norm) return { applied: 0, skipped: 0 };
@@ -344,6 +359,9 @@ function applyWorkflowState(workflowOrSnapshot, options) {
   var applied = 0;
   var skipped = 0;
   var dimensionsApplied = false;
+  // Track which model-class fields actually changed value so we can fire
+  // a single change event at the end to trigger Forge's load pipeline.
+  var modelChanged = { paramModel: false, paramVAE: false, paramTextEncoder: false };
 
   for (var key in norm.settings) {
     if (!Object.prototype.hasOwnProperty.call(norm.settings, key)) continue;
@@ -354,6 +372,9 @@ function applyWorkflowState(workflowOrSnapshot, options) {
     if (res && res.applied) {
       applied++;
       if (spec.dimension) dimensionsApplied = true;
+      if (res.model && res.changed && modelChanged[spec.id] === false) {
+        modelChanged[spec.id] = true;
+      }
     } else {
       skipped++;
     }
@@ -365,6 +386,22 @@ function applyWorkflowState(workflowOrSnapshot, options) {
     var w = parseInt(norm.settings.width, 10);
     var h = parseInt(norm.settings.height, 10);
     if (Number.isFinite(w) && Number.isFinite(h)) _maybeResizeCanvas(w, h);
+  }
+
+  // Trigger model load — dispatch `change` exactly once, on whichever
+  // field changed. paramModel's listener (app.js:2905) reads VAE + TE
+  // from the DOM and loads them together, so dispatching there subsumes
+  // a separate VAE/TE change. Only fall back to VAE/TE when the model
+  // itself didn't change.
+  if (loadModel) {
+    var targetId = null;
+    if (modelChanged.paramModel) targetId = "paramModel";
+    else if (modelChanged.paramVAE) targetId = "paramVAE";
+    else if (modelChanged.paramTextEncoder) targetId = "paramTextEncoder";
+    if (targetId) {
+      var el = document.getElementById(targetId);
+      if (el) el.dispatchEvent(new Event("change", { bubbles: true }));
+    }
   }
 
   if (!silent && typeof window.showToast === "function") {
