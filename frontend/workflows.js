@@ -28,8 +28,18 @@ var _newTabBtn = null;
 var _saveBtn = null;
 var _deleteBtn = null;
 
+function _t(key, fallback, params) {
+  return (window.I18N && window.I18N.t)
+    ? window.I18N.t(key, fallback, params)
+    : fallback;
+}
+
 function _toast(msg, kind) {
   if (typeof window.showToast === "function") window.showToast(msg, kind || "info");
+}
+
+function _applyI18n(root) {
+  if (window.I18N && window.I18N.applyToDom) window.I18N.applyToDom(root);
 }
 
 // ---------------------------------------------------------------------------
@@ -42,7 +52,9 @@ function _populate() {
   while (_select.firstChild) _select.removeChild(_select.firstChild);
   var blank = document.createElement("option");
   blank.value = "";
-  blank.textContent = _list.length ? "Workflow…" : "No workflows saved";
+  blank.textContent = _list.length
+    ? _t("workflows.select.placeholder", "Workflow…")
+    : _t("workflows.select.empty", "No workflows saved");
   _select.appendChild(blank);
   _list.forEach(function (meta) {
     var opt = document.createElement("option");
@@ -90,31 +102,32 @@ function _openSaveDialog(prefill, onSubmit) {
   box.className = "modal-box workflow-save-box";
 
   box.innerHTML =
-    '<h3>Save Workflow</h3>' +
-    '<label class="workflow-field"><span>Name</span>' +
+    '<h3 data-i18n="workflows.save.title">Save Workflow</h3>' +
+    '<label class="workflow-field"><span data-i18n="workflows.save.name">Name</span>' +
     '  <input type="text" id="wfDlgName" maxlength="200"></label>' +
-    '<label class="workflow-field"><span>Description</span>' +
+    '<label class="workflow-field"><span data-i18n="workflows.save.description">Description</span>' +
     '  <input type="text" id="wfDlgDesc" maxlength="1000"></label>' +
-    '<label class="workflow-field"><span>Family</span>' +
+    '<label class="workflow-field"><span data-i18n="workflows.save.family">Family</span>' +
     '  <select id="wfDlgFamily">' +
-    '    <option value="any">Any</option>' +
+    '    <option value="any" data-i18n="workflows.family.any">Any</option>' +
     '    <option value="sd15">SD 1.5</option>' +
     '    <option value="sdxl">SDXL</option>' +
     '    <option value="flux">FLUX</option>' +
     '    <option value="sd3">SD3</option>' +
     '    <option value="cosmos">Cosmos / Anima</option>' +
-    '    <option value="other">Other</option>' +
+    '    <option value="other" data-i18n="workflows.family.other">Other</option>' +
     '  </select></label>' +
-    '<label class="workflow-checkrow"><input type="checkbox" id="wfDlgIncPrompt" checked> Include prompt</label>' +
-    '<label class="workflow-checkrow"><input type="checkbox" id="wfDlgIncNeg" checked> Include negative prompt</label>' +
-    '<label class="workflow-checkrow"><input type="checkbox" id="wfDlgIncDims" checked> Include dimensions</label>' +
+    '<label class="workflow-checkrow"><input type="checkbox" id="wfDlgIncPrompt" checked> <span data-i18n="workflows.save.includePrompt">Include prompt</span></label>' +
+    '<label class="workflow-checkrow"><input type="checkbox" id="wfDlgIncNeg" checked> <span data-i18n="workflows.save.includeNegativePrompt">Include negative prompt</span></label>' +
+    '<label class="workflow-checkrow"><input type="checkbox" id="wfDlgIncDims" checked> <span data-i18n="workflows.save.includeDimensions">Include dimensions</span></label>' +
     '<div class="modal-actions">' +
-    '  <button class="ar-btn ar-clear" id="wfDlgCancel">Cancel</button>' +
-    '  <button class="ar-btn primary" id="wfDlgSave">Save</button>' +
+    '  <button class="ar-btn ar-clear" id="wfDlgCancel" data-i18n="workflows.save.cancel">Cancel</button>' +
+    '  <button class="ar-btn primary" id="wfDlgSave" data-i18n="workflows.save.submit">Save</button>' +
     '</div>';
 
   overlay.appendChild(box);
   document.body.appendChild(overlay);
+  _applyI18n(box);
 
   var nameEl = box.querySelector("#wfDlgName");
   var descEl = box.querySelector("#wfDlgDesc");
@@ -161,15 +174,26 @@ function _confirmApplyWithResize(workflowName, onChoice) {
   var box = document.createElement("div");
   box.className = "modal-box workflow-confirm-box";
   box.innerHTML =
-    '<h3>Apply Workflow</h3>' +
-    '<p>"' + (workflowName || "Workflow") + '" has different dimensions than the current canvas.</p>' +
+    '<h3 data-i18n="workflows.apply.title">Apply Workflow</h3>' +
+    '<p id="wfApplyMsg"></p>' +
     '<div class="modal-actions">' +
-    '  <button class="ar-btn ar-clear" data-choice="cancel">Cancel</button>' +
-    '  <button class="ar-btn" data-choice="settings-only">Apply settings only</button>' +
-    '  <button class="ar-btn primary" data-choice="resize">Apply settings and resize canvas</button>' +
+    '  <button class="ar-btn ar-clear" data-choice="cancel" data-i18n="workflows.apply.cancel">Cancel</button>' +
+    '  <button class="ar-btn" data-choice="settings-only" data-i18n="workflows.apply.settingsOnly">Apply settings only</button>' +
+    '  <button class="ar-btn primary" data-choice="resize" data-i18n="workflows.apply.resize">Apply settings and resize canvas</button>' +
     '</div>';
   overlay.appendChild(box);
   document.body.appendChild(overlay);
+  // Fill the parameterised message first so applyI18n picks up the
+  // sibling data-i18n attributes in the same pass.
+  var msgEl = box.querySelector("#wfApplyMsg");
+  if (msgEl) {
+    msgEl.textContent = _t(
+      "workflows.apply.dimensionsDiffer",
+      "\"{name}\" has different dimensions than the current canvas.",
+      { name: workflowName || "Workflow" },
+    );
+  }
+  _applyI18n(box);
 
   function pick(choice) {
     document.body.removeChild(overlay);
@@ -189,7 +213,7 @@ function saveCurrent() {
   _openSaveDialog({}, async function (form) {
     var WF = window.StudioWorkflowState;
     if (!WF || typeof WF.captureWorkflowState !== "function") {
-      _toast("Workflow helper not loaded", "error");
+      _toast(_t("workflows.toast.helperNotLoaded", "Workflow helper not loaded"), "error");
       return;
     }
     var snapshot = WF.captureWorkflowState({
@@ -213,13 +237,13 @@ function saveCurrent() {
     };
     try {
       var resp = await API.saveWorkflow(payload);
-      _toast("Workflow saved", "success");
+      _toast(_t("workflows.toast.saved", "Workflow saved"), "success");
       await refresh();
       if (resp && resp.id && _select) _select.value = resp.id;
       _syncButtons();
     } catch (e) {
       console.warn(TAG, "save failed:", e && e.message || e);
-      _toast("Workflow save failed", "error");
+      _toast(_t("workflows.toast.saveFailed", "Workflow save failed"), "error");
     }
   });
 }
@@ -230,7 +254,7 @@ async function _fetchSelected() {
     return await API.workflow(_select.value);
   } catch (e) {
     console.warn(TAG, "fetch failed:", e && e.message || e);
-    _toast("Could not load workflow", "error");
+    _toast(_t("workflows.toast.loadFailed", "Could not load workflow"), "error");
     return null;
   }
 }
@@ -245,7 +269,7 @@ async function applySelected() {
   if (!wf) return;
   var WF = window.StudioWorkflowState;
   if (!WF || typeof WF.applyWorkflowState !== "function") {
-    _toast("Workflow helper not loaded", "error");
+    _toast(_t("workflows.toast.helperNotLoaded", "Workflow helper not loaded"), "error");
     return;
   }
 
@@ -274,7 +298,7 @@ async function newTabFromSelected() {
   if (!wf) return;
   var WF = window.StudioWorkflowState;
   if (!WF || typeof WF.applyWorkflowState !== "function") {
-    _toast("Workflow helper not loaded", "error");
+    _toast(_t("workflows.toast.helperNotLoaded", "Workflow helper not loaded"), "error");
     return;
   }
   if (window.StudioDocs && typeof window.StudioDocs.newDoc === "function") {
@@ -292,15 +316,16 @@ async function deleteSelected() {
   if (!_select || !_select.value) return;
   var meta = _list.find(function (m) { return m.id === _select.value; });
   var name = (meta && meta.name) || _select.value;
-  if (!window.confirm("Delete workflow '" + name + "'?")) return;
+  var msg = _t("workflows.delete.confirm", "Delete workflow '{name}'?", { name: name });
+  if (!window.confirm(msg)) return;
   try {
     await API.deleteWorkflow(_select.value);
-    _toast("Workflow deleted", "success");
+    _toast(_t("workflows.toast.deleted", "Workflow deleted"), "success");
     await refresh();
     _syncButtons();
   } catch (e) {
     console.warn(TAG, "delete failed:", e && e.message || e);
-    _toast("Workflow delete failed", "error");
+    _toast(_t("workflows.toast.deleteFailed", "Workflow delete failed"), "error");
   }
 }
 

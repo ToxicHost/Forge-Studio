@@ -25,6 +25,12 @@
 
 var SCHEMA_VERSION = 1;
 
+function _t(key, fallback, params) {
+  return (window.I18N && window.I18N.t)
+    ? window.I18N.t(key, fallback, params)
+    : fallback;
+}
+
 // Type semantics for FIELD_MAP entries:
 //   "value"          — <input>/<select>, set via .value
 //   "textarea"       — <textarea>, set via .value
@@ -419,9 +425,16 @@ function applyWorkflowState(workflowOrSnapshot, options) {
 
   if (!silent && typeof window.showToast === "function") {
     if (skipped > 0) {
-      window.showToast("Workflow applied with " + skipped + " unavailable settings", "info");
+      window.showToast(
+        _t(
+          "workflows.toast.appliedPartial",
+          "Workflow applied with {count} unavailable settings",
+          { count: skipped },
+        ),
+        "info",
+      );
     } else {
-      window.showToast("Workflow applied", "success");
+      window.showToast(_t("workflows.toast.applied", "Workflow applied"), "success");
     }
   }
 

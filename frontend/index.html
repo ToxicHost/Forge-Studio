@@ -322,14 +322,28 @@
               <button id="skipBtn" data-i18n="actions.skip">Skip</button>
             </div>
 
-            <div class="workflow-row" id="workflowRow" title="Save and re-apply named generation setups. Apply does not load the model immediately — that happens on the next Generate.">
+            <div class="workflow-row" id="workflowRow"
+                 data-i18n-title="workflows.row.title"
+                 title="Save and re-apply named generation setups. Apply does not load the model immediately — that happens on the next Generate.">
               <select class="param-select" id="workflowSelect">
-                <option value="">Workflow…</option>
+                <option value="" data-i18n="workflows.select.placeholder">Workflow…</option>
               </select>
-              <button class="ar-btn" id="workflowApplyBtn" title="Apply selected workflow to this tab">Apply</button>
-              <button class="ar-btn" id="workflowNewTabBtn" title="Create a new tab with the selected workflow">New Tab</button>
-              <button class="ar-btn" id="workflowSaveBtn" title="Save current settings as a new workflow">Save</button>
-              <button class="ar-btn ar-clear" id="workflowDeleteBtn" title="Delete selected workflow">Delete</button>
+              <button class="ar-btn" id="workflowApplyBtn"
+                      data-i18n="workflows.button.apply"
+                      data-i18n-title="workflows.button.applyTitle"
+                      title="Apply selected workflow to this tab">Apply</button>
+              <button class="ar-btn" id="workflowNewTabBtn"
+                      data-i18n="workflows.button.newTab"
+                      data-i18n-title="workflows.button.newTabTitle"
+                      title="Create a new tab with the selected workflow">New Tab</button>
+              <button class="ar-btn" id="workflowSaveBtn"
+                      data-i18n="workflows.button.save"
+                      data-i18n-title="workflows.button.saveTitle"
+                      title="Save current settings as a new workflow">Save</button>
+              <button class="ar-btn ar-clear" id="workflowDeleteBtn"
+                      data-i18n="workflows.button.delete"
+                      data-i18n-title="workflows.button.deleteTitle"
+                      title="Delete selected workflow">Delete</button>
             </div>
 
             <div class="ar-row canvas-load-reset-row">
