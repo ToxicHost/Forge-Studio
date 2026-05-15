@@ -3726,7 +3726,10 @@ function resetCanvasState(opts) {
     S.smudgeBuffer = null;
 
     // Live preview — if the engine kept any committed pixels around.
-    if (S.livePreview) {
+    // Self-heal if another path corrupted the shape (e.g. wrote a boolean).
+    if (!S.livePreview || typeof S.livePreview !== "object") {
+        S.livePreview = { canvas: null, ctx: null, active: false };
+    } else {
         S.livePreview.active = false;
         if (S.livePreview.canvas && S.livePreview.ctx) {
             S.livePreview.ctx.clearRect(0, 0, S.livePreview.canvas.width, S.livePreview.canvas.height);
