@@ -566,6 +566,10 @@ window.StudioDocs = {
   switchDoc: switchDoc,
   closeDoc: closeDoc,
   renameDoc: renameDoc,
+  saveActiveDoc: function () {
+    _saveDoc(_activeIdx);
+    _renderStrip();
+  },
   get activeIdx() { return _activeIdx; },
   get count() { return _docs.length; },
   get activeDoc() { return _docs[_activeIdx]; },

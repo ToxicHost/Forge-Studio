@@ -328,16 +328,20 @@ function _writeField(spec, value) {
 }
 
 function _syncStateFlags() {
-  var S = window.StudioCore && window.StudioCore.state;
-  if (!S) return;
-  var saveOutputs   = document.getElementById("toggleSaveOutputs");
-  var highPrec      = document.getElementById("toggleHighPrecision");
-  var livePreview   = document.getElementById("toggleLivePreview");
-  var embedMeta     = document.getElementById("toggleMetadata");
-  if (saveOutputs) S.saveOutputs   = saveOutputs.classList.contains("on");
-  if (highPrec)    S.highPrecision = highPrec.classList.contains("on");
-  if (livePreview) S.livePreview   = livePreview.classList.contains("on");
-  if (embedMeta)   S.embedMetadata = embedMeta.classList.contains("on");
+  // App-level generation flags live on window.State (defined in app.js).
+  // StudioCore.state holds engine state — notably `livePreview` there is
+  // an object { canvas, ctx, active }, NOT a boolean. Writing the toggle
+  // value there clobbered the engine object and crashed resetCanvasState.
+  var AppState = window.State;
+  if (!AppState) return;
+  var saveOutputs = document.getElementById("toggleSaveOutputs");
+  var highPrec    = document.getElementById("toggleHighPrecision");
+  var livePreview = document.getElementById("toggleLivePreview");
+  var embedMeta   = document.getElementById("toggleMetadata");
+  if (saveOutputs) AppState.saveOutputs   = saveOutputs.classList.contains("on");
+  if (highPrec)    AppState.highPrecision = highPrec.classList.contains("on");
+  if (livePreview) AppState.livePreview   = livePreview.classList.contains("on");
+  if (embedMeta)   AppState.embedMetadata = embedMeta.classList.contains("on");
 }
 
 function _maybeResizeCanvas(width, height) {

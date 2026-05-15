@@ -4182,6 +4182,10 @@ function bindUI() {
     Core.composite();
     if (UI && UI.redraw) UI.redraw();
 
+    // Persist the cleared canvas into the active StudioDocs tab so
+    // switching tabs doesn't resurrect the pre-reset pixels.
+    window.StudioDocs?.saveActiveDoc?.();
+
     showToast(I18N.t("toast.canvasCleared", "Canvas cleared"), "info");
   });
 
