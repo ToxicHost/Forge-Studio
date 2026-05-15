@@ -37,15 +37,15 @@ const VERSION = "0.8.0";
 const METHOD_INFO = {
     weighted_sum: {
         label: "Weighted Sum", needsC: false, params: [], blockWeights: true,
-        showAlpha: true, alphaLabel: "Weight (B ← → A)", abAlpha: true,
-        alphaHint: "0 = 100% Model B. 1 = 100% Model A. 0.5 = equal blend.",
+        showAlpha: true, alphaLabel: "Secondary Weight",
+        alphaHint: "0 = 100% Primary/A, 1 = 100% Secondary/B, 0.5 = equal blend.",
         formula: "A × (1 − α) + B × α",
         desc: "The simplest merge — blends every weight between A and B by the alpha value. Good starting point for any merge. If results look washed out, try SLERP instead.",
     },
     slerp: {
         label: "SLERP", needsC: false, params: [], blockWeights: true,
-        showAlpha: true, alphaLabel: "Weight (B ← → A)", abAlpha: true,
-        alphaHint: "0 = 100% Model B. 1 = 100% Model A.",
+        showAlpha: true, alphaLabel: "Secondary Weight",
+        alphaHint: "0 = 100% Primary/A, 1 = 100% Secondary/B, 0.5 = equal blend.",
         formula: "slerp(A, B, α)",
         desc: "Spherical interpolation — preserves the magnitude of weight vectors instead of averaging them. Usually produces sharper, more vibrant results than Weighted Sum at the same alpha. Best for blending two models of similar quality.",
     },
@@ -106,8 +106,8 @@ const METHOD_INFO = {
     },
     svd_blend: {
         label: "SVD: Spectral Blend", needsC: false, params: [], blockWeights: true,
-        showAlpha: true, alphaLabel: "Weight (B ← → A)", abAlpha: true,
-        alphaHint: "0 = pure B, 1 = pure A. Interpolates in spectral space.",
+        showAlpha: true, alphaLabel: "Secondary Weight",
+        alphaHint: "0 = 100% Primary/A, 1 = 100% Secondary/B, 0.5 = equal blend.",
         formula: "procrustes_slerp(SVD(A), SVD(B), α)",
         desc: "Aligns both models’ spectral decompositions via Procrustes rotation, then interpolates structure and magnitude together in spectral space. Smoother than Weighted Sum because it respects the geometric relationship between feature directions rather than averaging raw weights.",
     },
@@ -141,24 +141,13 @@ const PARAM_DEFS = {
     eta: { label: "Eta (η)", min: 0, max: 0.5, step: 0.01, default: 0.1 },
 };
 
-// ────────────────────────────────────────────────────────────────────────
-// Slider direction convention.
-//
-// For methods flagged abAlpha (weighted_sum, slerp, svd_blend) we display
-// the slider with B on the left, A on the right — matches what feels
-// natural for block-merging in this codebase. Internally row.alpha and
-// row.blockWeights still store the OLD convention (0 = A, 1 = B) so the
-// backend math, recipes JSON, presets, and auto-alpha tools stay
-// untouched and existing data keeps working. Only the UI bind layer
-// flips. For non-abAlpha methods (strength / lambda / blend strength)
-// the slider is unflipped — those aren't A↔B mixes.
-function _abAlpha(method) { var info = METHOD_INFO[method] || {}; return !!info.abAlpha; }
-function _alphaForDisplay(stored, method) {
-    return _abAlpha(method) ? (1 - stored) : stored;
-}
-function _alphaFromDisplay(displayed, method) {
-    return _abAlpha(method) ? (1 - displayed) : displayed;
-}
+// Workshop alpha == backend alpha == Secondary (Model B) contribution.
+// 0 keeps Primary/A, 1 takes Secondary/B, 0.5 is an equal blend. Display
+// and storage are the same number; the helpers stay as identities so the
+// callsites are kept stable in case we ever need to introduce a flip
+// again.
+function _alphaForDisplay(stored, _method) { return stored; }
+function _alphaFromDisplay(displayed, _method) { return displayed; }
 
 const BLOCK_TOOLTIPS = {
     "Text Encoder": "Controls how text prompts are interpreted. Merging this changes what words mean to the model.",
@@ -1795,6 +1784,15 @@ function _buildUI(container) {
     // The row container
     + '<div id="wsRowList" class="ws-board"></div>'
 
+    // Chain tools — equalize alphas + final-composition preview
+    + '<div class="ws-chain-tools">'
+    + '<div class="ws-chain-tools-header">'
+    + '<span class="ws-chain-tools-label" data-i18n="workshop.chainTools.label">' + _t("workshop.chainTools.label", "Chain Analysis") + '</span>'
+    + '<button id="wsEqualizeChain" class="ws-small-btn ws-equalize-btn" disabled data-i18n="workshop.chainTools.equalize" data-i18n-title="workshop.chainTools.equalize.tooltip" title="' + _t("workshop.chainTools.equalize.tooltip", "Set every row's alpha so each source contributes equally to the final output.") + '">' + _t("workshop.chainTools.equalize", "Equalize Chain") + '</button>'
+    + '</div>'
+    + '<div id="wsChainContrib" class="ws-chain-contrib"></div>'
+    + '</div>'
+
     // Add Row button
     + '<button id="wsRowAdd" class="ws-row-add-btn" data-i18n="workshop.addRow">' + _t("workshop.addRow", "+ Add Row") + '</button>'
 
@@ -1852,6 +1850,8 @@ function _buildUI(container) {
     _els = {
         rowList: container.querySelector("#wsRowList"),
         rowAdd: container.querySelector("#wsRowAdd"),
+        equalizeBtn: container.querySelector("#wsEqualizeChain"),
+        chainContrib: container.querySelector("#wsChainContrib"),
         outputName: container.querySelector("#wsOutputName"), fp16: container.querySelector("#wsFp16"),
         saveIntermediates: container.querySelector("#wsSaveIntermediates"),
         mergeBtn: container.querySelector("#wsMergeBtn"), cancelBtn: container.querySelector("#wsCancelBtn"),
@@ -1929,6 +1929,7 @@ function _renderRows() {
     _renderInfo();
     _refreshActiveRowInspector();
     _updateActionButtons();
+    _renderChainContrib();
 }
 
 function _rowHtml(rowIdx) {
@@ -2168,21 +2169,22 @@ function _bindRowEvents(rowIdx) {
         _onRowMethodChanged(rowIdx);
     });
 
-    // Alpha — slider/number display in NEW convention (B-left / A-right for
-    // abAlpha methods); row.alpha stays in OLD convention internally. See
-    // _alphaForDisplay / _alphaFromDisplay above.
+    // Alpha — slider/number store the Secondary-weight value verbatim,
+    // which is exactly what the backend lerp expects.
     const alphaSlider = rowEl.querySelector(".ws-row-alpha-slider");
     const alphaVal = rowEl.querySelector(".ws-row-alpha-val");
     alphaSlider.addEventListener("input", () => {
         const displayed = parseFloat(alphaSlider.value);
         row.alpha = _alphaFromDisplay(displayed, row.method);
         alphaVal.value = displayed.toFixed(2);
+        _renderChainContrib();
     });
     alphaVal.addEventListener("change", () => {
         let v = parseFloat(alphaVal.value); if (isNaN(v)) v = 0.5;
         v = Math.max(0, Math.min(1, v));
         row.alpha = _alphaFromDisplay(v, row.method);
         alphaSlider.value = v; alphaVal.value = v.toFixed(2);
+        _renderChainContrib();
     });
 
     // Method-specific param sliders
@@ -2226,6 +2228,7 @@ function _bindRowEvents(rowIdx) {
             _updateRowAutoDiffButtons(rowIdx);
             if (row.useBlockWeights && !row.blockWeights) _initRowBlockWeights(rowIdx, row.alpha);
             _applyRowMethodVisibility(rowIdx);
+            _renderChainContrib();
         });
     }
 
@@ -2319,9 +2322,6 @@ function _applyRowMethodVisibility(rowIdx) {
     if (alphaCell) alphaCell.style.visibility = info.showAlpha ? "" : "hidden";
     const alphaSlider = rowEl.querySelector(".ws-row-alpha-slider");
     if (alphaSlider) alphaSlider.title = info.alphaLabel || "Weight";
-    // The abAlpha flag may differ between methods, so re-display the slider
-    // and number input from r.alpha — same stored value, possibly flipped
-    // display direction.
     const alphaValEl = rowEl.querySelector(".ws-row-alpha-val");
     if (alphaSlider && alphaValEl) {
         const disp = _alphaForDisplay(r.alpha, r.method);
@@ -2469,6 +2469,7 @@ function _refreshActiveRowInspector() {
 
 function _bindGlobalEvents() {
     _els.rowAdd.addEventListener("click", _addRow);
+    if (_els.equalizeBtn) _els.equalizeBtn.addEventListener("click", _equalizeChain);
 
     _els.outputName.addEventListener("input", () => { WS.outputName = _els.outputName.value.trim(); });
     _els.fp16.addEventListener("change", () => { WS.saveFp16 = _els.fp16.checked; });
@@ -2554,9 +2555,6 @@ function _buildBlockSlidersForRow(rowIdx) {
         }
         for (const block of group.blocks) {
             const stored = r.blockWeights?.[block] ?? r.alpha;
-            // Display value (NEW convention for abAlpha methods); the
-            // heat fill matches the displayed value so visuals line up
-            // with what the user sees on the slider.
             const disp = _alphaForDisplay(stored, r.method);
             const tip = _getBlockTooltip(block);
             const color = _heatColor(disp);
@@ -2576,7 +2574,6 @@ function _buildBlockSlidersForRow(rowIdx) {
             const block = e.target.dataset.block;
             const disp = parseFloat(e.target.value);
             if (!r.blockWeights) r.blockWeights = {};
-            // Store in OLD convention (method-aware), display unchanged.
             r.blockWeights[block] = _alphaFromDisplay(disp, r.method);
             const valSpan = container.querySelector('.ws-block-val[data-block="' + block + '"]');
             if (valSpan) valSpan.textContent = disp.toFixed(2);
@@ -2649,6 +2646,205 @@ function _renderActiveArchBadges() {
 }
 
 // ========================================================================
+// CHAIN ANALYSIS — equalize alphas and preview final contributions
+// ========================================================================
+
+// Methods we treat as `(1 - α)·A + α·B` for the contribution math. Exact
+// for weighted_sum / slerp / svd_blend; the task-vector and SVD-split
+// methods land here as a reasonable first-order approximation (their
+// per-key processing alters the magnitude of B's task vector but the
+// global "how much A vs B is in the result" still reads as α). cosine_-
+// adaptive picks α per key, so it has no global value to surface, and
+// add_difference subtracts a third tensor — both stay out of the linear
+// model and short-circuit the preview.
+const _LINEAR_CONTRIB_METHODS = new Set([
+    "weighted_sum", "slerp", "svd_blend",
+    "ties", "dare", "dare_ties", "della", "della_ties", "breadcrumbs",
+    "star", "svd_struct_a_mag_b", "svd_struct_b_mag_a",
+]);
+
+// { rowIdx → { filename: weight } | null }, where null means the row's
+// output cannot be expressed as a linear mix of concrete files.
+function _rowOutputContrib(rowIdx, cache) {
+    if (rowIdx in cache) return cache[rowIdx];
+    const r = WS.rows[rowIdx];
+    if (!r) { cache[rowIdx] = null; return null; }
+
+    function slotContrib(slotValue) {
+        if (!slotValue) return null;
+        if (_isRefValue(slotValue)) {
+            const refIdx = _rowIndexById(_refRowId(slotValue));
+            return refIdx >= 0 ? _rowOutputContrib(refIdx, cache) : null;
+        }
+        return { [slotValue]: 1.0 };
+    }
+
+    if (!r.primary || !r.secondary) {
+        cache[rowIdx] = slotContrib(r.primary);
+        return cache[rowIdx];
+    }
+
+    if (!_LINEAR_CONTRIB_METHODS.has(r.method)) {
+        cache[rowIdx] = null;
+        return null;
+    }
+
+    const primaryC = slotContrib(r.primary);
+    const secondaryC = slotContrib(r.secondary);
+    if (!primaryC || !secondaryC) { cache[rowIdx] = null; return null; }
+
+    const alpha = Math.max(0, Math.min(1, Number(r.alpha) || 0));
+    const out = {};
+    for (const k of Object.keys(primaryC)) out[k] = (out[k] || 0) + (1 - alpha) * primaryC[k];
+    for (const k of Object.keys(secondaryC)) out[k] = (out[k] || 0) + alpha * secondaryC[k];
+    cache[rowIdx] = out;
+    return out;
+}
+
+// True if every merge row in the board uses a method we model linearly.
+function _chainIsLinearModel() {
+    for (const r of WS.rows) {
+        if (!r.primary || !r.secondary) continue;
+        if (!_LINEAR_CONTRIB_METHODS.has(r.method)) return false;
+    }
+    return true;
+}
+
+// Compute the final-output composition (or null if the chain has no
+// merge rows or contains a non-linear method that breaks the math).
+function _finalContributions() {
+    const finalIdx = _finalMergeRowIdx();
+    if (finalIdx < 0) return null;
+    return _rowOutputContrib(finalIdx, {});
+}
+
+// Shape: { ok: true, chain: [rowIdx,…], headFile } when the board is a
+// linear accumulator (Row k's primary = Row k-1's output; Row k's
+// secondary = a concrete file). { ok: false, reason } otherwise.
+function _detectAccumulatorChain() {
+    const finalIdx = _finalMergeRowIdx();
+    if (finalIdx < 0) return { ok: false, reason: "No merge rows on the board" };
+    const chain = [];
+    let idx = finalIdx;
+    while (idx >= 0) {
+        const r = WS.rows[idx];
+        if (!r || !r.primary || !r.secondary) {
+            return { ok: false, reason: "Row " + (idx + 1) + " is not a complete merge" };
+        }
+        if (r.method !== "weighted_sum" && r.method !== "slerp") {
+            return { ok: false, reason: "Row " + (idx + 1) + " uses " + r.method + " — equalize only supports weighted_sum and slerp" };
+        }
+        if (!_isConcreteModel(r.secondary)) {
+            return { ok: false, reason: "Row " + (idx + 1) + ": Secondary must be a concrete model" };
+        }
+        chain.unshift(idx);
+        if (_isConcreteModel(r.primary)) {
+            return { ok: true, chain, headFile: r.primary };
+        }
+        if (!_isRefValue(r.primary)) {
+            return { ok: false, reason: "Row " + (idx + 1) + ": Primary must be a model or the previous row's output" };
+        }
+        const prevIdx = _rowIndexById(_refRowId(r.primary));
+        if (prevIdx !== idx - 1) {
+            return { ok: false, reason: "Row " + (idx + 1) + " does not reference the row above it" };
+        }
+        idx = prevIdx;
+    }
+    return { ok: false, reason: "Chain head not reached" };
+}
+
+function _equalizeChain() {
+    const det = _detectAccumulatorChain();
+    if (!det.ok) {
+        if (window.showToast) window.showToast("Cannot equalize: " + det.reason, "warning");
+        return;
+    }
+    // For an n-row accumulator chain there are n+1 sources. Equal weight
+    // per source means α for the kth row (1-indexed) is 1/(k+1):
+    //   Row 1 α = 1/2   Row 2 α = 1/3   …   Row n α = 1/(n+1)
+    for (let k = 0; k < det.chain.length; k++) {
+        const r = WS.rows[det.chain[k]];
+        const alpha = 1 / (k + 2);
+        r.alpha = alpha;
+        // Per-block weights are intentionally left alone — they're
+        // user customization, not part of the equalization story. If
+        // they wanted equal contribution per block they'd flip blocks
+        // off first.
+    }
+    _renderRows();
+    if (window.showToast) {
+        const pct = (100 / (det.chain.length + 1)).toFixed(2);
+        window.showToast("Equalized " + det.chain.length + " row" + (det.chain.length === 1 ? "" : "s") + " — each source contributes " + pct + "%", "success");
+    }
+}
+
+function _renderChainContrib() {
+    if (!_els.chainContrib) return;
+    const finalIdx = _finalMergeRowIdx();
+    if (finalIdx < 0) {
+        _els.chainContrib.innerHTML = '<span class="ws-chain-contrib-empty">Add a complete merge row to see the final composition.</span>';
+        if (_els.equalizeBtn) _els.equalizeBtn.disabled = true;
+        return;
+    }
+    if (!_chainIsLinearModel()) {
+        _els.chainContrib.innerHTML = '<span class="ws-chain-contrib-empty">Composition preview unavailable — chain uses Cosine Adaptive or Add Difference.</span>';
+        const det = _detectAccumulatorChain();
+        if (_els.equalizeBtn) _els.equalizeBtn.disabled = !det.ok;
+        return;
+    }
+    const contrib = _finalContributions();
+    if (!contrib || !Object.keys(contrib).length) {
+        _els.chainContrib.innerHTML = '<span class="ws-chain-contrib-empty">Add a complete merge row to see the final composition.</span>';
+        if (_els.equalizeBtn) _els.equalizeBtn.disabled = true;
+        return;
+    }
+
+    // Show concrete files only — anything left as null upstream gets
+    // rolled into "Unknown source". Sort largest contribution first.
+    const entries = Object.entries(contrib)
+        .map(([k, v]) => [k, +v])
+        .filter(([, v]) => v > 0.0005)
+        .sort((a, b) => b[1] - a[1]);
+
+    const total = entries.reduce((s, [, v]) => s + v, 0);
+    let html = '<div class="ws-chain-contrib-title">Final composition</div>';
+    html += '<div class="ws-chain-contrib-list">';
+    for (const [name, weight] of entries) {
+        const pct = (weight * 100).toFixed(2);
+        const barPct = Math.max(2, weight * 100).toFixed(2);
+        html += '<div class="ws-chain-contrib-row" title="' + _esc(name) + '">'
+            + '<span class="ws-chain-contrib-name">' + _esc(name) + '</span>'
+            + '<div class="ws-chain-contrib-bar"><div class="ws-chain-contrib-bar-fill" style="width:' + barPct + '%;"></div></div>'
+            + '<span class="ws-chain-contrib-pct">' + pct + '%</span>'
+            + '</div>';
+    }
+    if (Math.abs(total - 1.0) > 0.001) {
+        html += '<div class="ws-chain-contrib-note">Weights sum to ' + (total * 100).toFixed(2) + '% (chain has incomplete rows).</div>';
+    }
+    // Approximation note for non-exact methods.
+    const usesApprox = WS.rows.some(r => r.primary && r.secondary
+        && _LINEAR_CONTRIB_METHODS.has(r.method)
+        && r.method !== "weighted_sum" && r.method !== "slerp" && r.method !== "svd_blend");
+    if (usesApprox) {
+        html += '<div class="ws-chain-contrib-note">Approximate — task-vector / SVD-split methods filter B before adding.</div>';
+    }
+    // Per-block weights override the global alpha per-block; the preview
+    // shows the global mix only.
+    const usesBlocks = WS.rows.some(r => r.primary && r.secondary && r.useBlockWeights);
+    if (usesBlocks) {
+        html += '<div class="ws-chain-contrib-note">Per-block weights override the global alpha — actual contribution varies by block.</div>';
+    }
+    html += '</div>';
+    _els.chainContrib.innerHTML = html;
+
+    const det = _detectAccumulatorChain();
+    if (_els.equalizeBtn) _els.equalizeBtn.disabled = !det.ok;
+    if (_els.equalizeBtn) _els.equalizeBtn.title = det.ok
+        ? "Set every row's alpha so each source contributes equally to the final output."
+        : det.reason;
+}
+
+// ========================================================================
 // ACTION-BUTTON & PROGRESS UPDATES
 // ========================================================================
 
@@ -2714,6 +2910,8 @@ function _updateActionButtons() {
             ? "Begin Merge (" + chainSteps.length + " steps)"
             : "Begin Merge";
     }
+
+    _renderChainContrib();
 }
 
 function _setMergeButtonState(merging) {
