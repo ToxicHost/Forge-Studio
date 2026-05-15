@@ -1601,14 +1601,20 @@ async function doGenerate() {
   // corrupt Forge's weakref tracking if it fired during process_images();
   // we defer the switch to here where the pipeline is idle. Model first,
   // then VAE — the VAE handler resolves against the currently loaded
-  // checkpoint, so the model needs to settle first.
+  // checkpoint, so the model needs to settle first. The model path goes
+  // through loadSelectedModelComponents so TE/VAE/row state stays in
+  // sync (e.g. no leftover Anima TE after switching to SDXL).
   if (State._pendingModelSwitch) {
     const title = State._pendingModelSwitch;
     State._pendingModelSwitch = null;
     const modelSelect = document.getElementById("paramModel");
     if (modelSelect) {
       modelSelect.value = title;
-      modelSelect.dispatchEvent(new Event("change"));
+      if (typeof window.loadSelectedModelComponents === "function") {
+        await window.loadSelectedModelComponents("post-generation");
+      } else {
+        modelSelect.dispatchEvent(new Event("change"));
+      }
     }
   }
   if (State._pendingVAESwitch) {
@@ -2901,62 +2907,119 @@ function bindUI() {
     e.target.value = slider?.value || "0";
   });
 
-  // Model change in settings
-  document.getElementById("paramModel")?.addEventListener("change", async (e) => {
-    const title = e.target.value;
+  // ─── Shared model-component load helper ───────────────────────────────
+  // Single source of truth for switching the loaded checkpoint + its
+  // companion components (VAE, external Text Encoder). All entry points
+  // (paramModel change, paramTextEncoder change, pending-switch flush
+  // after generation, workflow apply) funnel through here so the UI
+  // dropdowns and Forge's loading state can never desync.
+  //
+  // The TE row visibility and value are driven entirely from the current
+  // model's `check_model_te` result. When the model doesn't need an
+  // external TE, the row is hidden and paramTextEncoder is forced to
+  // "None" — that ensures the next POST /studio/load_model rebuilds
+  // additional_modules without any leftover Anima/Cosmos TE entry.
+  //
+  // `reason` controls per-model TE memory behavior:
+  //   "model-change"     — user picked a new checkpoint; restore from
+  //                        per-model TE memory if available.
+  //   "te-change"        — user picked a TE explicitly; keep it as-is
+  //                        and persist it to per-model memory.
+  //   "workflow-apply"   — workflow already wrote paramTextEncoder; keep
+  //                        the workflow's value, do NOT restore from
+  //                        memory (memory would clobber the workflow).
+  //   "post-generation"  — pending switch flushed after a generation;
+  //                        same restore semantics as "model-change".
+  async function loadSelectedModelComponents(reason = "model-change") {
+    const modelSelect = document.getElementById("paramModel");
+    const title = modelSelect?.value;
     if (!title) return;
-    // If a generation is in flight, queue the switch and apply after it
-    // completes. forge_model_reload() mid-pipeline would destroy
-    // shared.sd_model out from under process_images().
-    if (State.generating) {
+
+    // Queue when generation is in flight — forge_model_reload() would
+    // destroy shared.sd_model out from under process_images(). The
+    // post-generation flush re-enters this helper with reason
+    // "post-generation".
+    if (State.generating && reason !== "post-generation") {
       State._pendingModelSwitch = title;
-      showToast(I18N.t("toast.modelSwitchPending", "Model will switch after generation completes"), "info");
+      showToast(
+        I18N.t("toast.modelSwitchPending", "Model will switch after generation completes"),
+        "info",
+      );
       return;
     }
-    // FR-002: Show progress bar during model load
+
+    const teRow = document.getElementById("textEncoderRow");
+    const teSelect = document.getElementById("paramTextEncoder");
+    const vaeVal = document.getElementById("paramVAE")?.value;
+
+    // Discover whether the new checkpoint needs an external TE.
+    let needsTE = false;
+    try {
+      const teCheck = await fetch(
+        API.base + "/studio/check_model_te?title=" + encodeURIComponent(title),
+      ).then((r) => r.json());
+      needsTE = !!teCheck.needs_te;
+    } catch (teErr) {
+      console.warn("[Studio] TE check failed:", teErr);
+    }
+
+    if (needsTE) {
+      if (teRow) teRow.style.display = "";
+      if (reason === "model-change" || reason === "post-generation") {
+        // Restore from per-model TE memory (no-op if the dropdown
+        // doesn't contain the remembered name).
+        const teMemory = JSON.parse(localStorage.getItem("studio_te_memory") || "{}");
+        const remembered = teMemory[title];
+        if (
+          remembered &&
+          teSelect &&
+          [...teSelect.options].some((o) => o.value === remembered)
+        ) {
+          teSelect.value = remembered;
+        }
+      }
+      // "te-change" and "workflow-apply" keep paramTextEncoder as-is.
+      const chosenTE = teSelect?.value || "None";
+      if (chosenTE === "None" && (State._textEncoderList || []).length > 0) {
+        showToast("This model needs a text encoder — select one above", "warn");
+      }
+    } else {
+      // Model bundles its own TE. Hide the row AND force the field to
+      // "None" so the next load_model call rebuilds additional_modules
+      // without any stale external TE entry. This is the core fix for
+      // the Anima→SDXL stale-TE bug.
+      if (teRow) teRow.style.display = "none";
+      if (teSelect) teSelect.value = "None";
+    }
+
+    const textEncoder = teSelect?.value || "None";
+
+    // Persist per-model TE memory when the user explicitly picked one.
+    if (reason === "te-change") {
+      try {
+        const teMemory = JSON.parse(localStorage.getItem("studio_te_memory") || "{}");
+        teMemory[title] = textEncoder;
+        localStorage.setItem("studio_te_memory", JSON.stringify(teMemory));
+      } catch (e) { /* ignore */ }
+    }
+
+    // Build the load body. Send text_encoder explicitly even when "None"
+    // so the backend knows to drop any prior external TE.
+    const loadBody = { title, text_encoder: textEncoder };
+    if (vaeVal && vaeVal !== "Automatic" && vaeVal !== "None") {
+      loadBody.vae = vaeVal;
+    }
+
     const btn = document.getElementById("genBtn");
     const fill = document.getElementById("progressFill");
-    if (btn) { btn.textContent = _i18n("toast.model.loading", "Loading model..."); btn.classList.add("generating"); }
+    if (btn) {
+      btn.textContent = _i18n("toast.model.loading", "Loading model...");
+      btn.classList.add("generating");
+    }
     if (fill) { fill.style.width = "100%"; fill.classList.add("indeterminate"); }
     StatusBar.setStatus("loading");
+
     try {
-      // Check if model needs external text encoder (near-instant header scan)
-      let textEncoder = "None";
-      try {
-        const teCheck = await fetch(API.base + "/studio/check_model_te?title=" + encodeURIComponent(title)).then(r => r.json());
-        const teRow = document.getElementById("textEncoderRow");
-        const teSelect = document.getElementById("paramTextEncoder");
-        if (teCheck.needs_te) {
-          // Show TE row — model needs external text encoder
-          if (teRow) teRow.style.display = "";
-          // Restore per-model TE memory from localStorage
-          const teMemory = JSON.parse(localStorage.getItem("studio_te_memory") || "{}");
-          if (teMemory[title] && teSelect) {
-            // Check if the remembered TE still exists in the dropdown
-            if ([...teSelect.options].some(o => o.value === teMemory[title])) {
-              teSelect.value = teMemory[title];
-            }
-          }
-          textEncoder = teSelect?.value || "None";
-          if (textEncoder === "None" && (State._textEncoderList || []).length > 0) {
-            showToast("This model needs a text encoder — select one above", "warn");
-          }
-        } else {
-          // Hide TE row — model bundles its own text encoder
-          if (teRow) teRow.style.display = "none";
-          if (teSelect) teSelect.value = "None";
-        }
-      } catch (teErr) {
-        console.warn("[Studio] TE check failed:", teErr);
-      }
-
-      // Always send the user's explicit VAE — needs_vae can't distinguish a good baked VAE from garbage merged weights.
-      const loadBody = { title, text_encoder: textEncoder };
-      const vaeVal = document.getElementById("paramVAE")?.value;
-      if (vaeVal && vaeVal !== "Automatic" && vaeVal !== "None") {
-        loadBody.vae = vaeVal;
-      }
-
       const r = await fetch(API.base + "/studio/load_model", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
@@ -2965,21 +3028,43 @@ function bindUI() {
       const data = await r.json();
       if (r.ok && data.ok) {
         StatusBar.setModel(data.loaded.split("[")[0].trim());
-        showToast(_i18n("toast.model.loaded", "Model loaded: " + data.loaded, { name: data.loaded }), "success");
+        showToast(
+          _i18n("toast.model.loaded", "Model loaded: " + data.loaded, { name: data.loaded }),
+          "success",
+        );
       } else {
         console.error("[Studio] Model load failed:", data);
-        showToast(_i18n("toast.model.loadFailed", "Model load failed: " + (data.error || r.status), { error: data.error || r.status }), "error");
+        showToast(
+          _i18n(
+            "toast.model.loadFailed",
+            "Model load failed: " + (data.error || r.status),
+            { error: data.error || r.status },
+          ),
+          "error",
+        );
       }
     } catch (err) {
       console.error("[Studio] Model load error:", err);
-      showToast(_i18n("toast.model.loadError", "Model load error: " + err.message, { error: err.message }), "error");
+      showToast(
+        _i18n("toast.model.loadError", "Model load error: " + err.message, { error: err.message }),
+        "error",
+      );
     }
+
     if (btn) {
-      btn.textContent = (window.I18N && window.I18N.t) ? window.I18N.t("actions.generate", "Generate") : "Generate";
+      btn.textContent = (window.I18N && window.I18N.t)
+        ? window.I18N.t("actions.generate", "Generate")
+        : "Generate";
       btn.classList.remove("generating");
     }
     if (fill) { fill.style.width = "0%"; fill.classList.remove("indeterminate"); }
     StatusBar.setStatus("ready");
+  }
+  window.loadSelectedModelComponents = loadSelectedModelComponents;
+
+  // Model change in settings
+  document.getElementById("paramModel")?.addEventListener("change", async () => {
+    await loadSelectedModelComponents("model-change");
   });
 
   // VAE change in settings
@@ -3014,53 +3099,14 @@ function bindUI() {
     }
   });
 
-  // Text Encoder change — save per-model memory and reload model with new TE
-  document.getElementById("paramTextEncoder")?.addEventListener("change", async (e) => {
-    const te = e.target.value;
-    const modelSelect = document.getElementById("paramModel");
-    const title = modelSelect?.value;
+  // Text Encoder change — reload the current model with the chosen TE.
+  // Setting TE to "None" still triggers a reload so the backend rebuilds
+  // additional_modules without any stale external TE entry. Per-model
+  // memory is persisted inside loadSelectedModelComponents("te-change").
+  document.getElementById("paramTextEncoder")?.addEventListener("change", async () => {
+    const title = document.getElementById("paramModel")?.value;
     if (!title) return;
-
-    // Save per-model TE choice to localStorage
-    const teMemory = JSON.parse(localStorage.getItem("studio_te_memory") || "{}");
-    teMemory[title] = te;
-    localStorage.setItem("studio_te_memory", JSON.stringify(teMemory));
-
-    if (te === "None") return; // No reload needed — clearing TE
-    showToast("Loading with text encoder...", "info");
-    const btn = document.getElementById("genBtn");
-    const fill = document.getElementById("progressFill");
-    if (btn) { btn.textContent = _i18n("toast.model.loading", "Loading model..."); btn.classList.add("generating"); }
-    if (fill) { fill.style.width = "100%"; fill.classList.add("indeterminate"); }
-    StatusBar.setStatus("loading");
-    try {
-      // Include VAE as additional module — if TE row is visible,
-      // model likely needs external VAE too
-      const loadBody = { title, text_encoder: te };
-      const vaeVal = document.getElementById("paramVAE")?.value;
-      if (vaeVal && vaeVal !== "Automatic" && vaeVal !== "None") {
-        loadBody.vae = vaeVal;
-      }
-      const r = await fetch(API.base + "/studio/load_model", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(loadBody),
-      });
-      const data = await r.json();
-      if (r.ok && data.ok) {
-        showToast("Model loaded with " + te, "success");
-      } else {
-        showToast("Load failed: " + (data.error || r.status), "error");
-      }
-    } catch (err) {
-      showToast("Load error: " + err.message, "error");
-    }
-    if (btn) {
-      btn.textContent = (window.I18N && window.I18N.t) ? window.I18N.t("actions.generate", "Generate") : "Generate";
-      btn.classList.remove("generating");
-    }
-    if (fill) { fill.style.width = "0%"; fill.classList.remove("indeterminate"); }
-    StatusBar.setStatus("ready");
+    await loadSelectedModelComponents("te-change");
   });
 
   // Toggle tracks — generic CSS toggle

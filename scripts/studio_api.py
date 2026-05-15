@@ -3319,18 +3319,27 @@ def setup_studio_routes(app: FastAPI):
             if not info:
                 return JSONResponse({"error": f"Not found: {title}"}, status_code=404)
 
-            # Build additional_modules list for models that need
-            # external text encoders and/or VAE (Anima/Cosmos, Flux, etc.)
+            # Build additional_modules fresh on every call. The previous
+            # forge_loading_parameters["additional_modules"] is NOT preserved
+            # — that's the whole point. A frontend switch from a model that
+            # needs an external TE (Anima/Cosmos) to one that bundles its
+            # own (SDXL) must drop the old TE entry. Any of "None",
+            # "Bundled", "", or a missing text_encoder field all mean
+            # "no external TE for this load".
             additional = []
             models_dir = getattr(shared, 'models_path', 'models')
 
-            if text_encoder and text_encoder not in ("None", "Bundled", ""):
+            _no_te = text_encoder is None or text_encoder in ("None", "Bundled", "")
+            if not _no_te:
                 te_path = os.path.join(models_dir, "text_encoder", text_encoder)
                 if os.path.isfile(te_path):
                     additional.append(te_path)
                     print(f"{TAG} Text encoder: {text_encoder}")
                 else:
                     print(f"{TAG} Warning: text encoder not found: {te_path}")
+            else:
+                # Logged so the bug we just fixed stays diagnosable.
+                print(f"{TAG} No external text encoder for this load")
 
             # VAE as additional module (when model needs external VAE)
             if vae and vae not in ("Automatic", "None", ""):
@@ -3395,7 +3404,13 @@ def setup_studio_routes(app: FastAPI):
 
     @app.get("/studio/model_status")
     async def model_status():
-        """Check whether a model is currently loaded in VRAM."""
+        """Check whether a model is currently loaded in VRAM.
+
+        Also reports privacy-safe details about the current
+        additional_modules list — counts and category booleans only, no
+        paths or filenames — so the stale-TE class of bug can be
+        diagnosed in the field without leaking user-local file paths.
+        """
         loaded = (
             hasattr(shared, 'sd_model')
             and shared.sd_model is not None
@@ -3405,9 +3420,51 @@ def setup_studio_routes(app: FastAPI):
         title = ""
         if loaded:
             title = getattr(shared.sd_model.sd_checkpoint_info, 'title', '')
+
+        additional_count = 0
+        has_external_te = False
+        has_external_vae = False
+        try:
+            params = sd_models.model_data.forge_loading_parameters or {}
+            mods = params.get("additional_modules") or []
+            additional_count = len(mods)
+            # Classify by directory bucket. Avoid returning the names.
+            from modules import sd_vae
+            try:
+                sd_vae.refresh_vae_list()
+            except Exception:
+                pass
+            vae_paths = {
+                os.path.normcase(os.path.abspath(p))
+                for p in (sd_vae.vae_dict or {}).values()
+                if p
+            }
+            for m in mods:
+                if not m:
+                    continue
+                try:
+                    norm = os.path.normcase(os.path.abspath(m))
+                except Exception:
+                    norm = m
+                if norm in vae_paths:
+                    has_external_vae = True
+                    continue
+                # Anything else under text_encoder/ counts as a TE entry.
+                if (os.sep + "text_encoder" + os.sep) in norm:
+                    has_external_te = True
+                else:
+                    # Unclassified — assume TE-like for safety so the
+                    # status surfaces a non-VAE module to investigate.
+                    has_external_te = True
+        except Exception:
+            log.exception("model_status component classification failed")
+
         return {
             "loaded": loaded,
             "title": title,
+            "additional_modules_count": additional_count,
+            "has_external_text_encoder": has_external_te,
+            "has_external_vae": has_external_vae,
             "auto_unload_enabled": _auto_unload_enabled,
             "auto_unload_minutes": _auto_unload_minutes,
         }

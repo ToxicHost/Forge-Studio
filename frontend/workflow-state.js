@@ -388,19 +388,32 @@ function applyWorkflowState(workflowOrSnapshot, options) {
     if (Number.isFinite(w) && Number.isFinite(h)) _maybeResizeCanvas(w, h);
   }
 
-  // Trigger model load — dispatch `change` exactly once, on whichever
-  // field changed. paramModel's listener (app.js:2905) reads VAE + TE
-  // from the DOM and loads them together, so dispatching there subsumes
-  // a separate VAE/TE change. Only fall back to VAE/TE when the model
-  // itself didn't change.
-  if (loadModel) {
-    var targetId = null;
-    if (modelChanged.paramModel) targetId = "paramModel";
-    else if (modelChanged.paramVAE) targetId = "paramVAE";
-    else if (modelChanged.paramTextEncoder) targetId = "paramTextEncoder";
-    if (targetId) {
-      var el = document.getElementById(targetId);
-      if (el) el.dispatchEvent(new Event("change", { bubbles: true }));
+  // Trigger model load via the shared helper rather than dispatching
+  // `change` on the dropdowns. Going through the helper directly means
+  // the paramModel listener's per-model TE memory restore can't clobber
+  // the value the workflow just wrote — the helper's "workflow-apply"
+  // reason keeps paramTextEncoder as-is. paramModel's load also handles
+  // VAE + TE in a single backend call, so any of the three changing
+  // funnels into one request.
+  var anyModelChanged =
+    modelChanged.paramModel || modelChanged.paramVAE || modelChanged.paramTextEncoder;
+  if (loadModel && anyModelChanged) {
+    if (typeof window.loadSelectedModelComponents === "function") {
+      // Fire and forget — generation can wait on State.generating-aware
+      // pending queue if it overlaps.
+      try { window.loadSelectedModelComponents("workflow-apply"); }
+      catch (e) { /* helper handles its own errors via toasts */ }
+    } else {
+      // Fallback for older builds without the helper: dispatch change
+      // on whichever field changed. paramModel cascades to VAE+TE.
+      var targetId = null;
+      if (modelChanged.paramModel) targetId = "paramModel";
+      else if (modelChanged.paramVAE) targetId = "paramVAE";
+      else if (modelChanged.paramTextEncoder) targetId = "paramTextEncoder";
+      if (targetId) {
+        var el = document.getElementById(targetId);
+        if (el) el.dispatchEvent(new Event("change", { bubbles: true }));
+      }
     }
   }
 
