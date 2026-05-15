@@ -3010,6 +3010,32 @@ function _renderModelInfo(label, info) {
         + '<div class="ws-info-row"><span>' + _t("workshop.inspector.keys", "Keys") + '</span><span>' + info.key_count.toLocaleString() + '</span></div>'
         + '<div class="ws-info-row"><span>' + _t("workshop.inspector.size", "Size") + '</span><span>' + info.size_gb + ' GB</span></div>'
         + '<div class="ws-info-row"><span>' + _t("workshop.inspector.dtypes", "Dtypes") + '</span><span>' + dtypes + '</span></div>';
+
+    // Package breakdown — tells the user where the GB live (core / TE / VAE
+    // / adapter / other), so an oversized merge is self-diagnosing.
+    if (info.packages) {
+        const pkgLabels = {
+            core: _t("workshop.inspector.package.core", "Core"),
+            text_encoder: _t("workshop.inspector.package.textEncoder", "Text Encoder"),
+            vae: _t("workshop.inspector.package.vae", "VAE"),
+            llm_adapter: _t("workshop.inspector.package.llmAdapter", "LLM Adapter"),
+            other: _t("workshop.inspector.package.other", "Other"),
+        };
+        const pkgRows = [];
+        for (const name of ["core", "text_encoder", "vae", "llm_adapter", "other"]) {
+            const p = info.packages[name];
+            if (!p || !p.keys) continue;
+            const gb = (p.gb !== undefined ? p.gb : (p.bytes || 0) / (1024 ** 3)).toFixed(2);
+            pkgRows.push('<div class="ws-info-row"><span>' + pkgLabels[name]
+                + '</span><span>' + p.keys.toLocaleString() + ' keys / ' + gb + ' GB</span></div>');
+        }
+        if (pkgRows.length) {
+            html += '<div class="ws-info-row ws-info-row-section"><span>'
+                + _t("workshop.inspector.packages", "Packages")
+                + '</span><span></span></div>' + pkgRows.join("");
+        }
+    }
+
     const mi = info.model_info || {};
     if (mi.prediction) html += '<div class="ws-info-row"><span>Prediction</span><span>' + _esc(mi.prediction) + '</span></div>';
     if (mi.base_model) html += '<div class="ws-info-row"><span>Base</span><span>' + _esc(mi.base_model) + '</span></div>';
