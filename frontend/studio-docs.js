@@ -28,71 +28,35 @@ var _stripEl = null;
 // ========================================================================
 // GENERATION PANEL — per-document prompt & settings
 // ========================================================================
-
-// Element IDs to save/restore, grouped by type
-var _GEN_VALUES = [
-  "paramSteps", "paramCFG", "paramDenoise", "paramSeed",
-  "paramBatch", "paramBatchSize",
-  "paramHrScale", "paramHrSteps", "paramHrDenoise", "paramHrCFG",
-  "paramAD1Conf", "paramAD1Denoise", "paramAD1Blur", "paramAD1Prompt",
-  "paramAD2Conf", "paramAD2Denoise", "paramAD2Blur", "paramAD2Prompt",
-  "paramAD3Conf", "paramAD3Denoise", "paramAD3Blur", "paramAD3Prompt",
-  "paramVarSeed", "paramVarStrength", "paramVarStrengthVal",
-  "paramResizeSeedW",
-  "paramMaskBlur", "paramPadding",
-  "paramSoftBias", "paramSoftPreserve", "paramSoftContrast",
-  "paramSoftMaskInf", "paramSoftDiffThresh", "paramSoftDiffContrast"
-];
-var _GEN_SELECTS = [
-  "paramSampler", "paramScheduler", "paramHrUpscaler", "paramHrCheckpoint",
-  "paramAD1Model", "paramAD2Model", "paramAD3Model",
-  "paramInpaintArea", "paramFill"
-];
-var _GEN_TEXTAREAS = ["paramPrompt", "paramNeg"];
-var _GEN_CHECKS = ["checkHires", "checkAD", "checkAD1", "checkAD2", "checkAD3",
-  "checkSoftInpaint", "checkExtra"];
+//
+// Delegates to window.StudioWorkflowState. Tab snapshots and Workflow
+// Profiles share that helper so the field list cannot drift between the
+// two systems. Old flat-snapshot payloads still load: applyWorkflowState
+// accepts either { settings: {...} } or a bare { paramSteps: ... } shape.
 
 function _saveGenPanel() {
-  var gen = {};
-  _GEN_VALUES.forEach(function (id) {
-    var el = document.getElementById(id);
-    if (el) gen[id] = el.value;
-  });
-  _GEN_SELECTS.forEach(function (id) {
-    var el = document.getElementById(id);
-    if (el) gen[id] = el.value;
-  });
-  _GEN_TEXTAREAS.forEach(function (id) {
-    var el = document.getElementById(id);
-    if (el) gen[id] = el.value;
-  });
-  _GEN_CHECKS.forEach(function (id) {
-    var el = document.getElementById(id);
-    if (el) gen[id] = el.classList.contains("checked");
-  });
-  return gen;
+  var WF = window.StudioWorkflowState;
+  if (WF && typeof WF.captureWorkflowState === "function") {
+    return WF.captureWorkflowState({
+      includePrompt: true,
+      includeNegativePrompt: true,
+      includeDimensions: true,
+      mode: "tab",
+    });
+  }
+  return {};
 }
 
 function _loadGenPanel(gen) {
   if (!gen) return;
-  _GEN_VALUES.forEach(function (id) {
-    var el = document.getElementById(id);
-    if (el && gen[id] !== undefined) el.value = gen[id];
-  });
-  _GEN_SELECTS.forEach(function (id) {
-    var el = document.getElementById(id);
-    if (el && gen[id] !== undefined) el.value = gen[id];
-  });
-  _GEN_TEXTAREAS.forEach(function (id) {
-    var el = document.getElementById(id);
-    if (el && gen[id] !== undefined) el.value = gen[id];
-  });
-  _GEN_CHECKS.forEach(function (id) {
-    var el = document.getElementById(id);
-    if (el && gen[id] !== undefined) {
-      el.classList.toggle("checked", gen[id]);
-    }
-  });
+  var WF = window.StudioWorkflowState;
+  if (WF && typeof WF.applyWorkflowState === "function") {
+    WF.applyWorkflowState(gen, {
+      applyDimensions: true,
+      silent: true,
+      fromTabSwitch: true,
+    });
+  }
 }
 
 // ========================================================================
@@ -347,12 +311,15 @@ function _createBlankDoc(name) {
     genPanel: (function () {
       var gen = _saveGenPanel();
       // Clear content-specific fields — keep settings (sampler, steps, CFG, etc.)
-      gen.paramPrompt = "";
-      gen.paramNeg = "";
-      gen.paramSeed = "-1";
-      gen.paramAD1Prompt = "";
-      gen.paramAD2Prompt = "";
-      gen.paramAD3Prompt = "";
+      // captureWorkflowState now returns { version, settings, dynamic }; mutate
+      // the settings sub-object using stable schema keys.
+      var s = (gen && gen.settings) ? gen.settings : (gen.settings = {});
+      s.prompt = "";
+      s.negative_prompt = "";
+      s.seed = -1;
+      s.ad1_prompt = "";
+      s.ad2_prompt = "";
+      s.ad3_prompt = "";
       return gen;
     })()
   };

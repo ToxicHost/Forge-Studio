@@ -31,7 +31,7 @@ import zipfile
 # Must be set before cv2 is imported anywhere in the process.
 os.environ.setdefault("OPENCV_IO_ENABLE_OPENEXR", "1")
 
-from datetime import date
+from datetime import date, datetime
 from pathlib import Path
 from threading import Thread
 from typing import Optional, List
@@ -224,6 +224,56 @@ def _atomic_write_json(path: Path, data) -> None:
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
     tmp.replace(path)
+
+
+# ---------------------------------------------------------------------------
+# Workflow Profiles — local JSON storage
+# ---------------------------------------------------------------------------
+# Each workflow is a single JSON file under <_studio_root>/workflows/. IDs
+# are timestamp-backed (wf_<ms>_<6-hex>) so we never collide on rename, and
+# names can change without touching the on-disk file. ID validation rejects
+# anything that could escape the workflow directory (slashes, dot-dot,
+# absolute paths, empty strings, over-length names).
+
+_WORKFLOW_NAME_RE = re.compile(r"[^a-zA-Z0-9_.-]+")
+_WORKFLOW_ID_RE = re.compile(r"^[a-zA-Z0-9_.-]{1,128}$")
+
+
+def _workflow_dir() -> Path:
+    d = _studio_root / "workflows"
+    d.mkdir(exist_ok=True)
+    return d
+
+
+def _workflow_path(workflow_id: str) -> Path:
+    if not workflow_id or not _WORKFLOW_ID_RE.match(workflow_id):
+        raise ValueError("Invalid workflow id")
+    safe = _WORKFLOW_NAME_RE.sub("-", workflow_id).strip(".-")
+    if not safe:
+        raise ValueError("Invalid workflow id")
+    return _workflow_dir() / f"{safe}.json"
+
+
+def _new_workflow_id() -> str:
+    import secrets
+    return f"wf_{int(time.time() * 1000)}_{secrets.token_hex(3)}"
+
+
+def _now_iso() -> str:
+    return datetime.utcnow().replace(microsecond=0).isoformat() + "Z"
+
+
+def _workflow_metadata(wf: dict) -> dict:
+    """Return just the metadata fields (no settings/dynamic payload)."""
+    return {
+        "id":          wf.get("id"),
+        "name":        wf.get("name") or "",
+        "description": wf.get("description") or "",
+        "family":      wf.get("family") or "any",
+        "created_at":  wf.get("created_at"),
+        "updated_at":  wf.get("updated_at"),
+        "options":     wf.get("options") or {},
+    }
 
 
 def _cleanup_stale_tmp_files() -> None:
@@ -2162,6 +2212,113 @@ def setup_studio_routes(app: FastAPI):
     @app.get("/studio/upscalers")
     async def get_upscalers():
         return [{"name": u.name} for u in shared.sd_upscalers]
+
+    # ------------------------------------------------------------------
+    # Workflow Profiles — saved generation setups
+    # One JSON file per workflow, stored under <studio_root>/workflows/.
+    # The list endpoint returns only metadata so the dropdown stays small;
+    # the per-id endpoint returns the full payload. Corrupted files are
+    # skipped from the list rather than failing the whole call.
+
+    @app.get("/studio/workflows")
+    async def list_workflows():
+        items = []
+        try:
+            for path in sorted(_workflow_dir().glob("*.json")):
+                try:
+                    wf = json.loads(path.read_text(encoding="utf-8"))
+                except Exception:
+                    log.exception("Skipping corrupted workflow file")
+                    continue
+                if not isinstance(wf, dict):
+                    continue
+                items.append(_workflow_metadata(wf))
+        except Exception:
+            log.exception("Failed to enumerate workflows")
+            return JSONResponse({"error": "Failed to list workflows"}, status_code=500)
+        return items
+
+    @app.get("/studio/workflows/{workflow_id}")
+    async def get_workflow(workflow_id: str):
+        try:
+            path = _workflow_path(workflow_id)
+        except ValueError:
+            return JSONResponse({"error": "Invalid workflow id"}, status_code=400)
+        if not path.exists():
+            return JSONResponse({"error": "Not found"}, status_code=404)
+        try:
+            wf = json.loads(path.read_text(encoding="utf-8"))
+        except Exception:
+            log.exception("Failed to read workflow")
+            return JSONResponse({"error": "Workflow read failed"}, status_code=500)
+        if not isinstance(wf, dict):
+            return JSONResponse({"error": "Malformed workflow"}, status_code=500)
+        return wf
+
+    @app.post("/studio/workflows")
+    async def save_workflow(req: dict):
+        if not isinstance(req, dict):
+            return JSONResponse({"error": "Invalid payload"}, status_code=400)
+        settings = req.get("settings")
+        if not isinstance(settings, dict):
+            return JSONResponse({"error": "settings must be an object"}, status_code=400)
+        dynamic = req.get("dynamic")
+        if dynamic is not None and not isinstance(dynamic, dict):
+            return JSONResponse({"error": "dynamic must be an object"}, status_code=400)
+        options = req.get("options")
+        if options is not None and not isinstance(options, dict):
+            return JSONResponse({"error": "options must be an object"}, status_code=400)
+
+        wf_id = req.get("id") or _new_workflow_id()
+        try:
+            path = _workflow_path(wf_id)
+        except ValueError:
+            return JSONResponse({"error": "Invalid workflow id"}, status_code=400)
+
+        now = _now_iso()
+        existing_created = None
+        if path.exists():
+            try:
+                existing = json.loads(path.read_text(encoding="utf-8"))
+                if isinstance(existing, dict):
+                    existing_created = existing.get("created_at")
+            except Exception:
+                existing_created = None
+
+        wf = {
+            "version":     int(req.get("version") or 1),
+            "id":          wf_id,
+            "name":        str(req.get("name") or "")[:200],
+            "description": str(req.get("description") or "")[:1000],
+            "family":      str(req.get("family") or "any")[:32],
+            "created_at":  existing_created or now,
+            "updated_at":  now,
+            "options":     options or {},
+            "settings":    settings,
+            "dynamic":     dynamic or {},
+        }
+
+        try:
+            _atomic_write_json(path, wf)
+        except Exception:
+            log.exception("Failed to save workflow")
+            return JSONResponse({"error": "Workflow save failed"}, status_code=500)
+
+        print(f"{TAG} Workflow saved")
+        return {"ok": True, "id": wf_id, "metadata": _workflow_metadata(wf)}
+
+    @app.delete("/studio/workflows/{workflow_id}")
+    async def delete_workflow(workflow_id: str):
+        try:
+            path = _workflow_path(workflow_id)
+        except ValueError:
+            return JSONResponse({"error": "Invalid workflow id"}, status_code=400)
+        try:
+            path.unlink(missing_ok=True)
+        except Exception:
+            log.exception("Failed to delete workflow")
+            return JSONResponse({"error": "Workflow delete failed"}, status_code=500)
+        return {"ok": True}
 
     # ------------------------------------------------------------------
     # Post-generation upscale — runs standalone upscaler on an image

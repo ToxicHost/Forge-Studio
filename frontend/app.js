@@ -67,6 +67,13 @@ const API = {
   liveStop:      ()       => API.post("/studio/live/stop", {}),
   liveSubmit:    (params) => API.post("/studio/live/submit", params),
   liveStatus:    ()       => API.get("/studio/live/status"),
+
+  // Workflow Profiles
+  workflows:       ()        => API.get("/studio/workflows"),
+  workflow:        (id)      => API.get("/studio/workflows/" + encodeURIComponent(id)),
+  saveWorkflow:    (payload) => API.post("/studio/workflows", payload),
+  deleteWorkflow:  (id)      => fetch(API.base + "/studio/workflows/" + encodeURIComponent(id),
+                                       { method: "DELETE" }).then(r => r.json()),
 };
 
 

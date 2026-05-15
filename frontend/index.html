@@ -322,6 +322,16 @@
               <button id="skipBtn" data-i18n="actions.skip">Skip</button>
             </div>
 
+            <div class="workflow-row" id="workflowRow" title="Save and re-apply named generation setups. Apply does not load the model immediately — that happens on the next Generate.">
+              <select class="param-select" id="workflowSelect">
+                <option value="">Workflow…</option>
+              </select>
+              <button class="ar-btn" id="workflowApplyBtn" title="Apply selected workflow to this tab">Apply</button>
+              <button class="ar-btn" id="workflowNewTabBtn" title="Create a new tab with the selected workflow">New Tab</button>
+              <button class="ar-btn" id="workflowSaveBtn" title="Save current settings as a new workflow">Save</button>
+              <button class="ar-btn ar-clear" id="workflowDeleteBtn" title="Delete selected workflow">Delete</button>
+            </div>
+
             <div class="ar-row canvas-load-reset-row">
               <button class="ar-btn" id="loadImageBtn" title="Load image to canvas">&#x1f4c2; <span data-i18n="actions.loadImage">Load Image</span></button>
               <input type="file" id="loadImageInput" accept="image/*" style="display:none;">
@@ -1027,7 +1037,8 @@
 (async () => {
   const scripts = [
     "ag-psd.js", "png-metadata.js", "i18n.js", "searchable-select.js", "canvas-core.js",
-    "canvas-ui.js", "app.js", "module-system.js", "studio-tour.js", "studio-docs.js", "tag-complete.js",
+    "canvas-ui.js", "workflow-state.js", "app.js", "workflows.js",
+    "module-system.js", "studio-tour.js", "studio-docs.js", "tag-complete.js",
     "lora-browser.js", "wildcard-browser.js"
   ];
   // Optional modules — loaded if available, silently skipped if not.
