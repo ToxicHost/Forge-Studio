@@ -14,20 +14,42 @@ print(f"[Parasite] v{__VER__} loaded from:", __file__)
 
 # ----------------------- helpers -----------------------
 
+def _apply_spatial_2d(x, fn):
+    """Apply a [B,C,H,W] spatial op to 4D or 5D latents.
+
+    SD/SDXL latents are [B,C,H,W]. Anima/Cosmos latents are [B,C,T,H,W].
+    For 5D, fold T into batch, apply the 2D op per frame, then restore shape.
+    Channel-preserving ops only.
+    """
+    if x.ndim == 4:
+        return fn(x)
+    if x.ndim == 5:
+        b, c, t, h, w = x.shape
+        y = x.permute(0, 2, 1, 3, 4).reshape(b * t, c, h, w)
+        y = fn(y)
+        return y.reshape(b, t, c, h, w).permute(0, 2, 1, 3, 4).contiguous()
+    raise RuntimeError(f"Parasite expected 4D or 5D latent, got shape {tuple(x.shape)}")
+
+def _bview(scalars, like):
+    """Reshape per-batch scalar tensor for broadcasting against `like`."""
+    return scalars.view(-1, *([1] * (like.ndim - 1)))
+
 def _rms(t, eps=1e-8):
     return torch.sqrt((t.float()**2).mean()) + eps
 
 def _normalize(v, eps=1e-8):
-    n = v.flatten(1).norm(dim=1).clamp_min(eps).view(-1,1,1,1)
-    return v / n
+    n = v.flatten(1).norm(dim=1).clamp_min(eps)
+    return v / _bview(n, v)
 
 def _blur3(x):
-    k = torch.tensor([[1.,2.,1.],
-                      [2.,4.,2.],
-                      [1.,2.,1.]], device=x.device, dtype=x.dtype)
-    k = (k / k.sum()).view(1,1,3,3)
-    w = k.expand(x.shape[1],1,3,3)
-    return F.conv2d(x, w, padding=1, groups=x.shape[1])
+    def op(z):
+        k = torch.tensor([[1.,2.,1.],
+                          [2.,4.,2.],
+                          [1.,2.,1.]], device=z.device, dtype=z.dtype)
+        k = (k / k.sum()).view(1,1,3,3)
+        w = k.expand(z.shape[1],1,3,3)
+        return F.conv2d(z, w, padding=1, groups=z.shape[1])
+    return _apply_spatial_2d(x, op)
 
 def _blur5(x):
     return _blur3(_blur3(x))
@@ -38,27 +60,31 @@ def _dog_hp(x, a=1.0, b=0.90):
     return a*(x - lo1) + b*(lo1 - lo2)
 
 def _laplace(x):
-    k = torch.tensor([[0.,-1.,0.],
-                      [-1.,4.,-1.],
-                      [0.,-1.,0.]], device=x.device, dtype=x.dtype).view(1,1,3,3)
-    w = k.expand(x.shape[1],1,3,3)
-    return F.conv2d(x, w, padding=1, groups=x.shape[1])
+    def op(z):
+        k = torch.tensor([[0.,-1.,0.],
+                          [-1.,4.,-1.],
+                          [0.,-1.,0.]], device=z.device, dtype=z.dtype).view(1,1,3,3)
+        w = k.expand(z.shape[1],1,3,3)
+        return F.conv2d(z, w, padding=1, groups=z.shape[1])
+    return _apply_spatial_2d(x, op)
 
 def _lum(x):
     return x.mean(dim=1, keepdim=True)
 
 def _edge_strength(y):
-    gx = F.pad(y, (0,1,0,0))[:, :, :, 1:] - F.pad(y, (1,0,0,0))[:, :, :, :-1]
-    gy = F.pad(y, (0,0,0,1))[:, :, 1:, :] - F.pad(y, (0,0,1,0))[:, :, :-1, :]
-    g = torch.sqrt(gx*gx + gy*gy)
-    g = g / (g.amax(dim=(2,3), keepdim=True).clamp_min(1e-6))
-    return g
+    def op(z):
+        gx = F.pad(z, (0,1,0,0))[:, :, :, 1:] - F.pad(z, (1,0,0,0))[:, :, :, :-1]
+        gy = F.pad(z, (0,0,0,1))[:, :, 1:, :] - F.pad(z, (0,0,1,0))[:, :, :-1, :]
+        g = torch.sqrt(gx*gx + gy*gy)
+        g = g / (g.amax(dim=(2,3), keepdim=True).clamp_min(1e-6))
+        return g
+    return _apply_spatial_2d(y, op)
 
 def _cos_sim(a, b, eps=1e-8):
     ab = (a*b).flatten(1).sum(dim=1)
     na = a.flatten(1).norm(dim=1).clamp_min(eps)
     nb = b.flatten(1).norm(dim=1).clamp_min(eps)
-    return (ab / (na*nb + eps)).view(-1,1,1,1)
+    return _bview(ab / (na*nb + eps), a)
 
 def _safe(t):
     return torch.nan_to_num(t, nan=0.0, posinf=0.0, neginf=0.0)
@@ -132,7 +158,7 @@ def _sample_parasite_core(model, x, *, sigmas, preset, extra_args=None, callback
             tex  = _safe(hp * tex_bias_gain)
 
         t_hat = _normalize(tex)
-        dot = (t_hat * u).flatten(1).sum(dim=1).view(-1,1,1,1)
+        dot = _bview((t_hat * u).flatten(1).sum(dim=1), u)
         v_orth = _normalize(_safe(t_hat - dot * u))
 
         if v_ema is None:
@@ -154,8 +180,8 @@ def _sample_parasite_core(model, x, *, sigmas, preset, extra_args=None, callback
         if omega_cycles and swirl_scale > 0.0:
             phase = 2.0 * math.pi * omega_cycles * t
             tex2  = _normalize(_safe(_laplace(lo - _blur3(lo))))
-            tex2  = _safe(tex2 - (tex2 * u).flatten(1).sum(dim=1).view(-1,1,1,1) * u)
-            tex2  = _safe(tex2 - (tex2 * v_orth).flatten(1).sum(dim=1).view(-1,1,1,1) * v_orth)
+            tex2  = _safe(tex2 - _bview((tex2 * u).flatten(1).sum(dim=1), u) * u)
+            tex2  = _safe(tex2 - _bview((tex2 * v_orth).flatten(1).sum(dim=1), v_orth) * v_orth)
             tex2  = _normalize(_safe(tex2))
             v_mix = _normalize(_safe(math.cos(phase) * v_orth + math.sin(phase) * tex2))
 
