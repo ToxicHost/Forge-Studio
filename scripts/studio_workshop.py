@@ -2770,7 +2770,14 @@ def _build_key_map(ckpt_keys: set, lora_keys: set, arch: str) -> dict:
             for cp in cosmos_prefixes:
                 candidates.append(f"{cp}{inner}".rstrip("."))
             # lycoris-style underscore form
-            candidates.append(f"lycoris_{inner.replace('.', '_')}")
+            underscore_inner = inner.replace(".", "_")
+            candidates.append(f"lycoris_{underscore_inner}")
+            # Kohya/A1111 lora_unet_ form — common for Anima LoRAs trained
+            # in kohya-ss and similar toolkits, which ship base names as
+            # lora_unet_<dot-to-underscore innerpath>. The generic Kohya
+            # block above only handles SD/SDXL ckpt prefixes; Cosmos's
+            # canonical net.* layout needs an explicit candidate here.
+            candidates.append(f"lora_unet_{underscore_inner}")
             for cand in candidates:
                 if cand and cand in lora_bases and cand not in key_map:
                     key_map[cand] = ckpt_key
