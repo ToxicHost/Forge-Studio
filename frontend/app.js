@@ -3712,7 +3712,17 @@ function bindUI() {
     }
   }
 
-  // UX-014/016: Session memory — save/restore with category filtering
+  // UX-014/016: Session memory — save/restore with category filtering.
+  // Save is wired to four triggers (debounced autosave on param change +
+  // visibilitychange-hidden + pagehide + beforeunload). The unload-family
+  // events are individually unreliable — beforeunload doesn't fire on
+  // mobile background, tab kill by Chrome's memory manager, bfcache
+  // navigation, browser crash, or OS-level process termination — so the
+  // debounced autosave acts as the safety net that catches everything
+  // the unload events miss.
+  let _quotaWarningShown = false;
+  let _sessionSaveTimer = null;
+
   function _saveSession() {
     const on = document.getElementById("toggleRememberSession")?.classList.contains("on") ?? false;
     if (!on) return;
@@ -3722,7 +3732,31 @@ function bindUI() {
       localStorage.setItem("studio-session-data", JSON.stringify(data));
     } catch (e) {
       console.warn("[Studio] Session save failed:", e);
+      // QuotaExceededError surfaces with different DOMException names
+      // across browsers ('QuotaExceededError' in Chrome/Safari,
+      // 'NS_ERROR_DOM_QUOTA_REACHED' in Firefox). One-shot toast — the
+      // autosave fires often enough that we'd spam without the guard.
+      if (!_quotaWarningShown && e?.name && /quota/i.test(e.name)) {
+        _quotaWarningShown = true;
+        try {
+          showToast(
+            _i18n(
+              "toast.session.quota",
+              "Session memory full — last session not saved. Clear browser storage to keep using Remember Last Session.",
+            ),
+            "error",
+          );
+        } catch (_) {}
+      }
     }
+  }
+
+  // Debounced autosave: 2s of idle is short enough that a crash loses
+  // little, long enough that typing in the prompt box doesn't hammer
+  // localStorage on every keystroke.
+  function _scheduleSessionSave() {
+    if (_sessionSaveTimer) clearTimeout(_sessionSaveTimer);
+    _sessionSaveTimer = setTimeout(_saveSession, 2000);
   }
 
   function _loadSession() {
@@ -3733,7 +3767,12 @@ function bindUI() {
       if (!raw) return false;
       const data = JSON.parse(raw);
       if (data && Object.keys(data).length > 0) {
-        _resolvedDefaults = data;
+        // Merge session over whatever Defaults previously loaded so new
+        // Canvas tabs (via _studioReapplyDefaults) see the combined state:
+        // Defaults for unchecked categories + Session for checked. Without
+        // the merge, switching tabs would surface only the session-tracked
+        // params and silently revert the rest to factory.
+        _resolvedDefaults = { ...(_resolvedDefaults || {}), ...data };
         _applyDefaults(data);
         console.log("[Studio] Restored session:", Object.keys(data).length, "params");
         return true;
@@ -3754,8 +3793,42 @@ function bindUI() {
     return true;
   };
 
-  // Auto-save session on page unload
+  // Auto-save session on page unload. Three event handlers, not one —
+  // each event misses in different scenarios:
+  //   beforeunload   — desktop browser close / navigation; suppressed on
+  //                    mobile background, tab kill, bfcache, crashes
+  //   pagehide       — fires reliably across bfcache + most close paths
+  //   visibilitychange to hidden — fires when tab is backgrounded,
+  //                    catches mobile and Chrome memory-manager kills
+  // The save is idempotent so multiple events firing in sequence is fine.
   window.addEventListener("beforeunload", _saveSession);
+  window.addEventListener("pagehide", _saveSession);
+  document.addEventListener("visibilitychange", () => {
+    if (document.visibilityState === "hidden") _saveSession();
+  });
+
+  // Debounced autosave on param change. The unload handlers above are the
+  // happy-path persistence; this is the safety net that catches outright
+  // crashes and OS-level kills. Each tracked element fires the same
+  // debounced save, so 2s after the user stops editing the session is
+  // written regardless of how the page ultimately closes.
+  for (const [id, type] of DEFAULTS_PARAMS) {
+    const el = document.getElementById(id);
+    if (!el) continue;
+    if (type === "check" || type === "on" || type === "active" || type === "open") {
+      // Class-toggle controls fire click in their own handlers; we listen
+      // on the same event so we run after the toggle has flipped.
+      el.addEventListener("click", _scheduleSessionSave);
+    } else if (type === "checkbox") {
+      el.addEventListener("change", _scheduleSessionSave);
+    } else {
+      // Text inputs / selects: input covers typing, change covers select
+      // and lost-focus commit. Both are needed; input alone misses select
+      // dropdowns that don't fire input.
+      el.addEventListener("input", _scheduleSessionSave);
+      el.addEventListener("change", _scheduleSessionSave);
+    }
+  }
 
   document.getElementById("checkUpdateBtn")?.addEventListener("click", async () => {
     const btn = document.getElementById("checkUpdateBtn");
@@ -3779,12 +3852,15 @@ function bindUI() {
     showToast(_i18n("toast.defaults.cleared", "Defaults cleared — reload for factory settings"), "info");
   });
 
-  // Expose for init() — priority: session memory → server defaults → factory
+  // Expose for init() — priority documented in codex.js: Defaults loads
+  // first as the baseline, Session overlays on top for whichever
+  // categories the user opted in. Categories the user unchecked in
+  // Session correctly inherit from Defaults this way; the previous
+  // early-return form skipped Defaults entirely whenever a Session
+  // existed, so unchecking a category dropped to factory instead.
   window._studioLoadDefaults = async function() {
-    // Try session memory first (if toggle is on)
-    if (_loadSession()) return;
-    // Fall back to server-saved defaults
-    await loadDefaults();
+    await loadDefaults();   // baseline (server-side, sets _resolvedDefaults)
+    _loadSession();          // overlay (browser-side, merges into _resolvedDefaults)
   };
 
   // AD slot checkboxes
