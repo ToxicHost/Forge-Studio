@@ -96,6 +96,106 @@ def _should_copy_from_a_without_merge(key: str, arch: Optional[str]) -> bool:
 
 
 # =========================================================================
+# COSMOS/ANIMA NAMESPACE CANONICALIZATION
+# =========================================================================
+#
+# Anima checkpoints ship in three layouts that all describe the same model:
+#   1. Compact     — every key under net.*
+#   2. Wrapped     — every key under model.diffusion_model.*
+#   3. AIO bundled — wrapped + cond_stage_model.* (Qwen3 TE) + first_stage_model.* (VAE)
+#
+# A naive set-union merge across mixed layouts treats net.X and
+# model.diffusion_model.X as two distinct keys and writes both, doubling the
+# diffusion stack and dragging in TE+VAE that aren't part of Anima's native
+# shape. The helpers below project every physical layout to a single
+# canonical net.* form before pair-matching, so one logical key produces
+# exactly one output tensor regardless of how it was packaged on the way in.
+
+_COSMOS_NET_PREFIX = "net."
+_COSMOS_WRAPPED_PREFIX = "model.diffusion_model."
+
+
+def _cosmos_canonical_key(key: str) -> Optional[str]:
+    """Project a physical Anima/Cosmos key to its canonical net.* form.
+
+    Returns None for keys that don't belong in Anima's native layout:
+    cond_stage_model.* / conditioner.* (text encoder) and first_stage_model.*
+    (VAE) — both are supplied externally by Forge Neo's Anima loader, so they
+    do not belong in the checkpoint file. Unrecognized keys also return None
+    and are dropped so a mis-packaged input can't smuggle stray namespaces
+    into the output.
+    """
+    if "cond_stage_model." in key or "conditioner." in key:
+        return None
+    if key.startswith(VAE_PREFIX) or ".first_stage_model." in key:
+        return None
+    if key.startswith(_COSMOS_NET_PREFIX):
+        return key
+    if key.startswith(_COSMOS_WRAPPED_PREFIX):
+        return _COSMOS_NET_PREFIX + key[len(_COSMOS_WRAPPED_PREFIX):]
+    return None
+
+
+def _cosmos_canonicalize_input(
+    physical_keys: set,
+) -> Tuple[set, Dict[str, str], Dict[str, int]]:
+    """Build a canonical-keyset + physical-key resolver for one input file.
+
+    Returns (canonical_set, phys_lookup, dropped):
+      canonical_set : net.* keys this input contributes to the merge
+      phys_lookup   : canonical_key -> physical key to read from this input
+      dropped       : {"te", "vae", "other"} counts of discarded physical keys
+
+    If a self-bloated input contains both net.X and model.diffusion_model.X
+    (e.g. a previously-broken merge output), prefer the net.* physical form
+    — it's the canonical layout and matches what Forge Neo's Anima loader
+    reads at inference time.
+    """
+    canonical_set: set = set()
+    phys_lookup: Dict[str, str] = {}
+    dropped = {"te": 0, "vae": 0, "other": 0}
+    for k in physical_keys:
+        if "cond_stage_model." in k or "conditioner." in k:
+            dropped["te"] += 1
+            continue
+        if k.startswith(VAE_PREFIX) or ".first_stage_model." in k:
+            dropped["vae"] += 1
+            continue
+        ck = _cosmos_canonical_key(k)
+        if ck is None:
+            dropped["other"] += 1
+            continue
+        canonical_set.add(ck)
+        # Prefer net.* over model.diffusion_model.* if both physical forms
+        # exist in this same input.
+        if ck not in phys_lookup or k.startswith(_COSMOS_NET_PREFIX):
+            phys_lookup[ck] = k
+    return canonical_set, phys_lookup, dropped
+
+
+def _cosmos_input_layout(keys: set) -> str:
+    """One-line description of a Cosmos input's physical layout for logs."""
+    has_net = any(k.startswith(_COSMOS_NET_PREFIX) for k in keys)
+    has_wrapped = any(k.startswith(_COSMOS_WRAPPED_PREFIX) for k in keys)
+    has_te = any("cond_stage_model." in k or "conditioner." in k for k in keys)
+    has_vae = any(k.startswith(VAE_PREFIX) or ".first_stage_model." in k for k in keys)
+    if has_net and has_wrapped:
+        base = "MIXED (net.* + model.diffusion_model.*)"
+    elif has_net:
+        base = "compact (net.*)"
+    elif has_wrapped:
+        base = "wrapped (model.diffusion_model.*)"
+    else:
+        base = "unknown"
+    extras = []
+    if has_te:
+        extras.append("+TE")
+    if has_vae:
+        extras.append("+VAE")
+    return base + (" " + " ".join(extras) if extras else "")
+
+
+# =========================================================================
 # PACKAGE / NAMESPACE CLASSIFICATION (diagnostics only)
 # =========================================================================
 #
@@ -1329,6 +1429,11 @@ def _compute_per_key_cosine(path_a: str, path_b: str, key_filter=None) -> dict:
 
     Used by Cosine Adaptive merge to get per-tensor adaptive alphas.
     key_filter: optional callable(key) -> bool to limit which keys are computed.
+
+    For Cosmos/Anima, the returned dict is keyed by canonical net.* keys so it
+    pairs correctly with the canonicalized merge loop. A and B are allowed to
+    use different physical layouts (compact / wrapped); they get paired by
+    their canonical projection.
     """
     similarities = {}
 
@@ -1336,8 +1441,16 @@ def _compute_per_key_cosine(path_a: str, path_b: str, key_filter=None) -> dict:
          safe_open(path_b, framework="pt", device="cpu") as f_b:
         keys_a = set(f_a.keys())
         keys_b = set(f_b.keys())
-        shared_keys = sorted(keys_a & keys_b)
         arch = detect_architecture(keys_a)["arch"]
+
+        if arch == "cosmos":
+            _, lookup_a, _ = _cosmos_canonicalize_input(keys_a)
+            _, lookup_b, _ = _cosmos_canonicalize_input(keys_b)
+            shared_keys = sorted(set(lookup_a) & set(lookup_b))
+        else:
+            lookup_a = {k: k for k in keys_a}
+            lookup_b = {k: k for k in keys_b}
+            shared_keys = sorted(keys_a & keys_b)
 
         for key in shared_keys:
             if key_filter and not key_filter(key):
@@ -1346,13 +1459,16 @@ def _compute_per_key_cosine(path_a: str, path_b: str, key_filter=None) -> dict:
             if _should_copy_from_a_without_merge(key, arch):
                 continue
 
-            sl = f_a.get_slice(key)
+            phys_a = lookup_a[key]
+            phys_b = lookup_b[key]
+
+            sl = f_a.get_slice(phys_a)
             dtype_str = str(sl.get_dtype())
             if "int" in dtype_str or "bool" in dtype_str:
                 continue
 
-            t_a = f_a.get_tensor(key).float().flatten()
-            t_b = f_b.get_tensor(key).float().flatten()
+            t_a = f_a.get_tensor(phys_a).float().flatten()
+            t_b = f_b.get_tensor(phys_b).float().flatten()
 
             if t_a.shape != t_b.shape:
                 del t_a, t_b
@@ -1699,20 +1815,62 @@ def merge_models(
             keys_a = set(f_a.keys())
             keys_b = set(f_b.keys())
             keys_c = set(f_c.keys()) if f_c else set()
-            all_keys = sorted(keys_a | keys_b | keys_c)
-            _merge_state["keys_total"] = len(all_keys)
             arch_info = detect_architecture(keys_a)
             arch = arch_info["arch"]
 
-            key_info = f"{len(all_keys)} total ({len(keys_a & keys_b)} shared"
-            if keys_c:
-                key_info += f", {len(keys_a & keys_b & keys_c)} tri-shared"
-            key_info += f", {len(keys_a - keys_b)} A-only, {len(keys_b - keys_a)} B-only"
-            if keys_c:
-                key_info += f", {len(keys_c - keys_a - keys_b)} C-only"
-            key_info += ")"
-            print(f"{TAG} Architecture: {arch_info['details']}")
-            print(f"{TAG} Keys: {key_info}")
+            # Cosmos/Anima ships in three layouts (compact net.*, wrapped
+            # model.diffusion_model.*, AIO wrapped+TE+VAE). Canonicalize every
+            # input to net.* before computing the merge keyset so a single
+            # logical parameter never produces two output tensors.
+            if arch == "cosmos":
+                canon_a, lookup_a, drop_a = _cosmos_canonicalize_input(keys_a)
+                canon_b, lookup_b, drop_b = _cosmos_canonicalize_input(keys_b)
+                if f_c:
+                    canon_c, lookup_c, drop_c = _cosmos_canonicalize_input(keys_c)
+                else:
+                    canon_c, lookup_c, drop_c = set(), {}, {"te": 0, "vae": 0, "other": 0}
+                all_keys = sorted(canon_a | canon_b | canon_c)
+                shared_ab = canon_a & canon_b
+                tri_shared = canon_a & canon_b & canon_c if f_c else set()
+                a_only = canon_a - canon_b - (canon_c if f_c else set())
+                b_only = canon_b - canon_a - (canon_c if f_c else set())
+                c_only = canon_c - canon_a - canon_b if f_c else set()
+                print(f"{TAG} Architecture: {arch_info['details']}")
+                print(f"{TAG} Cosmos namespace normalization:")
+                print(f"{TAG}   Input A: {len(keys_a)} physical keys, layout={_cosmos_input_layout(keys_a)} "
+                      f"→ {len(canon_a)} canonical net.* "
+                      f"(dropped {drop_a['te']} TE, {drop_a['vae']} VAE, {drop_a['other']} other)")
+                print(f"{TAG}   Input B: {len(keys_b)} physical keys, layout={_cosmos_input_layout(keys_b)} "
+                      f"→ {len(canon_b)} canonical net.* "
+                      f"(dropped {drop_b['te']} TE, {drop_b['vae']} VAE, {drop_b['other']} other)")
+                if f_c:
+                    print(f"{TAG}   Input C: {len(keys_c)} physical keys, layout={_cosmos_input_layout(keys_c)} "
+                          f"→ {len(canon_c)} canonical net.* "
+                          f"(dropped {drop_c['te']} TE, {drop_c['vae']} VAE, {drop_c['other']} other)")
+                print(f"{TAG}   Output: canonical net.* (TE/VAE supplied externally by Forge)")
+                key_info = f"{len(all_keys)} canonical ({len(shared_ab)} shared"
+                if f_c:
+                    key_info += f", {len(tri_shared)} tri-shared"
+                key_info += f", {len(a_only)} A-only, {len(b_only)} B-only"
+                if f_c:
+                    key_info += f", {len(c_only)} C-only"
+                key_info += ")"
+                print(f"{TAG} Keys: {key_info}")
+            else:
+                lookup_a = {k: k for k in keys_a}
+                lookup_b = {k: k for k in keys_b}
+                lookup_c = {k: k for k in keys_c} if f_c else {}
+                all_keys = sorted(keys_a | keys_b | keys_c)
+                key_info = f"{len(all_keys)} total ({len(keys_a & keys_b)} shared"
+                if keys_c:
+                    key_info += f", {len(keys_a & keys_b & keys_c)} tri-shared"
+                key_info += f", {len(keys_a - keys_b)} A-only, {len(keys_b - keys_a)} B-only"
+                if keys_c:
+                    key_info += f", {len(keys_c - keys_a - keys_b)} C-only"
+                key_info += ")"
+                print(f"{TAG} Architecture: {arch_info['details']}")
+                print(f"{TAG} Keys: {key_info}")
+            _merge_state["keys_total"] = len(all_keys)
 
             protected_copy_count = 0
 
@@ -1725,18 +1883,24 @@ def merge_models(
                 _merge_state["current_key"] = key
                 _merge_state["keys_done"] = i
 
+                # All physical-key access goes through lookup_a/b/c: identity
+                # for SD/SDXL/FLUX/SD3, canonical→physical for Cosmos/Anima.
+                phys_a = lookup_a.get(key)
+                phys_b = lookup_b.get(key)
+                phys_c = lookup_c.get(key) if f_c is not None else None
+
                 # --- Protected keys: copy verbatim from Model A ---
                 # Cosmos/Anima llm_adapter tensors are checkpoint-specific and
                 # must not participate in any merge math (including Add
                 # Difference). Fall back to B or C if A doesn't have it rather
                 # than crashing on KeyError.
                 if _should_copy_from_a_without_merge(key, arch):
-                    if key in keys_a:
-                        t_out = f_a.get_tensor(key)
-                    elif key in keys_b:
-                        t_out = f_b.get_tensor(key)
-                    elif f_c is not None and key in keys_c:
-                        t_out = f_c.get_tensor(key)
+                    if phys_a is not None:
+                        t_out = f_a.get_tensor(phys_a)
+                    elif phys_b is not None:
+                        t_out = f_b.get_tensor(phys_b)
+                    elif phys_c is not None:
+                        t_out = f_c.get_tensor(phys_c)
                     else:
                         continue
                     protected_copy_count += 1
@@ -1749,15 +1913,15 @@ def merge_models(
 
                 # --- Add Difference: 3-model merge ---
                 if method == "add_difference" and f_c is not None:
-                    if key in keys_a and key in keys_b and key in keys_c:
-                        t_a = f_a.get_tensor(key).float()
-                        t_b = f_b.get_tensor(key).float()
-                        t_c = f_c.get_tensor(key).float()
+                    if phys_a is not None and phys_b is not None and phys_c is not None:
+                        t_a = f_a.get_tensor(phys_a).float()
+                        t_b = f_b.get_tensor(phys_b).float()
+                        t_c = f_c.get_tensor(phys_c).float()
 
                         if not dtype_warning_logged:
-                            raw_a = str(f_a.get_slice(key).get_dtype())
-                            raw_b = str(f_b.get_slice(key).get_dtype())
-                            raw_c = str(f_c.get_slice(key).get_dtype())
+                            raw_a = str(f_a.get_slice(phys_a).get_dtype())
+                            raw_b = str(f_b.get_slice(phys_b).get_dtype())
+                            raw_c = str(f_c.get_slice(phys_c).get_dtype())
                             if raw_a != raw_b or raw_a != raw_c:
                                 print(f"{TAG} Warning: input dtype mismatch — A={raw_a}, B={raw_b}, C={raw_c}. Upcasting to fp32.")
                                 dtype_warning_logged = True
@@ -1786,21 +1950,21 @@ def merge_models(
                             t_out = t_a + key_alpha * diff
 
                         del t_a, t_b, t_c
-                    elif key in keys_a:
-                        t_out = f_a.get_tensor(key)
-                    elif key in keys_b:
-                        t_out = f_b.get_tensor(key)
+                    elif phys_a is not None:
+                        t_out = f_a.get_tensor(phys_a)
+                    elif phys_b is not None:
+                        t_out = f_b.get_tensor(phys_b)
                     else:
-                        t_out = f_c.get_tensor(key)
+                        t_out = f_c.get_tensor(phys_c)
 
                 # --- 2-model methods ---
-                elif key in keys_a and key in keys_b:
-                    t_a = f_a.get_tensor(key).float()
-                    t_b = f_b.get_tensor(key).float()
+                elif phys_a is not None and phys_b is not None:
+                    t_a = f_a.get_tensor(phys_a).float()
+                    t_b = f_b.get_tensor(phys_b).float()
 
                     if not dtype_warning_logged:
-                        raw_a = f_a.get_slice(key).get_dtype()
-                        raw_b = f_b.get_slice(key).get_dtype()
+                        raw_a = f_a.get_slice(phys_a).get_dtype()
+                        raw_b = f_b.get_slice(phys_b).get_dtype()
                         if str(raw_a) != str(raw_b):
                             print(f"{TAG} Warning: input dtype mismatch — A={raw_a}, B={raw_b}. Upcasting to fp32.")
                             dtype_warning_logged = True
@@ -1844,10 +2008,10 @@ def merge_models(
                         )
 
                     del t_a, t_b
-                elif key in keys_a:
-                    t_out = f_a.get_tensor(key)
+                elif phys_a is not None:
+                    t_out = f_a.get_tensor(phys_a)
                 else:
-                    t_out = f_b.get_tensor(key)
+                    t_out = f_b.get_tensor(phys_b)
 
                 # Downcast — never VAE or llm_adapter keys
                 if save_fp16 and t_out.dtype == torch.float32:
@@ -2582,6 +2746,7 @@ def _build_key_map(ckpt_keys: set, lora_keys: set, arch: str) -> dict:
             "diffusion_model.",
             "pipe.dit.",
             "dit.",
+            "net.",
         )
         for ckpt_key in ckpt_keys:
             if not ckpt_key.endswith(".weight"):
@@ -3082,8 +3247,24 @@ def bake_lora(
         protected_skipped = 0
         arch = arch_info["arch"]
 
+        # For Cosmos/Anima, walk canonical net.* keys so a bloated input
+        # (e.g. wrapped+TE+VAE bundle, or a self-bloated previous merge
+        # output) gets cleaned up on its way through. The physical lookup
+        # tells us where to read each canonical key's tensor from in the
+        # input file.
+        if arch == "cosmos":
+            _, lookup, drop = _cosmos_canonicalize_input(ckpt_keys)
+            all_keys = sorted(lookup)
+            if drop["te"] or drop["vae"] or drop["other"]:
+                print(f"{TAG} Cosmos namespace normalization: input has "
+                      f"{len(ckpt_keys)} physical keys, layout="
+                      f"{_cosmos_input_layout(ckpt_keys)} → {len(all_keys)} canonical net.* "
+                      f"(dropping {drop['te']} TE, {drop['vae']} VAE, {drop['other']} other)")
+        else:
+            lookup = {k: k for k in ckpt_keys}
+            all_keys = sorted(ckpt_keys)
+
         with safe_open(ckpt_path, framework="pt", device="cpu") as f:
-            all_keys = sorted(f.keys())
             _merge_state["keys_total"] = len(all_keys)
 
             for i, key in enumerate(all_keys):
@@ -3096,7 +3277,8 @@ def bake_lora(
                 _merge_state["current_key"] = key
                 _merge_state["keys_done"] = i
 
-                weight = f.get_tensor(key)
+                phys_key = lookup[key]
+                weight = f.get_tensor(phys_key)
 
                 # Protected keys (Anima llm_adapter): write the checkpoint
                 # tensor through unchanged. The key map already excludes them
@@ -3111,10 +3293,12 @@ def bake_lora(
                         _broadcast_workshop_progress()
                     continue
 
-                # Apply each LoRA sequentially
+                # Apply each LoRA sequentially. The key_map was built against
+                # the physical ckpt key, so look up by phys_key (which is the
+                # canonical key for non-cosmos arches).
                 for lora_dict, ckpt_to_lora, lora_keys, strength in all_lora_data:
-                    if key in ckpt_to_lora:
-                        base_name = ckpt_to_lora[key]
+                    if phys_key in ckpt_to_lora:
+                        base_name = ckpt_to_lora[phys_key]
                         atype = _detect_adapter_type(lora_keys, base_name)
 
                         result = _compute_lora_delta(
@@ -3262,9 +3446,24 @@ def bake_vae(
 
     VAE keys ALWAYS stay fp32 — fp16 VAE decoding produces NaN.
     All other checkpoint keys follow save_fp16 setting.
+
+    Anima/Cosmos checkpoints are hard-rejected: their canonical layout has no
+    bundled VAE (Forge supplies it externally), so adding first_stage_model.*
+    keys would force-emit a non-canonical layout and re-introduce the exact
+    namespace bloat the Cosmos canonicalizer is designed to remove.
     """
     global _merge_state
     _cancel_event.clear()
+
+    with safe_open(ckpt_path, framework="pt", device="cpu") as f:
+        ckpt_arch = detect_architecture(set(f.keys()))["arch"]
+    if ckpt_arch == "cosmos":
+        msg = ("VAE baking is not supported for Anima/Cosmos checkpoints. "
+               "Anima loads its VAE externally through Forge.")
+        print(f"{TAG} {msg}")
+        _merge_state.update({"active": False, "status": "error", "error": msg})
+        _broadcast_workshop_progress()
+        raise ValueError(msg)
     start = time.time()
 
     print(f"{TAG} ╔══════════════════════════════════════════════")
@@ -4685,6 +4884,20 @@ def setup_workshop_routes(app: FastAPI):
             vae_path = _resolve_vae_path(req.vae)
         except FileNotFoundError as e:
             return JSONResponse({"error": str(e)}, status_code=404)
+
+        # Anima/Cosmos's canonical layout has no bundled VAE — reject here
+        # so the user gets immediate feedback instead of seeing the error
+        # appear later via the merge_state poll.
+        try:
+            with safe_open(ckpt_path, framework="pt", device="cpu") as f:
+                ckpt_arch = detect_architecture(set(f.keys()))["arch"]
+        except Exception as e:
+            return JSONResponse({"error": f"Failed to inspect checkpoint: {e}"}, status_code=500)
+        if ckpt_arch == "cosmos":
+            return JSONResponse({
+                "error": "VAE baking is not supported for Anima/Cosmos checkpoints. "
+                         "Anima loads its VAE externally through Forge."
+            }, status_code=400)
 
         models_dir = _get_models_dir()
         if req.output_name:
