@@ -81,6 +81,8 @@ const API = {
   dynPromptsConfig:    ()        => API.get("/studio/dynamic_prompts/config"),
   dynPromptsSetConfig: (payload) => API.post("/studio/dynamic_prompts/config", payload),
   dynPromptsSelectFolder: (folder) => API.post("/studio/dynamic_prompts/select_folder", { folder }),
+  dynPromptsPickFolder: ()        => fetch(API.base + "/studio/dynamic_prompts/pick_folder",
+                                            { method: "POST" }).then(r => r.json()),
   dynPromptsStatus:    ()        => API.get("/studio/dynamic_prompts/status"),
 };
 
@@ -3283,8 +3285,10 @@ function bindUI() {
   const _dynPromptsToggle = document.getElementById("toggleStudioDynPrompts");
   const _dynFolderInput = document.getElementById("dynPromptsFolderInput");
   const _dynFolderDisplay = document.getElementById("dynPromptsFolderDisplay");
+  const _dynFolderBrowse = document.getElementById("dynPromptsFolderBrowse");
   const _dynFolderSet = document.getElementById("dynPromptsFolderSet");
   const _dynFolderReset = document.getElementById("dynPromptsFolderReset");
+  const _dynFolderManualRow = document.getElementById("dynPromptsFolderManualRow");
   const _dynDpNote = document.getElementById("dynPromptsDpNote");
 
   function _renderDynPromptsConfig(cfg) {
@@ -3329,13 +3333,9 @@ function bindUI() {
       .catch(() => {/* silent — toggle still works locally for this session */});
   });
 
-  _dynFolderSet?.addEventListener("click", () => {
-    const folder = (_dynFolderInput?.value || "").trim();
-    if (!folder) {
-      showToast("Enter a folder path or click Reset.", "info");
-      return;
-    }
-    API.dynPromptsSelectFolder(folder).then(resp => {
+  function _applyPickedFolder(folder) {
+    if (!folder) return;  // user cancelled
+    return API.dynPromptsSelectFolder(folder).then(resp => {
       _renderDynPromptsConfig(resp);
       if (resp.warning) {
         showToast(resp.warning, "info");
@@ -3343,6 +3343,34 @@ function bindUI() {
         showToast("Wildcard folder saved.", "info");
       }
     }).catch(() => showToast("Failed to save wildcard folder.", "error"));
+  }
+
+  _dynFolderBrowse?.addEventListener("click", () => {
+    API.dynPromptsPickFolder().then(resp => {
+      if (resp?.unavailable) {
+        // Headless host or no display server — reveal the manual-path
+        // row so the user can still set a folder by pasting.
+        if (_dynFolderManualRow) _dynFolderManualRow.style.display = "";
+        if (_dynFolderBrowse) _dynFolderBrowse.style.display = "none";
+        showToast("Folder picker unavailable on this server — enter path manually.", "info");
+        return;
+      }
+      _applyPickedFolder(resp?.path || "");
+    }).catch(() => {
+      // Likely 500 from the Tk fallback path; surface the manual entry.
+      if (_dynFolderManualRow) _dynFolderManualRow.style.display = "";
+      if (_dynFolderBrowse) _dynFolderBrowse.style.display = "none";
+      showToast("Folder picker unavailable — enter path manually.", "info");
+    });
+  });
+
+  _dynFolderSet?.addEventListener("click", () => {
+    const folder = (_dynFolderInput?.value || "").trim();
+    if (!folder) {
+      showToast("Enter a folder path or click Reset.", "info");
+      return;
+    }
+    _applyPickedFolder(folder);
   });
 
   _dynFolderReset?.addEventListener("click", () => {

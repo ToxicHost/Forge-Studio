@@ -905,9 +905,14 @@
                 <span class="dyn-prompts-folder-display" id="dynPromptsFolderDisplay" style="font-size:10px;color:var(--text-3);max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;text-align:right;">Default folders</span>
               </div>
               <div class="setting-row" id="dynPromptsFolderControls" style="gap:6px;justify-content:flex-end;">
+                <button class="defaults-btn" id="dynPromptsFolderBrowse" style="font-size:10px;padding:3px 8px;">Browse...</button>
+                <button class="defaults-btn" id="dynPromptsFolderReset" style="font-size:10px;padding:3px 8px;">Reset</button>
+              </div>
+              <!-- Manual-path fallback: shown only if the native picker
+                   reports it's unavailable (headless host, no display). -->
+              <div class="setting-row" id="dynPromptsFolderManualRow" style="display:none;gap:6px;justify-content:flex-end;">
                 <input type="text" id="dynPromptsFolderInput" placeholder="Custom wildcards folder path" style="flex:1;min-width:0;padding:4px 6px;font-size:11px;background:var(--bg-2);border:1px solid var(--border);border-radius:4px;color:var(--text-2);">
                 <button class="defaults-btn" id="dynPromptsFolderSet" style="font-size:10px;padding:3px 8px;">Set</button>
-                <button class="defaults-btn" id="dynPromptsFolderReset" style="font-size:10px;padding:3px 8px;">Reset</button>
               </div>
               <p class="dyn-prompts-dp-note" id="dynPromptsDpNote" style="display:none;font-size:10px;color:var(--text-4);margin:4px 0 0 0;">
                 Dynamic Prompts detected. Studio suppresses it during Studio-native expansion to avoid double processing.

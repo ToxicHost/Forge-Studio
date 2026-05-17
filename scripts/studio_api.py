@@ -3448,6 +3448,34 @@ def setup_studio_routes(app: FastAPI):
             log.exception("dynamic_prompts folder select failed")
             return JSONResponse({"error": "select_failed"}, status_code=500)
 
+    @app.post("/studio/dynamic_prompts/pick_folder")
+    async def dynamic_prompts_pick_folder():
+        """Open a native folder-picker dialog and return the chosen
+        path WITHOUT persisting it. Frontend follows up with
+        select_folder to validate + save.
+
+        Mirrors the gallery's pick-folder endpoint (same Tk pattern).
+        Only works when Studio is running on the user's machine — fine
+        for the standard local-host case; in a headless server context
+        this raises and the frontend falls back to the manual path
+        field.
+        """
+        try:
+            import tkinter as tk
+            from tkinter import filedialog
+            root = tk.Tk()
+            root.withdraw()
+            root.wm_attributes('-topmost', 1)
+            folder = filedialog.askdirectory(title="Select wildcards folder")
+            root.destroy()
+            if folder:
+                return {"path": folder.replace("/", os.sep)}
+            return {"path": ""}
+        except Exception as e:
+            # Tk unavailable (headless host, missing display) — let the
+            # frontend know so it can show the manual fallback.
+            return JSONResponse({"error": str(e), "unavailable": True}, status_code=500)
+
     @app.get("/studio/dynamic_prompts/status")
     async def dynamic_prompts_status():
         """Report whether the external Dynamic Prompts script is loaded
