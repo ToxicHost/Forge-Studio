@@ -5240,6 +5240,31 @@ async function init() {
     }
   }
 
+  // Civitai metadata lookup — default OFF. The browser uses
+  // window.StudioCivitai.enabled() to gate fetch buttons / disclosure.
+  {
+    const civToggle = document.getElementById("toggleCivitaiLookup");
+    const _isOn = () => localStorage.getItem("studio-civitai-enabled") === "1";
+    if (civToggle) {
+      civToggle.classList.toggle("on", _isOn());
+      civToggle.addEventListener("click", () => {
+        const on = civToggle.classList.contains("on");
+        localStorage.setItem("studio-civitai-enabled", on ? "1" : "0");
+        if (typeof showToast === "function") {
+          showToast(on
+            ? I18N.t("toast.civitai.enabled", "Civitai lookup enabled")
+            : I18N.t("toast.civitai.disabled", "Civitai lookup disabled"),
+            "info");
+        }
+        // Notify the LoRA browser so it can show/hide fetch controls.
+        window.dispatchEvent(new CustomEvent("studio-civitai-toggle", { detail: { enabled: on } }));
+      });
+    }
+    window.StudioCivitai = {
+      enabled: _isOn,
+    };
+  }
+
   // Reduced motion
   {
     const motionSel = document.getElementById("settingMotion");
