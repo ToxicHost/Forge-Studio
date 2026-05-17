@@ -74,6 +74,14 @@ const API = {
   saveWorkflow:    (payload) => API.post("/studio/workflows", payload),
   deleteWorkflow:  (id)      => fetch(API.base + "/studio/workflows/" + encodeURIComponent(id),
                                        { method: "DELETE" }).then(r => r.json()),
+
+  // Studio-native dynamic prompts (wildcards + {a|b|c}). Folder mode/path
+  // is server-side state; the per-generation enabled flag travels with
+  // each /studio/generate request as `studio_dynamic_prompts_enabled`.
+  dynPromptsConfig:    ()        => API.get("/studio/dynamic_prompts/config"),
+  dynPromptsSetConfig: (payload) => API.post("/studio/dynamic_prompts/config", payload),
+  dynPromptsSelectFolder: (folder) => API.post("/studio/dynamic_prompts/select_folder", { folder }),
+  dynPromptsStatus:    ()        => API.get("/studio/dynamic_prompts/status"),
 };
 
 
@@ -1504,6 +1512,12 @@ async function doGenerate() {
     // UX-015: Tell backend which extensions are disabled so it can suppress their scripts
     disabled_extensions: [...ExtensionBridge._disabled],
 
+    // Studio-native dynamic prompt expansion (wildcards + {a|b|c}).
+    // Backend reads its own stored config for the wildcard folder; only
+    // the on/off flag is request-scoped.
+    studio_dynamic_prompts_enabled:
+      document.getElementById("toggleStudioDynPrompts")?.classList.contains("on") ?? true,
+
     // UX-018: AR Randomizer
     ...(window.getARConfig?.() || {}),
   };
@@ -1518,6 +1532,17 @@ async function doGenerate() {
     if (result.error) {
       showToast(result.error, "error");
     } else if (result.images && result.images.length) {
+      // Surface Studio-native dynamic prompt warnings (missing/empty
+      // wildcards, max-depth recursion) as a single combined toast so
+      // the user knows their prompt didn't expand cleanly.
+      const _dpWarnings = result?.settings?.studio_dynamic_prompts_warnings;
+      if (Array.isArray(_dpWarnings) && _dpWarnings.length) {
+        const _label = _dpWarnings.length === 1
+          ? _dpWarnings[0]
+          : `${_dpWarnings.length} wildcard warnings — see console`;
+        showToast(_label, "info");
+        console.warn("[Studio] Dynamic prompts:", _dpWarnings);
+      }
       // FR-009: Prepend new results to gallery history (max 8 images)
       const MAX_GALLERY = 8;
       let newFileUrls;
@@ -2983,7 +3008,7 @@ function bindUI() {
       // "te-change" and "workflow-apply" keep paramTextEncoder as-is.
       const chosenTE = teSelect?.value || "None";
       if (chosenTE === "None" && (State._textEncoderList || []).length > 0) {
-        showToast("This model needs a text encoder — select one above", "warn");
+        showToast("This model needs a text encoder — select one above", "info");
       }
     } else {
       // Model bundles its own TE. Hide the row AND force the field to
@@ -3249,6 +3274,88 @@ function bindUI() {
     const el = document.getElementById("toggleMetadata");
     State.embedMetadata = el?.classList.contains("on") ?? true;
   });
+
+  // ===== Studio-native dynamic prompt expansion =====
+  // The toggle's enabled state is sent per-generation. The wildcard
+  // folder mode/path is server-side state we sync on startup and on
+  // explicit Set/Reset clicks. We never POST the folder text on every
+  // keystroke — only on Set, to avoid round-tripping arbitrary input.
+  const _dynPromptsToggle = document.getElementById("toggleStudioDynPrompts");
+  const _dynFolderInput = document.getElementById("dynPromptsFolderInput");
+  const _dynFolderDisplay = document.getElementById("dynPromptsFolderDisplay");
+  const _dynFolderSet = document.getElementById("dynPromptsFolderSet");
+  const _dynFolderReset = document.getElementById("dynPromptsFolderReset");
+  const _dynDpNote = document.getElementById("dynPromptsDpNote");
+
+  function _renderDynPromptsConfig(cfg) {
+    if (!cfg) return;
+    if (_dynFolderDisplay) {
+      if (cfg.wildcard_folder_mode === "custom" && cfg.wildcard_folder_display) {
+        _dynFolderDisplay.textContent = `custom: ${cfg.wildcard_folder_display}`;
+        _dynFolderDisplay.title = cfg.wildcard_folder || "";
+      } else {
+        _dynFolderDisplay.textContent = "Default folders";
+        _dynFolderDisplay.title = "";
+      }
+    }
+    if (_dynFolderInput) {
+      _dynFolderInput.value = cfg.wildcard_folder || "";
+    }
+    if (typeof cfg.studio_dynamic_prompts_enabled === "boolean" && _dynPromptsToggle) {
+      // Only adjust if the server has a different stored state — preserves
+      // the user's most-recent click after a defaults restore.
+      _dynPromptsToggle.classList.toggle("on", cfg.studio_dynamic_prompts_enabled);
+    }
+  }
+
+  function _loadDynPromptsConfig() {
+    return API.dynPromptsConfig().then(cfg => {
+      _renderDynPromptsConfig(cfg);
+      return cfg;
+    }).catch(() => null);
+  }
+
+  function _showDpNote(present) {
+    if (_dynDpNote) _dynDpNote.style.display = present ? "" : "none";
+  }
+
+  // Sync toggle state to server config so it persists across reloads
+  // and is independent of workflow-defaults state (which would let one
+  // saved workflow accidentally re-enable native expansion for users
+  // who turned it off globally).
+  _dynPromptsToggle?.addEventListener("click", () => {
+    const on = _dynPromptsToggle.classList.contains("on");
+    API.dynPromptsSetConfig({ studio_dynamic_prompts_enabled: on })
+      .catch(() => {/* silent — toggle still works locally for this session */});
+  });
+
+  _dynFolderSet?.addEventListener("click", () => {
+    const folder = (_dynFolderInput?.value || "").trim();
+    if (!folder) {
+      showToast("Enter a folder path or click Reset.", "info");
+      return;
+    }
+    API.dynPromptsSelectFolder(folder).then(resp => {
+      _renderDynPromptsConfig(resp);
+      if (resp.warning) {
+        showToast(resp.warning, "info");
+      } else {
+        showToast("Wildcard folder saved.", "info");
+      }
+    }).catch(() => showToast("Failed to save wildcard folder.", "error"));
+  });
+
+  _dynFolderReset?.addEventListener("click", () => {
+    API.dynPromptsSelectFolder("").then(resp => {
+      _renderDynPromptsConfig(resp);
+      showToast("Wildcard folder reset to default.", "info");
+    }).catch(() => showToast("Failed to reset wildcard folder.", "error"));
+  });
+
+  // Initial sync — non-blocking; if the API isn't ready yet the UI just
+  // shows its defaults until the user interacts.
+  _loadDynPromptsConfig();
+  API.dynPromptsStatus().then(s => _showDpNote(!!s?.dp_extension_present)).catch(() => {});
 
   // ===== UX-009: OUTPUT FORMAT SETTINGS =====
 

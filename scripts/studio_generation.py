@@ -36,6 +36,26 @@ try:
 except ImportError:
     _HAS_AR = False
 
+try:
+    from scripts.studio_dynamic_prompts import (
+        expand_prompt as _dp_expand_prompt,
+        resolve_wildcard_dirs as _dp_resolve_dirs,
+        load_config as _dp_load_config,
+        source_label as _dp_source_label,
+    )
+    _HAS_STUDIO_DP = True
+except ImportError:
+    try:
+        from studio_dynamic_prompts import (
+            expand_prompt as _dp_expand_prompt,
+            resolve_wildcard_dirs as _dp_resolve_dirs,
+            load_config as _dp_load_config,
+            source_label as _dp_source_label,
+        )
+        _HAS_STUDIO_DP = True
+    except ImportError:
+        _HAS_STUDIO_DP = False
+
 
 STUDIO_VERSION = "3.2"
 
@@ -1112,21 +1132,23 @@ def _cast_arg(val, runner, idx):
     return val
 
 
-def _force_enable_dynamic_prompts(runner, script_args):
-    """Force sd-dynamic-prompts' is_enabled checkbox to True in script_args.
+def _set_dynamic_prompts_enabled(runner, script_args, enabled):
+    """Force sd-dynamic-prompts' is_enabled checkbox in script_args.
 
-    DP defaults is_enabled to the result of an internal library-version
-    check. When the dynamicprompts pip package is missing, version-
-    mismatched, or installed against a different Python interpreter, the
-    check fails, the checkbox defaults to False, and DP's process() no-
-    ops — wildcards pass through the pipeline as literal text. Vanilla
-    WebUI surfaces this with a red banner; Studio hides DP's UI via
-    NATIVE_TITLES so users get zero signal.
+    With `enabled=True` this is the legacy behaviour Studio used before
+    native expansion: DP defaults is_enabled to an internal library-
+    version check that silently fails when the dynamicprompts pip
+    package is missing or version-mismatched, so we override it so
+    wildcards still get expanded through DP.
 
-    Locate the DP script in alwayson_scripts, scan its input slots for the
-    is_enabled component by label (falling back to args_from), and write
-    True. If DP's library is genuinely broken, DP will now raise loudly
-    during process() — visible failure > silent failure.
+    With `enabled=False` this suppresses DP for the current Studio
+    request — used when Studio's own native expansion has already
+    resolved wildcards and `{a|b|c}` choices, to avoid double-
+    processing.
+
+    Locates the DP script in alwayson_scripts, scans its input slots
+    for the is_enabled component by label (falling back to args_from),
+    and writes the requested boolean.
 
     Returns the target index that was overridden, or None if DP wasn't
     found on the runner.
@@ -1164,18 +1186,32 @@ def _force_enable_dynamic_prompts(runner, script_args):
     while target >= len(script_args):
         script_args.append(None)
     prev = script_args[target]
-    script_args[target] = True
-    if prev is not True:
-        print(f"[Studio] Forced Dynamic Prompts is_enabled=True at script_args[{target}] (was {prev!r})")
+    script_args[target] = bool(enabled)
+    if prev is not bool(enabled):
+        state_word = "enabled" if enabled else "suppressed (Studio-native expansion)"
+        print(f"[Studio] Dynamic Prompts {state_word} via script_args[{target}]")
     return target
 
 
-def _attach_script_runner(p, has_mask=False, ip=None, cn_units=None, extension_args=None, ad_params=None):
+def _force_enable_dynamic_prompts(runner, script_args):
+    """Back-compat wrapper — forces DP enabled. Prefer
+    `_set_dynamic_prompts_enabled` so the caller can also suppress DP
+    when Studio's native expansion is active.
+    """
+    return _set_dynamic_prompts_enabled(runner, script_args, True)
+
+
+def _attach_script_runner(p, has_mask=False, ip=None, cn_units=None, extension_args=None, ad_params=None,
+                          studio_dp_active=False):
     """Attach img2img script runner for wildcards, dynamic prompts, etc.
 
     extension_args: optional dict of {index: value} overrides from the
     extension bridge frontend. These are injected into script_args after
     the defaults are read from component .value attributes.
+
+    studio_dp_active: when True, Studio's native dynamic prompt
+    expansion has already resolved the prompt, so we suppress the
+    Dynamic Prompts script for this request to avoid double-processing.
     """
     try:
         import modules.scripts as mod_scripts
@@ -1191,8 +1227,10 @@ def _attach_script_runner(p, has_mask=False, ip=None, cn_units=None, extension_a
             if script_args:
                 script_args[0] = 0
 
-            # Force DP enabled — see _force_enable_dynamic_prompts() docstring.
-            _force_enable_dynamic_prompts(runner, script_args)
+            # DP coordination — Studio-native expansion suppresses DP for
+            # this request, otherwise force-enable so wildcards still work
+            # through DP for users who explicitly turned native off.
+            _set_dynamic_prompts_enabled(runner, script_args, not studio_dp_active)
 
             # Inject Soft Inpainting settings if applicable
             if has_mask and ip and ip.soft_inpaint_enabled:
@@ -1288,10 +1326,14 @@ def _attach_script_runner(p, has_mask=False, ip=None, cn_units=None, extension_a
         print(f"[Studio] Script runner attach failed: {e}")
 
 
-def _build_processing_obj(canvas_img, gp, mask_img, has_mask, ip, studio_outdir, batch_seed, cn_units=None, extension_args=None, ad_params=None):
+def _build_processing_obj(canvas_img, gp, mask_img, has_mask, ip, studio_outdir, batch_seed, cn_units=None, extension_args=None, ad_params=None, studio_dp_active=False):
     """Build a configured StableDiffusionProcessingImg2Img.
     Always uses batch_size=1 — the outer loop handles multiple images
-    so each gets fresh wildcard/dynamic prompt resolution."""
+    so each gets fresh wildcard/dynamic prompt resolution.
+
+    studio_dp_active: when True, Studio has already expanded the prompt
+    natively and the Dynamic Prompts script should be suppressed for
+    this request."""
     p = StableDiffusionProcessingImg2Img(
         sd_model=shared.sd_model,
         outpath_samples=studio_outdir, outpath_grids=studio_outdir,
@@ -1326,7 +1368,9 @@ def _build_processing_obj(canvas_img, gp, mask_img, has_mask, ip, studio_outdir,
         p._studio_inpaint_full_res = ip.inpaint_full_res
 
     # Attach img2img script runner (wildcards, dynamic prompts, ControlNet, etc.)
-    _attach_script_runner(p, has_mask=has_mask, ip=ip, cn_units=cn_units, extension_args=extension_args, ad_params=ad_params)
+    _attach_script_runner(p, has_mask=has_mask, ip=ip, cn_units=cn_units,
+                          extension_args=extension_args, ad_params=ad_params,
+                          studio_dp_active=studio_dp_active)
 
     # Re-assert after script attachment (scripts can override these)
     p.seed = batch_seed
@@ -1386,7 +1430,8 @@ def _build_img2img_to_txt2img_remap():
     return remap
 
 
-def _attach_txt2img_script_runner(p, gp=None, cn_units=None, extension_args=None, ad_params=None):
+def _attach_txt2img_script_runner(p, gp=None, cn_units=None, extension_args=None, ad_params=None,
+                                  studio_dp_active=False):
     """Attach txt2img script runner for wildcards, dynamic prompts, ControlNet.
 
     extension_args: optional dict of {index: value} overrides from the
@@ -1411,8 +1456,10 @@ def _attach_txt2img_script_runner(p, gp=None, cn_units=None, extension_args=None
             if script_args:
                 script_args[0] = 0
 
-            # Force DP enabled — see _force_enable_dynamic_prompts() docstring.
-            _force_enable_dynamic_prompts(runner, script_args)
+            # DP coordination — Studio-native expansion suppresses DP for
+            # this request, otherwise force-enable so wildcards still work
+            # through DP for users who explicitly turned native off.
+            _set_dynamic_prompts_enabled(runner, script_args, not studio_dp_active)
 
             # Inject ControlNet units if provided
             if cn_units:
@@ -1540,9 +1587,13 @@ def _attach_txt2img_script_runner(p, gp=None, cn_units=None, extension_args=None
         print(f"[Studio] Txt2img script runner attach failed: {e}")
 
 
-def _build_txt2img_obj(gp, studio_outdir, batch_seed, cn_units=None, extension_args=None, ad_params=None):
+def _build_txt2img_obj(gp, studio_outdir, batch_seed, cn_units=None, extension_args=None, ad_params=None, studio_dp_active=False):
     """Build a configured StableDiffusionProcessingTxt2Img.
-    No init_images, no mask, no denoising — pure text-to-image generation."""
+    No init_images, no mask, no denoising — pure text-to-image generation.
+
+    studio_dp_active: when True, Studio has already expanded the prompt
+    natively and the Dynamic Prompts script should be suppressed for
+    this request."""
     p = StableDiffusionProcessingTxt2Img(
         sd_model=shared.sd_model,
         outpath_samples=studio_outdir, outpath_grids=studio_outdir,
@@ -1565,7 +1616,9 @@ def _build_txt2img_obj(gp, studio_outdir, batch_seed, cn_units=None, extension_a
     p.sampler_name = gp.sampler_name or "Euler a"
 
     # Attach txt2img script runner (wildcards, dynamic prompts, ControlNet)
-    _attach_txt2img_script_runner(p, gp=gp, cn_units=cn_units, extension_args=extension_args, ad_params=ad_params)
+    _attach_txt2img_script_runner(p, gp=gp, cn_units=cn_units,
+                                  extension_args=extension_args, ad_params=ad_params,
+                                  studio_dp_active=studio_dp_active)
 
     # Re-assert after script attachment
     p.seed = batch_seed
@@ -1621,6 +1674,7 @@ def _run_attention_couple_image(
     is_txt2img, canvas_img, gp, mask_img, has_mask, ip,
     studio_outdir, batch_seed, hr, cn_units, extension_args,
     ad_params, regions_json, img_num, total_images,
+    studio_dp_active=False,
 ):
     """Run a single attention couple generation.
 
@@ -1633,7 +1687,8 @@ def _run_attention_couple_image(
     # ── Build processing object ─────────────────────────────────────
     if is_txt2img:
         p = _build_txt2img_obj(gp, studio_outdir, batch_seed, cn_units=cn_units,
-                               extension_args=extension_args, ad_params=ad_params)
+                               extension_args=extension_args, ad_params=ad_params,
+                               studio_dp_active=studio_dp_active)
         # Built-in hires fix for txt2img (runs inside process_images)
         if hr.enable and hr.scale > 1.0:
             p.enable_hr = True
@@ -1652,7 +1707,8 @@ def _run_attention_couple_image(
     else:
         p = _build_processing_obj(canvas_img, gp, mask_img, has_mask, ip,
                                    studio_outdir, batch_seed, cn_units=cn_units,
-                                   extension_args=extension_args, ad_params=ad_params)
+                                   extension_args=extension_args, ad_params=ad_params,
+                                   studio_dp_active=studio_dp_active)
 
     print(f"[Studio] Attention Couple generating image {img_num+1}/{total_images}, "
           f"seed={batch_seed}, txt2img={is_txt2img}, enable_hr={getattr(p, 'enable_hr', False)}")
@@ -1892,6 +1948,7 @@ def run_generation(
     extension_args=None,
     ar_config_dict=None,
     high_precision=False,
+    studio_dynamic_prompts_enabled=True,
 ):
     # === DEBUG: confirm function is being called ===
     print(f"[Studio] run_generation called: mode={repr(mode)}, inpaint_mode={repr(inpaint_mode)}, is_txt2img={is_txt2img}, regions_json_len={len(regions_json) if regions_json else 0}")
@@ -2091,6 +2148,32 @@ def run_generation(
             print("[Studio AR] Regions active — disabling randomization")
             ar_config = None
 
+    # ── Studio-native dynamic prompt expansion ──────────────
+    # When enabled, Studio resolves wildcards and {a|b|c} choices itself
+    # so generation no longer depends on sd-dynamic-prompts. We pull
+    # config + wildcard dirs once before the batch loop; per-image
+    # expansion happens inside the loop with a per-seed RNG so each
+    # image gets fresh choices while staying deterministic for repeat
+    # seeds.
+    _orig_prompt_template = gp.prompt
+    _orig_neg_prompt_template = gp.neg_prompt
+    _dp_warnings_seen: set = set()
+    _dp_wc_dirs = []
+    _dp_source = "default"
+    _dp_active = bool(studio_dynamic_prompts_enabled) and _HAS_STUDIO_DP
+    if _dp_active:
+        try:
+            _dp_cfg = _dp_load_config()
+            _dp_wc_dirs = _dp_resolve_dirs(_dp_cfg)
+            _dp_source = _dp_source_label(_dp_cfg)
+            if _dp_source == "custom":
+                print("[Studio] Dynamic prompts using custom wildcard folder")
+            else:
+                print(f"[Studio] Dynamic prompts using default wildcard folders ({len(_dp_wc_dirs)})")
+        except Exception as e:
+            print(f"[Studio] Dynamic prompts init failed (non-fatal): {e}")
+            _dp_active = False
+
     # ── Suppress conflicting extensions ──────────────────────
     # The standalone AR Selector has no enable toggle — it ALWAYS overrides
     # p.width/p.height in before_process/before_process_batch.  Boolean arg
@@ -2130,6 +2213,46 @@ def run_generation(
             shared.state.skipped = False
             batch_seed = use_seed + img_num
 
+            # ── Per-image native dynamic prompt expansion ───────
+            # Resets gp.prompt/gp.neg_prompt to the user-entered
+            # templates first so each image starts from the raw text,
+            # then expands with this image's seed-derived RNG. Skipped
+            # for regional mode because run_regional() does its own
+            # per-region prompt resolution.
+            _dp_image_used = []
+            _dp_image_warnings = []
+            gp.prompt = _orig_prompt_template
+            gp.neg_prompt = _orig_neg_prompt_template
+            if _dp_active and not is_regional_mode:
+                try:
+                    pos_res = _dp_expand_prompt(
+                        _orig_prompt_template,
+                        seed=batch_seed,
+                        wildcard_dirs=_dp_wc_dirs,
+                    )
+                    neg_res = _dp_expand_prompt(
+                        _orig_neg_prompt_template,
+                        # Offset negative-prompt seed so positive and
+                        # negative don't draw the same wildcard line
+                        # index for symmetric templates.
+                        seed=(batch_seed ^ 0x9E3779B9) & 0xFFFFFFFF,
+                        wildcard_dirs=_dp_wc_dirs,
+                    )
+                    gp.prompt = pos_res.expanded
+                    gp.neg_prompt = neg_res.expanded
+                    _dp_image_used = list(pos_res.used) + list(neg_res.used)
+                    _dp_image_warnings = list(pos_res.warnings) + list(neg_res.warnings)
+                    if _dp_image_used:
+                        print(f"[Studio] Dynamic prompts expanded "
+                              f"{len(_dp_image_used)} token(s)")
+                    for w in _dp_image_warnings:
+                        if w not in _dp_warnings_seen:
+                            _dp_warnings_seen.add(w)
+                            print(f"[Studio] {w}")
+                except Exception as e:
+                    print(f"[Studio] Dynamic prompts expansion failed for image "
+                          f"{img_num + 1} (non-fatal): {e}")
+
             if is_regional_mode:
                 # Regional Edit mode: multi-pass per-region inpainting
                 print(f"[Studio] Regional Edit mode — running multi-pass inpainting...")
@@ -2165,6 +2288,7 @@ def run_generation(
                     is_txt2img, canvas_img, gp, mask_img, has_mask, ip,
                     studio_outdir, batch_seed, hr, cn_units, extension_args,
                     ad_params, regions_json, img_num, total_images,
+                    studio_dp_active=_dp_active,
                 )
 
                 if result is None:
@@ -2193,7 +2317,8 @@ def run_generation(
                         gp.width, gp.height = new_w, new_h
 
                     p = _build_txt2img_obj(gp, studio_outdir, batch_seed, cn_units=cn_units,
-                                           extension_args=extension_args, ad_params=ad_params)
+                                           extension_args=extension_args, ad_params=ad_params,
+                                           studio_dp_active=_dp_active)
 
                     # Use Forge's built-in hires fix for txt2img so that:
                     # 1. Base gen → upscale → hires denoise all happen inside one process_images()
@@ -2219,7 +2344,7 @@ def run_generation(
                 else:
                     p = _build_processing_obj(canvas_img, gp, mask_img, has_mask, ip, studio_outdir,
                                               batch_seed, cn_units=cn_units, extension_args=extension_args,
-                                              ad_params=ad_params)
+                                              ad_params=ad_params, studio_dp_active=_dp_active)
                     print(f"[Studio] Generating image {img_num+1}/{total_images}: "
                           f"sampler={p.sampler_name}, scheduler={getattr(p, 'scheduler', 'N/A')}, "
                           f"steps={p.steps}, cfg={p.cfg_scale}, seed={batch_seed}")
@@ -2468,6 +2593,11 @@ def run_generation(
                 runner.alwayson_scripts.append(script)
         if _removed_scripts:
             print(f"[Studio] Restored {len(_removed_scripts)} suppressed script(s)")
+        # Restore gp.prompt to the user-entered template so settings_json
+        # records the raw text, not whichever expansion happened to run
+        # last.
+        gp.prompt = _orig_prompt_template
+        gp.neg_prompt = _orig_neg_prompt_template
 
     finish_task(id_task)
 
@@ -2477,14 +2607,26 @@ def run_generation(
         first_prompt = gp.prompt
         first_neg = gp.neg_prompt
 
-        settings_json = json.dumps({
+        settings_payload = {
             "prompt": first_prompt, "neg_prompt": first_neg,
             "sampler": gp.sampler_name, "scheduler": gp.schedule_type,
             "steps": gp.steps, "cfg": gp.cfg_scale, "denoising": gp.denoising,
             "width": gp.width, "height": gp.height,
             "seed": first_seed,
             "infotexts": all_infotexts,
-        })
+        }
+        if _dp_active:
+            # `default` / `custom` — never the raw path. The privacy
+            # rule for embedded metadata is that the user's wildcard
+            # folder path must not leak into image metadata.
+            settings_payload["studio_dynamic_prompts_active"] = True
+            settings_payload["studio_dynamic_prompts_source"] = _dp_source
+            if _dp_warnings_seen:
+                # Dedup'd list of warning strings the frontend can
+                # surface as a toast. No prompt text or paths — just
+                # things like "Missing wildcard: character".
+                settings_payload["studio_dynamic_prompts_warnings"] = sorted(_dp_warnings_seen)
+        settings_json = json.dumps(settings_payload)
         print(f"[Studio] Built settings_json: seed={first_seed}, {len(all_infotexts)} infotexts for {len(all_images)} images")
 
         display_info = all_infotexts[0] if all_infotexts else "Done."
