@@ -40,6 +40,17 @@
   --radius-lg: 12px;
   --font: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
   --mono: 'JetBrains Mono', 'Fira Code', monospace;
+  /* Sizing scale — keep this small. Used across the Generate panel to
+     normalize control heights, gaps, and section padding so rows line
+     up visually without per-component magic numbers. */
+  --ui-font: 12px;
+  --ui-font-small: 11px;
+  --ui-font-meta: 10px;
+  --control-h: 30px;
+  --control-h-sm: 28px;
+  --control-h-icon: 30px;
+  --control-gap: 6px;
+  --section-pad: 12px;
 }
 
 /* --- Theme: Liam (amber/black) --- */
@@ -391,8 +402,8 @@ body {
 }
 .tab-bar button {
   font-family: var(--font);
-  font-size: 10px;
-  padding: 4px 14px;
+  font-size: var(--ui-font-small);
+  padding: 6px 14px;
   border: none;
   border-radius: 4px;
   cursor: pointer;
@@ -707,7 +718,7 @@ body {
    ═══════════════════════════════════════════ */
 
 .panel-right {
-  width: 320px;
+  width: 360px;
   background: var(--bg-surface);
   border-left: 1px solid var(--border);
   display: flex; flex-direction: column;
@@ -724,8 +735,8 @@ body {
   flex-shrink: 0;
 }
 .panel-tab {
-  flex: 1; padding: 10px 0; text-align: center;
-  font-size: 11px; font-weight: 600;
+  flex: 1; padding: 12px 0; text-align: center;
+  font-size: var(--ui-font-small); font-weight: 600;
   letter-spacing: 0.8px; text-transform: uppercase;
   color: var(--text-4); cursor: pointer;
   border: none; background: none; font-family: var(--font);
@@ -747,7 +758,7 @@ body {
    PROMPT
    ═══════════════════════════════════════════ */
 
-.prompt-section { padding: 10px 12px; border-bottom: 1px solid var(--border); }
+.prompt-section { padding: 12px var(--section-pad) 14px; border-bottom: 1px solid var(--border); }
 
 .prompt-box {
   background: var(--bg-input); border: 1px solid var(--border-subtle);
@@ -782,10 +793,10 @@ body {
   border-radius: var(--radius-sm);
   color: var(--text-3);
   font-family: var(--font);
-  font-size: 10px;
+  font-size: var(--ui-font-small);
   font-weight: 500;
   letter-spacing: 0.3px;
-  padding: 2px 7px;
+  padding: 4px 9px;
   cursor: pointer;
   transition: all 0.12s;
   text-transform: uppercase;
@@ -896,12 +907,12 @@ body {
 }
 @keyframes shine { 0%,80%,100% { transform: translateX(-100%); } 90% { transform: translateX(100%); } }
 
-.gen-actions { display: flex; gap: 4px; margin-top: 4px; }
+.gen-actions { display: flex; gap: var(--control-gap); margin-top: var(--control-gap); }
 .gen-actions button {
-  flex: 1; height: 26px;
+  flex: 1; height: var(--control-h-sm);
   background: var(--bg-raised); color: var(--text-4);
   border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);
-  font-family: var(--font); font-size: 10px; cursor: pointer;
+  font-family: var(--font); font-size: var(--ui-font-small); cursor: pointer;
   transition: all 0.12s;
 }
 .gen-actions button:hover { color: var(--text-2); border-color: var(--border); }
@@ -984,9 +995,11 @@ body {
 .param-val {
   background: var(--bg-input); border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm); padding: 6px 8px;
-  font-size: 12px; color: var(--text-1); font-family: var(--mono);
+  min-height: var(--control-h-sm);
+  font-size: var(--ui-font); color: var(--text-1); font-family: var(--mono);
   text-align: center; cursor: pointer; transition: all 0.12s;
   width: 100%; outline: none;
+  box-sizing: border-box;
 }
 .param-val:hover { border-color: var(--border); }
 .param-val:focus { border-color: var(--accent); }
@@ -997,9 +1010,12 @@ body {
   appearance: none;
   background: var(--bg-input) url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='8' height='5' viewBox='0 0 8 5'%3E%3Cpath d='M0 0l4 4 4-4' fill='none' stroke='%236b6b74' stroke-width='1.5'/%3E%3C/svg%3E") no-repeat right 8px center;
   border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);
-  padding: 6px 22px 6px 8px; font-size: 12px; color: var(--text-2);
+  padding: 6px 22px 6px 8px;
+  min-height: var(--control-h-sm);
+  font-size: var(--ui-font); color: var(--text-2);
   font-family: var(--font); cursor: pointer; transition: border-color 0.12s;
   width: 100%; outline: none;
+  box-sizing: border-box;
 }
 .param-select:hover { border-color: var(--border); }
 .param-select:focus { border-color: var(--accent); }
@@ -1010,7 +1026,7 @@ body {
 .seed-row .param-cell label { font-size: 9px; }
 .seed-row .param-cell .param-val { font-size: 11px; padding: 4px 6px; width: 100%; }
 .seed-btn {
-  width: 26px; height: 28px;
+  width: var(--control-h-icon); height: var(--control-h-icon);
   background: var(--bg-raised); border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm); color: var(--text-3);
   font-size: 13px; cursor: pointer;
@@ -1023,9 +1039,9 @@ body {
 /* Extra seed (variation) */
 .extra-seed-toggle {
   display: inline-flex; align-items: center; gap: 4px;
-  font-size: 11px; color: var(--text-3); cursor: pointer;
+  font-size: var(--ui-font-small); color: var(--text-3); cursor: pointer;
   white-space: nowrap; user-select: none;
-  padding: 3px 8px; height: 28px;
+  padding: 3px 10px; height: var(--control-h);
   background: var(--bg-raised); border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
   transition: all 0.12s;
@@ -1057,10 +1073,22 @@ body {
 /* FR-003: Extra spacing above first ratio row (after W/H fields) */
 #arBaseButtons { margin-top: 10px; }
 
-/* Workflow Profiles row — compact strip in the Generate panel */
-.workflow-row { display: flex; gap: 4px; align-items: center; margin-top: 6px; flex-wrap: nowrap; }
-.workflow-row .param-select { flex: 1 1 auto; min-width: 0; }
-.workflow-row .ar-btn:disabled { opacity: 0.4; cursor: not-allowed; }
+/* Workflow Profiles — two-row layout so the dropdown reads cleanly and
+   the action buttons each get enough width to never wrap their label. */
+.workflow-row {
+  display: flex; flex-direction: column;
+  gap: var(--control-gap); margin-top: var(--control-gap);
+}
+.workflow-row .param-select { width: 100%; }
+.workflow-actions {
+  display: flex; gap: var(--control-gap);
+  align-items: stretch;
+}
+.workflow-actions .ar-btn {
+  flex: 1; min-width: 0; padding: 0 6px;
+  display: inline-flex; align-items: center; justify-content: center;
+}
+.workflow-actions .ar-btn:disabled { opacity: 0.4; cursor: not-allowed; }
 
 /* Workflow modals (Save dialog + dimensions-resize confirm) */
 .modal-overlay {
@@ -1087,16 +1115,17 @@ body {
 .modal-box .modal-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 14px; }
 .modal-box .ar-btn.primary { color: var(--accent, #6cf); border-color: var(--accent, #6cf); }
 .ar-btn {
-  height: 24px; padding: 0 8px;
+  height: var(--control-h-sm); padding: 0 10px;
   background: var(--bg-input); border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm); color: var(--text-3);
-  font-family: var(--mono); font-size: 10px; cursor: pointer;
+  font-family: var(--mono); font-size: var(--ui-font-small); cursor: pointer;
   transition: all 0.12s;
+  white-space: nowrap;
 }
 .ar-btn:hover { color: var(--text-2); border-color: var(--border); }
 .ar-btn.active { color: var(--accent); border-color: var(--accent); background: var(--accent-dim); }
 .ar-swap { font-size: 12px; }
-.ar-clear { color: var(--text-4); font-size: 11px; }
+.ar-clear { color: var(--text-4); font-size: var(--ui-font-small); }
 .ar-clear:hover { color: var(--red); border-color: var(--red); }
 
 .ar-randomize-row {
@@ -1156,7 +1185,7 @@ body {
 .collapse-section { border-bottom: 1px solid var(--border); }
 
 .collapse-header {
-  display: flex; align-items: center; padding: 8px 12px;
+  display: flex; align-items: center; padding: 10px var(--section-pad);
   gap: 8px; cursor: pointer; transition: background 0.1s;
 }
 .collapse-header:hover { background: var(--bg-raised); }
@@ -1189,14 +1218,14 @@ body {
 .collapse-body {
   max-height: 0; overflow: hidden;
   transition: max-height 0.22s ease;
-  padding: 0 12px;
+  padding: 0 var(--section-pad);
 }
 /* Fallback max-height: handles the brief window before the JS init at
    page-load can replace this with `none` (and any future restore path
    that adds `.open` without setting an inline max-height). Without this
    fallback, panels marked `.open` in the HTML or via session restore
    render with padding visible but no body — the "half-collapsed" look. */
-.collapse-body.open { padding: 0 12px 10px; max-height: 9999px; }
+.collapse-body.open { padding: 0 var(--section-pad) 12px; max-height: 9999px; }
 
 
 /* ═══════════════════════════════════════════
@@ -1251,14 +1280,16 @@ body {
   border-color: var(--accent) !important;
 }
 
-/* Tighten the Load Image / Reset Canvas row so it sits cleanly below
-   the Interrupt/Skip pair and above any of the lower sections. */
+/* Load Image / Reset Canvas: same-height buttons, consistent gap, and
+   a margin-bottom to keep its border clear of the next section's. */
 .canvas-load-reset-row {
-  margin-top: 6px;
+  margin-top: var(--control-gap);
+  margin-bottom: var(--control-gap);
   display: flex;
-  gap: 6px;
-  align-items: center;
+  gap: var(--control-gap);
+  align-items: stretch;
 }
+.canvas-load-reset-row .ar-btn { height: var(--control-h-sm); }
 
 
 /* ═══════════════════════════════════════════
@@ -2005,10 +2036,10 @@ body {
 /* 1080p: Bump everything up slightly */
 @media (max-height: 1100px) {
   :root { font-size: 13px; }
-  .panel-right { width: 340px; }
+  .panel-right { width: 380px; }
   .prompt-text { min-height: 48px; }
   .prompt-text.prompt-neg { min-height: 32px; }
-  .param-val, .param-select { min-height: 26px; font-size: 11px; }
+  .param-val, .param-select { min-height: 28px; font-size: 11px; }
   .gen-btn { padding: 10px 0; font-size: 13px; }
   .toolbar button { min-width: 28px; min-height: 28px; }
 }
@@ -2016,10 +2047,10 @@ body {
 /* 1440p: Medium bump */
 @media (min-height: 1101px) and (max-height: 1500px) {
   :root { font-size: 13px; }
-  .panel-right { width: 350px; }
+  .panel-right { width: 400px; }
   .prompt-text { min-height: 56px; }
   .prompt-text.prompt-neg { min-height: 36px; }
-  .param-val, .param-select { min-height: 28px; font-size: 12px; }
+  .param-val, .param-select { min-height: 30px; font-size: 12px; }
   .gen-btn { padding: 11px 0; font-size: 14px; }
   .toolbar button { min-width: 30px; min-height: 30px; }
 }
@@ -2027,10 +2058,10 @@ body {
 /* 4K */
 @media (min-height: 1501px) {
   :root { font-size: 14px; }
-  .panel-right { width: 380px; }
+  .panel-right { width: 440px; }
   .prompt-text { min-height: 64px; }
   .prompt-text.prompt-neg { min-height: 40px; }
-  .param-val, .param-select { min-height: 30px; font-size: 13px; }
+  .param-val, .param-select { min-height: 32px; font-size: 13px; }
   .gen-btn { padding: 12px 0; font-size: 15px; }
   .toolbar button { min-width: 34px; min-height: 34px; }
 }

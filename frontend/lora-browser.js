@@ -76,10 +76,10 @@
   border-radius: var(--radius-sm);
   color: var(--text-3);
   font-family: var(--font);
-  font-size: 10px;
+  font-size: var(--ui-font-small, 11px);
   font-weight: 500;
   letter-spacing: 0.3px;
-  padding: 2px 7px;
+  padding: 4px 9px;
   cursor: pointer;
   transition: all 0.12s;
   text-transform: uppercase;
