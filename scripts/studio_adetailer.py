@@ -1,34 +1,20 @@
 """
-Forge Studio — ADetailer Model Listing
-Minimal shim for Studio's model dropdown population.
+Forge Studio — ADetailer Model Listing (compatibility shim)
 
-ADetailer processing is handled by the native ADetailer extension (Studio fork).
-Studio injects its UI params into native AD's script_args slots via
-_build_native_ad_dicts() in studio_generation.py.
+This module previously owned the AD model dropdown lookup. AD logic
+now lives in ``studio_autodetailer``; this shim re-exports the model
+listing helpers so existing imports keep working without an API change.
 """
 
-import os
-from modules import shared
+try:
+    from scripts.studio_autodetailer import (
+        get_ad_models,
+        get_ad_models_for_ui_mapping as get_ad_model_mapping,
+    )
+except ImportError:
+    from studio_autodetailer import (
+        get_ad_models,
+        get_ad_models_for_ui_mapping as get_ad_model_mapping,
+    )
 
-_ad_model_mapping = None
-
-
-def get_ad_model_mapping():
-    global _ad_model_mapping
-    if _ad_model_mapping is not None:
-        return _ad_model_mapping
-    try:
-        from adetailer.common import get_models as ad_get_models
-        model_dir = os.path.join(getattr(shared, 'models_path', 'models'), 'adetailer')
-        os.makedirs(model_dir, exist_ok=True)
-        _ad_model_mapping = ad_get_models(model_dir)
-        print(f"[Studio AD] Found {len(_ad_model_mapping)} models")
-        return _ad_model_mapping
-    except Exception as e:
-        print(f"[Studio AD] Could not load model list: {e}")
-        return {}
-
-
-def get_ad_models():
-    mapping = get_ad_model_mapping()
-    return ["None"] + list(mapping.keys())
+__all__ = ["get_ad_models", "get_ad_model_mapping"]
