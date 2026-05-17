@@ -5420,7 +5420,7 @@ async function init() {
   // FR-001: Credits accordion
   // ---- Add contributors here ----
   const CREDITS = [
-    { name: "SnekySnek", role: "VRAM Unloading" },
+    { name: "SnekySnek", role: "VRAM Unloading, Civitai Metadata Lookup" },
     { name: "Railer", role: "Session Save, LoRA Stack, Resizable Side Panel, UI Polish" },
     { name: "LeFrenchy", role: "Beta Testing" },
   ];
