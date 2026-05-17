@@ -506,6 +506,13 @@ class GenerateRequest(BaseModel):
     # .float32.bin sidecar next to each PNG for the Develop module + EXR export.
     high_precision: bool = False
 
+    # Studio-native dynamic prompt expansion (V1: __wildcards__, {a|b|c},
+    # {N$$a|b|c}). When enabled, the backend resolves these in-process and
+    # suppresses sd-dynamic-prompts for this request to avoid double-
+    # processing. Default True so Studio's wildcards work even when the
+    # external DP extension is missing or broken by Forge Neo changes.
+    studio_dynamic_prompts_enabled: bool = True
+
 
 class GenerateResponse(BaseModel):
     """Generation result."""
@@ -1667,6 +1674,7 @@ def setup_studio_routes(app: FastAPI):
                 # High Precision: only worth the extra VAE decode when
                 # we'll actually save the resulting sidecar to disk.
                 bool(req.high_precision and req.save_outputs),
+                bool(req.studio_dynamic_prompts_enabled),
             )
         except Exception as e:
             log.exception("Generation handler failed")
@@ -1730,6 +1738,16 @@ def setup_studio_routes(app: FastAPI):
                         first_line = _parsed_infotexts[idx].split("\n")[0].strip()
                         if first_line != _raw_prompt.strip():
                             _parsed_infotexts[idx] += f"\nTemplate: {_raw_prompt}"
+
+            # Tag images generated with Studio-native expansion so the
+            # source ("default" vs "custom" wildcard folder mode) is
+            # recoverable from embedded metadata. Privacy: only the
+            # mode label is stored — never the absolute folder path.
+            if _parsed_settings.get("studio_dynamic_prompts_active"):
+                source_label = _parsed_settings.get("studio_dynamic_prompts_source", "default")
+                for idx in range(len(_parsed_infotexts)):
+                    if _parsed_infotexts[idx] and "Studio dynamic prompts:" not in _parsed_infotexts[idx]:
+                        _parsed_infotexts[idx] += f"\nStudio dynamic prompts: {source_label}"
 
         try:
             _parsed_base_seed = int(_parsed_settings.get("seed", -1)) if _parsed_settings else -1
@@ -3308,6 +3326,151 @@ def setup_studio_routes(app: FastAPI):
                     except Exception:
                         log.exception("Failed to read wildcard file")
         return {"lines": [], "count": 0}
+
+    # =========================================================================
+    # STUDIO-NATIVE DYNAMIC PROMPTS — config & folder management
+    # =========================================================================
+    # Frontend pushes `studio_dynamic_prompts_enabled` as a per-generation
+    # field but the wildcard folder (default vs custom path) is kept
+    # server-side via these endpoints. That way Studio's generation code
+    # doesn't have to trust arbitrary frontend-supplied paths on every
+    # request — the folder is set once through the config endpoint and
+    # validated when it changes.
+
+    def _short_display_path(folder: str) -> str:
+        """Build a short, privacy-friendly preview of a folder path.
+
+        Returns the last two path components prefixed with `...` so the
+        UI can show "...My Wildcards/anime" instead of the full
+        `/home/...` or `C:\\Users\\Name\\...` path. The setting panel is
+        cramped, and the full path is still available if the user wants
+        it via the config endpoint.
+        """
+        if not folder:
+            return ""
+        try:
+            parts = Path(folder).parts
+            if len(parts) <= 2:
+                return folder
+            tail = Path(*parts[-2:])
+            return f"...{os.sep}{tail}"
+        except Exception:
+            return folder
+
+    @app.get("/studio/dynamic_prompts/config")
+    async def dynamic_prompts_get_config():
+        try:
+            _load = _import("studio_dynamic_prompts", "load_config")
+            cfg = _load()
+            display = _short_display_path(cfg.get("wildcard_folder") or "")
+            return {
+                "studio_dynamic_prompts_enabled": bool(cfg.get("studio_dynamic_prompts_enabled", True)),
+                "wildcard_folder_mode": cfg.get("wildcard_folder_mode", "default"),
+                "wildcard_folder": cfg.get("wildcard_folder"),
+                "wildcard_folder_display": display,
+            }
+        except Exception:
+            log.exception("dynamic_prompts config load failed")
+            return JSONResponse({"error": "load_failed"}, status_code=500)
+
+    @app.post("/studio/dynamic_prompts/config")
+    async def dynamic_prompts_set_config(body: dict):
+        try:
+            _save = _import("studio_dynamic_prompts", "save_config")
+            _validate = _import("studio_dynamic_prompts", "validate_folder")
+            cfg = _save(body or {})
+            warning = None
+            if cfg.get("wildcard_folder_mode") == "custom" and cfg.get("wildcard_folder"):
+                info = _validate(cfg["wildcard_folder"])
+                if not info.get("exists"):
+                    warning = "Folder does not exist."
+                elif not info.get("has_txt"):
+                    warning = "No wildcard .txt files found in selected folder."
+            return {
+                "ok": True,
+                "studio_dynamic_prompts_enabled": bool(cfg.get("studio_dynamic_prompts_enabled", True)),
+                "wildcard_folder_mode": cfg.get("wildcard_folder_mode", "default"),
+                "wildcard_folder": cfg.get("wildcard_folder"),
+                "wildcard_folder_display": _short_display_path(cfg.get("wildcard_folder") or ""),
+                "warning": warning,
+            }
+        except Exception:
+            log.exception("dynamic_prompts config save failed")
+            return JSONResponse({"error": "save_failed"}, status_code=500)
+
+    @app.post("/studio/dynamic_prompts/select_folder")
+    async def dynamic_prompts_select_folder(body: dict):
+        """Validate a candidate folder and persist it as the custom
+        wildcard root. The frontend supplies the path (no server-side
+        native folder picker is available in this remote-API context);
+        this endpoint exists so the path-validation/persistence logic
+        lives next to the rest of the config and can be reused if a
+        native picker is added later.
+        """
+        try:
+            _save = _import("studio_dynamic_prompts", "save_config")
+            _validate = _import("studio_dynamic_prompts", "validate_folder")
+            _load = _import("studio_dynamic_prompts", "load_config")
+            folder = (body or {}).get("folder")
+            if folder is None or (isinstance(folder, str) and not folder.strip()):
+                # Treat empty path as a reset to default mode.
+                cfg = _save({"wildcard_folder_mode": "default", "wildcard_folder": None,
+                             "studio_dynamic_prompts_enabled":
+                             _load().get("studio_dynamic_prompts_enabled", True)})
+                return {
+                    "ok": True,
+                    "wildcard_folder_mode": cfg.get("wildcard_folder_mode"),
+                    "wildcard_folder": cfg.get("wildcard_folder"),
+                    "wildcard_folder_display": "",
+                    "warning": None,
+                }
+            existing = _load()
+            cfg = _save({
+                "studio_dynamic_prompts_enabled":
+                    existing.get("studio_dynamic_prompts_enabled", True),
+                "wildcard_folder_mode": "custom",
+                "wildcard_folder": folder,
+            })
+            info = _validate(cfg.get("wildcard_folder") or "")
+            warning = None
+            if not info.get("exists"):
+                warning = "Folder does not exist."
+            elif not info.get("has_txt"):
+                warning = "No wildcard .txt files found in selected folder."
+            return {
+                "ok": True,
+                "wildcard_folder_mode": cfg.get("wildcard_folder_mode"),
+                "wildcard_folder": cfg.get("wildcard_folder"),
+                "wildcard_folder_display": _short_display_path(cfg.get("wildcard_folder") or ""),
+                "warning": warning,
+            }
+        except Exception:
+            log.exception("dynamic_prompts folder select failed")
+            return JSONResponse({"error": "select_failed"}, status_code=500)
+
+    @app.get("/studio/dynamic_prompts/status")
+    async def dynamic_prompts_status():
+        """Report whether the external Dynamic Prompts script is loaded
+        so the frontend can show its compatibility note.
+        """
+        dp_present = False
+        try:
+            import modules.scripts as mod_scripts
+            for runner in [mod_scripts.scripts_txt2img, mod_scripts.scripts_img2img]:
+                if not runner:
+                    continue
+                for s in getattr(runner, "alwayson_scripts", []):
+                    try:
+                        if s.title().strip().lower() == "dynamic prompts":
+                            dp_present = True
+                            break
+                    except Exception:
+                        continue
+                if dp_present:
+                    break
+        except Exception:
+            log.exception("dynamic_prompts status probe failed")
+        return {"dp_extension_present": dp_present}
 
     @app.get("/studio/cn_models")
     async def get_cn_models():
