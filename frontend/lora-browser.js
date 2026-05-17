@@ -242,6 +242,26 @@
 }
 .lora-card.inserted { border-color: var(--green); box-shadow: 0 0 8px var(--green-dim); }
 .lora-card-preview { width: 100%; aspect-ratio: 1; object-fit: cover; display: block; background: var(--bg-void); }
+
+/* Civitai metadata badge — small marker in the top-right corner */
+.lora-civ-badge {
+  position: absolute; top: 4px; right: 4px;
+  min-width: 16px; height: 16px; padding: 0 4px;
+  display: inline-flex; align-items: center; justify-content: center;
+  font-family: var(--mono); font-size: 10px; font-weight: 600;
+  border-radius: 3px;
+  background: rgba(0, 0, 0, 0.55);
+  color: var(--text-2);
+  pointer-events: auto;
+  user-select: none;
+  z-index: 2;
+}
+.lora-civ-badge.lora-civ-ok { color: var(--accent); }
+.lora-civ-badge.lora-civ-notfound { color: var(--text-4); }
+.lora-civ-badge.lora-civ-private { color: var(--amber); }
+
+/* Footer fetch button spinner reuses the refresh-btn pattern */
+.lora-civitai-btn.spinning { opacity: 0.6; cursor: wait; }
 .lora-card-placeholder {
   width: 100%; aspect-ratio: 1;
   display: flex; align-items: center; justify-content: center;
@@ -422,6 +442,7 @@
         </div>
         <div class="lora-footer">
           <span class="lora-status"></span>
+          <button class="lora-open-folder lora-civitai-btn" style="display:none;" title="${_t("lora.civitai.fetchMissing.tooltip", "Fetch Civitai metadata for visible LoRAs that don't have it yet")}">${_t("lora.civitai.fetchMissing", "Fetch Civitai")}</button>
           <button class="lora-open-folder" data-i18n="lora.openFolder" data-i18n-title="lora.openFolder.tooltip" title="${_t("lora.openFolder.tooltip", "Open LoRA folder in file manager")}">${_t("lora.openFolder", "Open Folder")}</button>
           <span class="lora-hint" data-i18n="lora.hint">${_t("lora.hint", "Click to insert · Right-click for options")}</span>
         </div>
@@ -442,6 +463,17 @@
     modal.querySelector(".lora-weight-input").addEventListener("input", e => { const v = parseFloat(e.target.value); if (!isNaN(v)) insertWeight = v; });
     modal.querySelector(".lora-refresh-btn").addEventListener("click", refreshLoras);
     modal.querySelector(".lora-open-folder").addEventListener("click", openLoraFolder);
+    const civBtn = modal.querySelector(".lora-civitai-btn");
+    if (civBtn) {
+      civBtn.addEventListener("click", fetchMissingForView);
+      // Show/hide based on toggle state, and react to runtime changes.
+      const _syncCivBtn = () => {
+        const on = window.StudioCivitai?.enabled?.() === true;
+        civBtn.style.display = on ? "" : "none";
+      };
+      _syncCivBtn();
+      window.addEventListener("studio-civitai-toggle", _syncCivBtn);
+    }
 
     modal.addEventListener("keydown", e => { if (e.key === "Escape") closeModal(); e.stopPropagation(); });
     modal.addEventListener("keyup", e => e.stopPropagation());
@@ -539,22 +571,45 @@
     for (const lora of filtered) {
       const card = document.createElement("div");
       card.className = "lora-card";
-      card.title = lora.activation_text
-        ? `${lora.name}\nTrigger: ${lora.activation_text}`
-        : lora.name;
+      // Build a richer tooltip with Civitai info when present. The
+      // backend enriches `preview` / `activation_text` from Civitai
+      // already; this just adds model/author/base-model context.
+      const civ = lora.civitai;
+      const tipLines = [lora.name];
+      if (lora.activation_text) tipLines.push(`Trigger: ${lora.activation_text}`);
+      if (civ && !civ.not_found && !civ.private) {
+        if (civ.model_name) tipLines.push(`Civitai: ${civ.model_name}${civ.version_name ? ` (${civ.version_name})` : ""}`);
+        if (civ.base_model) tipLines.push(`Base: ${civ.base_model}`);
+        if (civ.author) tipLines.push(`Author: ${civ.author}`);
+      }
+      card.title = tipLines.join("\n");
       const baseName = lora.name.split("/").pop();
       const triggerHtml = lora.activation_text
         ? `<div class="lora-card-trigger" title="${escHtml(lora.activation_text)}">${escHtml(lora.activation_text)}</div>`
         : "";
+      // Small civitai badge: ⚑ in accent for fetched, ✕ dim for not-found,
+      // 🔒 for private. Visually subtle so it doesn't dominate the card.
+      let civBadge = "";
+      if (civ) {
+        if (civ.private) {
+          civBadge = `<span class="lora-civ-badge lora-civ-private" title="Marked private — Civitai lookup disabled for this LoRA">🔒</span>`;
+        } else if (civ.not_found) {
+          civBadge = `<span class="lora-civ-badge lora-civ-notfound" title="No Civitai match for this hash">·</span>`;
+        } else if (civ.fetched_at) {
+          civBadge = `<span class="lora-civ-badge lora-civ-ok" title="Civitai metadata cached">C</span>`;
+        }
+      }
 
       if (lora.preview) {
         card.innerHTML = `
           <img class="lora-card-preview" src="${lora.preview}" loading="lazy" alt=""
                onerror="this.outerHTML='<div class=\\'lora-card-placeholder\\'><span class=\\'lora-card-placeholder-text\\'>${escHtml(baseName)}</span></div>'">
+          ${civBadge}
           <div class="lora-card-info"><div class="lora-card-name">${escHtml(baseName)}</div>${triggerHtml}<div class="lora-card-meta">${formatSize(lora.size)}</div></div>`;
       } else {
         card.innerHTML = `
           <div class="lora-card-placeholder"><span class="lora-card-placeholder-text">${escHtml(baseName)}</span></div>
+          ${civBadge}
           <div class="lora-card-info"><div class="lora-card-name">${escHtml(baseName)}</div>${triggerHtml}<div class="lora-card-meta">${formatSize(lora.size)}</div></div>`;
       }
 
@@ -620,11 +675,170 @@
       menu.appendChild(btnRm);
     }
 
+    // ── Civitai actions ──
+    // "Fetch from Civitai" only when the global toggle is on AND this
+    // LoRA is not marked private. Privacy-related items (mark private,
+    // remove cache) are always available so the user can manage data
+    // even after disabling the feature globally.
+    const civ = lora.civitai;
+    const civEnabled = window.StudioCivitai?.enabled?.() === true;
+    const isPrivate = !!(civ && civ.private);
+    const hasCache = !!(civ && (civ.fetched_at || civ.not_found || civ.private));
+
+    if (civEnabled || hasCache) {
+      const sep2 = document.createElement("div"); sep2.className = "lora-card-menu-sep";
+      menu.appendChild(sep2);
+    }
+
+    if (civEnabled && !isPrivate) {
+      const btnFetch = document.createElement("button");
+      btnFetch.className = "lora-card-menu-item";
+      btnFetch.textContent = _t("lora.menu.fetchCivitai", "Fetch from Civitai");
+      btnFetch.addEventListener("click", () => { dismissContextMenu(); fetchOneFromCivitai(lora); });
+      menu.appendChild(btnFetch);
+    }
+    if (civEnabled || hasCache) {
+      const btnPriv = document.createElement("button");
+      btnPriv.className = "lora-card-menu-item";
+      btnPriv.textContent = isPrivate
+        ? _t("lora.menu.civitaiUnprivate", "Allow Civitai lookup for this LoRA")
+        : _t("lora.menu.civitaiPrivate", "Never query Civitai for this LoRA");
+      btnPriv.addEventListener("click", () => { dismissContextMenu(); setCivitaiPrivate(lora, !isPrivate); });
+      menu.appendChild(btnPriv);
+    }
+    if (hasCache) {
+      const btnRmCiv = document.createElement("button");
+      btnRmCiv.className = "lora-card-menu-item";
+      btnRmCiv.textContent = _t("lora.menu.civitaiRemove", "Remove Civitai cache");
+      btnRmCiv.style.color = "var(--red)";
+      btnRmCiv.addEventListener("click", () => { dismissContextMenu(); removeCivitaiCache(lora); });
+      menu.appendChild(btnRmCiv);
+    }
+
     const modalRect = modal.querySelector(".lora-modal").getBoundingClientRect();
     menu.style.left = Math.min(e.clientX, modalRect.right - 180) + "px";
-    menu.style.top = Math.min(e.clientY, modalRect.bottom - 120) + "px";
+    menu.style.top = Math.min(e.clientY, modalRect.bottom - 160) + "px";
     modal.appendChild(menu);
     activeMenu = menu;
+  }
+
+  // ── Civitai actions ────────────────────────────────────
+  async function fetchOneFromCivitai(lora) {
+    if (window.StudioCivitai?.enabled?.() !== true) return;
+    try {
+      const resp = await fetch("/studio/civitai/fetch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: lora.name }),
+      });
+      const data = await resp.json();
+      if (!resp.ok || !data.ok) {
+        showToast(`${_t("lora.civitai.fetchFailed", "Civitai fetch failed")}: ${data?.error || resp.status}`, "error");
+        return;
+      }
+      if (data.not_found) {
+        showToast(_t("lora.civitai.notFound", "No Civitai match for this LoRA"), "info");
+      } else {
+        showToast(_t("lora.civitai.fetched", "Fetched from Civitai"), "success");
+      }
+      await refreshLoras();
+    } catch (e) {
+      showToast(`${_t("lora.civitai.fetchFailed", "Civitai fetch failed")}: ${e.message || e}`, "error");
+    }
+  }
+
+  async function setCivitaiPrivate(lora, makePrivate) {
+    try {
+      const resp = await fetch("/studio/civitai/private", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: lora.name, private: !!makePrivate }),
+      });
+      const data = await resp.json();
+      if (!resp.ok || !data.ok) {
+        showToast(`${_t("lora.civitai.privateFailed", "Could not update privacy")}: ${data?.error || resp.status}`, "error");
+        return;
+      }
+      showToast(makePrivate
+        ? _t("lora.civitai.markedPrivate", "Marked private — Civitai lookup blocked")
+        : _t("lora.civitai.markedPublic", "Civitai lookup re-allowed"),
+        "info");
+      await refreshLoras();
+    } catch (e) {
+      showToast(`${_t("lora.civitai.privateFailed", "Could not update privacy")}: ${e.message || e}`, "error");
+    }
+  }
+
+  async function removeCivitaiCache(lora) {
+    try {
+      const resp = await fetch("/studio/civitai/clear_cache", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: lora.name }),
+      });
+      const data = await resp.json();
+      if (!resp.ok || !data.ok) {
+        showToast(`${_t("lora.civitai.clearFailed", "Could not clear cache")}: ${data?.error || resp.status}`, "error");
+        return;
+      }
+      showToast(_t("lora.civitai.cleared", "Civitai cache cleared"), "info");
+      await refreshLoras();
+    } catch (e) {
+      showToast(`${_t("lora.civitai.clearFailed", "Could not clear cache")}: ${e.message || e}`, "error");
+    }
+  }
+
+  async function fetchMissingForView() {
+    if (window.StudioCivitai?.enabled?.() !== true) return;
+    // Count LoRAs in the current view that lack any cache entry and aren't private.
+    const visible = getVisibleLoras();
+    const missing = visible.filter(l => !l.civitai || (!l.civitai.fetched_at && !l.civitai.not_found && !l.civitai.private));
+    if (missing.length === 0) {
+      showToast(_t("lora.civitai.allCached", "All visible LoRAs already have metadata"), "info");
+      return;
+    }
+    const label = activeFolder || _t("lora.allFolder", "All LoRAs");
+    const ok = window.confirm(_t("lora.civitai.confirmFetch",
+      `Fetch Civitai metadata for ${missing.length} LoRA(s) in “${label}”?\n\n` +
+      `This sends file hashes (not filenames or prompts) to civitai.com.`));
+    if (!ok) return;
+
+    const btn = modal?.querySelector(".lora-civitai-btn");
+    if (btn) { btn.disabled = true; btn.classList.add("spinning"); }
+    try {
+      // Send the exact list of names so search-filtered views fetch
+      // exactly what the user saw counted, not the whole folder.
+      const body = { names: missing.map(l => l.name), skip_existing: true };
+      const resp = await fetch("/studio/civitai/fetch_batch", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify(body),
+      });
+      const data = await resp.json();
+      if (!resp.ok || !data.ok) {
+        showToast(`${_t("lora.civitai.fetchFailed", "Civitai fetch failed")}: ${data?.error || resp.status}`, "error");
+        return;
+      }
+      showToast(_t("lora.civitai.bulkDone",
+        `Fetched ${data.fetched} · skipped ${data.skipped} · no match ${data.not_found}` +
+        (data.errors?.length ? ` · ${data.errors.length} error(s)` : "")), "success");
+      await refreshLoras();
+    } catch (e) {
+      showToast(`${_t("lora.civitai.fetchFailed", "Civitai fetch failed")}: ${e.message || e}`, "error");
+    } finally {
+      if (btn) { btn.disabled = false; btn.classList.remove("spinning"); }
+    }
+  }
+
+  // Helper: filtered LoRAs matching the current folder + search.
+  function getVisibleLoras() {
+    let arr = allLoras;
+    if (activeFolder) arr = arr.filter(l => (l.subfolder || "") === activeFolder);
+    const q = searchQuery.toLowerCase();
+    if (q) arr = arr.filter(l =>
+      (l.name || "").toLowerCase().includes(q) ||
+      (l.activation_text || "").toLowerCase().includes(q));
+    return arr;
   }
 
   function pickPreviewFile(lora) {

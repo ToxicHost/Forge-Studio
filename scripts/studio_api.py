@@ -1493,6 +1493,11 @@ def setup_studio_routes(app: FastAPI):
 
     print(f"{TAG} Registering routes...")
 
+    # Civitai metadata enricher — set later if the optional module loads.
+    # Captured by the get_loras closure so the response is decorated with
+    # cached metadata when available. Defined here so the closure can see it.
+    _civitai_enrich = None
+
     # ------------------------------------------------------------------
     # Standalone mode: root redirect + file serving
     # ------------------------------------------------------------------
@@ -3039,13 +3044,25 @@ def setup_studio_routes(app: FastAPI):
                 return candidate
         return None
 
+    def _resolve_lora_dirs():
+        """Return (primary_lora_dir, extra_dirs_list). Same logic the LoRA
+        listing has always used; extracted so the Civitai module can
+        share it. Returns (None, []) when no dir is configured."""
+        primary = getattr(shared.cmd_opts, 'lora_dir', None)
+        extras = list(getattr(shared.cmd_opts, 'lora_dirs', []))
+        if not primary:
+            try:
+                from modules.paths import models_path
+                primary = os.path.join(models_path, "Lora")
+            except Exception:
+                primary = None
+        return primary, extras
+
     @app.get("/studio/loras")
     async def get_loras():
-        lora_dir = getattr(shared.cmd_opts, 'lora_dir', None)
-        extra_dirs = list(getattr(shared.cmd_opts, 'lora_dirs', []))
+        lora_dir, extra_dirs = _resolve_lora_dirs()
         if not lora_dir:
-            from modules.paths import models_path
-            lora_dir = os.path.join(models_path, "Lora")
+            return []
 
         loras = []
         all_dirs = [lora_dir] + extra_dirs
@@ -3102,6 +3119,15 @@ def setup_studio_routes(app: FastAPI):
                     })
 
         loras.sort(key=lambda x: _natural_sort_key(x["name"]))
+
+        # Merge in any cached Civitai metadata (never fetches; never
+        # overwrites user's local preview / sidecar trigger words).
+        if _civitai_enrich is not None:
+            try:
+                _civitai_enrich(loras, all_dirs)
+            except Exception:
+                log.exception("Civitai enrichment failed")
+
         return loras
 
     @app.post("/studio/lora_preview")
@@ -4459,6 +4485,24 @@ def setup_studio_routes(app: FastAPI):
         setup_gallery_routes(app)
     else:
         print(f"{TAG} Gallery module not found — skipping")
+
+    # ------------------------------------------------------------------
+    # Civitai metadata module (opt-in, hash-based; see studio_civitai.py)
+    # ------------------------------------------------------------------
+
+    setup_civitai_routes = _load_optional_module("studio_civitai", "setup_civitai_routes")
+    if setup_civitai_routes:
+        try:
+            setup_civitai_routes(app, _resolve_lora_dirs)
+            # Pull the enrich helper into the get_loras closure so it can
+            # decorate the response with cached metadata.
+            _enrich = _load_optional_module("studio_civitai", "enrich_lora_entries")
+            if _enrich:
+                _civitai_enrich = _enrich
+        except Exception:
+            print(f"{TAG} Civitai module setup failed")
+    else:
+        print(f"{TAG} Civitai module not found — skipping")
 
     print(f"{TAG} All routes registered — standalone UI at /studio")
 

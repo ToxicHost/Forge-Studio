@@ -983,6 +983,16 @@
               </p>
             </div>
             <div class="setting-group">
+              <div class="setting-group-title" data-i18n="settings.civitai.title">Civitai metadata</div>
+              <div class="setting-row" data-i18n-title="settings.civitai.tooltip" title="Looks up LoRA preview images, trigger words, and model info by file hash. Off by default. Per-file privacy is available from the LoRA browser context menu.">
+                <span class="setting-label" data-i18n="settings.civitai.enable">Enable Civitai lookup</span>
+                <div class="toggle-track" id="toggleCivitaiLookup"><div class="toggle-knob"></div></div>
+              </div>
+              <p style="font-size:10px;color:var(--text-4);margin:6px 0 0 0;" data-i18n="settings.civitai.note">
+                Uses model hashes to look up metadata on Civitai. No prompts or images are sent. Filenames are not transmitted. Lookups happen only when you ask.
+              </p>
+            </div>
+            <div class="setting-group">
               <div class="setting-group-title" data-i18n="settings.language.title">Language</div>
               <div class="setting-row">
                 <span class="setting-label" data-i18n="settings.language.label">Interface language</span>

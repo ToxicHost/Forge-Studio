@@ -105,6 +105,7 @@ Everything Forge Neo's pipeline supports, surfaced as inline panels:
 - Hires checkpoint swap, variation seed, resize-from-seed
 - Aspect-ratio buttons with a *randomize* row (random base size, ratio, or orientation per generation)
 - LoRA browser, embedding browser, wildcard insertion (with Dynamic Prompts)
+- **Civitai metadata lookup** — opt-in. Hash-based, never sends filenames or prompts. Caches previews, trigger words, and model info locally; per-file privacy opt-out from the browser context menu.
 - Tag autocomplete — Danbooru, e621, merged Danbooru+e621, Derpibooru
 - Prompt scheduling, alternating, composable diffusion, attention weighting — all the standard syntax
 
