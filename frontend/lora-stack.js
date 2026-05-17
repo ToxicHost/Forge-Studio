@@ -97,8 +97,43 @@ function add(loraOrName, weight) {
              loraOrName.preferred_weight > 0) {
     w = loraOrName.preferred_weight;
   }
+
+  // Dedup: the picker keeps the modal open for multi-add, so a double
+  // click on the same card is the typical "duplicate" path. Skip the
+  // push, flash the existing row, and let the user know the stack
+  // already has it — they can edit weight/enabled inline.
+  for (var i = 0; i < state.length; i++) {
+    if (state[i].name === name) {
+      _flashRow(i);
+      if (typeof window.showToast === "function") {
+        window.showToast(
+          _t("loraStack.add.duplicate", "{name} is already in the stack", { name: name }),
+          "info"
+        );
+      }
+      return;
+    }
+  }
+
   state.push({ name: name, weight: w, enabled: true });
   _commit();
+}
+
+function _flashRow(idx) {
+  if (!rowsEl) return;
+  var row = rowsEl.querySelector('.lora-stack-row[data-idx="' + idx + '"]');
+  if (!row) return;
+  row.classList.add("flash");
+  // Smooth-scroll only when off-screen — avoid jumping the panel
+  // around for a row already in view.
+  if (typeof row.scrollIntoView === "function") {
+    var box = container && container.getBoundingClientRect();
+    var r = row.getBoundingClientRect();
+    if (box && (r.top < box.top || r.bottom > box.bottom)) {
+      row.scrollIntoView({ block: "nearest", behavior: "smooth" });
+    }
+  }
+  setTimeout(function () { row.classList.remove("flash"); }, 700);
 }
 
 function remove(idx) {
@@ -216,7 +251,7 @@ function render() {
   if (state.length === 0) {
     var empty = document.createElement("div");
     empty.className = "lora-stack-empty";
-    empty.textContent = _t("loraStack.empty", "No LoRAs added. Click + Add to browse.");
+    empty.textContent = _t("loraStack.empty", "No LoRAs added. Click + LoRAs to browse.");
     rowsEl.appendChild(empty);
   } else {
     var frag = document.createDocumentFragment();

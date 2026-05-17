@@ -710,6 +710,28 @@
     const menu = document.createElement("div");
     menu.className = "lora-card-menu";
 
+    // "Add to Stack" only appears when the structured stack is
+    // available AND we're not already in pick mode (in pick mode the
+    // card click already targets the stack \u2014 a menu duplicate would
+    // be noise). Sits at the top so it's the obvious primary action
+    // for users who treat the stack as the main workflow.
+    if (!pickCallback && window.LoraStack && typeof window.LoraStack.add === "function") {
+      const btnStack = document.createElement("button");
+      btnStack.className = "lora-card-menu-item";
+      btnStack.dataset.i18n = "lora.menu.addToStack";
+      btnStack.textContent = _t("lora.menu.addToStack", "Add to LoRA Stack");
+      btnStack.addEventListener("click", () => {
+        dismissContextMenu();
+        const weight = (lora.preferred_weight && lora.preferred_weight > 0)
+          ? lora.preferred_weight : insertWeight;
+        try { window.LoraStack.add(lora, weight); }
+        catch (err) { console.error(`${TAG} stack add error:`, err); }
+      });
+      menu.appendChild(btnStack);
+      const sep = document.createElement("div"); sep.className = "lora-card-menu-sep";
+      menu.appendChild(sep);
+    }
+
     const btnUpload = document.createElement("button");
     btnUpload.className = "lora-card-menu-item";
     btnUpload.dataset.i18n = "lora.menu.previewFromFile";
