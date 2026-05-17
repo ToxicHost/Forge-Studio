@@ -60,6 +60,10 @@ var FIELD_MAP = {
   // Prompts ----------------------------------------------------------------
   prompt:          { id: "paramPrompt",   type: "textarea", prompt: true },
   negative_prompt: { id: "paramNeg",      type: "textarea", negPrompt: true },
+  // LoRA stack is a JSON-serialized [{name, weight, enabled}] array in a
+  // hidden input. Flagged `prompt: true` so it follows the positive prompt's
+  // include/exclude rules in workflow save dialogs.
+  lora_stack:      { id: "paramLoraStack", type: "hidden", prompt: true },
 
   // Model / VAE / TE -------------------------------------------------------
   // Excluded from tab snapshots: tab switching never reloads the global
@@ -301,7 +305,11 @@ function _writeField(spec, value) {
       return { applied: true };
     }
     case "hidden":
-      el.value = value;
+      el.value = value == null ? "" : String(value);
+      // Notify listeners (e.g. LoraStack) that the hidden value changed.
+      // Pre-existing hidden inputs (arBasePoolData, arRatioPoolData) have
+      // no input listeners so this is a no-op for them.
+      el.dispatchEvent(new Event("input", { bubbles: true }));
       return { applied: true };
     case "textarea":
       el.value = value == null ? "" : String(value);

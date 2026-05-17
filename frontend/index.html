@@ -310,6 +310,21 @@
                 <span class="token-count" id="tokenCount"></span>
               </div>
             </div>
+            <div class="prompt-box lora-stack-box" id="loraStackBox">
+              <div class="lora-stack-header">
+                <span class="lora-stack-label" data-i18n="loraStack.label">LoRAs</span>
+                <div class="lora-stack-actions">
+                  <button type="button" class="lora-stack-btn" id="loraStackImportBtn" data-i18n-title="loraStack.import.tooltip" title="Move &lt;lora:…&gt; tags from positive prompt into this stack">Import</button>
+                  <button type="button" class="lora-stack-btn" id="loraStackPreviewBtn" data-i18n-title="loraStack.preview.tooltip" title="Toggle compiled prompt preview">Preview</button>
+                  <button type="button" class="lora-stack-btn lora-stack-add-btn" id="loraStackAddBtn" data-i18n-title="loraStack.add.tooltip" title="Browse LoRAs to add">+ Add</button>
+                </div>
+              </div>
+              <div class="lora-stack-rows" id="loraStackRows"></div>
+              <div class="lora-stack-preview" id="loraStackPreview">
+                <code class="lora-stack-preview-text"></code>
+              </div>
+              <input type="hidden" id="paramLoraStack" value="">
+            </div>
             <div class="prompt-box">
               <textarea class="prompt-text prompt-neg" id="paramNeg" rows="2" placeholder="Negative prompt..."></textarea>
             </div>
@@ -1053,7 +1068,7 @@
     "ag-psd.js", "png-metadata.js", "i18n.js", "searchable-select.js", "canvas-core.js",
     "canvas-ui.js", "workflow-state.js", "app.js", "workflows.js",
     "module-system.js", "studio-tour.js", "studio-docs.js", "tag-complete.js",
-    "lora-browser.js", "wildcard-browser.js"
+    "lora-browser.js", "lora-stack.js", "wildcard-browser.js"
   ];
   // Optional modules — loaded if available, silently skipped if not.
   // debug.js exposes window.StudioDebug.* — dev-tools-only, no UI.
