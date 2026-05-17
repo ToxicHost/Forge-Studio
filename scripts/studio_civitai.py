@@ -36,7 +36,12 @@ from typing import Any, Dict, Iterable, List, Optional, Tuple
 TAG = "[Studio Civitai]"
 log = logging.getLogger("studio.civitai")
 
-CIVITAI_BY_HASH = "https://civitai.com/api/v1/model-versions/by-hash/{hash}"
+# Civitai split adult content onto civitai.red. Both hosts expose the same
+# /api/v1/model-versions/by-hash endpoint. We try civitai.com first, and fall
+# back to civitai.red ONLY on 404 — never on connection errors, so transient
+# network problems can't accidentally leak a lookup to the wrong host.
+CIVITAI_HOSTS = ("https://civitai.com", "https://civitai.red")
+BY_HASH_PATH = "/api/v1/model-versions/by-hash/{hash}"
 USER_AGENT = "Forge-Studio (https://github.com/ToxicHost/Forge-Studio)"
 REQUEST_TIMEOUT = 30  # seconds — single lookup
 HASH_CHUNK_BYTES = 1 << 20  # 1 MiB
@@ -250,9 +255,17 @@ def _ext_from_url(url: str) -> str:
 
 
 def _shape_metadata(
-    sha: str, api_resp: dict, fetched_at: float, *, private: bool = False
+    sha: str,
+    api_resp: dict,
+    fetched_at: float,
+    *,
+    private: bool = False,
+    source_host: str = "https://civitai.com",
 ) -> dict:
-    """Normalize Civitai's response into our cache schema."""
+    """Normalize Civitai's response into our cache schema. `source_host`
+    is the host that actually returned the result (civitai.com or
+    civitai.red) — used for the user-facing source URL so "Open on
+    Civitai" lands on the right domain."""
     model = api_resp.get("model") or {}
     images = api_resp.get("images") or []
     # Pick first image that's actually an image (not video) and has a URL
@@ -271,7 +284,7 @@ def _shape_metadata(
     source_url = None
     if model_id and version_id:
         source_url = (
-            f"https://civitai.com/models/{model_id}?modelVersionId={version_id}"
+            f"{source_host}/models/{model_id}?modelVersionId={version_id}"
         )
     trained_words = api_resp.get("trainedWords") or []
     if not isinstance(trained_words, list):
@@ -283,6 +296,7 @@ def _shape_metadata(
         "fetched_at": fetched_at,
         "private": bool(private),
         "not_found": False,
+        "source_host": source_host,
         "model_id": model_id,
         "version_id": version_id,
         "model_name": model.get("name") or "",
@@ -305,6 +319,7 @@ def _shape_not_found(sha: str, fetched_at: float) -> dict:
         "fetched_at": fetched_at,
         "private": False,
         "not_found": True,
+        "source_host": "",
         "model_id": None,
         "version_id": None,
         "model_name": "",
@@ -343,6 +358,7 @@ def set_private_flag(lora_dir: str, sha: str, private: bool) -> dict:
         "fetched_at": 0.0,
         "private": False,
         "not_found": False,
+        "source_host": "",
         "model_id": None,
         "version_id": None,
         "model_name": "",
@@ -382,6 +398,23 @@ def clear_cache(lora_dir: str, sha: str) -> bool:
     return removed
 
 
+def _lookup_by_hash(sha: str) -> Tuple[dict, str]:
+    """Try each Civitai host in order. Returns `(api_response, host)` for
+    the first one that succeeds. Raises `CivitaiNotFound` only if every
+    host returned 404. Any non-404 error (network, 5xx, parse) raises
+    immediately — we only fall through on a clean 404.
+    """
+    last_404 = None
+    for host in CIVITAI_HOSTS:
+        url = host + BY_HASH_PATH.format(hash=sha)
+        try:
+            return _http_get_json(url), host
+        except CivitaiNotFound as e:
+            last_404 = e
+            continue
+    raise last_404 if last_404 else CivitaiNotFound("All hosts returned 404")
+
+
 def fetch_one(
     lora_path: str,
     base_dir: str,
@@ -391,8 +424,8 @@ def fetch_one(
     """Hash, fetch, and cache one LoRA. Returns the metadata dict.
 
     Raises CivitaiError on network failure. Returns a `not_found: True`
-    entry when Civitai has no record for the hash. Refuses (returns the
-    existing entry) when the LoRA is marked private.
+    entry when no configured host has a record for the hash. Refuses
+    (returns the existing entry) when the LoRA is marked private.
     """
     sha = get_or_compute_hash(base_dir, lora_path)
     existing = load_cached_entry(base_dir, sha)
@@ -401,7 +434,7 @@ def fetch_one(
         return existing
 
     try:
-        resp = _http_get_json(CIVITAI_BY_HASH.format(hash=sha))
+        resp, source_host = _lookup_by_hash(sha)
     except CivitaiNotFound:
         entry = _shape_not_found(sha, time.time())
         if existing and existing.get("private"):
@@ -410,7 +443,9 @@ def fetch_one(
         return entry
 
     entry = _shape_metadata(
-        sha, resp, time.time(), private=bool(existing and existing.get("private"))
+        sha, resp, time.time(),
+        private=bool(existing and existing.get("private")),
+        source_host=source_host,
     )
 
     if download_preview and entry.get("preview_url"):
@@ -447,6 +482,7 @@ def _public_view(
         "fetched_at": entry.get("fetched_at") or 0.0,
         "private": bool(entry.get("private")),
         "not_found": bool(entry.get("not_found")),
+        "source_host": entry.get("source_host") or "",
         "model_id": entry.get("model_id"),
         "version_id": entry.get("version_id"),
         "model_name": entry.get("model_name") or "",

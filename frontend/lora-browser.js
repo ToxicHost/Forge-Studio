@@ -257,11 +257,48 @@
   z-index: 2;
 }
 .lora-civ-badge.lora-civ-ok { color: var(--accent); }
+.lora-civ-badge.lora-civ-ok.lora-civ-red { color: var(--red); }
 .lora-civ-badge.lora-civ-notfound { color: var(--text-4); }
 .lora-civ-badge.lora-civ-private { color: var(--amber); }
 
 /* Footer fetch button spinner reuses the refresh-btn pattern */
 .lora-civitai-btn.spinning { opacity: 0.6; cursor: wait; }
+
+/* Bulk-fetch progress in footer status slot. The bar gives at-a-
+   glance visual feedback for long runs (e.g. 100+ LoRAs), the text
+   gives the count + ETA, and the cancel button stops the loop after
+   the current in-flight request — never mid-request. */
+.lora-civ-progress {
+  display: inline-flex; align-items: center; gap: 8px;
+  font-family: var(--font); font-size: 10px; color: var(--text-3);
+}
+.lora-civ-progress-bar {
+  display: inline-block;
+  width: 100px; height: 6px;
+  background: var(--bg-input);
+  border-radius: 3px; overflow: hidden;
+  border: 1px solid var(--border-subtle);
+}
+.lora-civ-progress-fill {
+  display: block; height: 100%;
+  background: var(--accent);
+  transition: width 0.2s linear;
+}
+.lora-civ-progress-text {
+  font-family: var(--mono); white-space: nowrap;
+  color: var(--text-2);
+}
+.lora-civ-cancel-btn {
+  background: var(--bg-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-3);
+  font-family: var(--font); font-size: 10px;
+  padding: 2px 8px; cursor: pointer;
+  transition: all 0.12s;
+}
+.lora-civ-cancel-btn:hover { color: var(--red); border-color: var(--red); }
+.lora-civ-cancel-btn:disabled { opacity: 0.5; cursor: wait; }
 .lora-card-placeholder {
   width: 100%; aspect-ratio: 1;
   display: flex; align-items: center; justify-content: center;
@@ -587,16 +624,23 @@
       const triggerHtml = lora.activation_text
         ? `<div class="lora-card-trigger" title="${escHtml(lora.activation_text)}">${escHtml(lora.activation_text)}</div>`
         : "";
-      // Small civitai badge: ⚑ in accent for fetched, ✕ dim for not-found,
-      // 🔒 for private. Visually subtle so it doesn't dominate the card.
+      // Small civitai badge: C in accent for fetched (R if it came from
+      // civitai.red), · dim for not-found, 🔒 for private. Visually
+      // subtle so it doesn't dominate the card.
       let civBadge = "";
       if (civ) {
         if (civ.private) {
           civBadge = `<span class="lora-civ-badge lora-civ-private" title="Marked private — Civitai lookup disabled for this LoRA">🔒</span>`;
         } else if (civ.not_found) {
-          civBadge = `<span class="lora-civ-badge lora-civ-notfound" title="No Civitai match for this hash">·</span>`;
+          civBadge = `<span class="lora-civ-badge lora-civ-notfound" title="No match on civitai.com or civitai.red">·</span>`;
         } else if (civ.fetched_at) {
-          civBadge = `<span class="lora-civ-badge lora-civ-ok" title="Civitai metadata cached">C</span>`;
+          const isRed = (civ.source_host || "").includes("civitai.red");
+          const letter = isRed ? "R" : "C";
+          const cls = isRed ? "lora-civ-ok lora-civ-red" : "lora-civ-ok";
+          const tip = isRed
+            ? "Metadata cached from civitai.red"
+            : "Metadata cached from civitai.com";
+          civBadge = `<span class="lora-civ-badge ${cls}" title="${tip}">${letter}</span>`;
         }
       }
 
@@ -798,36 +842,104 @@
       return;
     }
     const label = activeFolder || _t("lora.allFolder", "All LoRAs");
+    // Rough estimate: ~2-4s per LoRA cold (hash + HTTP + preview), ~1s warm.
+    const estSec = Math.round(missing.length * 2.5);
+    const estLabel = estSec >= 60 ? `~${Math.ceil(estSec / 60)} min` : `~${estSec} s`;
     const ok = window.confirm(_t("lora.civitai.confirmFetch",
       `Fetch Civitai metadata for ${missing.length} LoRA(s) in “${label}”?\n\n` +
-      `This sends file hashes (not filenames or prompts) to civitai.com.`));
+      `This sends file hashes (not filenames or prompts) to civitai.com.\n` +
+      `Estimated time: ${estLabel}. You can cancel mid-way.`));
     if (!ok) return;
 
+    // Per-LoRA loop with live progress + cancel, so 100+ LoRAs feels
+    // navigable instead of "did it freeze?". Each request also persists
+    // server-side as it completes — cancelling never loses what's done.
+    const total = missing.length;
+    let done = 0, ok_count = 0, notfound = 0, errors = 0;
+    let cancelled = false;
+    const startTime = performance.now();
+
     const btn = modal?.querySelector(".lora-civitai-btn");
+    const status = modal?.querySelector(".lora-status");
+    const prevStatusHTML = status?.innerHTML || "";
     if (btn) { btn.disabled = true; btn.classList.add("spinning"); }
-    try {
-      // Send the exact list of names so search-filtered views fetch
-      // exactly what the user saw counted, not the whole folder.
-      const body = { names: missing.map(l => l.name), skip_existing: true };
-      const resp = await fetch("/studio/civitai/fetch_batch", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify(body),
-      });
-      const data = await resp.json();
-      if (!resp.ok || !data.ok) {
-        showToast(`${_t("lora.civitai.fetchFailed", "Civitai fetch failed")}: ${data?.error || resp.status}`, "error");
-        return;
+
+    let cancelBtn = null;
+    const _formatETA = (sec) => {
+      if (!isFinite(sec) || sec <= 0) return "";
+      if (sec < 60) return `${Math.round(sec)}s`;
+      const m = Math.floor(sec / 60);
+      const s = Math.round(sec % 60);
+      return s ? `${m}m${String(s).padStart(2, "0")}s` : `${m}m`;
+    };
+    const _renderProgress = (currentName) => {
+      if (!status) return;
+      const elapsed = (performance.now() - startTime) / 1000;
+      const rate = done > 0 ? elapsed / done : 0;
+      const remaining = (total - done) * rate;
+      // Wait for a couple of samples before showing ETA so the first one isn't wildly off
+      const etaText = done >= 3 ? ` · ETA ${_formatETA(remaining)}` : "";
+      const nameTrim = currentName && currentName.length > 28
+        ? "…" + currentName.slice(-27) : (currentName || "");
+      const nameText = nameTrim ? ` · ${escHtml(nameTrim)}` : "";
+      status.innerHTML =
+        `<span class="lora-civ-progress">` +
+          `<span class="lora-civ-progress-bar"><span class="lora-civ-progress-fill" style="width:${(done / total * 100).toFixed(1)}%"></span></span>` +
+          `<span class="lora-civ-progress-text">${done}/${total}${etaText}${nameText}</span>` +
+        `</span>`;
+      if (cancelBtn) status.appendChild(cancelBtn);
+    };
+
+    cancelBtn = document.createElement("button");
+    cancelBtn.type = "button";
+    cancelBtn.className = "lora-civ-cancel-btn";
+    cancelBtn.textContent = _t("lora.civitai.cancel", "Cancel");
+    cancelBtn.addEventListener("click", () => {
+      cancelled = true;
+      cancelBtn.disabled = true;
+      cancelBtn.textContent = _t("lora.civitai.cancelling", "Stopping…");
+    });
+
+    _renderProgress(missing[0]?.name || "");
+
+    for (const lora of missing) {
+      if (cancelled) break;
+      try {
+        const resp = await fetch("/studio/civitai/fetch", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ name: lora.name }),
+        });
+        const data = await resp.json().catch(() => null);
+        if (resp.ok && data && data.ok) {
+          if (data.not_found) notfound++;
+          else ok_count++;
+          // Update in-memory so badges reflect new state on the next refresh.
+          if (data.civitai) lora.civitai = data.civitai;
+        } else {
+          errors++;
+        }
+      } catch (e) {
+        errors++;
       }
-      showToast(_t("lora.civitai.bulkDone",
-        `Fetched ${data.fetched} · skipped ${data.skipped} · no match ${data.not_found}` +
-        (data.errors?.length ? ` · ${data.errors.length} error(s)` : "")), "success");
-      await refreshLoras();
-    } catch (e) {
-      showToast(`${_t("lora.civitai.fetchFailed", "Civitai fetch failed")}: ${e.message || e}`, "error");
-    } finally {
-      if (btn) { btn.disabled = false; btn.classList.remove("spinning"); }
+      done++;
+      _renderProgress(done < total ? missing[done].name : "");
     }
+
+    // Restore footer status, drop spinner, summarize.
+    if (status) status.innerHTML = prevStatusHTML;
+    if (btn) { btn.disabled = false; btn.classList.remove("spinning"); }
+    const errPart = errors ? ` · ${errors} error${errors === 1 ? "" : "s"}` : "";
+    if (cancelled) {
+      showToast(_t("lora.civitai.cancelled",
+        `Stopped at ${done}/${total} · fetched ${ok_count} · no match ${notfound}${errPart}`),
+        "info");
+    } else {
+      showToast(_t("lora.civitai.bulkDone",
+        `Fetched ${ok_count} · no match ${notfound}${errPart}`),
+        errors ? "info" : "success");
+    }
+    await refreshLoras();
   }
 
   // Helper: filtered LoRAs matching the current folder + search.
