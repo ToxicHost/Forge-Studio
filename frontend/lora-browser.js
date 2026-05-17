@@ -261,8 +261,25 @@
 .lora-civ-badge.lora-civ-notfound { color: var(--text-4); }
 .lora-civ-badge.lora-civ-private { color: var(--amber); }
 
-/* Footer fetch button spinner reuses the refresh-btn pattern */
+/* Footer "Fetch Civitai" button — mirrors .lora-open-folder visually
+   but stays a separate class so the open-folder click handler can't
+   accidentally bind to it (querySelector(".lora-open-folder") used to
+   match this button first when it shared the class). */
+.lora-civitai-btn {
+  background: var(--bg-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-3);
+  font-family: var(--font); font-size: 10px;
+  padding: 3px 8px; cursor: pointer;
+  transition: all 0.12s;
+}
+.lora-civitai-btn:hover {
+  color: var(--text-1);
+  border-color: var(--border-hover);
+}
 .lora-civitai-btn.spinning { opacity: 0.6; cursor: wait; }
+.lora-civitai-btn:disabled { opacity: 0.5; cursor: wait; }
 
 /* Bulk-fetch progress in footer status slot. The bar gives at-a-
    glance visual feedback for long runs (e.g. 100+ LoRAs), the text
@@ -479,7 +496,7 @@
         </div>
         <div class="lora-footer">
           <span class="lora-status"></span>
-          <button class="lora-open-folder lora-civitai-btn" style="display:none;" title="${_t("lora.civitai.fetchMissing.tooltip", "Fetch Civitai metadata for visible LoRAs that don't have it yet")}">${_t("lora.civitai.fetchMissing", "Fetch Civitai")}</button>
+          <button class="lora-civitai-btn" style="display:none;" title="${_t("lora.civitai.fetchMissing.tooltip", "Fetch Civitai metadata for visible LoRAs that don't have it yet")}">${_t("lora.civitai.fetchMissing", "Fetch Civitai")}</button>
           <button class="lora-open-folder" data-i18n="lora.openFolder" data-i18n-title="lora.openFolder.tooltip" title="${_t("lora.openFolder.tooltip", "Open LoRA folder in file manager")}">${_t("lora.openFolder", "Open Folder")}</button>
           <span class="lora-hint" data-i18n="lora.hint">${_t("lora.hint", "Click to insert · Right-click for options")}</span>
         </div>
