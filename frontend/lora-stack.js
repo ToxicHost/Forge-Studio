@@ -37,8 +37,15 @@ function _t(key, fallback, params) {
 
 function _writeHidden() {
   if (!hidden) return;
+  // Dispatch inside the suppress window: our own input listener short-
+  // circuits via _suppressInput so we don't loop back into reload(), but
+  // the bubbled event still reaches the session-autosave listener on
+  // paramLoraStack (app.js:3834). Without this, stack-only edits sit in
+  // the DOM until the next beforeunload/pagehide — fine on a clean tab
+  // close, lost on a browser/OS crash.
   _suppressInput = true;
   hidden.value = JSON.stringify(state);
+  hidden.dispatchEvent(new Event("input", { bubbles: true }));
   _suppressInput = false;
 }
 
@@ -312,7 +319,9 @@ function _openPicker() {
     return;
   }
   if (typeof LB.openPick === "function") {
-    LB.openPick(function (lora) { add(lora); });
+    // The browser passes through its resolved weight (current weight
+    // field, overridden by the LoRA's preferred_weight sidecar).
+    LB.openPick(function (lora, weight) { add(lora, weight); });
   } else {
     LB.open();
   }

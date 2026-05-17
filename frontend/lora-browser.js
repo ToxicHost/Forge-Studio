@@ -561,7 +561,12 @@
       card.addEventListener("click", e => {
         if (e.target.closest(".lora-card-menu")) return;
         if (pickCallback) {
-          try { pickCallback(lora); }
+          // Resolve the same weight insertLora would have used so the
+          // browser's weight field (and the LoRA's preferred_weight
+          // sidecar) carry through to the structured stack.
+          const weight = (lora.preferred_weight && lora.preferred_weight > 0)
+            ? lora.preferred_weight : insertWeight;
+          try { pickCallback(lora, weight); }
           catch (err) { console.error(`${TAG} pick callback error:`, err); }
         } else {
           insertLora(lora);
