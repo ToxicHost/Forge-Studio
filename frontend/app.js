@@ -1427,7 +1427,9 @@ async function doGenerate() {
     mode: (window.StudioCore?.state?.editingMask || window.StudioCore?.state?._userMaskMode || maskB64) ? "Edit" : "Create",
     inpaint_mode: "Inpaint",
 
-    prompt:        document.getElementById("paramPrompt")?.value || "",
+    prompt:        (window.LoraStack?.compilePrompt
+                     ? window.LoraStack.compilePrompt(document.getElementById("paramPrompt")?.value || "")
+                     : (document.getElementById("paramPrompt")?.value || "")),
     neg_prompt:    document.getElementById("paramNeg")?.value || "",
     steps:         parseInt(document.getElementById("paramSteps")?.value) || 30,
     sampler_name:  document.getElementById("paramSampler")?.value || "DPM++ 2M SDE",
@@ -3451,6 +3453,7 @@ function bindUI() {
   const DEFAULTS_CATEGORIES = {
     prompts: [
       ["paramPrompt", "val"], ["paramNeg", "val"],
+      ["paramLoraStack", "val"],
     ],
     gen: [
       ["paramModel", "val"],
@@ -3703,6 +3706,9 @@ function bindUI() {
 
     // Restore AR pools from hidden inputs
     _syncPoolsFromDOM();
+
+    // Re-render LoRA stack from restored hidden input value
+    window.LoraStack?.reload();
 
     // Restore brush size to canvas state
     const restoredBrush = parseInt(document.getElementById("paramBrushSize")?.value);

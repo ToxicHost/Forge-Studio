@@ -36,6 +36,10 @@
   let modal = null;
   let loaded = false;
   let collapsedFolders = new Set();
+  // When set, clicking a card calls this callback with the LoRA object
+  // instead of inserting <lora:…> into a textarea. Used by the LoRA Stack
+  // "+ Add" button so picks go straight into the structured stack.
+  let pickCallback = null;
 
   // ── Shared: last-focused prompt tracking ───────────────
   function _trackPromptFocus() {
@@ -556,7 +560,17 @@
 
       card.addEventListener("click", e => {
         if (e.target.closest(".lora-card-menu")) return;
-        insertLora(lora);
+        if (pickCallback) {
+          // Resolve the same weight insertLora would have used so the
+          // browser's weight field (and the LoRA's preferred_weight
+          // sidecar) carry through to the structured stack.
+          const weight = (lora.preferred_weight && lora.preferred_weight > 0)
+            ? lora.preferred_weight : insertWeight;
+          try { pickCallback(lora, weight); }
+          catch (err) { console.error(`${TAG} pick callback error:`, err); }
+        } else {
+          insertLora(lora);
+        }
         card.classList.add("inserted");
         setTimeout(() => card.classList.remove("inserted"), 600);
       });
@@ -691,6 +705,22 @@
 
   // ── Open / Close ───────────────────────────────────────
   async function openModal() {
+    pickCallback = null;
+    await fetchLoras();
+    buildModal();
+    modal.style.display = "flex";
+    renderFolderTree();
+    renderGrid();
+    const search = modal.querySelector(".lora-search");
+    search.value = searchQuery;
+    setTimeout(() => search.focus(), 50);
+  }
+
+  // Open in "pick mode": clicking a card invokes `cb(lora)` and keeps the
+  // modal open so multiple picks can be made in one session. Esc / close
+  // button still dismiss normally.
+  async function openPick(cb) {
+    pickCallback = typeof cb === "function" ? cb : null;
     await fetchLoras();
     buildModal();
     modal.style.display = "flex";
@@ -703,6 +733,7 @@
 
   function closeModal() {
     if (modal) modal.style.display = "none";
+    pickCallback = null;
     const target = getTargetTextarea();
     if (target) target.focus();
   }
@@ -769,5 +800,5 @@
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
   else init();
 
-  window.LoraBrowser = { open: openModal, close: closeModal, refresh: refreshLoras };
+  window.LoraBrowser = { open: openModal, openPick: openPick, close: closeModal, refresh: refreshLoras };
 })();
