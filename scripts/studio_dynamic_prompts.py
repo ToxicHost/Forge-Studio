@@ -518,6 +518,132 @@ def get_wildcard_lines(
     }
 
 
+def _default_write_root() -> Optional[Path]:
+    """Return Studio's auto-detected writable wildcard root, used when
+    no custom folder is configured. Defers to `studio_lexicon` so the
+    detection lives in one place; falls back to the first resolver dir
+    if that import fails.
+    """
+    try:
+        from scripts.studio_lexicon import get_wildcards_root  # type: ignore
+        p = Path(get_wildcards_root())
+        if p.is_dir():
+            return p
+    except Exception:
+        try:
+            from studio_lexicon import get_wildcards_root  # type: ignore
+            p = Path(get_wildcards_root())
+            if p.is_dir():
+                return p
+        except Exception:
+            pass
+    # Last resort: first existing default resolver dir
+    for d in _default_wildcard_dirs():
+        return d
+    return None
+
+
+def get_wildcard_write_root(cfg: Optional[dict] = None) -> Optional[Path]:
+    """Return the folder where the Wildcards editor should create,
+    rename and delete files.
+
+    - custom mode: the user's custom folder (created on demand if its
+      parent exists, so the editor can populate an empty target).
+    - default mode: Studio's own writable lexicon root.
+
+    Returns None only when no usable folder exists at all (e.g. custom
+    mode with an unreachable parent and no fallback).
+    """
+    if cfg is None:
+        cfg = load_config()
+    if cfg.get("wildcard_folder_mode") == "custom" and cfg.get("wildcard_folder"):
+        try:
+            p = Path(str(cfg["wildcard_folder"])).expanduser()
+            if p.is_dir():
+                return p
+            # Try to create the directory if its parent exists — lets
+            # the user pick an empty target folder and start editing.
+            if p.parent.is_dir():
+                try:
+                    p.mkdir(parents=True, exist_ok=True)
+                    return p
+                except Exception:
+                    pass
+        except Exception:
+            pass
+        # Custom mode but folder unreachable — no fallback, mirrors the
+        # read-side behaviour of returning [] from resolve_wildcard_dirs.
+        return None
+    return _default_write_root()
+
+
+def _safe_wildcard_target(name: str, root: Path) -> Path:
+    """Resolve `name` to `<root>/<name>.txt`, rejecting traversal."""
+    parts = [p for p in str(name).replace("\\", "/").split("/") if p]
+    if not parts or any(p in ("", "..", ".") for p in parts):
+        raise ValueError("Invalid wildcard name")
+    target = (root / (os.path.join(*parts) + ".txt")).resolve()
+    root_resolved = root.resolve()
+    try:
+        target.relative_to(root_resolved)
+    except ValueError as e:
+        raise ValueError("Path outside wildcard root") from e
+    return target
+
+
+def write_wildcard(
+    name: str,
+    lines,
+    cfg: Optional[dict] = None,
+) -> dict:
+    """Write a wildcard file under the active write root.
+
+    `lines` may be a list of strings or a single string with embedded
+    newlines. Parent folders are created on demand. Returns
+    ``{"ok": True, "name": ..., "lines": N}`` on success or
+    ``{"ok": False, "error": ...}`` on failure (no absolute paths).
+    """
+    root = get_wildcard_write_root(cfg)
+    if root is None:
+        return {"ok": False, "error": "no_write_root"}
+    try:
+        target = _safe_wildcard_target(name, root)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
+    if isinstance(lines, str):
+        body = lines
+    else:
+        body = "\n".join(str(x).rstrip() for x in (lines or []))
+    if body and not body.endswith("\n"):
+        body += "\n"
+    try:
+        target.parent.mkdir(parents=True, exist_ok=True)
+        target.write_text(body, encoding="utf-8")
+    except Exception as e:
+        return {"ok": False, "error": f"write_failed: {e.__class__.__name__}"}
+    return {"ok": True, "name": str(name), "lines": body.count("\n")}
+
+
+def delete_wildcard(name: str, cfg: Optional[dict] = None) -> dict:
+    """Delete a wildcard file under the active write root. Returns
+    ``{"ok": True, "deleted": bool}``; never raises for normal misses.
+    """
+    root = get_wildcard_write_root(cfg)
+    if root is None:
+        return {"ok": False, "error": "no_write_root"}
+    try:
+        target = _safe_wildcard_target(name, root)
+    except ValueError as e:
+        return {"ok": False, "error": str(e)}
+    if not target.is_file():
+        return {"ok": True, "deleted": False}
+    try:
+        target.unlink()
+    except Exception as e:
+        return {"ok": False, "error": f"delete_failed: {e.__class__.__name__}"}
+    return {"ok": True, "deleted": True}
+
+
 __all__ = [
     "DynamicPromptExpansionResult",
     "DEFAULT_CONFIG",
@@ -530,4 +656,7 @@ __all__ = [
     "source_label",
     "list_wildcards",
     "get_wildcard_lines",
+    "get_wildcard_write_root",
+    "write_wildcard",
+    "delete_wildcard",
 ]

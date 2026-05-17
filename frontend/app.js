@@ -3334,11 +3334,12 @@ function bindUI() {
   });
 
   // Notify other modules that the active wildcard root changed so their
-  // cached lists match what generation will resolve. Best-effort: each
-  // hook is optional and failures are non-fatal.
+  // cached lists/trees match what generation will resolve. Best-effort:
+  // each hook is optional and failures are non-fatal.
   function _onWildcardFolderChanged() {
     try { window.TagComplete?.refreshWildcards?.(); } catch (_) {}
     try { window.WildcardBrowser?.refresh?.(); } catch (_) {}
+    try { window.LexiconAPI?.refresh?.(); } catch (_) {}
   }
 
   function _applyPickedFolder(folder) {
