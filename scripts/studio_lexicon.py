@@ -27,7 +27,7 @@ from fastapi.responses import JSONResponse, StreamingResponse
 TAG = "[Lexicon]"
 VERSION = "1.0.0"
 
-_wildcards_root: str = ""
+_default_wildcards_root: str = ""
 
 
 def _find_wildcards_dir() -> str:
@@ -47,21 +47,44 @@ def _find_wildcards_dir() -> str:
     return os.path.realpath(fallback)
 
 
-def _get_root() -> str:
-    global _wildcards_root
-    if not _wildcards_root:
-        _wildcards_root = _find_wildcards_dir()
-    return _wildcards_root
+def _get_default_root() -> str:
+    """Return Studio's default wildcard root (cached). This is the
+    folder used when the user has NOT selected a custom wildcard
+    folder. Studio's native dynamic-prompts resolver calls this to
+    build its default search list — keeping it pure (no config read)
+    avoids a cycle with `studio_dynamic_prompts.get_wildcard_write_root`.
+    """
+    global _default_wildcards_root
+    if not _default_wildcards_root:
+        _default_wildcards_root = _find_wildcards_dir()
+    return _default_wildcards_root
 
 
 def get_wildcards_root() -> str:
-    """Public accessor for the resolved wildcards directory.
-
-    Single source of truth — every Studio module that reads/writes
-    wildcards (Lexicon, /studio/wildcards endpoints, Attention Couple
-    resolver) must call this so they agree on where files live.
+    """Default wildcard root for the resolver to chain into. Always
+    Studio's own writable folder — never the user's custom override.
+    Editor operations should use the active root via `_get_root()`.
     """
-    return _get_root()
+    return _get_default_root()
+
+
+def _get_root() -> str:
+    """Return the ACTIVE wildcard root for editor operations
+    (tree/read/write/delete). Honours the user's dynamic-prompts
+    folder selection — custom folder in custom mode, otherwise the
+    default root above.
+    """
+    try:
+        try:
+            from scripts.studio_dynamic_prompts import get_wildcard_write_root  # type: ignore
+        except ImportError:
+            from studio_dynamic_prompts import get_wildcard_write_root  # type: ignore
+        active = get_wildcard_write_root()
+        if active is not None:
+            return os.path.realpath(str(active))
+    except Exception:
+        pass
+    return _get_default_root()
 
 
 def _safe_path(rel_path: str) -> str:
@@ -118,20 +141,22 @@ def _build_tree(dir_path: str, rel_prefix: str = "") -> dict:
 # WILDCARD RESOLUTION
 # =========================================================================
 
-_resolver_cache = {}
+_resolver_cache = {}  # {"root": "<path>", "gen": <RandomPromptGenerator>}
 
 def _get_resolver():
-    if "gen" in _resolver_cache:
+    wc_dir = _get_root()
+    cached_root = _resolver_cache.get("root")
+    if cached_root == wc_dir and "gen" in _resolver_cache:
         return _resolver_cache["gen"]
     try:
         from dynamicprompts.generators import RandomPromptGenerator
         from dynamicprompts.wildcards.wildcard_manager import WildcardManager
-        wc_dir = _get_root()
         if os.path.isdir(wc_dir):
             wm = WildcardManager(Path(wc_dir))
             gen = RandomPromptGenerator(wildcard_manager=wm)
         else:
             gen = RandomPromptGenerator()
+        _resolver_cache["root"] = wc_dir
         _resolver_cache["gen"] = gen
         return gen
     except ImportError:

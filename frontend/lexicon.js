@@ -1279,7 +1279,14 @@ function _escHTML(s) { return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").rep
 // PUBLIC API — for cross-module access (e.g., wildcard browser → open file)
 // ========================================================================
 
-window.LexiconAPI = { openFile };
+// `refresh()` is invoked by app.js after the user changes the native
+// wildcard folder so the editor's tree reflects the new active root.
+// Safe no-op if the module hasn't built its UI yet (StudioModules calls
+// loadTree on activate anyway).
+window.LexiconAPI = {
+    openFile,
+    refresh: () => { try { loadTree(); loadInfo(); } catch (_) {} },
+};
 
 // ========================================================================
 // MODULE REGISTRATION

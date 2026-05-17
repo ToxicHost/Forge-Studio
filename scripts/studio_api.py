@@ -3271,61 +3271,32 @@ def setup_studio_routes(app: FastAPI):
 
     @app.get("/studio/wildcards")
     async def get_wildcards():
-        from modules.paths import script_path
-        from pathlib import Path
-        webui_root = Path(script_path)
-        wildcards = []
+        # Routed through the Studio-native resolver so autocomplete sees
+        # exactly the wildcards generation will expand — including the
+        # user's custom wildcard folder when configured. The legacy
+        # `path` field is preserved as an empty string for compatibility
+        # with older frontend code; real local paths are never returned.
         try:
-            _get_root = _import("studio_lexicon", "get_wildcards_root")
-            candidates = [Path(_get_root())]
+            _list = _import("studio_dynamic_prompts", "list_wildcards")
+            items = _list() or []
         except Exception:
-            candidates = [
-                webui_root / "extensions" / "sd-dynamic-prompts" / "wildcards",
-                webui_root / "extensions-builtin" / "sd-dynamic-prompts" / "wildcards",
-                webui_root / "extensions" / "sd-dynamic-prompts-fork" / "wildcards",
-                webui_root / "wildcards",
-                webui_root / "outputs" / "wildcards",
-            ]
-        for wc_dir in candidates:
-            if wc_dir.is_dir():
-                for f in sorted(wc_dir.rglob("*.txt"), key=lambda p: _natural_sort_key(str(p))):
-                    rel = f.relative_to(wc_dir)
-                    # Convert path separators to forward slashes, strip .txt
-                    name = str(rel).replace("\\", "/").replace(".txt", "")
-                    wildcards.append({"name": name, "path": str(f)})
-                break  # Use first found directory
-        return wildcards
+            log.exception("Failed to list wildcards")
+            return []
+        items.sort(key=lambda w: _natural_sort_key(w.get("name", "")))
+        return [{"name": w["name"], "path": ""} for w in items]
 
     @app.get("/studio/wildcard_content")
     async def get_wildcard_content(name: str = ""):
-        """Return the lines of a wildcard file for preview."""
-        from modules.paths import script_path
-        from pathlib import Path
+        """Return the lines of a wildcard file for preview, using the
+        same resolver as generation so preview matches expansion."""
         if not name:
-            return {"lines": [], "count": 0}
-        webui_root = Path(script_path)
+            return {"lines": [], "count": 0, "truncated": False}
         try:
-            _get_root = _import("studio_lexicon", "get_wildcards_root")
-            candidates = [Path(_get_root())]
+            _get_lines = _import("studio_dynamic_prompts", "get_wildcard_lines")
+            return _get_lines(name)
         except Exception:
-            candidates = [
-                webui_root / "extensions" / "sd-dynamic-prompts" / "wildcards",
-                webui_root / "extensions-builtin" / "sd-dynamic-prompts" / "wildcards",
-                webui_root / "extensions" / "sd-dynamic-prompts-fork" / "wildcards",
-                webui_root / "wildcards",
-                webui_root / "outputs" / "wildcards",
-            ]
-        for wc_dir in candidates:
-            if wc_dir.is_dir():
-                target = wc_dir / (name.replace("/", os.sep) + ".txt")
-                if target.exists() and target.is_file():
-                    try:
-                        text = target.read_text(encoding="utf-8", errors="replace")
-                        lines = [l.strip() for l in text.splitlines() if l.strip() and not l.strip().startswith("#")]
-                        return {"lines": lines[:50], "count": len(lines), "truncated": len(lines) > 50}
-                    except Exception:
-                        log.exception("Failed to read wildcard file")
-        return {"lines": [], "count": 0}
+            log.exception("Failed to read wildcard file")
+            return {"lines": [], "count": 0, "truncated": False}
 
     # =========================================================================
     # STUDIO-NATIVE DYNAMIC PROMPTS — config & folder management
