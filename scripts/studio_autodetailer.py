@@ -60,63 +60,234 @@ except ImportError:
 
 
 # =========================================================================
-# Backend selection (stubs for PR 2 — preserve current behavior for PR 1)
+# Backend selection
 # =========================================================================
+#
+# Studio supports several AD backends behind a single API. The active
+# backend is decided per request from a combination of:
+#   - what the caller asked for (`requested`)
+#   - what's actually installed/available
+#   - whether the request even needs AD (any enabled slot with a model)
+#
+# Backend names:
+#   "extension"     — the installed ADetailer extension runs through its
+#                     own script_args slots. Studio injects params into
+#                     those slots and does NOT run its own post-process.
+#   "studio_compat" — Studio runs its own per-detection inpaint loop but
+#                     borrows the extension's detection + mask helpers.
+#                     The extension is suppressed via p._ad_disabled.
+#                     This is the current production path.
+#   "studio_native" — Studio runs its own loop without depending on the
+#                     extension. Not implemented yet — placeholder.
+#   "none"          — AD is disabled or no backend is available. Nothing
+#                     runs and no script_args are injected.
+#
+# Invariant: exactly one backend may process a given generation. Never
+# both inject extension args AND run Studio postprocess.
+
+_BACKEND_EXTENSION = "extension"
+_BACKEND_STUDIO_COMPAT = "studio_compat"
+_BACKEND_STUDIO_NATIVE = "studio_native"
+_BACKEND_NONE = "none"
+
 
 @dataclass
 class ADetailerBackendStatus:
     """Snapshot of which AD backend is active for a given request."""
     requested: str = "auto"
-    active: str = "none"
+    active: str = _BACKEND_NONE
     extension_available: bool = False
     studio_native_available: bool = False
     models_found: int = 0
     warning: str = ""
 
+    @property
+    def has_work(self) -> bool:
+        return self.active != _BACKEND_NONE
+
+    @property
+    def wants_extension_injection(self) -> bool:
+        """True when Studio should inject AD params into the extension's
+        script_args slots so the extension processes the request."""
+        return self.active == _BACKEND_EXTENSION
+
+    @property
+    def wants_extension_suppression(self) -> bool:
+        """True when Studio runs its own AD loop and the extension's
+        postprocess hook must be skipped via p._ad_disabled."""
+        return self.active in (_BACKEND_STUDIO_COMPAT, _BACKEND_STUDIO_NATIVE)
+
+    @property
+    def wants_studio_postprocess(self) -> bool:
+        """True when Studio's own ``run_studio_autodetailer`` should run
+        after the base generation pass."""
+        return self.active in (_BACKEND_STUDIO_COMPAT, _BACKEND_STUDIO_NATIVE)
+
+
+# Native readiness flag — flipped to True in PR 6 once the native
+# detection/mask path is complete. Until then `auto` still resolves to
+# `studio_compat`.
+_NATIVE_READY_FOR_DEFAULT = False
+
 
 def resolve_ad_backend(requested: str = "auto") -> ADetailerBackendStatus:
-    """Decide which AD backend should run.
+    """Decide which AD backend should run for a request.
 
-    For PR 1 this is a stub that preserves current behavior: if the
-    ADetailer extension is importable, the "studio_compat" path runs
-    (Studio's own loop borrowing ADetailer internals). Otherwise AD is
-    skipped.
+    Resolves the requested backend name against actual availability.
+    Returns a status object describing the active backend along with
+    diagnostic flags. Never raises — if nothing is available, returns
+    a "none" status with a warning.
 
-    Future PRs will branch this on requested ∈ {auto, extension,
-    studio_compat, studio_native, none} and consult a real native
-    backend readiness flag.
+    Rules:
+        - "extension": extension AD only. Falls through to "none" with
+          warning if the extension isn't installed.
+        - "studio_native": native loop only. PR 2 has no real native
+          backend so this currently resolves to "none" with warning
+          (strict mode — no silent fallback to compat).
+        - "studio_compat": Studio loop borrowing extension internals.
+          Requires the extension to be installed.
+        - "auto" (default): prefer studio_native when ready, fall back
+          to studio_compat, then to extension, then to none.
+        - "none": skip AD entirely.
     """
     ext_avail = _HAS_AD_LIBS
-    # PR 1: no real native backend exists yet.
-    native_avail = False
+    native_avail = False  # PR 2: native backend not implemented yet
     models_found = len(get_ad_model_mapping()) if ext_avail else 0
 
-    if requested == "none":
+    if requested == _BACKEND_NONE:
         return ADetailerBackendStatus(
-            requested=requested, active="none",
+            requested=requested, active=_BACKEND_NONE,
             extension_available=ext_avail,
             studio_native_available=native_avail,
             models_found=models_found,
         )
 
-    # PR 1 preserves the current production path: when AD libs are
-    # importable, Studio's own loop runs ("studio_compat"). Falls back
-    # to "none" otherwise.
+    if requested == _BACKEND_EXTENSION:
+        if ext_avail:
+            return ADetailerBackendStatus(
+                requested=requested, active=_BACKEND_EXTENSION,
+                extension_available=True,
+                studio_native_available=native_avail,
+                models_found=models_found,
+            )
+        return ADetailerBackendStatus(
+            requested=requested, active=_BACKEND_NONE,
+            extension_available=False,
+            studio_native_available=native_avail,
+            models_found=0,
+            warning="ADetailer extension unavailable",
+        )
+
+    if requested == _BACKEND_STUDIO_NATIVE:
+        if native_avail:
+            return ADetailerBackendStatus(
+                requested=requested, active=_BACKEND_STUDIO_NATIVE,
+                extension_available=ext_avail,
+                studio_native_available=True,
+                models_found=models_found,
+            )
+        return ADetailerBackendStatus(
+            requested=requested, active=_BACKEND_NONE,
+            extension_available=ext_avail,
+            studio_native_available=False,
+            models_found=models_found,
+            warning="Studio Native AutoDetailer unavailable",
+        )
+
+    if requested == _BACKEND_STUDIO_COMPAT:
+        if ext_avail:
+            return ADetailerBackendStatus(
+                requested=requested, active=_BACKEND_STUDIO_COMPAT,
+                extension_available=True,
+                studio_native_available=native_avail,
+                models_found=models_found,
+            )
+        return ADetailerBackendStatus(
+            requested=requested, active=_BACKEND_NONE,
+            extension_available=False,
+            studio_native_available=native_avail,
+            models_found=0,
+            warning="ADetailer extension unavailable; studio_compat needs it",
+        )
+
+    # "auto" — prefer native if ready, else studio_compat, else extension.
+    if native_avail and _NATIVE_READY_FOR_DEFAULT:
+        return ADetailerBackendStatus(
+            requested=requested, active=_BACKEND_STUDIO_NATIVE,
+            extension_available=ext_avail,
+            studio_native_available=True,
+            models_found=models_found,
+        )
     if ext_avail:
         return ADetailerBackendStatus(
-            requested=requested, active="studio_compat",
+            requested=requested, active=_BACKEND_STUDIO_COMPAT,
             extension_available=True,
             studio_native_available=native_avail,
             models_found=models_found,
         )
-
+    if native_avail:
+        return ADetailerBackendStatus(
+            requested=requested, active=_BACKEND_STUDIO_NATIVE,
+            extension_available=False,
+            studio_native_available=True,
+            models_found=models_found,
+        )
     return ADetailerBackendStatus(
-        requested=requested, active="none",
+        requested=requested, active=_BACKEND_NONE,
         extension_available=False,
-        studio_native_available=native_avail,
+        studio_native_available=False,
         models_found=0,
-        warning="ADetailer extension unavailable and no native backend yet",
+        warning="No ADetailer backend available",
     )
+
+
+def has_active_slots(ad_slot_dicts) -> bool:
+    """Return True when at least one slot is enabled with a real model.
+
+    Used to short-circuit the backend resolution path when a request
+    has AD master-enabled but no slot is actually configured.
+    """
+    if not ad_slot_dicts:
+        return False
+    return any(
+        d.get("ad_tab_enable") and d.get("ad_model", "None") != "None"
+        for d in ad_slot_dicts
+    )
+
+
+def resolve_ad_backend_for_request(
+    ad_enable, ad_slot_dicts, requested: str = "auto"
+) -> ADetailerBackendStatus:
+    """Resolve the backend for a specific request.
+
+    Combines the master enable bool, the slot configuration, and the
+    requested backend name. When master is False or no slot is active,
+    returns a "none" status regardless of availability.
+    """
+    if not ad_enable or not has_active_slots(ad_slot_dicts):
+        return ADetailerBackendStatus(
+            requested=requested, active=_BACKEND_NONE,
+            extension_available=_HAS_AD_LIBS,
+            studio_native_available=False,
+            models_found=(len(get_ad_model_mapping()) if _HAS_AD_LIBS else 0),
+        )
+    return resolve_ad_backend(requested)
+
+
+def log_backend_choice(status: ADetailerBackendStatus, ad_slot_dicts) -> None:
+    """Log the backend choice for this generation, once.
+
+    Privacy: no prompts, no paths. Slot counts and backend name only.
+    """
+    if status.active == _BACKEND_NONE:
+        if status.warning:
+            print(f"[Studio AD] skipped: {status.warning}")
+        return
+    active_slots = sum(
+        1 for d in (ad_slot_dicts or [])
+        if d.get("ad_tab_enable") and d.get("ad_model", "None") != "None"
+    )
+    print(f"[Studio AD] backend={status.active}, active_slots={active_slots}")
 
 
 def get_adetailer_status() -> dict:

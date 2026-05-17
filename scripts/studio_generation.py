@@ -131,6 +131,9 @@ try:
         run_studio_autodetailer,
         get_ad_model_mapping as get_ad_runtime_model_mapping,
         resolve_ad_backend,
+        resolve_ad_backend_for_request,
+        log_backend_choice,
+        has_active_slots,
         get_adetailer_status,
         ADetailerBackendStatus,
         _build_native_ad_dicts,
@@ -146,6 +149,9 @@ except ImportError:
         run_studio_autodetailer,
         get_ad_model_mapping as get_ad_runtime_model_mapping,
         resolve_ad_backend,
+        resolve_ad_backend_for_request,
+        log_backend_choice,
+        has_active_slots,
         get_adetailer_status,
         ADetailerBackendStatus,
         _build_native_ad_dicts,
@@ -1279,7 +1285,7 @@ def _run_attention_couple_image(
     is_txt2img, canvas_img, gp, mask_img, has_mask, ip,
     studio_outdir, batch_seed, hr, cn_units, extension_args,
     ad_params, regions_json, img_num, total_images,
-    studio_dp_active=False,
+    studio_dp_active=False, ad_backend=None,
 ):
     """Run a single attention couple generation.
 
@@ -1288,11 +1294,26 @@ def _run_attention_couple_image(
 
     Mirrors the standard generation path exactly, with
     run_with_attention_couple() replacing process_images().
+
+    ``ad_backend`` is the resolved ADetailerBackendStatus for this
+    request. When None (legacy callers), the backend is resolved from
+    ``ad_params`` so this function remains safe to call without it.
     """
+    if ad_backend is None:
+        if ad_params:
+            ad_backend = resolve_ad_backend_for_request(ad_params[0], ad_params[1])
+        else:
+            ad_backend = resolve_ad_backend_for_request(False, [])
+
+    # Script-arg injection only when the extension backend is active;
+    # studio_compat / studio_native run their own loop and explicitly
+    # suppress the extension via p._ad_disabled below.
+    ad_params_for_runner = ad_params if ad_backend.wants_extension_injection else None
+
     # ── Build processing object ─────────────────────────────────────
     if is_txt2img:
         p = _build_txt2img_obj(gp, studio_outdir, batch_seed, cn_units=cn_units,
-                               extension_args=extension_args, ad_params=ad_params,
+                               extension_args=extension_args, ad_params=ad_params_for_runner,
                                studio_dp_active=studio_dp_active)
         # Built-in hires fix for txt2img (runs inside process_images)
         if hr.enable and hr.scale > 1.0:
@@ -1312,14 +1333,14 @@ def _run_attention_couple_image(
     else:
         p = _build_processing_obj(canvas_img, gp, mask_img, has_mask, ip,
                                    studio_outdir, batch_seed, cn_units=cn_units,
-                                   extension_args=extension_args, ad_params=ad_params,
+                                   extension_args=extension_args, ad_params=ad_params_for_runner,
                                    studio_dp_active=studio_dp_active)
 
     print(f"[Studio] Attention Couple generating image {img_num+1}/{total_images}, "
           f"seed={batch_seed}, txt2img={is_txt2img}, enable_hr={getattr(p, 'enable_hr', False)}")
 
     # ── Suppress stock AD — Studio runs its own pipeline ────────────
-    if _HAS_AD_LIBS and ad_params and ad_params[0]:
+    if ad_backend.wants_extension_suppression:
         p._ad_disabled = True
 
     # ── Attach region data for AD region-prompt matching ────────────
@@ -1365,19 +1386,15 @@ def _run_attention_couple_image(
                                hr.steps, hr.denoise, hr.cfg, p, hr.checkpoint)
 
     # ── Studio ADetailer ────────────────────────────────────────────
-    if _HAS_AD_LIBS and ad_params and ad_params[0]:
+    if ad_backend.wants_studio_postprocess and ad_params:
         _ad_enable, _ad_slot_dicts = ad_params
-        if _ad_enable and any(
-            d.get("ad_tab_enable") and d.get("ad_model", "None") != "None"
-            for d in _ad_slot_dicts
-        ):
-            result = _run_studio_ad(
-                result, p, _ad_slot_dicts,
-                mask_img=mask_img if has_mask else None,
-            )
-            # Post-AD mask composite
-            if has_mask and mask_img and canvas_img and not is_txt2img:
-                result = _clip_to_mask(result, canvas_img, mask_img, ip)
+        result = _run_studio_ad(
+            result, p, _ad_slot_dicts,
+            mask_img=mask_img if has_mask else None,
+        )
+        # Post-AD mask composite
+        if has_mask and mask_img and canvas_img and not is_txt2img:
+            result = _clip_to_mask(result, canvas_img, mask_img, ip)
 
     # ── Infotext ────────────────────────────────────────────────────
     img_info = ""
@@ -1688,6 +1705,17 @@ def run_generation(
          "prompt": ad3_prompt, "neg_prompt": ad3_neg_prompt},
     ])
 
+    # --- ADetailer backend resolution ---
+    # Single decision point: which AD backend processes this request.
+    # All downstream branches consult this status to enforce the
+    # invariant that exactly one backend runs per generation.
+    ad_backend = resolve_ad_backend_for_request(ad_params[0], ad_params[1])
+    log_backend_choice(ad_backend, ad_params[1])
+    # Script-arg payload for the extension backend. None means "don't
+    # inject" — used for studio_compat/studio_native/none, all of which
+    # avoid touching the extension's script_args slots.
+    ad_params_for_runner = ad_params if ad_backend.wants_extension_injection else None
+
     # --- ControlNet units ---
     cn_units = []
     if cn_json and cn_json.strip() not in ("", "null", "[]"):
@@ -1893,7 +1921,7 @@ def run_generation(
                     is_txt2img, canvas_img, gp, mask_img, has_mask, ip,
                     studio_outdir, batch_seed, hr, cn_units, extension_args,
                     ad_params, regions_json, img_num, total_images,
-                    studio_dp_active=_dp_active,
+                    studio_dp_active=_dp_active, ad_backend=ad_backend,
                 )
 
                 if result is None:
@@ -1922,7 +1950,7 @@ def run_generation(
                         gp.width, gp.height = new_w, new_h
 
                     p = _build_txt2img_obj(gp, studio_outdir, batch_seed, cn_units=cn_units,
-                                           extension_args=extension_args, ad_params=ad_params,
+                                           extension_args=extension_args, ad_params=ad_params_for_runner,
                                            studio_dp_active=_dp_active)
 
                     # Use Forge's built-in hires fix for txt2img so that:
@@ -1949,7 +1977,7 @@ def run_generation(
                 else:
                     p = _build_processing_obj(canvas_img, gp, mask_img, has_mask, ip, studio_outdir,
                                               batch_seed, cn_units=cn_units, extension_args=extension_args,
-                                              ad_params=ad_params, studio_dp_active=_dp_active)
+                                              ad_params=ad_params_for_runner, studio_dp_active=_dp_active)
                     print(f"[Studio] Generating image {img_num+1}/{total_images}: "
                           f"sampler={p.sampler_name}, scheduler={getattr(p, 'scheduler', 'N/A')}, "
                           f"steps={p.steps}, cfg={p.cfg_scale}, seed={batch_seed}")
@@ -1961,9 +1989,9 @@ def run_generation(
                         _hp_warn_fp16_vae_once()
                         _hp_begin_capture()
                 try:
-                    # Suppress stock ADetailer — Studio runs its own AD pipeline
-                    # with centroid-based mask filtering after hires fix.
-                    if _HAS_AD_LIBS and ad_params and ad_params[0]:
+                    # Suppress stock ADetailer when a Studio-controlled
+                    # AD backend will run its own post-process pipeline.
+                    if ad_backend.wants_extension_suppression:
                         p._ad_disabled = True
                     processed = process_images(p)
                 except Exception as e:
@@ -2093,40 +2121,36 @@ def run_generation(
                 # Runs AFTER hires fix so faces are refined at full
                 # resolution. Uses centroid filtering to skip detections
                 # outside the inpaint mask. Stock AD was suppressed above.
-                if _HAS_AD_LIBS and ad_params and ad_params[0]:
+                if ad_backend.wants_studio_postprocess:
                     _ad_enable, _ad_slot_dicts = ad_params
-                    if _ad_enable and any(
-                        d.get("ad_tab_enable") and d.get("ad_model", "None") != "None"
-                        for d in _ad_slot_dicts
-                    ):
-                        ad_ret = _run_studio_ad(
-                            result, p, _ad_slot_dicts,
-                            mask_img=mask_img if has_mask else None,
-                            capture_blend_mask=high_precision,
-                        )
-                        if isinstance(ad_ret, tuple):
-                            result, _ad_blend = ad_ret
-                            if high_precision and _ad_blend is not None:
-                                _hp_or_into_blend_mask(_ad_blend)
-                        else:
-                            result = ad_ret
-                        # Final mask composite — clips any AD overshoot.
-                        # Dilated-binary clip via _clip_to_mask (HP blend mask
-                        # uses the soft version separately, see comment in the
-                        # post-process composite above).
-                        if has_mask and mask_img and canvas_img and not is_txt2img:
-                            try:
-                                result = _clip_to_mask(result, canvas_img, mask_img, ip)
-                                if high_precision:
-                                    from PIL import ImageFilter
-                                    _soft_msk2 = mask_img.convert("L").resize(result.size, Image.LANCZOS)
-                                    _blur2 = getattr(ip, 'mask_blur', 4) if ip else 4
-                                    if _blur2 > 0:
-                                        _soft_msk2 = _soft_msk2.filter(ImageFilter.GaussianBlur(radius=_blur2))
-                                    inv2 = 1.0 - (np.asarray(_soft_msk2, dtype=np.float32) / 255.0)
-                                    _hp_or_into_blend_mask(inv2)
-                            except Exception as _ce2:
-                                print(f"[Studio] Post-AD mask composite error: {_ce2}")
+                    ad_ret = _run_studio_ad(
+                        result, p, _ad_slot_dicts,
+                        mask_img=mask_img if has_mask else None,
+                        capture_blend_mask=high_precision,
+                    )
+                    if isinstance(ad_ret, tuple):
+                        result, _ad_blend = ad_ret
+                        if high_precision and _ad_blend is not None:
+                            _hp_or_into_blend_mask(_ad_blend)
+                    else:
+                        result = ad_ret
+                    # Final mask composite — clips any AD overshoot.
+                    # Dilated-binary clip via _clip_to_mask (HP blend mask
+                    # uses the soft version separately, see comment in the
+                    # post-process composite above).
+                    if has_mask and mask_img and canvas_img and not is_txt2img:
+                        try:
+                            result = _clip_to_mask(result, canvas_img, mask_img, ip)
+                            if high_precision:
+                                from PIL import ImageFilter
+                                _soft_msk2 = mask_img.convert("L").resize(result.size, Image.LANCZOS)
+                                _blur2 = getattr(ip, 'mask_blur', 4) if ip else 4
+                                if _blur2 > 0:
+                                    _soft_msk2 = _soft_msk2.filter(ImageFilter.GaussianBlur(radius=_blur2))
+                                inv2 = 1.0 - (np.asarray(_soft_msk2, dtype=np.float32) / 255.0)
+                                _hp_or_into_blend_mask(inv2)
+                        except Exception as _ce2:
+                            print(f"[Studio] Post-AD mask composite error: {_ce2}")
 
                 all_images.append(result)
                 # Float data is only valid when post-processing didn't

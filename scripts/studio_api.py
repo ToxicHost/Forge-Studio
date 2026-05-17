@@ -2505,6 +2505,8 @@ def setup_studio_routes(app: FastAPI):
         # Shared imports for the worker thread
         _build_native_ad_dicts = _import("studio_generation", "_build_native_ad_dicts")
         _run_studio_ad = _import("studio_generation", "_run_studio_ad")
+        _resolve_ad_backend_for_request = _import("studio_generation", "resolve_ad_backend_for_request")
+        _log_backend_choice = _import("studio_generation", "log_backend_choice")
         _build_txt2img_obj = _import("studio_generation", "_build_txt2img_obj")
         GenParams = _import("studio_generation", "GenParams")
         _reset_generation_state = _import("studio_generation", "_reset_generation_state")
@@ -2544,10 +2546,12 @@ def setup_studio_routes(app: FastAPI):
             ad_enable_flag, ad_slot_dicts = _build_native_ad_dicts(
                 bool(req.run_ad), ad_raw_slots
             )
-            ad_has_work = ad_enable_flag and any(
-                d.get("ad_tab_enable") and d.get("ad_model", "None") != "None"
-                for d in ad_slot_dicts
-            )
+            # Resolve which AD backend will process this refine request.
+            # Used to enforce single-backend invariant and gate stock-AD
+            # suppression + Studio postprocess call.
+            ad_backend = _resolve_ad_backend_for_request(ad_enable_flag, ad_slot_dicts)
+            _log_backend_choice(ad_backend, ad_slot_dicts)
+            ad_has_work = ad_backend.has_work
 
             # ── ESRGAN-only fast path ────────────────────────────────
             # No refine, no AD → use the standalone upscaler helper.
@@ -2635,7 +2639,7 @@ def setup_studio_routes(app: FastAPI):
 
                 # Studio runs its own AD post-process; stock AD must bail
                 # even if a script happens to re-enable it somewhere.
-                if ad_has_work:
+                if ad_backend.wants_extension_suppression:
                     p._ad_disabled = True
 
                 runner = p.scripts  # set by _build_txt2img_obj
@@ -2710,7 +2714,7 @@ def setup_studio_routes(app: FastAPI):
                     return None, None, seed, "process_images returned no images"
 
                 # Post-process AD on the hires output.
-                if ad_has_work and not shared.state.interrupted:
+                if ad_backend.wants_studio_postprocess and not shared.state.interrupted:
                     result = _run_studio_ad(result, p, ad_slot_dicts, mask_img=None)
 
             finally:
