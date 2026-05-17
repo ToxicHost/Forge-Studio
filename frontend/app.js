@@ -5285,6 +5285,85 @@ async function init() {
     }
   }
 
+  // Resizable right panel divider
+  {
+    const divider = document.getElementById("panelDivider");
+    const panel = document.getElementById("panelRight");
+    if (divider && panel) {
+      const MIN_W = 320;
+      const SMALL_SCREEN = 900;
+      const _maxW = () => Math.min(720, Math.floor(window.innerWidth * 0.5));
+      const _isSmall = () => window.innerWidth < SMALL_SCREEN;
+      const _clearWidth = () => { panel.style.width = ""; };
+      const _applyWidth = (w) => {
+        if (_isSmall()) { _clearWidth(); return; }
+        const clamped = Math.max(MIN_W, Math.min(_maxW(), w));
+        panel.style.width = clamped + "px";
+      };
+      // Restore saved width
+      const _restoreSaved = () => {
+        const saved = parseFloat(localStorage.getItem("studio-panel-right-width") || "");
+        if (!isNaN(saved) && saved > 0) _applyWidth(saved);
+        else _clearWidth();
+      };
+      _restoreSaved();
+      // Re-clamp on viewport resize
+      window.addEventListener("resize", () => {
+        if (_isSmall()) { _clearWidth(); return; }
+        const saved = parseFloat(localStorage.getItem("studio-panel-right-width") || "");
+        if (!isNaN(saved) && saved > 0) _applyWidth(saved);
+      });
+      // Drag to resize
+      divider.addEventListener("mousedown", (e) => {
+        if (e.button !== 0) return;
+        if (panel.classList.contains("collapsed")) return;
+        if (_isSmall()) return;
+        e.preventDefault();
+        const startX = e.clientX;
+        const startW = panel.getBoundingClientRect().width;
+        divider.classList.add("dragging");
+        document.body.style.cursor = "col-resize";
+        document.body.style.userSelect = "none";
+        // Suppress panel width transition during drag for snappiness
+        const prevTransition = panel.style.transition;
+        panel.style.transition = "none";
+        const onMove = (ev) => {
+          // Divider is to the LEFT of the panel, so dragging right shrinks the panel
+          const newW = startW - (ev.clientX - startX);
+          _applyWidth(newW);
+        };
+        const onUp = () => {
+          document.removeEventListener("mousemove", onMove);
+          document.removeEventListener("mouseup", onUp);
+          divider.classList.remove("dragging");
+          document.body.style.cursor = "";
+          document.body.style.userSelect = "";
+          panel.style.transition = prevTransition;
+          const finalW = panel.getBoundingClientRect().width;
+          localStorage.setItem("studio-panel-right-width", String(Math.round(finalW)));
+          window.dispatchEvent(new Event("resize"));
+        };
+        document.addEventListener("mousemove", onMove);
+        document.addEventListener("mouseup", onUp);
+      });
+      // Double-click to reset
+      divider.addEventListener("dblclick", () => {
+        if (panel.classList.contains("collapsed")) return;
+        localStorage.removeItem("studio-panel-right-width");
+        _clearWidth();
+        window.dispatchEvent(new Event("resize"));
+      });
+      // Hide divider when panel is collapsed
+      const _syncDividerVisibility = () => {
+        divider.classList.toggle("hidden", panel.classList.contains("collapsed"));
+      };
+      _syncDividerVisibility();
+      new MutationObserver(_syncDividerVisibility).observe(panel, {
+        attributes: true, attributeFilter: ["class"],
+      });
+    }
+  }
+
   // UX-013: Initial VRAM readout + slow poll (every 30s)
   _refreshVRAM();
   setInterval(_refreshVRAM, 30000);
