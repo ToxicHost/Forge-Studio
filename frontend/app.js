@@ -3333,10 +3333,19 @@ function bindUI() {
       .catch(() => {/* silent — toggle still works locally for this session */});
   });
 
+  // Notify other modules that the active wildcard root changed so their
+  // cached lists match what generation will resolve. Best-effort: each
+  // hook is optional and failures are non-fatal.
+  function _onWildcardFolderChanged() {
+    try { window.TagComplete?.refreshWildcards?.(); } catch (_) {}
+    try { window.WildcardBrowser?.refresh?.(); } catch (_) {}
+  }
+
   function _applyPickedFolder(folder) {
     if (!folder) return;  // user cancelled
     return API.dynPromptsSelectFolder(folder).then(resp => {
       _renderDynPromptsConfig(resp);
+      _onWildcardFolderChanged();
       if (resp.warning) {
         showToast(resp.warning, "info");
       } else {
@@ -3376,6 +3385,7 @@ function bindUI() {
   _dynFolderReset?.addEventListener("click", () => {
     API.dynPromptsSelectFolder("").then(resp => {
       _renderDynPromptsConfig(resp);
+      _onWildcardFolderChanged();
       showToast("Wildcard folder reset to default.", "info");
     }).catch(() => showToast("Failed to reset wildcard folder.", "error"));
   });

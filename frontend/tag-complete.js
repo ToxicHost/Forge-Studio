@@ -244,6 +244,26 @@
     extrasLoaded = true;
   }
 
+  // Re-fetch the wildcard list from the server. Used by the Settings UI
+  // after the user picks/sets/resets the native wildcard folder so
+  // autocomplete suggestions match generation-time expansion. Preview
+  // cache is cleared too — old content for a name may no longer match
+  // the file that resolves under the new folder.
+  async function refreshWildcards() {
+    try {
+      const resp = await fetch(window.location.origin + "/studio/wildcards");
+      if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
+      const data = await resp.json();
+      if (Array.isArray(data)) {
+        wildcards = data;
+        previewCache = {};
+        console.log(`[TagComplete] Refreshed ${wildcards.length} wildcards`);
+      }
+    } catch (e) {
+      console.warn("[TagComplete] refreshWildcards failed:", e);
+    }
+  }
+
   // ── Search ──────────────────────────────────────────────
 
   function searchTags(query) {
@@ -853,6 +873,7 @@
     },
     getSource: function () { return _source; },
     getSources: function () { return VALID_SOURCES.slice(); },
+    refreshWildcards: refreshWildcards,
   };
 
   if (document.readyState === "loading") {

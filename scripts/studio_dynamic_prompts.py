@@ -442,6 +442,82 @@ def source_label(cfg: Optional[dict] = None) -> str:
     return "custom" if cfg.get("wildcard_folder_mode") == "custom" else "default"
 
 
+# =========================================================================
+# Public wildcard listing — shared by autocomplete + browser
+# =========================================================================
+
+def list_wildcards(cfg: Optional[dict] = None) -> List[dict]:
+    """Return wildcard names visible to Studio native dynamic prompts.
+
+    Walks every directory returned by `resolve_wildcard_dirs(cfg)` and
+    collects nested `.txt` files. The first directory in resolver order
+    wins for any given name — matches generation-time lookup behaviour.
+
+    Privacy: returns names only (forward-slash-joined, no `.txt`), never
+    absolute paths.
+    """
+    dirs = resolve_wildcard_dirs(cfg)
+    seen: set = set()
+    out: List[dict] = []
+    for base in dirs:
+        try:
+            base_resolved = base.resolve()
+        except Exception:
+            continue
+        try:
+            files = list(base.rglob("*.txt"))
+        except Exception:
+            continue
+        files.sort(key=lambda p: str(p).lower())
+        for f in files:
+            try:
+                # Reject anything that escapes the base (e.g. via symlinks).
+                f_resolved = f.resolve()
+                try:
+                    rel = f_resolved.relative_to(base_resolved)
+                except ValueError:
+                    continue
+                if not f.is_file():
+                    continue
+                name = str(rel).replace("\\", "/")
+                if name.lower().endswith(".txt"):
+                    name = name[:-4]
+                if not name or name in seen:
+                    continue
+                seen.add(name)
+                out.append({"name": name})
+            except Exception:
+                continue
+    return out
+
+
+def get_wildcard_lines(
+    name: str,
+    cfg: Optional[dict] = None,
+    limit: int = 50,
+) -> dict:
+    """Return preview lines for a wildcard using the same resolver as
+    generation. Mirrors `_read_wildcard_lines` so autocomplete previews
+    show exactly what generation will pick from.
+
+    Returns ``{"lines": [...], "count": int, "truncated": bool}``. No
+    absolute paths are included.
+    """
+    if not name:
+        return {"lines": [], "count": 0, "truncated": False}
+    dirs = resolve_wildcard_dirs(cfg)
+    lines = _read_wildcard_lines(name, dirs)
+    if not lines:
+        return {"lines": [], "count": 0, "truncated": False}
+    if limit is None or limit < 0:
+        return {"lines": list(lines), "count": len(lines), "truncated": False}
+    return {
+        "lines": lines[:limit],
+        "count": len(lines),
+        "truncated": len(lines) > limit,
+    }
+
+
 __all__ = [
     "DynamicPromptExpansionResult",
     "DEFAULT_CONFIG",
@@ -452,4 +528,6 @@ __all__ = [
     "expand_prompt",
     "is_enabled",
     "source_label",
+    "list_wildcards",
+    "get_wildcard_lines",
 ]
