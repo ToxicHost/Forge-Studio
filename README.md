@@ -204,6 +204,6 @@ What Invoke does better (so you have the honest picture):
 - **Forge Studio** by ToxicHost & Moritz.
 - **Gallery** powered by TrackImage by Moritz.
 - **VRAM Unload** feature suggested by SnekySnek.
-- **Remember Last Session** suggested by Railer.
+- **Remember Last Session**, **LoRA Stack**, **Resizable Side Panel**, and **UI density polish** suggested by Railer.
 - **Closed beta testers** — Frenchy, Jaiguy. Huge thanks for the bug hunts.
 - Built on **Forge Neo** by Haoming02, a fork of **Stable Diffusion WebUI Forge** by lllyasviel.

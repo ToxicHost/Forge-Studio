@@ -5378,7 +5378,7 @@ async function init() {
   // ---- Add contributors here ----
   const CREDITS = [
     { name: "SnekySnek", role: "VRAM Unloading" },
-    { name: "Railer", role: "Session Save" },
+    { name: "Railer", role: "Session Save, LoRA Stack, Resizable Side Panel, UI Polish" },
     { name: "LeFrenchy", role: "Beta Testing" },
   ];
   // --------------------------------
