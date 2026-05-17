@@ -5300,14 +5300,20 @@ async function init() {
       const SMALL_SCREEN = 900;
       const _maxW = () => Math.min(720, Math.floor(window.innerWidth * 0.5));
       const _isSmall = () => window.innerWidth < SMALL_SCREEN;
+      const _isCollapsed = () => panel.classList.contains("collapsed");
       const _clearWidth = () => { panel.style.width = ""; };
       const _applyWidth = (w) => {
+        // While collapsed, inline width would shadow the CSS rule
+        // `.panel-right.collapsed { width: 0 }` and the panel would stay
+        // open. Leave it cleared and re-apply on expand.
+        if (_isCollapsed()) return;
         if (_isSmall()) { _clearWidth(); return; }
         const clamped = Math.max(MIN_W, Math.min(_maxW(), w));
         panel.style.width = clamped + "px";
       };
-      // Restore saved width
+      // Restore saved width (no-op while collapsed)
       const _restoreSaved = () => {
+        if (_isCollapsed()) { _clearWidth(); return; }
         const saved = parseFloat(localStorage.getItem("studio-panel-right-width") || "");
         if (!isNaN(saved) && saved > 0) _applyWidth(saved);
         else _clearWidth();
@@ -5315,6 +5321,7 @@ async function init() {
       _restoreSaved();
       // Re-clamp on viewport resize
       window.addEventListener("resize", () => {
+        if (_isCollapsed()) return;
         if (_isSmall()) { _clearWidth(); return; }
         const saved = parseFloat(localStorage.getItem("studio-panel-right-width") || "");
         if (!isNaN(saved) && saved > 0) _applyWidth(saved);
@@ -5322,7 +5329,7 @@ async function init() {
       // Drag to resize
       divider.addEventListener("mousedown", (e) => {
         if (e.button !== 0) return;
-        if (panel.classList.contains("collapsed")) return;
+        if (_isCollapsed()) return;
         if (_isSmall()) return;
         e.preventDefault();
         const startX = e.clientX;
@@ -5354,17 +5361,28 @@ async function init() {
       });
       // Double-click to reset
       divider.addEventListener("dblclick", () => {
-        if (panel.classList.contains("collapsed")) return;
+        if (_isCollapsed()) return;
         localStorage.removeItem("studio-panel-right-width");
         _clearWidth();
         window.dispatchEvent(new Event("resize"));
       });
-      // Hide divider when panel is collapsed
-      const _syncDividerVisibility = () => {
-        divider.classList.toggle("hidden", panel.classList.contains("collapsed"));
+      // Sync divider visibility AND inline width to the collapsed class.
+      // The collapse button (above) only toggles the class; without
+      // clearing inline width here, a dragged/restored width would shadow
+      // `.panel-right.collapsed { width: 0 }` and the panel wouldn't
+      // actually collapse. MutationObserver callbacks run as microtasks
+      // before the next layout, so there's no visible flicker.
+      let _wasCollapsed = _isCollapsed();
+      const _syncCollapseState = () => {
+        const collapsed = _isCollapsed();
+        divider.classList.toggle("hidden", collapsed);
+        if (collapsed === _wasCollapsed) return;
+        _wasCollapsed = collapsed;
+        if (collapsed) _clearWidth();
+        else _restoreSaved();
       };
-      _syncDividerVisibility();
-      new MutationObserver(_syncDividerVisibility).observe(panel, {
+      _syncCollapseState();
+      new MutationObserver(_syncCollapseState).observe(panel, {
         attributes: true, attributeFilter: ["class"],
       });
     }
