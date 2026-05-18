@@ -830,6 +830,10 @@ body {
 .lora-stack-row.disabled { opacity: 0.45; }
 .lora-stack-row.dragging { opacity: 0.4; }
 .lora-stack-row.drag-over { border-color: var(--accent); background: var(--accent-dim); }
+.lora-stack-row.flash {
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
 .lora-stack-drag {
   cursor: grab; color: var(--text-4); font-size: 11px;
   line-height: 1; user-select: none; padding: 0 2px;
