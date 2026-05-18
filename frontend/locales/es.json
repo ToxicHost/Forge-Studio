@@ -261,7 +261,6 @@
   "lora.menu.previewFromFile": "Vista previa desde archivo…",
   "lora.menu.previewFromCanvas": "Vista previa desde lienzo",
   "lora.menu.removePreview": "Quitar vista previa",
-  "lora.tab.tooltip": "Examinar LoRAs (Ctrl+L)",
 
   "wildcard.allFolder": "Todos",
   "wildcard.search.placeholder": "Buscar wildcards...",

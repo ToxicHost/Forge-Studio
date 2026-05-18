@@ -4,7 +4,12 @@
  *
  * Modal overlay for browsing, searching, and inserting LoRAs into prompts.
  * Self-contained: injects its own CSS, builds its own DOM, manages its own state.
- * Trigger buttons injected into both positive and negative prompt boxes on init.
+ *
+ * On the studio image tab, the LoRA Stack is the primary surface — its
+ * "+ LoRAs" button opens this modal in pick mode and Ctrl+L is rebound
+ * to the same picker. Browse mode (LoraBrowser.open() — clicking a card
+ * inserts <lora:…> into the focused prompt) is still exported for surfaces
+ * without a stack, such as Video Lab.
  *
  * Features:
  *   - Folder tree navigation with subfolder support
@@ -12,8 +17,7 @@
  *   - Preview thumbnails where available
  *   - Set preview from disk upload or canvas capture (right-click card)
  *   - Refresh without reloading the UI
- *   - Works for both positive and negative prompts
- *   - Ctrl+L keyboard shortcut
+ *   - Ctrl+L opens the stack picker (studio tab)
  */
 (function () {
   "use strict";
@@ -1109,52 +1113,28 @@
     return s.replace(/&/g, "&amp;").replace(/</g, "&lt;").replace(/>/g, "&gt;").replace(/"/g, "&quot;").replace(/'/g, "&#39;");
   }
 
-  function ensureUtilsBar(promptBoxEl) {
-    let bar = promptBoxEl.querySelector(".prompt-utils-bar");
-    if (!bar) {
-      bar = document.createElement("div");
-      bar.className = "prompt-utils-bar";
-      promptBoxEl.appendChild(bar);
-    }
-    return bar;
-  }
-
 
   // ── Init ───────────────────────────────────────────────
-  function makeButton() {
-    const btn = document.createElement("button");
-    btn.className = "prompt-browser-btn";
-    btn.textContent = "LoRA";
-    btn.dataset.i18nTitle = "lora.tab.tooltip";
-    btn.title = _t("lora.tab.tooltip", "Browse LoRAs (Ctrl+L)");
-    btn.addEventListener("click", e => { e.preventDefault(); e.stopPropagation(); openModal(); });
-    return btn;
-  }
-
   function init() {
     injectStyles();
     _trackPromptFocus();
 
-    // Positive prompt: use existing token bar
-    const tokenBar = document.getElementById("tokenBar");
-    const posBox = document.getElementById("paramPrompt")?.closest(".prompt-box");
-    if (tokenBar) tokenBar.prepend(makeButton());
-    else if (posBox) ensureUtilsBar(posBox).appendChild(makeButton());
-
-    // Negative prompt: create or reuse utils bar
-    const negBox = document.getElementById("paramNeg")?.closest(".prompt-box");
-    if (negBox) ensureUtilsBar(negBox).appendChild(makeButton());
-
-    // Ctrl+L shortcut
+    // Ctrl+L: open the LoRA Stack picker. Card-click adds to the stack
+    // via LoraStack.add — same modal as browse mode, different callback.
+    // Falls back to insert-token browse mode if the stack module isn't
+    // loaded (e.g. trimmed builds).
     document.addEventListener("keydown", e => {
       if (e.ctrlKey && e.key === "l" && !e.shiftKey && !e.altKey) {
         const active = document.activeElement;
         const isPrompt = active && (active.id === "paramPrompt" || active.id === "paramNeg");
         const isBody = !active || active === document.body;
-        if (isPrompt || isBody) {
-          e.preventDefault();
-          if (modal && modal.style.display === "flex") closeModal();
-          else openModal();
+        if (!isPrompt && !isBody) return;
+        e.preventDefault();
+        if (modal && modal.style.display === "flex") { closeModal(); return; }
+        if (window.LoraStack && typeof window.LoraStack.add === "function") {
+          openPick((lora, weight) => window.LoraStack.add(lora, weight));
+        } else {
+          openModal();
         }
       }
     });

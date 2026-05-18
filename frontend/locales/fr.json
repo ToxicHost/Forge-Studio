@@ -261,7 +261,6 @@
   "lora.menu.previewFromFile": "Aperçu depuis un fichier…",
   "lora.menu.previewFromCanvas": "Aperçu depuis le canevas",
   "lora.menu.removePreview": "Supprimer l'aperçu",
-  "lora.tab.tooltip": "Parcourir les LoRAs (Ctrl+L)",
 
   "wildcard.allFolder": "Tous",
   "wildcard.search.placeholder": "Rechercher des wildcards...",
