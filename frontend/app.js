@@ -289,6 +289,11 @@ const State = {
   schedulers: [],
   upscalers: [],
 
+  // Architecture string of the currently loaded checkpoint (from
+  // /studio/check_model_te). Used to gate TE preservation across
+  // model swaps — same arch keeps the TE, different arch resets.
+  _currentModelArch: "unknown",
+
   // Action history
   history: [],
   historyIdx: -1,
@@ -1042,6 +1047,153 @@ const UpdateBanner = {
 
 
 // ═══════════════════════════════════════════
+// TEXT ENCODER MEMORY HELPERS
+// ═══════════════════════════════════════════
+//
+// Studio remembers the user's last external Text Encoder pick per
+// model title AND per architecture. Architecture-level memory lets us
+// restore an Anima/Cosmos TE when the user returns to an Anima/Cosmos
+// model after a detour through SDXL/Flux/etc., without ever carrying
+// a Cosmos TE into an arch that didn't ask for it.
+//
+// Persisted shape:
+//   {
+//     by_model: { "<title>": "<te_filename>" },
+//     by_arch:  { "<arch>":  "<te_filename>" }
+//   }
+//
+// Older builds wrote a flat `{ title: te }` object; _normalizeTeMemory
+// migrates that on read.
+
+function _readTeMemory() {
+  try {
+    return _normalizeTeMemory(JSON.parse(localStorage.getItem("studio_te_memory") || "{}"));
+  } catch (_) {
+    return { by_model: {}, by_arch: {} };
+  }
+}
+
+function _writeTeMemory(mem) {
+  try {
+    localStorage.setItem("studio_te_memory", JSON.stringify(mem || { by_model: {}, by_arch: {} }));
+  } catch (_) {}
+}
+
+function _optionExists(select, value) {
+  return !!(select && value && [...select.options].some(o => o.value === value));
+}
+
+function _teArchKey(arch) {
+  return arch || "unknown";
+}
+
+function _normalizeTeMemory(raw) {
+  if (!raw || typeof raw !== "object") return { by_model: {}, by_arch: {} };
+  if (raw.by_model || raw.by_arch) {
+    return {
+      by_model: raw.by_model || {},
+      by_arch: raw.by_arch || {},
+    };
+  }
+  // Legacy flat shape: title -> te filename
+  return { by_model: raw, by_arch: {} };
+}
+
+async function checkModelTE(title) {
+  if (!title) return { needs_te: false, needs_vae: false, arch: "unknown" };
+  try {
+    return await fetch(
+      API.base + "/studio/check_model_te?title=" + encodeURIComponent(title)
+    ).then(r => r.json());
+  } catch (_) {
+    return { needs_te: false, needs_vae: false, arch: "unknown" };
+  }
+}
+
+function rememberExternalTE(modelTitle, arch, teName) {
+  if (!modelTitle || !teName || teName === "None") return;
+  const mem = _readTeMemory();
+  mem.by_model[modelTitle] = teName;
+  if (arch) mem.by_arch[_teArchKey(arch)] = teName;
+  _writeTeMemory(mem);
+}
+
+// Restore the TE dropdown for the given model with architecture-aware
+// rules. Returns the /check_model_te payload so callers can update
+// State._currentModelArch.
+//
+// reason:
+//   "model-change" / "post-generation" — normal restore from memory
+//   "te-change"      — user just picked a TE explicitly; keep teSelect.value
+//                      if it's a valid option, else fall back to "None"
+//   "workflow-apply" — workflow already wrote a value; same as te-change
+//
+// opts.previousArch — arch of the previously loaded model. If different
+//   from the target arch, opts.preferredTE and the current teSelect.value
+//   are ignored (only mem.by_model and mem.by_arch are consulted) so we
+//   never carry e.g. a Cosmos TE across into Flux.
+// opts.preferredTE  — caller-suggested TE name (e.g. the value captured
+//   before populateDropdowns rebuilt the options).
+async function restoreTextEncoderForModel(modelTitle, reason = "model-change", opts = {}) {
+  const teRow = document.getElementById("textEncoderRow");
+  const teSelect = document.getElementById("paramTextEncoder");
+  if (!modelTitle || !teSelect) {
+    return { needs_te: false, needs_vae: false, arch: "unknown" };
+  }
+
+  const check = await checkModelTE(modelTitle);
+  const needsTE = !!check.needs_te;
+  const arch = check.arch || "unknown";
+
+  if (!needsTE) {
+    if (teRow) teRow.style.display = "none";
+    teSelect.value = "None";
+    return check;
+  }
+
+  if (teRow) teRow.style.display = "";
+
+  // For explicit user/workflow-driven values, keep what's already set
+  // (it may match a value that was just programmatically restored from
+  // the workflow) and only fall back to "None" if it no longer exists.
+  if (reason === "workflow-apply" || reason === "te-change") {
+    if (!_optionExists(teSelect, teSelect.value)) {
+      teSelect.value = "None";
+    }
+    return check;
+  }
+
+  const mem = _readTeMemory();
+  const previousArch = opts.previousArch || null;
+  const sameArch = !previousArch || previousArch === arch;
+
+  const candidates = [];
+  // Exact model memory is always safest.
+  candidates.push(mem.by_model?.[modelTitle]);
+  // Same architecture can reuse the currently selected/preferred TE.
+  if (sameArch) {
+    candidates.push(opts.preferredTE);
+    if (teSelect.value !== "None") candidates.push(teSelect.value);
+  }
+  // Architecture-level memory is allowed for the target arch.
+  candidates.push(mem.by_arch?.[_teArchKey(arch)]);
+
+  const restored = candidates.find(v => v && v !== "None" && _optionExists(teSelect, v));
+
+  if (restored) {
+    teSelect.value = restored;
+  } else {
+    teSelect.value = "None";
+    if ((State._textEncoderList || []).length > 0) {
+      showToast("This model needs a text encoder — select one above", "info");
+    }
+  }
+
+  return check;
+}
+
+
+// ═══════════════════════════════════════════
 // POPULATE DROPDOWNS FROM API
 // ═══════════════════════════════════════════
 
@@ -1231,26 +1383,18 @@ async function populateDropdowns() {
 
     console.log(`[Studio] Loaded ${models.length} models, ${samplers.length} samplers, ${upscalers.length} upscalers`);
 
-    // Check if currently loaded model needs external text encoder (async, non-blocking)
-    const currentModel = document.getElementById("paramModel")?.value;
-    if (currentModel) {
-      fetch(API.base + "/studio/check_model_te?title=" + encodeURIComponent(currentModel))
-        .then(r => r.json()).then(teCheck => {
-          const teRow = document.getElementById("textEncoderRow");
-          const teSelect = document.getElementById("paramTextEncoder");
-          if (teCheck.needs_te) {
-            if (teRow) teRow.style.display = "";
-            // Restore per-model TE memory
-            const teMemory = JSON.parse(localStorage.getItem("studio_te_memory") || "{}");
-            if (teMemory[currentModel] && teSelect) {
-              if ([...teSelect.options].some(o => o.value === teMemory[currentModel])) {
-                teSelect.value = teMemory[currentModel];
-              }
-            }
-          } else {
-            if (teRow) teRow.style.display = "none";
-          }
-        }).catch(() => {});
+    // Snapshot model+TE BEFORE the async TE rebuild can clobber the
+    // dropdown. We use these both as a preservation hint for
+    // restoreTextEncoderForModel() and to persist the user's current
+    // pick into TE memory so refresh cycles never lose it.
+    const modelBeforePopulate = document.getElementById("paramModel")?.value || "";
+    const teBeforePopulate = document.getElementById("paramTextEncoder")?.value || "None";
+    const previousArchForRestore = State._currentModelArch || null;
+    if (modelBeforePopulate && teBeforePopulate !== "None") {
+      // Fire-and-forget; rememberExternalTE is a no-op if arch is unknown.
+      checkModelTE(modelBeforePopulate).then(c => {
+        rememberExternalTE(modelBeforePopulate, c.arch, teBeforePopulate);
+      });
     }
 
     // VAE dropdown (async, non-blocking)
@@ -1267,8 +1411,10 @@ async function populateDropdowns() {
       }
     }).catch(() => {});
 
-    // Text Encoder dropdown (async, non-blocking)
-    fetch(API.base + "/studio/text_encoders").then(r => r.json()).then(teList => {
+    // Text Encoder dropdown (async, non-blocking). The restore call MUST
+    // come after innerHTML rebuild — otherwise replacing the <option>s
+    // wipes whatever value was just selected.
+    fetch(API.base + "/studio/text_encoders").then(r => r.json()).then(async teList => {
       const teSelect = document.getElementById("paramTextEncoder");
       if (teSelect) {
         teSelect.innerHTML = '<option value="None">None (bundled)</option>' +
@@ -1278,6 +1424,15 @@ async function populateDropdowns() {
       }
       // Cache the list so model-change handler can check if any TEs exist
       State._textEncoderList = teList;
+
+      const currentModel = document.getElementById("paramModel")?.value || modelBeforePopulate;
+      if (currentModel) {
+        const check = await restoreTextEncoderForModel(currentModel, "model-change", {
+          preferredTE: teBeforePopulate,
+          previousArch: previousArchForRestore,
+        });
+        State._currentModelArch = check.arch || "unknown";
+      }
     }).catch(() => { State._textEncoderList = []; });
 
     // ADetailer model dropdowns (async, non-blocking)
@@ -2977,59 +3132,26 @@ function bindUI() {
       return;
     }
 
-    const teRow = document.getElementById("textEncoderRow");
     const teSelect = document.getElementById("paramTextEncoder");
     const vaeVal = document.getElementById("paramVAE")?.value;
 
-    // Discover whether the new checkpoint needs an external TE.
-    let needsTE = false;
-    try {
-      const teCheck = await fetch(
-        API.base + "/studio/check_model_te?title=" + encodeURIComponent(title),
-      ).then((r) => r.json());
-      needsTE = !!teCheck.needs_te;
-    } catch (teErr) {
-      console.warn("[Studio] TE check failed:", teErr);
-    }
-
-    if (needsTE) {
-      if (teRow) teRow.style.display = "";
-      if (reason === "model-change" || reason === "post-generation") {
-        // Restore from per-model TE memory (no-op if the dropdown
-        // doesn't contain the remembered name).
-        const teMemory = JSON.parse(localStorage.getItem("studio_te_memory") || "{}");
-        const remembered = teMemory[title];
-        if (
-          remembered &&
-          teSelect &&
-          [...teSelect.options].some((o) => o.value === remembered)
-        ) {
-          teSelect.value = remembered;
-        }
-      }
-      // "te-change" and "workflow-apply" keep paramTextEncoder as-is.
-      const chosenTE = teSelect?.value || "None";
-      if (chosenTE === "None" && (State._textEncoderList || []).length > 0) {
-        showToast("This model needs a text encoder — select one above", "info");
-      }
-    } else {
-      // Model bundles its own TE. Hide the row AND force the field to
-      // "None" so the next load_model call rebuilds additional_modules
-      // without any stale external TE entry. This is the core fix for
-      // the Anima→SDXL stale-TE bug.
-      if (teRow) teRow.style.display = "none";
-      if (teSelect) teSelect.value = "None";
-    }
+    // Resolve TE through the shared architecture-aware helper. It
+    // handles row visibility, memory restore, and the no-external-TE
+    // bundled case (forces value to "None" so additional_modules
+    // doesn't leak the prior arch's TE into load_model).
+    const previousArch = State._currentModelArch || null;
+    const teBeforeRestore = teSelect?.value || "None";
+    const check = await restoreTextEncoderForModel(title, reason, {
+      preferredTE: teBeforeRestore,
+      previousArch,
+    });
+    State._currentModelArch = check.arch || "unknown";
 
     const textEncoder = teSelect?.value || "None";
 
     // Persist per-model TE memory when the user explicitly picked one.
-    if (reason === "te-change") {
-      try {
-        const teMemory = JSON.parse(localStorage.getItem("studio_te_memory") || "{}");
-        teMemory[title] = textEncoder;
-        localStorage.setItem("studio_te_memory", JSON.stringify(teMemory));
-      } catch (e) { /* ignore */ }
+    if (reason === "te-change" && textEncoder !== "None") {
+      rememberExternalTE(title, State._currentModelArch, textEncoder);
     }
 
     // Build the load body. Send text_encoder explicitly even when "None"
@@ -3146,6 +3268,18 @@ function bindUI() {
   // ===== REFRESH BUTTONS =====
   document.getElementById("refreshModelsBtn")?.addEventListener("click", async () => {
     showToast(I18N.t("toast.refreshingModels", "Refreshing models..."), "info");
+    // Stash the current model+TE into TE memory before the rebuild so
+    // populateDropdowns can restore it (populateDropdowns also stashes,
+    // but doing it here too ensures the model selection survives even
+    // if populateDropdowns runs in parallel with the TE list fetch).
+    const _curModel = document.getElementById("paramModel")?.value || "";
+    const _curTE = document.getElementById("paramTextEncoder")?.value || "None";
+    if (_curModel && _curTE !== "None") {
+      try {
+        const c = await checkModelTE(_curModel);
+        rememberExternalTE(_curModel, c.arch, _curTE);
+      } catch (_) { /* ignore */ }
+    }
     try {
       await API.refreshModels();
       await populateDropdowns();
@@ -3178,15 +3312,27 @@ function bindUI() {
     try {
       const teList = await fetch(API.base + "/studio/text_encoders").then(r => r.json());
       const teSelect = document.getElementById("paramTextEncoder");
+      const current = teSelect?.value || "None";
       if (teSelect) {
-        const current = teSelect.value;
         teSelect.innerHTML = '<option value="None">None (bundled)</option>' +
           teList.map(name =>
             `<option value="${name}">${name}</option>`
           ).join("");
-        if ([...teSelect.options].some(o => o.value === current)) teSelect.value = current;
       }
       State._textEncoderList = teList;
+      // Funnel restore through the arch-aware helper so a missing TE
+      // falls back to "None" (with toast) instead of staying selected
+      // as a now-invalid option.
+      const currentModel = document.getElementById("paramModel")?.value || "";
+      if (currentModel) {
+        const check = await restoreTextEncoderForModel(currentModel, "model-change", {
+          preferredTE: current,
+          previousArch: State._currentModelArch || null,
+        });
+        State._currentModelArch = check.arch || "unknown";
+      } else if (teSelect && _optionExists(teSelect, current)) {
+        teSelect.value = current;
+      }
       showToast(`Text encoders refreshed (${teList.length} found)`, "success");
     } catch (e) {
       showToast("TE refresh failed: " + e.message, "error");
