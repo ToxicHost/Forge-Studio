@@ -2356,10 +2356,10 @@ def run_generation(
                         _hp_warn_fp16_vae_once()
                         _hp_begin_capture()
                 try:
-                    # Suppress stock ADetailer — Studio runs its own AD pipeline
-                    # with centroid-based mask filtering after hires fix.
-                    if _HAS_AD_LIBS and ad_params and ad_params[0]:
-                        p._ad_disabled = True
+                    # Native ADetailer fires inside process_images() via its
+                    # postprocess_image hook. AD slot params were injected
+                    # into native AD's script_args in _attach_script_runner
+                    # / _attach_txt2img_script_runner; nothing more to do here.
                     processed = process_images(p)
                 except Exception as e:
                     print(f"[Studio] process_images error: {e}")
@@ -2484,44 +2484,11 @@ def run_generation(
                     hp_post_processed = True
                     hp_post_reason = "img2img hires fix"
 
-                # ── Studio ADetailer ────────────────────────────────────
-                # Runs AFTER hires fix so faces are refined at full
-                # resolution. Uses centroid filtering to skip detections
-                # outside the inpaint mask. Stock AD was suppressed above.
-                if _HAS_AD_LIBS and ad_params and ad_params[0]:
-                    _ad_enable, _ad_slot_dicts = ad_params
-                    if _ad_enable and any(
-                        d.get("ad_tab_enable") and d.get("ad_model", "None") != "None"
-                        for d in _ad_slot_dicts
-                    ):
-                        ad_ret = _run_studio_ad(
-                            result, p, _ad_slot_dicts,
-                            mask_img=mask_img if has_mask else None,
-                            capture_blend_mask=high_precision,
-                        )
-                        if isinstance(ad_ret, tuple):
-                            result, _ad_blend = ad_ret
-                            if high_precision and _ad_blend is not None:
-                                _hp_or_into_blend_mask(_ad_blend)
-                        else:
-                            result = ad_ret
-                        # Final mask composite — clips any AD overshoot.
-                        # Dilated-binary clip via _clip_to_mask (HP blend mask
-                        # uses the soft version separately, see comment in the
-                        # post-process composite above).
-                        if has_mask and mask_img and canvas_img and not is_txt2img:
-                            try:
-                                result = _clip_to_mask(result, canvas_img, mask_img, ip)
-                                if high_precision:
-                                    from PIL import ImageFilter
-                                    _soft_msk2 = mask_img.convert("L").resize(result.size, Image.LANCZOS)
-                                    _blur2 = getattr(ip, 'mask_blur', 4) if ip else 4
-                                    if _blur2 > 0:
-                                        _soft_msk2 = _soft_msk2.filter(ImageFilter.GaussianBlur(radius=_blur2))
-                                    inv2 = 1.0 - (np.asarray(_soft_msk2, dtype=np.float32) / 255.0)
-                                    _hp_or_into_blend_mask(inv2)
-                            except Exception as _ce2:
-                                print(f"[Studio] Post-AD mask composite error: {_ce2}")
+                # Native ADetailer already fired inside process_images()
+                # (and inside Forge's built-in hires fix for txt2img).
+                # No separate Studio AD post-pass for normal generation —
+                # the dedicated _run_studio_ad pipeline is reserved for
+                # special cases (Attention Couple region-aware AD).
 
                 all_images.append(result)
                 # Float data is only valid when post-processing didn't
