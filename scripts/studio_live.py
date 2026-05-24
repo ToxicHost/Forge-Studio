@@ -287,7 +287,25 @@ def _generation_worker(spec: LiveSpec):
         print(f"{TAG} Generation starting: {spec.width}x{spec.height}, "
               f"strength={spec.strength}, steps={spec.steps}, seed={spec.seed}")
 
-        # Ensure model is loaded
+        # Ensure model is loaded — reuse Studio's robust loader if available.
+        # It handles FakeInitialModel cold-start and model-mismatch reloads,
+        # which the basic forge_model_reload guard below misses.
+        _ensure_loaded = None
+        try:
+            try:
+                from studio_generation import _ensure_model_loaded as _ensure_loaded
+            except ImportError:
+                from scripts.studio_generation import _ensure_model_loaded as _ensure_loaded
+        except Exception as e:
+            print(f"{TAG} Could not import _ensure_model_loaded ({e}) — using basic reload")
+
+        if _ensure_loaded is not None:
+            try:
+                _ensure_loaded()
+            except Exception as e:
+                print(f"{TAG} Model ensure failed: {e}")
+
+        # Final guard / fallback if the model still isn't loaded
         if not hasattr(shared.sd_model, 'forge_objects') or shared.sd_model.forge_objects is None:
             try:
                 if hasattr(sd_models, 'forge_model_reload'):
@@ -346,50 +364,15 @@ def _generation_worker(spec: LiveSpec):
         if hasattr(p, 'scheduler'):
             p.scheduler = spec.scheduler
 
-        # Attach script runner — required for wildcards/dynamic prompts.
-        # Without this, process_images() won't resolve __wildcards__ or
-        # {dynamic|prompts}. We attach the full img2img runner with defaults
-        # and force-disable AD in the script_args (same as unchecking it).
-        # ControlNet with no units = no-op. Everything else is lightweight.
-        try:
-            import modules.scripts as mod_scripts
-            runner = mod_scripts.scripts_img2img
-            if runner and hasattr(runner, 'alwayson_scripts'):
-                p.scripts = runner
-                n_inputs = len(runner.inputs) if hasattr(runner, 'inputs') else 0
-                script_args = [None] * n_inputs
-                if hasattr(runner, 'inputs') and runner.inputs:
-                    for i, comp in enumerate(runner.inputs):
-                        if comp is not None and hasattr(comp, 'value'):
-                            script_args[i] = comp.value
-                if script_args:
-                    script_args[0] = 0
-
-                try:
-                    try:
-                        from studio_generation import _force_enable_dynamic_prompts
-                    except ImportError:
-                        from scripts.studio_generation import _force_enable_dynamic_prompts
-                    _force_enable_dynamic_prompts(runner, script_args)
-                except Exception as _dp_e:
-                    print(f"{TAG} Warning: could not force-enable Dynamic Prompts ({_dp_e})")
-
-                # Force-disable ADetailer in script_args
-                for s in runner.alwayson_scripts:
-                    try:
-                        title = s.title().strip() if callable(getattr(s, 'title', None)) else ""
-                    except Exception:
-                        title = ""
-                    if title == "ADetailer":
-                        idx = s.args_from
-                        if idx < len(script_args):
-                            script_args[idx] = False
-                        break
-
-                p.script_args = script_args
-                print(f"{TAG} Script runner attached ({len(runner.alwayson_scripts)} alwayson, AD off)")
-        except Exception as e:
-            print(f"{TAG} Warning: script runner failed ({e}) — wildcards won't resolve")
+        # Raw img2img: no script runner attached. The full scripts_img2img
+        # runner pulls in default extension args (ADetailer, ControlNet, AR
+        # selector, Dynamic Prompts, etc.) that normal /studio/generate carefully
+        # patches but Live did not, and which can corrupt sampling on
+        # Anima/Cosmos (NaN/black output). Live is deliberately script-free here;
+        # wildcard/Dynamic Prompts support is dropped until raw Live is stable.
+        p.scripts = None
+        p.script_args = ()
+        print(f"{TAG} Running raw img2img path (scripts disabled)")
 
         # Run generation. Live never installs p.sampler_cfg_function — that hook
         # participates in CFG math and corrupts sampling (NaN/black output on
