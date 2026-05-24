@@ -9,7 +9,8 @@ rebuilt for Forge Neo's process_images() pipeline.
 Design:
   - LiveScheduler ports Krita's input-diff gating and adaptive grace period
   - Latest-wins queue: one running task, one pending slot
-  - Own interrupt flag checked every sampler step (bypasses unreliable shared.state)
+  - No mid-sampler interruption: a running frame finishes naturally before the
+    newest pending frame starts (never installs p.sampler_cfg_function)
   - WebSocket broadcast for results (rides existing /studio/ws)
   - No disk writes, no scripts, no ADetailer — Live is raw img2img only
 """
@@ -153,52 +154,6 @@ class LiveSpec:
 
 
 # =========================================================================
-# INTERRUPT FLAG — own flag, bypasses unreliable shared.state
-# =========================================================================
-
-_live_interrupt = threading.Event()
-
-
-def request_interrupt():
-    """Set the interrupt flag. Checked every sampler step."""
-    _live_interrupt.set()
-
-
-def clear_interrupt():
-    """Clear the interrupt flag before starting a new generation."""
-    _live_interrupt.clear()
-
-
-def is_interrupted() -> bool:
-    return _live_interrupt.is_set()
-
-
-# =========================================================================
-# SAMPLER CALLBACK — injects interrupt check into every sampling step
-# =========================================================================
-
-def install_interrupt_callback(p):
-    """Install a sampler_cfg_function that checks our interrupt flag every step.
-
-    This runs inside the denoiser loop and can halt sampling faster than
-    shared.state.interrupted, which Forge checks infrequently.
-
-    Must be called BEFORE process_images() triggers the model clone.
-    """
-    from modules import shared
-
-    def _live_cfg_denoiser(params):
-        if _live_interrupt.is_set():
-            # Signal Forge's own interrupt so process_images() exits cleanly
-            shared.state.interrupted = True
-        return params.x  # pass-through, don't modify the denoised output
-
-    # sampler_cfg_function is singleton (last write wins) — this is fine
-    # for Live because we own the entire generation, no other scripts running
-    p.sampler_cfg_function = _live_cfg_denoiser
-
-
-# =========================================================================
 # LATEST-WINS QUEUE
 # =========================================================================
 
@@ -211,7 +166,9 @@ _scheduler = LiveScheduler()
 
 def submit(spec: LiveSpec):
     """Submit a live generation request. Latest wins — if a generation is
-    running, the pending slot is overwritten and the current gen is interrupted."""
+    running, the pending slot is overwritten with the newest spec. The running
+    generation is NOT interrupted; it finishes naturally and the pending spec
+    starts on completion. This avoids corrupting the sampler mid-step."""
     global _pending_spec, _is_active
 
     if not _is_active:
@@ -219,10 +176,12 @@ def submit(spec: LiveSpec):
 
     with _lock:
         if _current_thread and _current_thread.is_alive():
-            # Generation running — store as pending, interrupt current
+            # Generation running — store newest as pending without interrupting.
+            # Interrupting via sampler_cfg_function corrupts CFG math (NaN/black
+            # output on Anima/Cosmos), so we let the active frame complete.
             _pending_spec = spec
-            request_interrupt()
             _broadcast({"type": "live_busy", "pending": True})
+            print(f"{TAG} Generation busy — queued latest frame without interrupt")
         else:
             # No generation running — always start immediately.
             # The scheduler rate-limits during active generation (pending slot),
@@ -236,17 +195,18 @@ def activate():
     global _is_active
     _is_active = True
     _scheduler.reset()
-    clear_interrupt()
     print(f"{TAG} Live painting activated")
     _broadcast({"type": "live_started"})
 
 
 def deactivate():
-    """Deactivate the live painting loop. Interrupts any running generation."""
+    """Deactivate the live painting loop. Clears the pending slot so no new
+    frame is scheduled. A generation already in flight finishes on its own and
+    won't reschedule (because _is_active is False) — we never interrupt the
+    sampler, which keeps Anima/Cosmos sampling stable."""
     global _is_active, _pending_spec
     _is_active = False
     _pending_spec = None
-    request_interrupt()
     _scheduler.reset()
     print(f"{TAG} Live painting deactivated")
     _broadcast({"type": "live_stopped"})
@@ -260,7 +220,6 @@ def _start_generation(spec: LiveSpec):
     """Start a generation in a background thread."""
     global _current_thread, _pending_spec
     _pending_spec = None
-    clear_interrupt()
     _scheduler.notify_generation_started()
 
     _current_thread = threading.Thread(
@@ -289,8 +248,8 @@ def _on_generation_complete(spec: LiveSpec, result_b64: Optional[str], error: Op
             "seed": spec.seed,
         })
     else:
-        # Interrupted with no result — tell frontend so it doesn't stall
-        print(f"{TAG} Generation interrupted (no result)")
+        # Completed but produced no image — tell frontend so it doesn't stall
+        print(f"{TAG} Generation produced no result")
         _broadcast({"type": "live_busy", "pending": _pending_spec is not None})
 
     if not _is_active:
@@ -302,8 +261,9 @@ def _on_generation_complete(spec: LiveSpec, result_b64: Optional[str], error: Op
             next_spec = _pending_spec
             _pending_spec = None
             _broadcast({"type": "live_busy", "pending": False})
-            # Always start — the pending spec exists because the user changed
-            # something during generation. No reason to delay.
+            # The pending spec exists because input changed during generation.
+            # Start it now that the sampler has finished cleanly.
+            print(f"{TAG} Starting queued latest frame")
             _start_generation(next_spec)
 
 
@@ -431,27 +391,15 @@ def _generation_worker(spec: LiveSpec):
         except Exception as e:
             print(f"{TAG} Warning: script runner failed ({e}) — wildcards won't resolve")
 
-        # Install our interrupt callback
-        install_interrupt_callback(p)
-
-        # Check interrupt before starting (may have been set while we were setting up)
-        if is_interrupted():
-            _on_generation_complete(spec, None, None)
-            return
-
-        # Run generation
+        # Run generation. Live never installs p.sampler_cfg_function — that hook
+        # participates in CFG math and corrupts sampling (NaN/black output on
+        # Anima/Cosmos). Latest-wins is handled by the pending queue instead.
         t0 = time.time()
         processed = process_images(p)
         elapsed = time.time() - t0
         print(f"{TAG} Generation completed in {elapsed:.2f}s")
 
-        # Clear our interrupt flag — generation is done either way
-        clear_interrupt()
-
-        # Encode result — if process_images produced images, USE THEM,
-        # even if the interrupt flag was set. The generation completed;
-        # the watchdog or a new submit may have set the flag mid-gen,
-        # but the result is still valid.
+        # Encode result — if process_images produced images, use them.
         if processed and processed.images:
             result_img = processed.images[0]
             buf = io.BytesIO()
