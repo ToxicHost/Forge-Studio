@@ -771,6 +771,7 @@
   "toast.vae.savedMissing": "Saved VAE not found; using current/default VAE",
   "toast.te.refreshing": "Refreshing text encoders...",
   "toast.te.savedMissing": "Saved text encoder not found; using None",
+  "toast.preflight.failed": "Could not load the selected model — generation cancelled",
   "toast.gpuWeights.reset": "GPU weights reset to Forge default",
   "toast.gpuWeights.failed": "Failed to set GPU weights",
   "toast.defaults.saved": "Workflow defaults saved",
