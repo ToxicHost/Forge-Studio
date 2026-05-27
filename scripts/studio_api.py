@@ -3595,9 +3595,11 @@ def setup_studio_routes(app: FastAPI):
         """Check whether a model is currently loaded in VRAM.
 
         Also reports privacy-safe details about the current
-        additional_modules list — counts and category booleans only, no
-        paths or filenames — so the stale-TE class of bug can be
-        diagnosed in the field without leaking user-local file paths.
+        additional_modules list so the stale-TE class of bug can be
+        diagnosed — and the generation preflight can compare backend
+        against UI — without leaking user-local file paths. We return the
+        same display names the dropdowns use (VAE dict key, text-encoder
+        path relative to models/text_encoder/), never the absolute path.
         """
         loaded = (
             hasattr(shared, 'sd_model')
@@ -3612,21 +3614,30 @@ def setup_studio_routes(app: FastAPI):
         additional_count = 0
         has_external_te = False
         has_external_vae = False
+        external_te_name = None
+        external_vae_name = None
         try:
             params = sd_models.model_data.forge_loading_parameters or {}
             mods = params.get("additional_modules") or []
             additional_count = len(mods)
-            # Classify by directory bucket. Avoid returning the names.
+            # Classify by directory bucket. Report display names only.
             from modules import sd_vae
             try:
                 sd_vae.refresh_vae_list()
             except Exception:
                 pass
-            vae_paths = {
-                os.path.normcase(os.path.abspath(p))
-                for p in (sd_vae.vae_dict or {}).values()
-                if p
-            }
+            # Reverse map normalized path -> dict key so we can surface the
+            # same name the VAE dropdown shows (not the absolute path).
+            vae_by_path = {}
+            for vname, p in (sd_vae.vae_dict or {}).items():
+                if not p:
+                    continue
+                try:
+                    vae_by_path[os.path.normcase(os.path.abspath(p))] = vname
+                except Exception:
+                    pass
+            models_dir = getattr(shared, 'models_path', 'models')
+            te_dir = os.path.join(models_dir, "text_encoder")
             for m in mods:
                 if not m:
                     continue
@@ -3634,16 +3645,22 @@ def setup_studio_routes(app: FastAPI):
                     norm = os.path.normcase(os.path.abspath(m))
                 except Exception:
                     norm = m
-                if norm in vae_paths:
+                if norm in vae_by_path:
                     has_external_vae = True
+                    external_vae_name = vae_by_path[norm]
                     continue
                 # Anything else under text_encoder/ counts as a TE entry.
                 if (os.sep + "text_encoder" + os.sep) in norm:
                     has_external_te = True
+                    try:
+                        external_te_name = os.path.relpath(m, te_dir).replace("\\", "/")
+                    except Exception:
+                        external_te_name = os.path.basename(m)
                 else:
                     # Unclassified — assume TE-like for safety so the
                     # status surfaces a non-VAE module to investigate.
                     has_external_te = True
+                    external_te_name = os.path.basename(m)
         except Exception:
             log.exception("model_status component classification failed")
 
@@ -3653,6 +3670,10 @@ def setup_studio_routes(app: FastAPI):
             "additional_modules_count": additional_count,
             "has_external_text_encoder": has_external_te,
             "has_external_vae": has_external_vae,
+            # Display names (null when none) for the generation preflight to
+            # compare against the UI selection. No absolute paths.
+            "external_text_encoder": external_te_name,
+            "external_vae": external_vae_name,
             "auto_unload_enabled": _auto_unload_enabled,
             "auto_unload_minutes": _auto_unload_minutes,
         }

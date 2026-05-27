@@ -1153,16 +1153,19 @@ async function restoreTextEncoderForModel(modelTitle, reason = "model-change", o
 
   if (teRow) teRow.style.display = "";
 
-  // For explicit user/workflow/session-driven values, keep what's already
-  // set (it may match a value that was just programmatically restored from
-  // the workflow or session) and only fall back to "None" if it no longer
-  // exists. Architecture memory must NOT clobber an explicitly chosen TE.
-  if (reason === "workflow-apply" || reason === "session-restore" || reason === "te-change") {
+  // For explicit user/workflow/session/preflight-driven values, keep what's
+  // already set (it may match a value that was just programmatically
+  // restored from the workflow or session) and only fall back to "None" if
+  // it no longer exists. Architecture memory must NOT clobber an explicitly
+  // chosen TE.
+  if (reason === "workflow-apply" || reason === "session-restore"
+      || reason === "generation-preflight" || reason === "te-change") {
     if (!_optionExists(teSelect, teSelect.value)) {
       // A saved TE whose file was removed since save shouldn't break
       // generation — warn and drop to bundled instead of leaving a
       // phantom selection that doesn't actually load.
-      if (reason === "session-restore" && teSelect.value && teSelect.value !== "None") {
+      if ((reason === "session-restore" || reason === "generation-preflight")
+          && teSelect.value && teSelect.value !== "None") {
         showToast(
           _i18n("toast.te.savedMissing", "Saved text encoder not found; using None"),
           "info",
@@ -1558,8 +1561,85 @@ async function populateDropdowns() {
 // GENERATION
 // ═══════════════════════════════════════════
 
+// Generation preflight: reconcile Forge's actually-loaded components with
+// the UI selection before generating. Dropdowns can be restored from
+// session/defaults/workflow while Forge still holds stale (or no) external
+// TE/VAE — generating then silently uses the wrong components. We compare
+// /studio/model_status against the selected model/VAE/TE and only reload on
+// a real mismatch (so the common already-matching case costs one GET).
+// Returns true when it's safe to generate, false if a required load failed.
+async function ensureSelectedComponentsLoadedForGenerate() {
+  const title = document.getElementById("paramModel")?.value || "";
+  if (!title) return true;  // nothing selected — let generation proceed/fail as before
+
+  const teVal = document.getElementById("paramTextEncoder")?.value || "None";
+  const vaeVal = document.getElementById("paramVAE")?.value || "";
+
+  const _norm = (s) => String(s == null ? "" : s).trim();
+  const _teIsNone = (v) => { const n = _norm(v); return !n || n === "None" || n === "Bundled"; };
+  const _vaeIsAuto = (v) => { const n = _norm(v); return !n || n === "Automatic" || n === "None"; };
+
+  let status = null;
+  try {
+    status = await fetch(API.base + "/studio/model_status").then(r => r.json());
+  } catch (_) {
+    status = null;  // status unavailable — fall through to a best-effort load
+  }
+
+  let mismatch = false;
+  if (!status || !status.loaded) {
+    mismatch = true;
+  } else {
+    if (_norm(status.title) !== _norm(title)) mismatch = true;
+
+    // external_text_encoder / external_vae are display names (or null).
+    const backendTE = status.external_text_encoder;
+    if (_teIsNone(teVal)) {
+      if (backendTE) mismatch = true;            // backend holds a TE we don't want
+    } else if (_norm(backendTE) !== _norm(teVal)) {
+      mismatch = true;
+    }
+
+    const backendVAE = status.external_vae;
+    if (_vaeIsAuto(vaeVal)) {
+      if (backendVAE) mismatch = true;           // backend holds a VAE we don't want
+    } else if (_norm(backendVAE) !== _norm(vaeVal)) {
+      mismatch = true;
+    }
+  }
+
+  if (!mismatch) return true;
+
+  console.log("[Studio] Generation preflight: backend components differ from UI — syncing");
+  if (typeof window.loadSelectedModelComponents !== "function") return true;
+  const ok = await window.loadSelectedModelComponents("generation-preflight");
+  return ok !== false;
+}
+
 async function doGenerate() {
+  if (State.generating || State._preflighting) return;
+
+  // Make Forge's loaded components match the UI before committing. Run with
+  // State.generating still false so loadSelectedModelComponents performs the
+  // load instead of queueing it; _preflighting guards against a second click
+  // during the (possibly multi-second) load.
+  State._preflighting = true;
+  let ready;
+  try {
+    ready = await ensureSelectedComponentsLoadedForGenerate();
+  } finally {
+    State._preflighting = false;
+  }
+  if (!ready) {
+    showToast(
+      _i18n("toast.preflight.failed", "Could not load the selected model — generation cancelled"),
+      "error",
+    );
+    return;
+  }
+  // The preflight awaited; bail if a generation started in the meantime.
   if (State.generating) return;
+
   State.generating = true;
 
   // B-002 fix: Re-read live preview toggle state on each gen start to prevent
@@ -3177,12 +3257,18 @@ function bindUI() {
   //   "session-restore"  — defaults/session already wrote paramTextEncoder;
   //                        keep the saved value, do NOT restore from memory
   //                        (same as workflow-apply, used by the boot sync).
+  //   "generation-preflight" — Generate detected the backend didn't match
+  //                        the UI selection; load the UI's components as-is
+  //                        before generating. Keeps the explicit value.
   //   "post-generation"  — pending switch flushed after a generation;
   //                        same restore semantics as "model-change".
+  // Returns true when the backend reports a successful load, false on any
+  // failure or when the switch was deferred. Most callers ignore the
+  // result; the generation preflight relies on it to abort cleanly.
   async function loadSelectedModelComponents(reason = "model-change") {
     const modelSelect = document.getElementById("paramModel");
     const title = modelSelect?.value;
-    if (!title) return;
+    if (!title) return false;
 
     // Queue when generation is in flight — forge_model_reload() would
     // destroy shared.sd_model out from under process_images(). The
@@ -3194,7 +3280,7 @@ function bindUI() {
         I18N.t("toast.modelSwitchPending", "Model will switch after generation completes"),
         "info",
       );
-      return;
+      return false;
     }
 
     const teSelect = document.getElementById("paramTextEncoder");
@@ -3235,6 +3321,7 @@ function bindUI() {
     if (fill) { fill.style.width = "100%"; fill.classList.add("indeterminate"); }
     StatusBar.setStatus("loading");
 
+    let loadedOk = false;
     try {
       const r = await fetch(API.base + "/studio/load_model", {
         method: "POST",
@@ -3243,6 +3330,7 @@ function bindUI() {
       });
       const data = await r.json();
       if (r.ok && data.ok) {
+        loadedOk = true;
         StatusBar.setModel(data.loaded.split("[")[0].trim());
         showToast(
           _i18n("toast.model.loaded", "Model loaded: " + data.loaded, { name: data.loaded }),
@@ -3275,6 +3363,7 @@ function bindUI() {
     }
     if (fill) { fill.style.width = "0%"; fill.classList.remove("indeterminate"); }
     StatusBar.setStatus("ready");
+    return loadedOk;
   }
   window.loadSelectedModelComponents = loadSelectedModelComponents;
 

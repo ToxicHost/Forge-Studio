@@ -13,12 +13,15 @@
  * StudioSearchableSelect + ExtensionBridge globals (gracefully degrades
  * when those aren't present).
  *
- * Apply intentionally never triggers an immediate model/VAE/TE load. The
- * change-listeners at app.js:2898 (paramModel), :2979 (paramVAE), and
- * :3011 (paramTextEncoder) only fire on `change` events — we set `.value`
- * directly and refresh the searchable-select label so the dropdown reads
- * correctly without kicking off an async load. The model loads naturally
- * on the next Generate.
+ * Tab-switch applies (loadModel omitted/false) never trigger a model/VAE/TE
+ * load: we set `.value` directly and refresh the searchable-select label so
+ * the dropdown reads correctly without kicking off an async load — the
+ * paramModel/VAE/TE change-listeners only fire on real `change` events, not
+ * programmatic `.value` writes. Explicit workflow apply (loadModel: true)
+ * DOES load the selected components via the shared helper
+ * window.loadSelectedModelComponents("workflow-apply"). Either way, the
+ * generation preflight in app.js reconciles UI vs. Forge's loaded state
+ * before each Generate, so any remaining mismatch self-corrects by then.
  */
 (function () {
 "use strict";
