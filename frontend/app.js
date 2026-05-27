@@ -1153,11 +1153,21 @@ async function restoreTextEncoderForModel(modelTitle, reason = "model-change", o
 
   if (teRow) teRow.style.display = "";
 
-  // For explicit user/workflow-driven values, keep what's already set
-  // (it may match a value that was just programmatically restored from
-  // the workflow) and only fall back to "None" if it no longer exists.
-  if (reason === "workflow-apply" || reason === "te-change") {
+  // For explicit user/workflow/session-driven values, keep what's already
+  // set (it may match a value that was just programmatically restored from
+  // the workflow or session) and only fall back to "None" if it no longer
+  // exists. Architecture memory must NOT clobber an explicitly chosen TE.
+  if (reason === "workflow-apply" || reason === "session-restore" || reason === "te-change") {
     if (!_optionExists(teSelect, teSelect.value)) {
+      // A saved TE whose file was removed since save shouldn't break
+      // generation — warn and drop to bundled instead of leaving a
+      // phantom selection that doesn't actually load.
+      if (reason === "session-restore" && teSelect.value && teSelect.value !== "None") {
+        showToast(
+          _i18n("toast.te.savedMissing", "Saved text encoder not found; using None"),
+          "info",
+        );
+      }
       teSelect.value = "None";
     }
     return check;
@@ -1318,7 +1328,11 @@ async function populateDropdowns() {
     // catches HTML attribute changes; setting select.value is a property
     // change so the trigger displays a stale label otherwise.
     const _syncSearchable = (sel) => {
-      try { window.StudioSearchableSelect?.attach(sel)?.refresh?.(); } catch (_) {}
+      // Refresh an already-wrapped searchable select's trigger label after a
+      // programmatic .value set. Guarded on the existing wrapper handle so
+      // this never *attaches* a plain select as a side effect — VAE/TE stay
+      // native unless the defaults/session restore path wrapped them.
+      try { sel?._studioSSelHandle?.refresh?.(); } catch (_) {}
     };
 
     // Status bar — fetch actual loaded model. At Studio boot Forge may
@@ -1397,18 +1411,51 @@ async function populateDropdowns() {
       });
     }
 
-    // VAE dropdown (async, non-blocking)
+    // VAE dropdown (async, non-blocking).
+    //
+    // Restore priority: a session/defaults-stashed value (pendingValue) or
+    // the value already selected wins over /studio/current_vae. current_vae
+    // reflects what Forge has loaded *right now*, which at boot is the
+    // default — letting it speak first would silently stomp the user's
+    // saved VAE before the post-restore sync can re-apply it.
     fetch(API.base + "/studio/vaes").then(r => r.json()).then(vaes => {
       const vaeSelect = document.getElementById("paramVAE");
-      if (vaeSelect) {
-        vaeSelect.innerHTML = vaes.map(v =>
-          `<option value="${v.name}">${v.name}</option>`
-        ).join("");
-        // Set current VAE
-        fetch(API.base + "/studio/current_vae").then(r => r.json()).then(current => {
-          if (current.name && vaeSelect) vaeSelect.value = current.name;
-        }).catch(() => {});
+      if (!vaeSelect) return;
+      const pendingVAE = vaeSelect.dataset.pendingValue || "";
+      const prev = pendingVAE || vaeSelect.value;
+      vaeSelect.innerHTML = vaes.map(v =>
+        `<option value="${v.name}">${v.name}</option>`
+      ).join("");
+
+      // Priority 1/2: honor the saved (pending) value, or a meaningful
+      // existing selection, if it still exists. "Automatic" is the
+      // placeholder for "no explicit VAE" — when it's merely the current
+      // dropdown state (not an explicitly saved choice) we let current_vae
+      // speak so a fresh boot still reflects Forge's actual loaded VAE.
+      if (prev && _optionExists(vaeSelect, prev) && (pendingVAE || prev !== "Automatic")) {
+        vaeSelect.value = prev;
+        delete vaeSelect.dataset.pendingValue;
+        _syncSearchable(vaeSelect);
+        return;
       }
+
+      // A saved VAE that no longer exists shouldn't block generation —
+      // warn and fall through to current/default.
+      if (pendingVAE) {
+        showToast(
+          _i18n("toast.vae.savedMissing", "Saved VAE not found; using current/default VAE"),
+          "info",
+        );
+      }
+      delete vaeSelect.dataset.pendingValue;
+
+      // Priority 3: fall back to whatever Forge actually has loaded.
+      fetch(API.base + "/studio/current_vae").then(r => r.json()).then(current => {
+        if (current.name && _optionExists(vaeSelect, current.name)) {
+          vaeSelect.value = current.name;
+          _syncSearchable(vaeSelect);
+        }
+      }).catch(() => {});
     }).catch(() => {});
 
     // Text Encoder dropdown (async, non-blocking). The restore call MUST
@@ -1416,6 +1463,12 @@ async function populateDropdowns() {
     // wipes whatever value was just selected.
     fetch(API.base + "/studio/text_encoders").then(r => r.json()).then(async teList => {
       const teSelect = document.getElementById("paramTextEncoder");
+      // A session/defaults-stashed TE (pendingValue) is an explicit user
+      // choice and must not be clobbered by per-model/arch memory. When
+      // present we restore it verbatim via "session-restore"; otherwise we
+      // fall back to the normal memory-driven "model-change" path.
+      const pendingTE = teSelect?.dataset.pendingValue || "";
+      const savedTE = pendingTE || teBeforePopulate || "None";
       if (teSelect) {
         teSelect.innerHTML = '<option value="None">None (bundled)</option>' +
           teList.map(name =>
@@ -1426,12 +1479,21 @@ async function populateDropdowns() {
       State._textEncoderList = teList;
 
       const currentModel = document.getElementById("paramModel")?.value || modelBeforePopulate;
-      if (currentModel) {
-        const check = await restoreTextEncoderForModel(currentModel, "model-change", {
-          preferredTE: teBeforePopulate,
+      if (currentModel && teSelect) {
+        const reason = pendingTE ? "session-restore" : "model-change";
+        // Seed the value first so the session-restore branch of
+        // restoreTextEncoderForModel keeps it (it only downgrades to
+        // "None" if the saved option no longer exists).
+        if (reason === "session-restore") teSelect.value = savedTE;
+        const check = await restoreTextEncoderForModel(currentModel, reason, {
+          preferredTE: savedTE,
           previousArch: previousArchForRestore,
         });
         State._currentModelArch = check.arch || "unknown";
+        delete teSelect.dataset.pendingValue;
+        _syncSearchable(teSelect);
+      } else if (teSelect) {
+        delete teSelect.dataset.pendingValue;
       }
     }).catch(() => { State._textEncoderList = []; });
 
@@ -3112,6 +3174,9 @@ function bindUI() {
   //   "workflow-apply"   — workflow already wrote paramTextEncoder; keep
   //                        the workflow's value, do NOT restore from
   //                        memory (memory would clobber the workflow).
+  //   "session-restore"  — defaults/session already wrote paramTextEncoder;
+  //                        keep the saved value, do NOT restore from memory
+  //                        (same as workflow-apply, used by the boot sync).
   //   "post-generation"  — pending switch flushed after a generation;
   //                        same restore semantics as "model-change".
   async function loadSelectedModelComponents(reason = "model-change") {
@@ -3749,6 +3814,8 @@ function bindUI() {
     ],
     gen: [
       ["paramModel", "val"],
+      ["paramVAE", "val"],
+      ["paramTextEncoder", "val"],
       ["paramSampler", "val"], ["paramScheduler", "val"],
       ["paramSteps", "val"], ["paramCFG", "val"], ["paramDenoise", "val"],
       ["paramWidth", "val"], ["paramHeight", "val"],
@@ -4150,6 +4217,34 @@ function bindUI() {
     showToast(_i18n("toast.defaults.cleared", "Defaults cleared — reload for factory settings"), "info");
   });
 
+  // After defaults/session restore the dropdowns hold the saved model/VAE/
+  // TE, but Forge itself may have booted with only the bare checkpoint (the
+  // external VAE/TE aren't persisted in config.json). One deferred sync
+  // re-issues /studio/load_model so the actually-loaded components match
+  // the restored UI. Debounced via setTimeout so the async VAE/TE dropdown
+  // fetches have a chance to populate first, and coalesced so defaults +
+  // session can't trigger two competing loads.
+  let _componentRestoreTimer = null;
+
+  function _scheduleRestoredComponentSync(reason = "session-restore") {
+    if (_componentRestoreTimer) clearTimeout(_componentRestoreTimer);
+    _componentRestoreTimer = setTimeout(async () => {
+      _componentRestoreTimer = null;
+      if (State.generating) return;
+      if (typeof window.loadSelectedModelComponents !== "function") return;
+      const model = document.getElementById("paramModel")?.value;
+      if (!model) return;
+      console.log("[Studio] Component restore queued:", reason);
+      await window.loadSelectedModelComponents(reason);
+      // Drop async-dropdown restore hints so a later refresh can't
+      // resurrect a since-changed VAE/TE from a stale pending value.
+      ["paramVAE", "paramTextEncoder"].forEach(id => {
+        const el = document.getElementById(id);
+        if (el) delete el.dataset.pendingValue;
+      });
+    }, 250);
+  }
+
   // Expose for init() — priority documented in codex.js: Defaults loads
   // first as the baseline, Session overlays on top for whichever
   // categories the user opted in. Categories the user unchecked in
@@ -4157,8 +4252,16 @@ function bindUI() {
   // early-return form skipped Defaults entirely whenever a Session
   // existed, so unchecking a category dropped to factory instead.
   window._studioLoadDefaults = async function() {
-    await loadDefaults();   // baseline (server-side, sets _resolvedDefaults)
-    _loadSession();          // overlay (browser-side, merges into _resolvedDefaults)
+    const hadDefaults = await loadDefaults();   // baseline (server-side, sets _resolvedDefaults)
+    const hadSession = _loadSession();           // overlay (browser-side, merges into _resolvedDefaults)
+    // Only sync when something was actually restored — otherwise we'd issue
+    // a needless model reload (and "Loading model…" flash) on every cold
+    // boot. Session wins over defaults, so a single sync after both run is
+    // enough; tab switches never reach here (they use _studioReapplyDefaults).
+    if (hadDefaults || hadSession) {
+      console.log("[Studio] Restoring AI components from session/defaults");
+      _scheduleRestoredComponentSync("session-restore");
+    }
   };
 
   // AD slot checkboxes
