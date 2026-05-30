@@ -513,6 +513,18 @@ class GenerateRequest(BaseModel):
     # external DP extension is missing or broken by Forge Neo changes.
     studio_dynamic_prompts_enabled: bool = True
 
+    # Auto Watermark: composite a user-selected image (from the extension's
+    # watermarks/ folder) onto the final generated image as the last
+    # post-process step. watermark_name is a bare filename; the backend
+    # resolves it under the fixed folder with a traversal guard.
+    watermark_enable: bool = False
+    watermark_name: str = ""                  # filename under <ext>/watermarks/
+    watermark_position: str = "bottom-right"  # 9 anchors (see studio_generation._WM_POSITIONS)
+    watermark_opacity: float = 1.0            # 0..1
+    watermark_scale: float = 0.15             # fraction of the shorter edge
+    watermark_margin: int = 16                # px from the chosen edge(s)
+    watermark_rotation: float = 0.0           # degrees
+
 
 class GenerateResponse(BaseModel):
     """Generation result."""
@@ -1675,6 +1687,19 @@ def setup_studio_routes(app: FastAPI):
                 # we'll actually save the resulting sidecar to disk.
                 bool(req.high_precision and req.save_outputs),
                 bool(req.studio_dynamic_prompts_enabled),
+                watermark=(
+                    {
+                        "enable": True,
+                        "name": req.watermark_name,
+                        "position": req.watermark_position,
+                        "opacity": req.watermark_opacity,
+                        "scale": req.watermark_scale,
+                        "margin": req.watermark_margin,
+                        "rotation": req.watermark_rotation,
+                    }
+                    if (req.watermark_enable and req.watermark_name.strip())
+                    else None
+                ),
             )
         except Exception as e:
             log.exception("Generation handler failed")
@@ -3471,6 +3496,45 @@ def setup_studio_routes(app: FastAPI):
             log.exception("dynamic_prompts status probe failed")
         return {"dp_extension_present": dp_present}
 
+    @app.get("/studio/watermarks")
+    async def get_watermarks():
+        """List selectable watermark files for the Settings dropdown.
+
+        Same shape as /studio/loras. The folder is fixed (<ext>/watermarks/);
+        only the selection varies, so this is a list-files endpoint rather
+        than a folder-path picker.
+        """
+        try:
+            _list = _import("studio_watermark", "list_watermarks")
+            return _list()
+        except Exception:
+            log.exception("watermark list failed")
+            return []
+
+    @app.post("/studio/watermarks/open_folder")
+    async def open_watermarks_folder():
+        """Open the watermarks folder in the OS file manager so the user can
+        drop images in. Best-effort: returns {"unavailable": True} on headless
+        hosts (no display), surfacing the path so the UI can show it instead.
+        """
+        try:
+            _dir = _import("studio_watermark", "watermarks_dir_display")
+            folder = _dir()
+        except Exception:
+            log.exception("watermark folder resolve failed")
+            return JSONResponse({"error": "resolve_failed"}, status_code=500)
+        try:
+            if sys.platform.startswith("win"):
+                os.startfile(folder)  # type: ignore[attr-defined]
+            elif sys.platform == "darwin":
+                subprocess.Popen(["open", folder])
+            else:
+                subprocess.Popen(["xdg-open", folder])
+            return {"ok": True, "path": folder}
+        except Exception as e:
+            # No file manager / headless — let the UI show the path.
+            return {"ok": False, "unavailable": True, "path": folder, "error": str(e)}
+
     @app.get("/studio/cn_models")
     async def get_cn_models():
         try:
@@ -3862,11 +3926,17 @@ def setup_studio_routes(app: FastAPI):
     @app.post("/studio/save_image")
     async def save_image(req: SaveImageRequest):
         try:
-            # Decode image
-            b64 = req.image_b64
-            if "," in b64:
-                b64 = b64.split(",", 1)[1]
-            img = Image.open(io.BytesIO(base64.b64decode(b64)))
+            # Decode image — surface a clear message rather than a raw
+            # binascii/PIL error. validate=True catches malformed base64;
+            # img.load() forces any lazy decode error to happen here.
+            try:
+                b64 = req.image_b64
+                if "," in b64:
+                    b64 = b64.split(",", 1)[1]
+                img = Image.open(io.BytesIO(base64.b64decode(b64, validate=True)))
+                img.load()
+            except Exception as de:
+                raise ValueError(f"Invalid image data: {de}")
 
             # Determine output directory — same logic as generation auto-save
             try:
@@ -3880,12 +3950,47 @@ def setup_studio_routes(app: FastAPI):
                     base_outdir = os.path.dirname(base_outdir)
             except Exception:
                 base_outdir = os.path.abspath("output")
-            output_dir = Path(base_outdir) / "studio"
+
+            safe_sub = ""
             if req.subfolder:
                 # Sanitize subfolder — no path traversal
                 safe_sub = req.subfolder.replace("..", "").replace("\\", "/").strip("/")
-                output_dir = output_dir / safe_sub
-            output_dir.mkdir(parents=True, exist_ok=True)
+
+            def _probe_writable(d: Path) -> bool:
+                """Real write probe — os.access() is unreliable on Windows."""
+                try:
+                    d.mkdir(parents=True, exist_ok=True)
+                    with tempfile.NamedTemporaryFile(dir=str(d), prefix=".wmprobe_", delete=True):
+                        pass
+                    return True
+                except Exception:
+                    return False
+
+            # Primary location; fall back to an extension-local folder if the
+            # configured output dir isn't writable (the most common cause of
+            # the historical "Save failed: 500"). User-facing notice avoids
+            # leaking absolute paths.
+            primary = Path(base_outdir) / "studio"
+            if safe_sub:
+                primary = primary / safe_sub
+            used_fallback = False
+            if _probe_writable(primary):
+                output_dir = primary
+            else:
+                here = Path(__file__).parent
+                ext_root = here if (here / "frontend").is_dir() else here.parent
+                fallback = ext_root / "output" / "studio"
+                if safe_sub:
+                    fallback = fallback / safe_sub
+                if not _probe_writable(fallback):
+                    raise RuntimeError(
+                        "Could not write to the output folder or the Studio "
+                        "fallback folder. Check folder permissions."
+                    )
+                output_dir = fallback
+                used_fallback = True
+                log.warning("save_image: primary outdir not writable (%s); using fallback %s",
+                            primary, fallback)
 
             # Filename
             ext_map = {"png": "png", "jpeg": "jpg", "webp": "webp"}
@@ -3939,7 +4044,11 @@ def setup_studio_routes(app: FastAPI):
             img.save(str(path), icc_profile=_SRGB_ICC, **save_kwargs)
             print(f"{TAG} Saved {req.format.upper()} → {path}")
 
-            return {"ok": True, "path": str(path), "filename": path.name}
+            resp = {"ok": True, "path": str(path), "filename": path.name}
+            if used_fallback:
+                resp["notice"] = ("Primary output folder is not writable; "
+                                  "saved to the Studio fallback output folder.")
+            return resp
 
         except Exception as e:
             log.exception("Save handler failed")

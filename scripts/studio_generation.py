@@ -368,6 +368,106 @@ def _swap_checkpoint(checkpoint_name):
     return False
 
 
+_WM_POSITIONS = (
+    "top-left", "top-center", "top-right",
+    "center-left", "center", "center-right",
+    "bottom-left", "bottom-center", "bottom-right",
+)
+
+
+def apply_watermark(image, wm_cfg):
+    """Composite a watermark image onto `image` as the final pixel step.
+
+    `wm_cfg` is a dict: {enable, name, position, opacity, scale, margin,
+    rotation}. `name` is a bare filename resolved under the extension's
+    watermarks/ folder. Scale is a fraction of the shorter edge (Moritz's
+    Forge Neo approach — keeps the mark optically consistent across aspect
+    ratios). Opacity scales the alpha channel; rotation is in degrees.
+
+    Returns ``(image, changed)``. `changed` is True only when pixels were
+    actually modified, so the caller can decide whether to drop the High
+    Precision float sidecar. Never raises — on any error it logs and
+    returns ``(image, False)`` so a watermark problem can't break a
+    generation.
+    """
+    try:
+        if not wm_cfg or not wm_cfg.get("enable"):
+            return image, False
+        name = (wm_cfg.get("name") or "").strip()
+        if not name:
+            return image, False
+        opacity = float(wm_cfg.get("opacity", 1.0))
+        if opacity <= 0.0:
+            return image, False  # fully transparent → genuine no-op
+
+        try:
+            from studio_watermark import resolve_watermark_path
+        except ImportError:
+            from scripts.studio_watermark import resolve_watermark_path
+        path = resolve_watermark_path(name)
+        if path is None:
+            print(f"[Studio] Watermark not found or invalid: {name!r}")
+            return image, False
+
+        wm = Image.open(path)
+        wm.load()
+        wm = wm.convert("RGBA")
+
+        bw, bh = image.size
+        short_edge = min(bw, bh)
+
+        # Scale relative to the shorter edge; preserve aspect ratio and
+        # never upscale beyond the watermark's native size or the canvas.
+        scale = max(0.0, float(wm_cfg.get("scale", 0.15)))
+        target_w = max(1, int(round(short_edge * scale)))
+        target_w = min(target_w, wm.width, bw)
+        scale_factor = target_w / wm.width
+        target_h = max(1, int(round(wm.height * scale_factor)))
+        target_h = min(target_h, bh)
+        if (target_w, target_h) != wm.size:
+            wm = wm.resize((target_w, target_h), Image.LANCZOS)
+
+        # Opacity — scale the existing alpha channel.
+        if opacity < 1.0:
+            r, g, b, a = wm.split()
+            a = a.point(lambda v: int(v * opacity))
+            wm.putalpha(a)
+
+        # Rotation — expand=True grows the bounding box, so re-read size.
+        rotation = float(wm_cfg.get("rotation", 0.0))
+        if rotation % 360 != 0:
+            wm = wm.rotate(rotation, expand=True, resample=Image.BICUBIC)
+
+        ww, wh = wm.size
+        margin = int(wm_cfg.get("margin", 16))
+        position = wm_cfg.get("position", "bottom-right")
+        if position not in _WM_POSITIONS:
+            position = "bottom-right"
+        vert, _, horiz = position.partition("-")
+
+        if horiz == "left":
+            x = margin
+        elif horiz == "right":
+            x = bw - ww - margin
+        else:  # center
+            x = (bw - ww) // 2
+        if vert == "top":
+            y = margin
+        elif vert == "bottom":
+            y = bh - wh - margin
+        else:  # center
+            y = (bh - wh) // 2
+        x = max(0, x)
+        y = max(0, y)
+
+        base = image.convert("RGBA")
+        base.alpha_composite(wm, (x, y))
+        return base.convert("RGB"), True
+    except Exception as e:
+        print(f"[Studio] Watermark composite failed: {e}")
+        return image, False
+
+
 def run_hires_fix(image, upscaler_name, scale, hr_steps, hr_denoise, hr_cfg, p_orig, hr_checkpoint=""):
     """Hires fix that reuses the existing processing object to avoid model
     unload/reload cycles in lowvram mode. Saves and restores p_orig's state
@@ -1949,6 +2049,7 @@ def run_generation(
     ar_config_dict=None,
     high_precision=False,
     studio_dynamic_prompts_enabled=True,
+    watermark=None,
 ):
     # === DEBUG: confirm function is being called ===
     print(f"[Studio] run_generation called: mode={repr(mode)}, inpaint_mode={repr(inpaint_mode)}, is_txt2img={is_txt2img}, regions_json_len={len(regions_json) if regions_json else 0}")
@@ -2490,6 +2591,17 @@ def run_generation(
                 # the dedicated _run_studio_ad pipeline is reserved for
                 # special cases (Attention Couple region-aware AD).
 
+                # Watermark — last pixel-level post-process, applied at the
+                # final output resolution (after any hires fix above). Only
+                # flags hp_post_processed when pixels actually changed, so a
+                # disabled/empty/invalid/opacity-0 watermark stays a true
+                # no-op and keeps the High Precision float sidecar.
+                if watermark and watermark.get("enable"):
+                    result, wm_changed = apply_watermark(result, watermark)
+                    if wm_changed:
+                        hp_post_processed = True
+                        hp_post_reason = "watermark composite"
+
                 all_images.append(result)
                 # Float data is only valid when post-processing didn't
                 # alter the image AND dimensions match the captured tensor.
@@ -2517,7 +2629,7 @@ def run_generation(
                     all_blend_masks.append(None)
                     if high_precision:
                         if hp_post_processed:
-                            reason = f"post-processing changed resolution ({hp_post_reason})"
+                            reason = f"post-processing altered pixels ({hp_post_reason})"
                         elif fa is None:
                             reason = "decode hook produced no usable batch (see prior log)"
                         else:
