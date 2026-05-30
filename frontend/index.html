@@ -950,6 +950,68 @@
               </div>
             </div>
             <div class="setting-group">
+              <div class="setting-group-title">Watermark</div>
+              <div class="setting-row" title="Composite a watermark image onto every generated image as the final step. Drop PNG/WebP files (transparency recommended) into the watermarks folder.">
+                <span class="setting-label">Auto watermark</span>
+                <div class="toggle-track" id="toggleWatermark"><div class="toggle-knob"></div></div>
+              </div>
+              <div id="watermarkOpts" style="display:none;">
+                <div class="setting-row">
+                  <span class="setting-label">Image</span>
+                  <select class="param-select" id="settingWatermark" style="width:140px;padding:4px 8px;">
+                    <option value="">— None —</option>
+                  </select>
+                </div>
+                <div class="setting-row" style="gap:6px;justify-content:flex-end;">
+                  <button class="defaults-btn" id="watermarkRefresh" style="font-size:10px;padding:3px 8px;">Refresh</button>
+                  <button class="defaults-btn" id="watermarkOpenFolder" style="font-size:10px;padding:3px 8px;">Open folder</button>
+                </div>
+                <p id="watermarkFolderHint" style="display:none;font-size:10px;color:var(--text-4);margin:4px 0 0 0;word-break:break-all;"></p>
+                <div class="setting-row">
+                  <span class="setting-label">Position</span>
+                  <select class="param-select" id="settingWatermarkPosition" style="width:120px;padding:4px 8px;">
+                    <option value="top-left">Top left</option>
+                    <option value="top-center">Top center</option>
+                    <option value="top-right">Top right</option>
+                    <option value="center-left">Center left</option>
+                    <option value="center">Center</option>
+                    <option value="center-right">Center right</option>
+                    <option value="bottom-left">Bottom left</option>
+                    <option value="bottom-center">Bottom center</option>
+                    <option value="bottom-right" selected>Bottom right</option>
+                  </select>
+                </div>
+                <div class="setting-row">
+                  <span class="setting-label">Opacity</span>
+                  <div style="display:flex;align-items:center;gap:6px;">
+                    <input type="range" id="settingWatermarkOpacity" min="0" max="100" value="100" style="width:90px;">
+                    <span id="settingWatermarkOpacityVal" style="font-size:11px;color:var(--text-3);min-width:28px;">100%</span>
+                  </div>
+                </div>
+                <div class="setting-row" title="Size as a percent of the image's shorter edge — keeps the watermark optically consistent across aspect ratios.">
+                  <span class="setting-label">Size</span>
+                  <div style="display:flex;align-items:center;gap:6px;">
+                    <input type="range" id="settingWatermarkScale" min="1" max="50" value="15" style="width:90px;">
+                    <span id="settingWatermarkScaleVal" style="font-size:11px;color:var(--text-3);min-width:28px;">15%</span>
+                  </div>
+                </div>
+                <div class="setting-row">
+                  <span class="setting-label">Margin</span>
+                  <div style="display:flex;align-items:center;gap:6px;">
+                    <input type="range" id="settingWatermarkMargin" min="0" max="200" value="16" style="width:90px;">
+                    <span id="settingWatermarkMarginVal" style="font-size:11px;color:var(--text-3);min-width:28px;">16px</span>
+                  </div>
+                </div>
+                <div class="setting-row">
+                  <span class="setting-label">Rotation</span>
+                  <div style="display:flex;align-items:center;gap:6px;">
+                    <input type="range" id="settingWatermarkRotation" min="-180" max="180" value="0" style="width:90px;">
+                    <span id="settingWatermarkRotationVal" style="font-size:11px;color:var(--text-3);min-width:28px;">0°</span>
+                  </div>
+                </div>
+              </div>
+            </div>
+            <div class="setting-group">
               <div class="setting-group-title">VRAM</div>
               <div style="margin-bottom:8px;">
                 <button class="defaults-btn" id="unloadModelBtn" style="width:100%;" data-i18n="settings.vram.unloadModel">Unload Model from VRAM</button>

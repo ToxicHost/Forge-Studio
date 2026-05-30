@@ -19,10 +19,28 @@
 const API = {
   base: window.location.origin,
 
+  // Read the response body once, then either surface the server's real
+  // error message (the backend returns {"error": ...} on failures) or
+  // parse the success payload — tolerating empty/non-JSON 200 bodies.
+  _finish(method, path, r, text) {
+    if (!r.ok) {
+      let detail = "";
+      try {
+        const parsed = JSON.parse(text);
+        if (parsed && parsed.error) detail = String(parsed.error);
+      } catch (_) {
+        if (text && text.trim()) detail = text.trim().slice(0, 300);
+      }
+      throw new Error(`${method} ${path}: ${r.status}` + (detail ? ` — ${detail}` : ""));
+    }
+    if (!text || !text.trim()) return {};
+    try { return JSON.parse(text); } catch (_) { return {}; }
+  },
+
   async get(path) {
     const r = await fetch(this.base + path);
-    if (!r.ok) throw new Error(`GET ${path}: ${r.status}`);
-    return r.json();
+    const text = await r.text();
+    return this._finish("GET", path, r, text);
   },
 
   async post(path, body) {
@@ -31,8 +49,8 @@ const API = {
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(body),
     });
-    if (!r.ok) throw new Error(`POST ${path}: ${r.status}`);
-    return r.json();
+    const text = await r.text();
+    return this._finish("POST", path, r, text);
   },
 
   // Resource endpoints
@@ -52,6 +70,8 @@ const API = {
   loadModel:     (title)  => API.post("/studio/load_model", { title }),
   refreshModels: ()       => API.post("/studio/refresh_models", {}),
   saveImage:     (params) => API.post("/studio/save_image", params),
+  watermarks:    ()       => API.get("/studio/watermarks"),
+  openWatermarksFolder: () => API.post("/studio/watermarks/open_folder", {}),
   unloadModel:   ()       => API.post("/studio/unload_model", {}),
   modelStatus:   ()       => API.get("/studio/model_status"),
   autoUnload:    (params) => API.post("/studio/auto_unload", params),
@@ -274,6 +294,14 @@ const State = {
   saveLossless: false,     // WebP lossless mode
   highPrecision: false,    // capture float32 VAE output, save .float32.bin sidecar
   livePreview: true,       // show preview thumbnail during generation
+  // Auto Watermark (composited onto the final generated image)
+  watermarkEnable: false,
+  watermarkName: "",
+  watermarkPosition: "bottom-right",
+  watermarkOpacity: 1.0,   // 0..1
+  watermarkScale: 0.15,    // fraction of the shorter edge
+  watermarkMargin: 16,     // px
+  watermarkRotation: 0,    // degrees
   baseGenW: 768,           // pre-hires base dimensions (restored after display)
   baseGenH: 768,
   _deferPreviewHide: false, // hide preview on tab-return if gen finished while hidden
@@ -1806,6 +1834,15 @@ async function doGenerate() {
     high_precision: !!State.highPrecision,
     is_txt2img: isTxt2img,
 
+    // Auto Watermark — composited onto the final image server-side.
+    watermark_enable: !!State.watermarkEnable,
+    watermark_name: State.watermarkName || "",
+    watermark_position: State.watermarkPosition || "bottom-right",
+    watermark_opacity: State.watermarkOpacity ?? 1.0,
+    watermark_scale: State.watermarkScale ?? 0.15,
+    watermark_margin: State.watermarkMargin ?? 16,
+    watermark_rotation: State.watermarkRotation ?? 0,
+
     // Extension bridge args
     extension_args: ExtensionBridge.collectArgs(),
     // UX-015: Tell backend which extensions are disabled so it can suppress their scripts
@@ -3127,15 +3164,28 @@ function bindUI() {
         filename: origName,
       });
       if (result.ok) {
-        showToast(toGallery
+        const base = toGallery
           ? `Saved to Gallery → ${result.filename}`
-          : `Saved ${result.filename}`, "success");
+          : `Saved ${result.filename}`;
+        showToast(result.notice ? `${base} (${result.notice})` : base, "success");
       } else {
         showToast(result.error || "Save failed", "error");
       }
     } catch (e) {
       console.error("[Studio] Save failed:", e);
-      showToast("Save failed: " + e.message, "error");
+      // Server save failed — fall back to a client-side download so the user
+      // doesn't lose the image (parity with the canvas save path).
+      try {
+        const a = document.createElement("a");
+        a.href = imgSrc;
+        a.download = (State.outputFilenames[State.selectedOutputIdx] || `studio_${Date.now()}`)
+          .replace(/\.[^.]+$/, "") + "." + (fmt === "jpeg" ? "jpg" : fmt);
+        document.body.appendChild(a); a.click();
+        setTimeout(() => document.body.removeChild(a), 100);
+        showToast("Saved locally (server save failed: " + e.message + ")", "info");
+      } catch (_) {
+        showToast("Save failed: " + e.message, "error");
+      }
     }
   }
 
@@ -3739,6 +3789,78 @@ function bindUI() {
     if (qRow) qRow.style.display = on ? "none" : "";
   });
 
+  // ===== Auto Watermark =====
+  const _wmToggle = document.getElementById("toggleWatermark");
+  const _wmSelect = document.getElementById("settingWatermark");
+  const _wmOpts = document.getElementById("watermarkOpts");
+  const _wmPos = document.getElementById("settingWatermarkPosition");
+  const _wmOpacity = document.getElementById("settingWatermarkOpacity");
+  const _wmScale = document.getElementById("settingWatermarkScale");
+  const _wmMargin = document.getElementById("settingWatermarkMargin");
+  const _wmRotation = document.getElementById("settingWatermarkRotation");
+
+  // Populate the watermark dropdown from <ext>/watermarks/, preserving the
+  // current selection across refreshes (same pattern as the model select).
+  function _loadWatermarks() {
+    if (!_wmSelect) return Promise.resolve();
+    const prev = State.watermarkName || _wmSelect.value || "";
+    return API.watermarks().then(list => {
+      const items = Array.isArray(list) ? list : [];
+      _wmSelect.innerHTML = `<option value="">— None —</option>` +
+        items.map(w => `<option value="${w.name}">${w.name}</option>`).join("");
+      if (prev && items.some(w => w.name === prev)) _wmSelect.value = prev;
+      try { window.StudioSearchableSelect?.attach(_wmSelect, { placeholder: "— Select watermark —", searchPlaceholder: "Filter…" }); } catch (_) {}
+    }).catch(() => {});
+  }
+
+  _wmToggle?.addEventListener("click", () => {
+    State.watermarkEnable = _wmToggle.classList.contains("on");
+    if (_wmOpts) _wmOpts.style.display = State.watermarkEnable ? "" : "none";
+    if (State.watermarkEnable) _loadWatermarks();
+  });
+  _wmSelect?.addEventListener("change", () => { State.watermarkName = _wmSelect.value || ""; });
+  _wmPos?.addEventListener("change", () => { State.watermarkPosition = _wmPos.value || "bottom-right"; });
+  _wmOpacity?.addEventListener("input", () => {
+    const v = parseInt(_wmOpacity.value);
+    const lbl = document.getElementById("settingWatermarkOpacityVal");
+    if (lbl) lbl.textContent = v + "%";
+    State.watermarkOpacity = v / 100;
+  });
+  _wmScale?.addEventListener("input", () => {
+    const v = parseInt(_wmScale.value);
+    const lbl = document.getElementById("settingWatermarkScaleVal");
+    if (lbl) lbl.textContent = v + "%";
+    State.watermarkScale = v / 100;
+  });
+  _wmMargin?.addEventListener("input", () => {
+    const v = parseInt(_wmMargin.value);
+    const lbl = document.getElementById("settingWatermarkMarginVal");
+    if (lbl) lbl.textContent = v + "px";
+    State.watermarkMargin = v;
+  });
+  _wmRotation?.addEventListener("input", () => {
+    const v = parseInt(_wmRotation.value);
+    const lbl = document.getElementById("settingWatermarkRotationVal");
+    if (lbl) lbl.textContent = v + "°";
+    State.watermarkRotation = v;
+  });
+  document.getElementById("watermarkRefresh")?.addEventListener("click", () => {
+    _loadWatermarks().then(() => showToast("Watermark list refreshed", "info"));
+  });
+  document.getElementById("watermarkOpenFolder")?.addEventListener("click", () => {
+    API.openWatermarksFolder().then(resp => {
+      const hint = document.getElementById("watermarkFolderHint");
+      if (resp && resp.unavailable && resp.path) {
+        if (hint) { hint.textContent = "Drop watermark files here: " + resp.path; hint.style.display = ""; }
+        showToast("Folder picker unavailable — path shown below.", "info");
+      } else if (resp && resp.ok) {
+        showToast("Opened watermarks folder", "success");
+      }
+    }).catch(() => {});
+  });
+  // Populate on init so the dropdown is ready when the group is opened.
+  _loadWatermarks();
+
   // ===== UX-013: VRAM MANAGEMENT =====
 
   // Manual unload button
@@ -3948,6 +4070,14 @@ function bindUI() {
       ["settingSaveFormat", "val"], ["settingJpegQuality", "val"], ["settingWebpQuality", "val"],
       ["toggleWebpLossless", "on"],
     ],
+    // Watermark settings persist regardless of the enable toggle, so a user's
+    // configured mark/position/sliders survive disabling + reload.
+    watermark: [
+      ["toggleWatermark", "on"], ["settingWatermark", "val"],
+      ["settingWatermarkPosition", "val"], ["settingWatermarkOpacity", "val"],
+      ["settingWatermarkScale", "val"], ["settingWatermarkMargin", "val"],
+      ["settingWatermarkRotation", "val"],
+    ],
     brush: [
       ["paramBrushSize", "val"],
     ],
@@ -4151,6 +4281,30 @@ function bindUI() {
     // Hide WebP quality row if lossless
     const wqRow = document.getElementById("webpQualityRow");
     if (wqRow) wqRow.style.display = State.saveLossless ? "none" : "";
+
+    // Sync watermark state + labels from restored DOM (.value sets don't fire events)
+    State.watermarkEnable = document.getElementById("toggleWatermark")?.classList.contains("on") ?? false;
+    State.watermarkName = document.getElementById("settingWatermark")?.value || "";
+    State.watermarkPosition = document.getElementById("settingWatermarkPosition")?.value || "bottom-right";
+    const wmOp = parseInt(document.getElementById("settingWatermarkOpacity")?.value);
+    const wmSc = parseInt(document.getElementById("settingWatermarkScale")?.value);
+    const wmMg = parseInt(document.getElementById("settingWatermarkMargin")?.value);
+    const wmRo = parseInt(document.getElementById("settingWatermarkRotation")?.value);
+    State.watermarkOpacity = Number.isFinite(wmOp) ? wmOp / 100 : 1.0;
+    State.watermarkScale = Number.isFinite(wmSc) ? wmSc / 100 : 0.15;
+    State.watermarkMargin = Number.isFinite(wmMg) ? wmMg : 16;
+    State.watermarkRotation = Number.isFinite(wmRo) ? wmRo : 0;
+    const _wmOpL = document.getElementById("settingWatermarkOpacityVal");
+    if (_wmOpL && Number.isFinite(wmOp)) _wmOpL.textContent = wmOp + "%";
+    const _wmScL = document.getElementById("settingWatermarkScaleVal");
+    if (_wmScL && Number.isFinite(wmSc)) _wmScL.textContent = wmSc + "%";
+    const _wmMgL = document.getElementById("settingWatermarkMarginVal");
+    if (_wmMgL && Number.isFinite(wmMg)) _wmMgL.textContent = wmMg + "px";
+    const _wmRoL = document.getElementById("settingWatermarkRotationVal");
+    if (_wmRoL && Number.isFinite(wmRo)) _wmRoL.textContent = wmRo + "°";
+    const _wmOptsEl = document.getElementById("watermarkOpts");
+    if (_wmOptsEl) _wmOptsEl.style.display = State.watermarkEnable ? "" : "none";
+    if (State.watermarkEnable) { try { _loadWatermarks(); } catch (_) {} }
 
     // Restore AR pools from hidden inputs
     _syncPoolsFromDOM();
