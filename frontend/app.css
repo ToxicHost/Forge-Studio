@@ -8,6 +8,33 @@
 
 
 /* ═══════════════════════════════════════════
+   BUNDLED FONTS
+   Playfair Display — shipped locally (no CDN
+   dependency) via two variable fonts covering
+   weights 400–900, roman + italic. Served from
+   frontend/fonts/ at /studio/static/fonts/.
+   Licensed under the SIL Open Font License; see
+   fonts/OFL.txt.
+   ═══════════════════════════════════════════ */
+
+@font-face {
+  font-family: 'Playfair Display';
+  font-style: normal;
+  font-weight: 400 900;
+  font-display: swap;
+  src: url('/studio/static/fonts/PlayfairDisplay-VariableFont_wght.ttf') format('truetype-variations');
+}
+
+@font-face {
+  font-family: 'Playfair Display';
+  font-style: italic;
+  font-weight: 400 900;
+  font-display: swap;
+  src: url('/studio/static/fonts/PlayfairDisplay-Italic-VariableFont_wght.ttf') format('truetype-variations');
+}
+
+
+/* ═══════════════════════════════════════════
    TOKENS
    ═══════════════════════════════════════════ */
 
@@ -40,6 +67,7 @@
   --radius-lg: 12px;
   --font: 'DM Sans', -apple-system, BlinkMacSystemFont, sans-serif;
   --mono: 'JetBrains Mono', 'Fira Code', monospace;
+  --font-display: 'Playfair Display', Georgia, 'Times New Roman', serif;
   /* Sizing scale — keep this small. Used across the Generate panel to
      normalize control heights, gaps, and section padding so rows line
      up visually without per-component magic numbers. */
