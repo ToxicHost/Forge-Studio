@@ -2382,6 +2382,7 @@ function _showTextOverlay(p, e) {
                 <option>Arial</option><option>Georgia</option><option>Courier New</option>
                 <option>Impact</option><option>Verdana</option><option>Times New Roman</option>
                 <option>Comic Sans MS</option><option>Trebuchet MS</option>
+                <option>Playfair Display</option>
             </select>
             <input id="textSize" type="number" min="8" max="500" value="48" style="width:50px;background:var(--bg-raised);color:var(--text-1);border:1px solid var(--border);border-radius:4px;padding:3px 6px;font-size:11px;">
             <label style="font-size:10px;color:var(--text-3);display:flex;align-items:center;gap:2px;cursor:pointer;">
@@ -2416,7 +2417,7 @@ function _showTextOverlay(p, e) {
 
     const textPos = { x: p.x, y: p.y };
 
-    function commitText() {
+    async function commitText() {
         const text = document.getElementById("textInput")?.value;
         if (!text) { overlay.remove(); return; }
         const font = document.getElementById("textFont")?.value || "Arial";
@@ -2425,10 +2426,16 @@ function _showTextOverlay(p, e) {
         const italic = document.getElementById("textItalic")?.checked;
         overlay.remove();
 
+        const style = `${italic ? "italic " : ""}${bold ? "bold " : ""}${size}px "${font}"`;
+
+        // Bundled / web-font families (e.g. Playfair Display) may not be
+        // loaded yet the first time they're used — canvas fillText would
+        // silently fall back to a default. Ensure the face is ready first.
+        try { await document.fonts.load(style, text); } catch (_) {}
+
         // Rasterize to a new layer
         C.saveStructuralUndo("Place text");
         const newL = C.makeLayer("Text: " + text.slice(0, 15), "paint");
-        const style = `${italic ? "italic " : ""}${bold ? "bold " : ""}${size}px "${font}"`;
         newL.ctx.font = style;
         newL.ctx.fillStyle = S.color;
         newL.ctx.textBaseline = "top";
