@@ -95,6 +95,55 @@ def _should_copy_from_a_without_merge(key: str, arch: Optional[str]) -> bool:
     return arch == "cosmos" and _is_llm_adapter_key(key)
 
 
+def _resolve_output_dtype(output_dtype: str, arch: Optional[str], save_fp16: bool = True) -> str:
+    """
+    Resolve requested output dtype to one of: fp16, bf16, fp32.
+
+    output_dtype:
+      - "auto": architecture-aware reduced precision
+      - "fp16"
+      - "bf16"
+      - "fp32"
+
+    Backcompat:
+      - if output_dtype missing/blank and save_fp16 true -> auto
+      - if output_dtype missing/blank and save_fp16 false -> fp32
+    """
+    od = (output_dtype or "").strip().lower()
+    if not od:
+        od = "auto" if save_fp16 else "fp32"
+
+    if od == "auto":
+        return "bf16" if arch == "cosmos" else "fp16"
+
+    if od in ("fp16", "bf16", "fp32"):
+        return od
+
+    return "bf16" if arch == "cosmos" else "fp16"
+
+
+def _cast_output_tensor(t: "torch.Tensor", dtype_policy: str, key: str, arch: Optional[str]) -> "torch.Tensor":
+    """
+    Cast final tensor for save. Protected keys remain untouched.
+    """
+    if _is_protected_fp32_key(key, arch):
+        return t
+
+    if not torch.is_floating_point(t):
+        return t
+
+    if dtype_policy == "fp32":
+        return t.float() if t.dtype != torch.float32 else t
+
+    if dtype_policy == "bf16":
+        return t.to(torch.bfloat16)
+
+    if dtype_policy == "fp16":
+        return t.half()
+
+    return t
+
+
 # =========================================================================
 # COSMOS/ANIMA NAMESPACE CANONICALIZATION
 # =========================================================================
@@ -1723,6 +1772,7 @@ def merge_models(
     path_c: str = None,
     density: float = 0.2, drop_rate: float = 0.9,
     cosine_shift: float = 0.0, eta: float = 0.1,
+    output_dtype: str = "auto",
 ):
     """Key-iterative model merge with optional per-block weights.
 
@@ -1817,6 +1867,9 @@ def merge_models(
             keys_c = set(f_c.keys()) if f_c else set()
             arch_info = detect_architecture(keys_a)
             arch = arch_info["arch"]
+
+            dtype_policy = _resolve_output_dtype(output_dtype, arch, save_fp16)
+            print(f"{TAG} Output dtype: {dtype_policy.upper()} (requested={output_dtype or 'legacy'}, save_fp16={save_fp16})")
 
             # Cosmos/Anima ships in three layouts (compact net.*, wrapped
             # model.diffusion_model.*, AIO wrapped+TE+VAE). Canonicalize every
@@ -2013,10 +2066,8 @@ def merge_models(
                 else:
                     t_out = f_b.get_tensor(phys_b)
 
-                # Downcast — never VAE or llm_adapter keys
-                if save_fp16 and t_out.dtype == torch.float32:
-                    if not _is_protected_fp32_key(key, arch):
-                        t_out = t_out.half()
+                # Final save dtype cast — merge math is fp32, save dtype is policy-driven.
+                t_out = _cast_output_tensor(t_out, dtype_policy, key, arch)
 
                 output_dict[key] = t_out
 
@@ -2056,7 +2107,10 @@ def merge_models(
             "model_a": os.path.basename(path_a),
             "model_b": os.path.basename(path_b),
             "alpha": alpha, "block_weights": block_weights,
-            "fp16": save_fp16, "architecture": arch_info["arch"],
+            "fp16": save_fp16,
+            "output_dtype": dtype_policy,
+            "output_dtype_requested": output_dtype or ("auto" if save_fp16 else "fp32"),
+            "architecture": arch_info["arch"],
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "workshop_version": VERSION,
         }
@@ -3173,6 +3227,7 @@ def inspect_lora(path: str) -> dict:
 def bake_lora(
     ckpt_path: str, lora_list: List[Tuple[str, float]], output_path: str,
     save_fp16: bool = True,
+    output_dtype: str = "auto",
 ):
     """Bake one or more LoRAs into a checkpoint. Applied sequentially.
 
@@ -3212,6 +3267,9 @@ def bake_lora(
         with safe_open(ckpt_path, framework="pt", device="cpu") as f:
             ckpt_keys = set(f.keys())
             arch_info = detect_architecture(ckpt_keys)
+
+        dtype_policy = _resolve_output_dtype(output_dtype, arch_info["arch"], save_fp16)
+        print(f"{TAG} Output dtype: {dtype_policy.upper()} (requested={output_dtype or 'legacy'}, save_fp16={save_fp16})")
 
         for lora_path, strength in lora_list:
             lora_dict = load_safetensors(lora_path, device="cpu")
@@ -3319,10 +3377,8 @@ def bake_lora(
                             if errors <= 5:
                                 print(f"{TAG} Failed to apply {atype}: {base_name}")
 
-                # Downcast — never VAE or llm_adapter keys
-                if save_fp16 and weight.dtype == torch.float32:
-                    if not _is_protected_fp32_key(key, arch_info["arch"]):
-                        weight = weight.half()
+                # Final save dtype cast — bake math is fp32, save dtype is policy-driven.
+                weight = _cast_output_tensor(weight, dtype_policy, key, arch_info["arch"])
 
                 output_dict[key] = weight
 
@@ -3350,6 +3406,8 @@ def bake_lora(
             "loras": [{"filename": os.path.basename(p), "strength": s} for p, s in lora_list],
             "adapters_applied": applied,
             "fp16": save_fp16,
+            "output_dtype": dtype_policy,
+            "output_dtype_requested": output_dtype or ("auto" if save_fp16 else "fp32"),
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "workshop_version": VERSION,
         }
@@ -3448,6 +3506,7 @@ def _resolve_vae_path(filename: str) -> str:
 def bake_vae(
     ckpt_path: str, vae_path: str, output_path: str,
     save_fp16: bool = True,
+    output_dtype: str = "auto",
 ):
     """Bake a VAE into a checkpoint. Key-iterative.
 
@@ -3513,6 +3572,8 @@ def bake_vae(
         with safe_open(ckpt_path, framework="pt", device="cpu") as f:
             all_keys = sorted(f.keys())
             ckpt_arch = detect_architecture(set(all_keys))["arch"]
+            dtype_policy = _resolve_output_dtype(output_dtype, ckpt_arch, save_fp16)
+            print(f"{TAG} Output dtype: {dtype_policy.upper()} (requested={output_dtype or 'legacy'}, save_fp16={save_fp16})")
             _merge_state["keys_total"] = len(all_keys)
 
             for i, key in enumerate(all_keys):
@@ -3531,10 +3592,8 @@ def bake_vae(
                     replaced += 1
                 else:
                     weight = f.get_tensor(key)
-                    # Downcast non-protected keys (skip VAE + llm_adapter)
-                    if save_fp16 and weight.dtype == torch.float32:
-                        if not _is_protected_fp32_key(key, ckpt_arch):
-                            weight = weight.half()
+                    # Final save dtype cast — policy-driven (VAE + llm_adapter protected).
+                    weight = _cast_output_tensor(weight, dtype_policy, key, ckpt_arch)
 
                 output_dict[key] = weight
 
@@ -3554,6 +3613,8 @@ def bake_vae(
             "vae": os.path.basename(vae_path),
             "keys_replaced": replaced,
             "fp16": save_fp16,
+            "output_dtype": dtype_policy,
+            "output_dtype_requested": output_dtype or ("auto" if save_fp16 else "fp32"),
             "timestamp": datetime.now(timezone.utc).isoformat(),
             "workshop_version": VERSION,
         }
@@ -3807,6 +3868,7 @@ def _chain_step_merge(step_num, params, outputs, models_dir):
     alpha = params.get("alpha", 0.5)
     block_weights = params.get("block_weights")
     save_fp16 = params.get("save_fp16", True)
+    output_dtype = params.get("output_dtype", "auto")
     density = params.get("density", 0.2)
     drop_rate = params.get("drop_rate", 0.9)
     cosine_shift = params.get("cosine_shift", 0.0)
@@ -3818,6 +3880,7 @@ def _chain_step_merge(step_num, params, outputs, models_dir):
         block_weights, save_fp16,
         path_c=path_c, density=density, drop_rate=drop_rate,
         cosine_shift=cosine_shift, eta=eta,
+        output_dtype=output_dtype,
     )
 
     if not os.path.isfile(output_path):
@@ -3856,8 +3919,9 @@ def _chain_step_lora_bake(step_num, params, outputs, models_dir):
     output_path = os.path.join(models_dir, out_name)
 
     save_fp16 = params.get("save_fp16", True)
+    output_dtype = params.get("output_dtype", "auto")
 
-    bake_lora(ckpt_path, lora_list, output_path, save_fp16)
+    bake_lora(ckpt_path, lora_list, output_path, save_fp16, output_dtype=output_dtype)
 
     if not os.path.isfile(output_path):
         raise RuntimeError(f"LoRA bake did not produce output: {out_name} "
@@ -3889,8 +3953,9 @@ def _chain_step_vae_bake(step_num, params, outputs, models_dir):
     output_path = os.path.join(models_dir, out_name)
 
     save_fp16 = params.get("save_fp16", True)
+    output_dtype = params.get("output_dtype", "auto")
 
-    bake_vae(ckpt_path, vae_path, output_path, save_fp16)
+    bake_vae(ckpt_path, vae_path, output_path, save_fp16, output_dtype=output_dtype)
 
     if not os.path.isfile(output_path):
         raise RuntimeError(f"VAE bake did not produce output: {out_name}")
@@ -4074,6 +4139,7 @@ class MergeRequest(BaseModel):
     method: str = "weighted_sum"
     output_name: Optional[str] = None
     save_fp16: bool = True
+    output_dtype: str = "auto"
     block_weights: Optional[Dict[str, float]] = None
     # Phase 4 additions
     model_c: Optional[str] = None
@@ -4339,6 +4405,7 @@ def setup_workshop_routes(app: FastAPI):
                 "drop_rate": req.drop_rate,
                 "cosine_shift": req.cosine_shift,
                 "eta": req.eta,
+                "output_dtype": req.output_dtype,
             },
             daemon=True)
         thread.start()
@@ -4762,6 +4829,7 @@ def setup_workshop_routes(app: FastAPI):
         loras: List[LoraEntry]
         output_name: Optional[str] = None
         save_fp16: bool = True
+        output_dtype: str = "auto"
 
     @app.post("/studio/workshop/bake")
     async def workshop_bake(req: BakeRequest):
@@ -4806,6 +4874,7 @@ def setup_workshop_routes(app: FastAPI):
         thread = Thread(
             target=bake_lora,
             args=(ckpt_path, lora_list, output_path, req.save_fp16),
+            kwargs={"output_dtype": req.output_dtype},
             daemon=True,
         )
         thread.start()
@@ -4879,6 +4948,7 @@ def setup_workshop_routes(app: FastAPI):
         vae: str
         output_name: Optional[str] = None
         save_fp16: bool = True
+        output_dtype: str = "auto"
 
     @app.post("/studio/workshop/bake_vae")
     async def workshop_bake_vae(req: VaeBakeRequest):
@@ -4923,6 +4993,7 @@ def setup_workshop_routes(app: FastAPI):
         thread = Thread(
             target=bake_vae,
             args=(ckpt_path, vae_path, output_path, req.save_fp16),
+            kwargs={"output_dtype": req.output_dtype},
             daemon=True,
         )
         thread.start()

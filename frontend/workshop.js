@@ -207,7 +207,7 @@ const WS = {
     // Global recipe extras (applied after the board)
     recipeLoras: [],     // [{filename, strength}] — LoRA bake (global)
     recipeVae: null,     // VAE baked once into the chain's final output (global)
-    outputName: "", saveFp16: true, saveIntermediates: false,
+    outputName: "", saveFp16: true, outputDtype: "auto", saveIntermediates: false,
 
     // Run state
     merging: false, progress: 0, status: "idle", error: null, result: null,
@@ -534,8 +534,18 @@ function _buildBoardSnapshot() {
         recipeVae: WS.recipeVae,
         outputName: WS.outputName,
         saveFp16: WS.saveFp16,
+        outputDtype: WS.outputDtype,
         saveIntermediates: WS.saveIntermediates,
     };
+}
+
+function _wsOutputDtype() {
+    // Resolve the output dtype to send to the backend. When reduced
+    // precision is unchecked we force fp32; otherwise the dropdown value
+    // (default "auto") wins. Backend maps "auto" to BF16 for Anima/Cosmos
+    // and FP16 for everything else — merge math always runs in FP32.
+    if (!WS.saveFp16) return "fp32";
+    return WS.outputDtype || "auto";
 }
 
 function _buildRecipeChain() {
@@ -574,6 +584,7 @@ function _buildRecipeChain() {
             alpha: row.alpha,
             block_weights: row.useBlockWeights ? row.blockWeights : null,
             save_fp16: WS.saveFp16,
+            output_dtype: _wsOutputDtype(),
         };
         const info = METHOD_INFO[row.method] || {};
         if (info.needsC && row.tertiary) params.model_c = _resolveRowInput(row.tertiary, rowOutputStep);
@@ -602,6 +613,7 @@ function _buildRecipeChain() {
                     checkpoint: "__O" + mergeStepNum + "__",
                     vae: row.vae,
                     save_fp16: WS.saveFp16,
+                    output_dtype: _wsOutputDtype(),
                 },
             });
             rowFinalStep = stepNum;
@@ -635,6 +647,7 @@ function _buildRecipeChain() {
                 checkpoint: bakeCheckpoint,
                 loras: activeLoras.map(l => ({ filename: l.filename, strength: l.strength })),
                 save_fp16: WS.saveFp16,
+                output_dtype: _wsOutputDtype(),
             },
         });
         bakeCheckpoint = "__O" + stepNum + "__";
@@ -649,6 +662,7 @@ function _buildRecipeChain() {
                 checkpoint: bakeCheckpoint,
                 vae: WS.recipeVae,
                 save_fp16: WS.saveFp16,
+                output_dtype: _wsOutputDtype(),
             },
         });
     }
@@ -723,6 +737,7 @@ async function startMerge() {
         const body = _buildMergeBody();
         body.output_name = WS.outputName || null;
         body.save_fp16 = WS.saveFp16;
+        body.output_dtype = _wsOutputDtype();
         try {
             WS.merging = true; WS.status = "running"; WS.progress = 0; WS.error = null; WS.result = null;
             _renderProgress(); _setMergeButtonState(true);
@@ -1065,6 +1080,7 @@ async function _importJournalRecipe(entry) {
     WS.recipeVae = restored.recipeVae || null;
     WS.outputName = restored.outputName || "";
     WS.saveFp16 = restored.saveFp16 !== undefined ? !!restored.saveFp16 : true;
+    WS.outputDtype = restored.outputDtype || "auto";
     WS.saveIntermediates = !!restored.saveIntermediates;
     WS.compatibility = null;
     WS.healthScan = null;
@@ -1072,6 +1088,7 @@ async function _importJournalRecipe(entry) {
     // Sync the global control DOM that lives outside _renderRows().
     if (_els.outputName) _els.outputName.value = WS.outputName;
     if (_els.fp16) _els.fp16.checked = WS.saveFp16;
+    if (_els.outputDtype) _els.outputDtype.value = WS.outputDtype;
     if (_els.saveIntermediates) _els.saveIntermediates.checked = WS.saveIntermediates;
 
     _renderRows();
@@ -1184,6 +1201,7 @@ function _restoreFromBoardSnapshot(board) {
         recipeVae: _resolveVaeOrNull(board.recipeVae, missing),
         outputName: board.outputName || "",
         saveFp16: board.saveFp16 !== undefined ? !!board.saveFp16 : true,
+        outputDtype: board.outputDtype || "auto",
         saveIntermediates: !!board.saveIntermediates,
         missingCount: missing.count,
     };
@@ -1209,6 +1227,7 @@ function _restoreFromSingleMerge(recipe) {
         recipeVae: null,
         outputName: "",
         saveFp16: recipe.fp16 !== undefined ? !!recipe.fp16 : true,
+        outputDtype: recipe.output_dtype_requested || recipe.output_dtype || "auto",
         saveIntermediates: false,
         missingCount: missing.count,
     };
@@ -1224,6 +1243,7 @@ function _restoreFromLoraBake(recipe) {
         recipeVae: null,
         outputName: "",
         saveFp16: recipe.fp16 !== undefined ? !!recipe.fp16 : true,
+        outputDtype: recipe.output_dtype_requested || recipe.output_dtype || "auto",
         saveIntermediates: false,
         missingCount: missing.count,
     };
@@ -1239,6 +1259,7 @@ function _restoreFromVaeBake(recipe) {
         recipeVae: _resolveVaeOrNull(recipe.vae, missing),
         outputName: "",
         saveFp16: recipe.fp16 !== undefined ? !!recipe.fp16 : true,
+        outputDtype: recipe.output_dtype_requested || recipe.output_dtype || "auto",
         saveIntermediates: false,
         missingCount: missing.count,
     };
@@ -1261,6 +1282,7 @@ function _restoreFromChainSteps(steps) {
     let recipeVae = null;
     let outputName = "";
     let saveFp16 = true;
+    let outputDtype = "auto";
     const stepsLen = steps.length;
 
     // First pass: build a quick index of step → step type so we can
@@ -1270,6 +1292,8 @@ function _restoreFromChainSteps(steps) {
         const s = steps[i];
         if (!s) continue;
         if (s.fp16 !== undefined) saveFp16 = !!s.fp16;
+        if (s.output_dtype_requested) outputDtype = s.output_dtype_requested;
+        else if (s.output_dtype) outputDtype = s.output_dtype;
         if (s.type === "merge") {
             const row = _newRow();
             row.primary   = _resolveModelOrNull(s.model_a, missing);
@@ -1334,6 +1358,7 @@ function _restoreFromChainSteps(steps) {
         recipeVae,
         outputName,
         saveFp16,
+        outputDtype,
         saveIntermediates: false,
         missingCount: missing.count,
     };
@@ -1416,7 +1441,8 @@ function _recipeRowsHtml(recipe, elapsed) {
     if (recipe.checkpoint) html += '<div class="ws-je-recipe-row"><span>Checkpoint</span><span>' + _esc(recipe.checkpoint) + '</span></div>';
     if (recipe.loras) { for (const l of recipe.loras) { html += '<div class="ws-je-recipe-row"><span>LoRA</span><span>' + _esc(l.filename) + ' @ ' + l.strength + '</span></div>'; } }
     if (recipe.vae) html += '<div class="ws-je-recipe-row"><span>VAE</span><span>' + _esc(recipe.vae) + '</span></div>';
-    if (recipe.fp16 !== undefined) html += '<div class="ws-je-recipe-row"><span>fp16</span><span>' + (recipe.fp16 ? "Yes" : "No") + '</span></div>';
+    if (recipe.output_dtype) html += '<div class="ws-je-recipe-row"><span>Output dtype</span><span>' + String(recipe.output_dtype).toUpperCase() + '</span></div>';
+    else if (recipe.fp16 !== undefined) html += '<div class="ws-je-recipe-row"><span>fp16</span><span>' + (recipe.fp16 ? "Yes" : "No") + '</span></div>';
     if (elapsed) html += '<div class="ws-je-recipe-row"><span>Time</span><span>' + elapsed + '</span></div>';
     return html;
 }
@@ -1810,7 +1836,7 @@ function _buildUI(container) {
     + '</div>'
 
     // ── Output ──
-    + '<div class="ws-output-section"><div class="ws-param"><label data-i18n="workshop.outputFilename">' + _t("workshop.outputFilename", "Output Filename") + '</label><input type="text" id="wsOutputName" class="param-val ws-output-input" data-i18n-placeholder="workshop.outputFilename.placeholder" placeholder="' + _t("workshop.outputFilename.placeholder", "auto-generated if empty") + '" style="text-align:left;"></div><div class="ws-output-opts"><label class="ws-checkbox-label"><input type="checkbox" id="wsFp16" checked><span data-i18n="workshop.saveFp16">' + _t("workshop.saveFp16", "Save as fp16") + '</span></label><label class="ws-checkbox-label" data-i18n-title="workshop.keepIntermediates.tooltip" title="' + _t("workshop.keepIntermediates.tooltip", "Keep each row's output as its own .safetensors file (useful for multi-row boards)") + '"><input type="checkbox" id="wsSaveIntermediates"><span data-i18n="workshop.keepIntermediates">' + _t("workshop.keepIntermediates", "Keep intermediates") + '</span></label></div></div>'
+    + '<div class="ws-output-section"><div class="ws-param"><label data-i18n="workshop.outputFilename">' + _t("workshop.outputFilename", "Output Filename") + '</label><input type="text" id="wsOutputName" class="param-val ws-output-input" data-i18n-placeholder="workshop.outputFilename.placeholder" placeholder="' + _t("workshop.outputFilename.placeholder", "auto-generated if empty") + '" style="text-align:left;"></div><div class="ws-output-opts"><label class="ws-checkbox-label" data-i18n-title="workshop.reducedPrecision.tooltip" title="' + _t("workshop.reducedPrecision.tooltip", "Auto saves Anima/Cosmos as BF16 and other models as FP16. Merge math always runs in FP32.") + '"><input type="checkbox" id="wsFp16" checked><span data-i18n="workshop.reducedPrecision">' + _t("workshop.reducedPrecision", "Reduced precision") + '</span></label><label class="ws-output-dtype-label" data-i18n-title="workshop.outputDtype.tooltip" title="' + _t("workshop.outputDtype.tooltip", "Auto saves Anima/Cosmos as BF16 and other models as FP16. Merge math always runs in FP32.") + '"><span data-i18n="workshop.outputDtype">' + _t("workshop.outputDtype", "Output dtype") + '</span><select id="wsOutputDtype" class="param-val ws-output-dtype-select"><option value="auto">' + _t("workshop.outputDtype.auto", "Auto") + '</option><option value="fp16">FP16</option><option value="bf16">BF16</option><option value="fp32">FP32</option></select></label><label class="ws-checkbox-label" data-i18n-title="workshop.keepIntermediates.tooltip" title="' + _t("workshop.keepIntermediates.tooltip", "Keep each row's output as its own .safetensors file (useful for multi-row boards)") + '"><input type="checkbox" id="wsSaveIntermediates"><span data-i18n="workshop.keepIntermediates">' + _t("workshop.keepIntermediates", "Keep intermediates") + '</span></label></div></div>'
 
     // Memory status
     + '<div id="wsMemoryStatus" class="ws-memory-status" style="display:none;"><span class="ws-memory-badge" data-i18n="workshop.testMergeActive">' + _t("workshop.testMergeActive", "Test merge active") + '</span><span id="wsMemoryInfo" class="ws-memory-info"></span><button id="wsRevertBtn" class="ws-revert-btn" data-i18n="workshop.action.revert">' + _t("workshop.action.revert", "Revert") + '</button></div>'
@@ -1853,6 +1879,7 @@ function _buildUI(container) {
         equalizeBtn: container.querySelector("#wsEqualizeChain"),
         chainContrib: container.querySelector("#wsChainContrib"),
         outputName: container.querySelector("#wsOutputName"), fp16: container.querySelector("#wsFp16"),
+        outputDtype: container.querySelector("#wsOutputDtype"),
         saveIntermediates: container.querySelector("#wsSaveIntermediates"),
         mergeBtn: container.querySelector("#wsMergeBtn"), cancelBtn: container.querySelector("#wsCancelBtn"),
         progressSection: container.querySelector("#wsProgressSection"), progressFill: container.querySelector("#wsProgressFill"),
@@ -2472,8 +2499,27 @@ function _bindGlobalEvents() {
     if (_els.equalizeBtn) _els.equalizeBtn.addEventListener("click", _equalizeChain);
 
     _els.outputName.addEventListener("input", () => { WS.outputName = _els.outputName.value.trim(); });
-    _els.fp16.addEventListener("change", () => { WS.saveFp16 = _els.fp16.checked; });
+    // "Reduced precision" checkbox and the Output dtype dropdown stay in
+    // sync: unchecking forces FP32, re-checking restores Auto. The dropdown
+    // is the full-fidelity control (auto/fp16/bf16/fp32).
+    _els.fp16.addEventListener("change", () => {
+        WS.saveFp16 = _els.fp16.checked;
+        if (!WS.saveFp16) {
+            WS.outputDtype = "fp32";
+        } else if (WS.outputDtype === "fp32") {
+            WS.outputDtype = "auto";
+        }
+        if (_els.outputDtype) _els.outputDtype.value = WS.outputDtype;
+    });
     _els.fp16.checked = WS.saveFp16;
+    if (_els.outputDtype) {
+        _els.outputDtype.addEventListener("change", () => {
+            WS.outputDtype = _els.outputDtype.value || "auto";
+            WS.saveFp16 = WS.outputDtype !== "fp32";
+            _els.fp16.checked = WS.saveFp16;
+        });
+        _els.outputDtype.value = WS.outputDtype;
+    }
     _els.saveIntermediates.addEventListener("change", () => {
         WS.saveIntermediates = _els.saveIntermediates.checked;
         _recomputeFinalRowOutputName();
