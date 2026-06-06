@@ -656,6 +656,20 @@
     cursor: pointer;
 }
 
+.ws-output-dtype-label {
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    font-size: 11px;
+    color: var(--text-2);
+    cursor: pointer;
+}
+
+.ws-output-dtype-select {
+    font-size: 11px;
+    padding: 2px 6px;
+}
+
 
 /* ═══════════════════════════════════════════
    ACTION ROW

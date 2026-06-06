@@ -272,41 +272,34 @@ def _on_generation_complete(spec: LiveSpec, result_b64: Optional[str], error: Op
 # =========================================================================
 
 def _generation_worker(spec: LiveSpec):
-    """Run a single live generation frame. Stripped down: no scripts, no AD,
-    no hires fix, no disk writes. Just img2img → result."""
+    """Run a single live generation frame. Uses the standard Studio
+    generation builder (_build_processing_obj) so Anima/WAN/flow-matching
+    models get the same parameter setup as regular img2img."""
     result_b64 = None
     error = None
 
     try:
-        from modules import shared, sd_models
-        from modules.processing import (
-            StableDiffusionProcessingImg2Img,
-            process_images,
-        )
+        from modules import shared
+        from modules.processing import process_images
+
+        # Import the standard generation infrastructure
+        try:
+            from studio_generation import (
+                GenParams, InpaintParams, _build_processing_obj,
+                _reset_generation_state, _ensure_model_loaded,
+            )
+        except ImportError:
+            from scripts.studio_generation import (
+                GenParams, InpaintParams, _build_processing_obj,
+                _reset_generation_state, _ensure_model_loaded,
+            )
 
         print(f"{TAG} Generation starting: {spec.width}x{spec.height}, "
               f"strength={spec.strength}, steps={spec.steps}, seed={spec.seed}")
 
-        # Ensure model is loaded
-        if not hasattr(shared.sd_model, 'forge_objects') or shared.sd_model.forge_objects is None:
-            try:
-                if hasattr(sd_models, 'forge_model_reload'):
-                    sd_models.forge_model_reload()
-            except Exception as e:
-                error = f"Model not loaded: {e}"
-                _on_generation_complete(spec, None, error)
-                return
-
-        # Clear stale state
-        shared.state.interrupted = False
-        shared.state.skipped = False
-        shared.state.job_count = 1
-        shared.state.job_no = 0
-        shared.state.sampling_step = 0
-        shared.state.sampling_steps = 0
-        shared.state.current_latent = None
-        shared.state.current_image = None
-        shared.state.time_start = time.time()
+        # Use the same preflight as regular generation
+        _reset_generation_state()
+        _ensure_model_loaded()
 
         # Decode init image
         image_data = spec.image_b64
@@ -320,84 +313,53 @@ def _generation_worker(spec: LiveSpec):
         elif init_img.mode != "RGB":
             init_img = init_img.convert("RGB")
 
-        # Build minimal img2img processing object
-        p = StableDiffusionProcessingImg2Img(
-            sd_model=shared.sd_model,
-            outpath_samples="",
-            outpath_grids="",
+        # Build processing object through the standard path — same as
+        # regular Create-mode img2img. This ensures built-in script arg
+        # patching, parameter re-assertion, and proper model state setup
+        # that flow-matching models (Anima/Cosmos) require.
+        gp = GenParams(
             prompt=spec.prompt,
-            negative_prompt=spec.negative_prompt,
-            init_images=[init_img],
-            resize_mode=0,
-            denoising_strength=spec.strength,
-            n_iter=1,
-            batch_size=1,
+            neg_prompt=spec.negative_prompt,
             steps=spec.steps,
+            sampler_name=spec.sampler_name,
+            schedule_type=spec.scheduler,
             cfg_scale=spec.cfg_scale,
+            denoising=spec.strength,
             width=spec.width,
             height=spec.height,
-            sampler_name=spec.sampler_name,
             seed=spec.seed,
-            do_not_save_samples=True,
-            do_not_save_grid=True,
         )
 
-        # Set scheduler
-        if hasattr(p, 'scheduler'):
-            p.scheduler = spec.scheduler
+        p = _build_processing_obj(
+            canvas_img=init_img,
+            gp=gp,
+            mask_img=None,
+            has_mask=False,
+            ip=InpaintParams(),
+            studio_outdir="",
+            batch_seed=spec.seed,
+        )
 
-        # Attach script runner — required for wildcards/dynamic prompts.
-        # Without this, process_images() won't resolve __wildcards__ or
-        # {dynamic|prompts}. We attach the full img2img runner with defaults
-        # and force-disable AD in the script_args (same as unchecking it).
-        # ControlNet with no units = no-op. Everything else is lightweight.
-        try:
-            import modules.scripts as mod_scripts
-            runner = mod_scripts.scripts_img2img
-            if runner and hasattr(runner, 'alwayson_scripts'):
-                p.scripts = runner
-                n_inputs = len(runner.inputs) if hasattr(runner, 'inputs') else 0
-                script_args = [None] * n_inputs
-                if hasattr(runner, 'inputs') and runner.inputs:
-                    for i, comp in enumerate(runner.inputs):
-                        if comp is not None and hasattr(comp, 'value'):
-                            script_args[i] = comp.value
-                if script_args:
-                    script_args[0] = 0
+        # Live overrides: no disk writes
+        p.do_not_save_samples = True
+        p.do_not_save_grid = True
 
-                try:
-                    try:
-                        from studio_generation import _force_enable_dynamic_prompts
-                    except ImportError:
-                        from scripts.studio_generation import _force_enable_dynamic_prompts
-                    _force_enable_dynamic_prompts(runner, script_args)
-                except Exception as _dp_e:
-                    print(f"{TAG} Warning: could not force-enable Dynamic Prompts ({_dp_e})")
-
-                # Force-disable ADetailer in script_args
-                for s in runner.alwayson_scripts:
-                    try:
-                        title = s.title().strip() if callable(getattr(s, 'title', None)) else ""
-                    except Exception:
-                        title = ""
-                    if title == "ADetailer":
-                        idx = s.args_from
-                        if idx < len(script_args):
-                            script_args[idx] = False
-                        break
-
-                p.script_args = script_args
-                print(f"{TAG} Script runner attached ({len(runner.alwayson_scripts)} alwayson, AD off)")
-        except Exception as e:
-            print(f"{TAG} Warning: script runner failed ({e}) — wildcards won't resolve")
-
-        # Run generation. Live never installs p.sampler_cfg_function — that hook
-        # participates in CFG math and corrupts sampling (NaN/black output on
-        # Anima/Cosmos). Latest-wins is handled by the pending queue instead.
+        # Run generation
         t0 = time.time()
         processed = process_images(p)
         elapsed = time.time() - t0
         print(f"{TAG} Generation completed in {elapsed:.2f}s")
+
+        # ── Lightweight NaN check (remove once confirmed fixed) ──
+        import torch as _torch
+        if hasattr(p, 'latents_after_sampling') and p.latents_after_sampling:
+            _lat = p.latents_after_sampling[0]
+            _nan = _torch.isnan(_lat).sum().item()
+            if _nan:
+                print(f"{TAG} DIAG samples_ddim: BAD nan={_nan}/{_lat.numel()}")
+            else:
+                print(f"{TAG} DIAG samples_ddim: FINITE {_lat.numel()} elements")
+        # ─────────────────────────────────────────────────────────
 
         # Encode result — if process_images produced images, use them.
         if processed and processed.images:
