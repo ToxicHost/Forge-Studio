@@ -3237,7 +3237,9 @@ function bindUI() {
           format: _fmtFromName(data.path),
           quality: State.saveQuality || 95,
           metadata: infotext || null,
-          full_path: data.path,                       // exact path the user chose
+          // Send the one-shot token the dialog minted — the server resolves it
+          // to the chosen path. Never sends a raw client path for the write.
+          save_token: data.token || undefined,
         });
         if (res.ok) showToast("Saved " + res.filename, "success");
         else showToast(res.error || "Save failed", "error");

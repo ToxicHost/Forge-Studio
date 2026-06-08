@@ -353,20 +353,30 @@ _GITHUB_API = f"https://api.github.com/repos/{_GITHUB_OWNER}/{_GITHUB_REPO}"
 _VERSION_FILE = _studio_root / "version.json"
 
 
-# Folders Studio has written generated images to this session. Forge's own
-# output tree is always reachable via the /file= route, but a user-chosen
-# save folder lives outside it, so we record it here and serve files from it
-# (path-validated) through /studio/file — keeps previews and the float/mask
-# sidecars loadable regardless of where the user pointed auto-save.
-_STUDIO_SERVE_ROOTS = set()
+# ── /studio/file serving + path-write safety ────────────────────────────
+# Security model (hardened): /studio/file serves ONLY files Studio itself
+# wrote/returned this session (exact resolved-path allowlist) plus media/
+# sidecar files under Forge's own output tree. Clients can NOT register new
+# readable roots, and writes are confined to "safe roots" (output tree +
+# folders the user picked via the server-side dialog + operator-configured
+# STUDIO_SAVE_ROOTS). Save As uses one-shot tokens, never a raw client path.
 
+# Exact resolved file paths Studio wrote this session and may serve.
+_SERVED_FILES = set()
+# Directories the LOCAL user explicitly chose via the server-side picker
+# dialog (trusted — not client request data). Used as safe write roots.
+_PICKED_DIRS = set()
+# One-shot Save As tokens: token -> (resolved_path, expiry_epoch).
+_SAVE_TOKENS = {}
+_SAVE_TOKEN_TTL = 300  # seconds
 
-def _register_serve_root(p):
-    try:
-        if p:
-            _STUDIO_SERVE_ROOTS.add(str(Path(p).expanduser().resolve()))
-    except Exception:
-        pass
+# Only these media/sidecar suffixes may be served by /studio/file. Note the
+# compound suffixes — plain .json/.bin/.txt/.py/.db are deliberately NOT here.
+_FILE_EXT_ALLOW = (
+    ".png", ".jpg", ".jpeg", ".webp", ".gif",
+    ".mp4", ".webm", ".mov",
+    ".float32.bin", ".float32.json",  # .blend_mask.png covered by .png
+)
 
 
 def _forge_output_root():
@@ -382,23 +392,124 @@ def _forge_output_root():
         return str(Path("output").resolve())
 
 
-def _path_is_served(path):
-    """True when `path` resolves inside the Forge output tree or a folder
-    Studio has saved to this session — guards /studio/file against traversal
-    and arbitrary filesystem reads."""
+def _resolved(p):
     try:
-        rp = Path(path).expanduser().resolve()
+        return Path(p).expanduser().resolve()
+    except Exception:
+        return None
+
+
+def _register_served_file(p):
+    """Record an exact file Studio wrote so /studio/file may serve it."""
+    rp = _resolved(p)
+    if rp is not None:
+        _SERVED_FILES.add(str(rp))
+
+
+def _register_picked_dir(p):
+    """Record a directory the LOCAL user selected via the server-side picker
+    dialog. Trusted (not client request data) → a safe write root."""
+    rp = _resolved(p)
+    if rp is not None and rp.is_dir():
+        _PICKED_DIRS.add(str(rp))
+
+
+def _ext_allowed(name):
+    n = str(name).lower()
+    return any(n.endswith(s) for s in _FILE_EXT_ALLOW)
+
+
+def _is_under(child, root):
+    try:
+        child.relative_to(root)
+        return True
     except Exception:
         return False
-    roots = set(_STUDIO_SERVE_ROOTS)
-    roots.add(_forge_output_root())
-    for root in roots:
-        try:
-            rp.relative_to(root)
+
+
+def _is_served_file(path):
+    """True only for an allowed media/sidecar file that Studio wrote this
+    session OR that lives under Forge's own output tree. No client-registered
+    roots; resolve()+exact-match defeats traversal and symlink escape."""
+    rp = _resolved(path)
+    if rp is None or not _ext_allowed(rp.name):
+        return False
+    if str(rp) in _SERVED_FILES:
+        return True
+    # Fixed fallback root: Forge's output tree (needed so float/mask sidecars
+    # from earlier sessions still load via the Gallery). Extension-gated above.
+    return _is_under(rp, Path(_forge_output_root()))
+
+
+def _safe_write_roots():
+    roots = {_forge_output_root()}
+    roots.update(_PICKED_DIRS)
+    # Operator-configured extra roots (env is trusted) for remote/VM setups
+    # where the user types a path instead of using the server-side dialog.
+    extra = os.environ.get("STUDIO_SAVE_ROOTS", "")
+    for chunk in extra.split(os.pathsep):
+        rp = _resolved(chunk.strip())
+        if rp is not None:
+            roots.add(str(rp))
+    return roots
+
+
+def _safe_write_root(path):
+    """True when `path` is inside a safe write root: Forge's output tree, a
+    dialog-picked folder, or an operator-configured STUDIO_SAVE_ROOTS entry.
+    Blocks a random API client from writing to arbitrary absolute paths."""
+    rp = _resolved(path)
+    if rp is None:
+        return False
+    return any(_is_under(rp, Path(r)) for r in _safe_write_roots())
+
+
+def _mint_save_token(path):
+    """Store a dialog-chosen Save As path behind a short-lived one-shot token."""
+    import secrets
+    rp = _resolved(path)
+    if rp is None:
+        return ""
+    now = time.time()
+    # Opportunistic prune of expired tokens.
+    for k in [k for k, (_, exp) in list(_SAVE_TOKENS.items()) if exp < now]:
+        _SAVE_TOKENS.pop(k, None)
+    tok = secrets.token_urlsafe(24)
+    _SAVE_TOKENS[tok] = (str(rp), now + _SAVE_TOKEN_TTL)
+    # The picked file's parent is a trusted write root for the duration.
+    _register_picked_dir(str(rp.parent))
+    return tok
+
+
+def _consume_save_token(token):
+    """Resolve + invalidate a Save As token. Single-use; None if invalid/expired."""
+    if not token:
+        return None
+    ent = _SAVE_TOKENS.pop(token, None)
+    if not ent:
+        return None
+    path, exp = ent
+    if time.time() > exp:
+        return None
+    return path
+
+
+def _check_same_origin(request):
+    """Reject cross-site browser requests (CSRF) to path-writing endpoints.
+    Same-origin UI and non-browser clients (no Origin header) pass; a browser
+    request whose Origin host differs from the Host header is rejected. (Direct
+    non-browser LAN clients are additionally constrained by _safe_write_root.)"""
+    try:
+        origin = request.headers.get("origin")
+        if not origin:
+            sfs = request.headers.get("sec-fetch-site")
+            if sfs and sfs not in ("same-origin", "same-site", "none"):
+                return False
             return True
-        except ValueError:
-            continue
-    return False
+        from urllib.parse import urlparse
+        return urlparse(origin).netloc == (request.headers.get("host") or "")
+    except Exception:
+        return True
 
 
 def _read_version():
@@ -767,7 +878,9 @@ def _write_float_metadata(bin_path: Path, float_arr, stats) -> None:
                 "max_rgb": st.get("max_rgb"),
             },
         }
-        _atomic_write_json(bin_path.with_suffix(".json"), meta)
+        json_path = bin_path.with_suffix(".json")
+        _atomic_write_json(json_path, meta)
+        _register_served_file(str(json_path))
     except Exception as e:
         print(f"{TAG} High Precision: metadata sidecar write failed: {e}")
 
@@ -794,6 +907,7 @@ def _save_float_sidecar(fpath: Path, float_arr, stats=None) -> str:
         data = np.ascontiguousarray(float_arr, dtype=np.float32).tobytes()
         with open(str(sidecar), "wb") as f:
             f.write(data)
+        _register_served_file(str(sidecar))
         _write_float_metadata(sidecar, float_arr, stats)
         return str(sidecar)
     except Exception as e:
@@ -820,6 +934,7 @@ def _save_mask_sidecar(fpath: Path, mask_arr) -> str:
         sidecar = fpath.with_name(fpath.stem + ".blend_mask.png")
         u8 = (np.clip(mask_arr, 0.0, 1.0) * 255.0 + 0.5).astype(np.uint8)
         Image.fromarray(u8, mode="L").save(str(sidecar), format="PNG", optimize=True)
+        _register_served_file(str(sidecar))
         return str(sidecar)
     except Exception as e:
         print(f"{TAG} High Precision: blend-mask sidecar write failed for {fpath.name}: {e}")
@@ -1843,13 +1958,19 @@ def setup_studio_routes(app: FastAPI):
         # When set we use it as the base and keep the {mode}/{date} substructure
         # for organization; when blank we fall back to Forge's output dir.
         _save_override = (req.save_dir or "").strip()
+        # Security: only honor a custom save_dir that resolves inside a safe
+        # write root (Forge output tree, a dialog-picked folder, or a
+        # STUDIO_SAVE_ROOTS entry). A random/cross-site client cannot redirect
+        # writes to an arbitrary absolute path; we silently fall back instead.
+        if _save_override and not _safe_write_root(_save_override):
+            log.warning("save_dir rejected (outside safe roots) — using default output dir")
+            _save_override = ""
         if _save_override:
             try:
                 base_outdir = str(Path(_save_override).expanduser())
                 output_dir = Path(base_outdir) / mode_folder / date.today().strftime("%Y-%m-%d")
-                _register_serve_root(_save_override)
             except Exception:
-                log.exception("Invalid save_dir override %r — falling back to default", _save_override)
+                log.exception("Invalid save_dir override — falling back to default")
                 _save_override = ""
         if not _save_override:
             try:
@@ -1948,6 +2069,7 @@ def setup_studio_routes(app: FastAPI):
                         with open(str(fpath), "wb") as f:
                             f.write(png_bytes)
                         image_paths.append(str(fpath))
+                        _register_served_file(str(fpath))
                         # High Precision: write the float32 sidecar next
                         # to the PNG. Best-effort; failure here doesn't
                         # affect the saved image.
@@ -2025,6 +2147,7 @@ def setup_studio_routes(app: FastAPI):
                         with open(str(fpath), "wb") as f:
                             f.write(file_bytes)
                         image_paths.append(str(fpath))
+                        _register_served_file(str(fpath))
                         images_b64.append(f"data:{mime};base64," + base64.b64encode(file_bytes).decode())
                         # High Precision: write float32 sidecar next to
                         # the lossy file. The sidecar holds the true
@@ -3423,11 +3546,12 @@ def setup_studio_routes(app: FastAPI):
         path: str
 
     @app.post("/studio/open_folder")
-    async def open_folder(req: OpenFolderRequest):
-        """Open an arbitrary folder in the OS file manager on the Forge/Studio
-        server machine. Used by the configurable "Save to Gallery folder"
-        setting. Opens on the server, not the browser client — see the UI
-        helper text for the remote/VM caveat."""
+    async def open_folder(req: OpenFolderRequest, request: Request):
+        """Open a folder in the OS file manager on the Forge/Studio server
+        machine. Opens on the server, not the browser client. CSRF-guarded:
+        a cross-site browser request cannot trigger it."""
+        if not _check_same_origin(request):
+            return JSONResponse({"ok": False, "error": "forbidden"}, status_code=403)
         import subprocess, platform
         target = (req.path or "").strip()
         if not target:
@@ -3448,16 +3572,15 @@ def setup_studio_routes(app: FastAPI):
 
     @app.get("/studio/file")
     async def studio_file(path: str = ""):
-        """Serve a generated file (image or .float32.bin/mask sidecar) from a
-        folder Studio wrote to. Needed because a user-chosen save folder lives
-        outside Forge's /file= tree. Path-validated against served roots to
-        prevent traversal / arbitrary reads."""
-        if not path or not _path_is_served(path):
+        """Serve a generated media/sidecar file. Hardened: only files Studio
+        wrote this session (exact resolved-path allowlist) or media/sidecar
+        files under Forge's own output tree, and only allowed extensions.
+        Clients cannot register readable roots; resolve()+exact-match defeats
+        traversal/symlink escape."""
+        if not path or not _is_served_file(path):
             return JSONResponse({"error": "forbidden"}, status_code=403)
-        rp = Path(path).expanduser()
-        try:
-            rp = rp.resolve()
-        except Exception:
+        rp = _resolved(path)
+        if rp is None:
             return JSONResponse({"error": "bad path"}, status_code=400)
         if not rp.is_file():
             return JSONResponse({"error": "not found"}, status_code=404)
@@ -4102,13 +4225,17 @@ def setup_studio_routes(app: FastAPI):
         format: str = "png"          # png | jpeg | webp
         quality: int = 80            # for jpeg/webp; matches GenerateRequest.save_quality default
         subfolder: str = ""          # optional subfolder under output dir
-        dest_dir: Optional[str] = None  # optional absolute folder (configurable "Save to Gallery folder"); overrides subfolder/base
+        dest_dir: Optional[str] = None  # optional absolute folder (configurable "Save to Gallery folder"); confined to safe write roots
         filename: Optional[str] = None  # optional custom filename (without ext)
-        full_path: Optional[str] = None # exact target path chosen via a Save As… dialog (overwrites; bypasses auto-naming)
+        save_token: Optional[str] = None  # one-shot token from /pick-save-file (preferred Save As path source)
+        full_path: Optional[str] = None # raw Save As path — only honored if inside a safe write root
         metadata: Optional[str] = None  # infotext to embed (PNG tEXt, JPEG/WebP EXIF UserComment)
 
     @app.post("/studio/save_image")
-    async def save_image(req: SaveImageRequest):
+    async def save_image(req: SaveImageRequest, request: Request):
+        # CSRF: reject cross-site browser requests to this path-writing endpoint.
+        if not _check_same_origin(request):
+            return JSONResponse({"ok": False, "error": "forbidden"}, status_code=403)
         try:
             # Decode image — surface a clear message rather than a raw
             # binascii/PIL error. validate=True catches malformed base64;
@@ -4122,15 +4249,24 @@ def setup_studio_routes(app: FastAPI):
             except Exception as de:
                 raise ValueError(f"Invalid image data: {de}")
 
-            # Explicit "Save As…" target — the user already chose the exact path
-            # (and confirmed any overwrite) in the native save dialog, so write
-            # there directly and skip the auto-naming/uniqueness logic used by
-            # quick saves. Format follows the chosen file extension.
-            if (req.full_path or "").strip():
-                target = Path(req.full_path).expanduser()
+            # Explicit "Save As…" target. Preferred source is a one-shot token
+            # minted by /pick-save-file (the path the LOCAL user chose in the
+            # native dialog) — never a raw client path. A raw full_path is only
+            # honored if it resolves inside a safe write root, so a random/
+            # cross-site client cannot write to an arbitrary absolute path.
+            _saveas_path = _consume_save_token(req.save_token)
+            if not _saveas_path and (req.full_path or "").strip():
+                if _safe_write_root(req.full_path):
+                    _saveas_path = str(Path(req.full_path).expanduser())
+                else:
+                    return JSONResponse(
+                        {"ok": False, "error": "Save path is outside an allowed folder. "
+                         "Use the Browse dialog, or set STUDIO_SAVE_ROOTS on the server."},
+                        status_code=403)
+            if _saveas_path:
+                target = Path(_saveas_path).expanduser()
                 try:
                     target.parent.mkdir(parents=True, exist_ok=True)
-                    _register_serve_root(str(target.parent))
                 except Exception:
                     pass
                 _ext = target.suffix.lower().lstrip(".")
@@ -4155,7 +4291,8 @@ def setup_studio_routes(app: FastAPI):
                     pnginfo.add_text("parameters", req.metadata)
                     save_kwargs["pnginfo"] = pnginfo
                 img.save(str(target), icc_profile=_SRGB_ICC, **save_kwargs)
-                print(f"{TAG} Saved (Save As) {eff_fmt.upper()} → {target}")
+                _register_served_file(str(target))
+                print(f"{TAG} Saved (Save As) {eff_fmt.upper()} → {target.name}")
                 return {"ok": True, "path": str(target), "filename": target.name}
 
             # Determine output directory — same logic as generation auto-save
@@ -4194,6 +4331,13 @@ def setup_studio_routes(app: FastAPI):
             # must surface a clear error rather than quietly landing somewhere
             # unexpected.
             dest_dir = (req.dest_dir or "").strip()
+            if dest_dir and not _safe_write_root(dest_dir):
+                # Confine to safe write roots — a random/cross-site client must
+                # not be able to write to an arbitrary absolute path.
+                return JSONResponse(
+                    {"ok": False, "error": "Save folder is outside an allowed location. "
+                     "Pick it via Browse, or set STUDIO_SAVE_ROOTS on the server."},
+                    status_code=403)
             if dest_dir:
                 output_dir = Path(dest_dir).expanduser()
                 if not _probe_writable(output_dir):
