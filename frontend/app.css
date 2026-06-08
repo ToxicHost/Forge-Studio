@@ -1859,6 +1859,12 @@ body {
 /* Result → Canvas is the primary action — give it a touch more emphasis so
    the three buttons don't read as one repeated control. */
 .output-actions #outputToCanvas { color: var(--text-2); }
+/* ▾ split-button — narrow, butted against Save As… so they read as one
+   control with a primary action plus an overflow menu. */
+.output-actions .output-save-more {
+  flex: 0 0 auto; width: 20px; gap: 0; margin-left: -2px;
+  border-top-left-radius: 0; border-bottom-left-radius: 0;
+}
 
 /* Output gallery save — icon-only square button + floating popover. */
 .output-actions .output-save-icon {

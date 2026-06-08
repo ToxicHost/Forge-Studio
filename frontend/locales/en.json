@@ -52,7 +52,8 @@
   "actions.save": "Save",
   "actions.save.tooltip": "Save using your default format and folder",
   "actions.saveAs": "Save As…",
-  "actions.saveAs.tooltip": "Save As… — choose format, location, or Save to Gallery",
+  "actions.saveAs.tooltip": "Save As… — open the file dialog to choose name, location, and format",
+  "actions.saveMore.tooltip": "More destinations — Save to Gallery, Export EXR",
 
   "live.strength": "Strength",
 

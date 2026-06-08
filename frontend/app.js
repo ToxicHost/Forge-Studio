@@ -2924,9 +2924,7 @@ function bindUI() {
         { label: "Send to Canvas", action: "canvas" },
         seed ? { label: `Copy Seed (${seed})`, action: "seed" } : null,
         null, // separator
-        { label: "Save as PNG", action: "save-png" },
-        { label: "Save as JPEG", action: "save-jpeg" },
-        { label: "Save as WebP", action: "save-webp" },
+        { label: "Save As…", action: "save-as" },
         { label: _exrCtxLabel, action: "save-exr" },
       ].filter(Boolean).map(item =>
         item.label ? `<div class="gallery-ctx-item" data-action="${item.action}">${item.label}</div>`
@@ -2949,15 +2947,8 @@ function bindUI() {
           navigator.clipboard.writeText(seed).then(() => showToast(`Seed ${seed} copied`, "success"));
         } else if (action === "save-exr") {
           await _exportEXR(idx, false);
-        } else if (action.startsWith("save-")) {
-          const fmt = action.replace("save-", "");
-          const metadata = State.embedMetadata ? (infotext || "") : "";
-          const origName = State.outputFilenames[idx] || null;
-          try {
-            const result = await API.saveImage({ image_b64: imgSrc, format: fmt, quality: 95, metadata: metadata || null, subfolder: "downloads", filename: origName });
-            if (result.ok) showToast(`Saved ${result.filename}`, "success");
-            else showToast(result.error || "Save failed", "error");
-          } catch (err) { showToast("Save failed: " + err.message, "error"); }
+        } else if (action === "save-as") {
+          await _saveAsNative(idx);
         }
       });
 
@@ -3168,30 +3159,80 @@ function bindUI() {
   // Native "Save As…" via the File System Access API (Chromium). Returns
   // true when handled (including user-cancel), false when unsupported or
   // failed so the caller can fall back to the backend/download flow.
-  async function _saveViaNativePicker(fmt) {
-    if (typeof window.showSaveFilePicker !== "function") return false;
-    const imgSrc = await _resolveOutputAsB64(State.selectedOutputIdx);
-    if (!imgSrc) return false;
-    const ext = fmt === "jpeg" ? "jpg" : fmt;
-    const mime = fmt === "jpeg" ? "image/jpeg" : (fmt === "webp" ? "image/webp" : "image/png");
-    const stem = (State.outputFilenames[State.selectedOutputIdx] || `studio_${Date.now()}`).replace(/\.[^.]+$/, "");
+  const _extForFmt = (f) => (f === "jpeg" ? "jpg" : f);
+  const _mimeForFmt = (f) => (f === "jpeg" ? "image/jpeg" : (f === "webp" ? "image/webp" : "image/png"));
+  const _fmtFromName = (name) => {
+    const ext = (String(name).split(".").pop() || "").toLowerCase();
+    if (ext === "jpg" || ext === "jpeg") return "jpeg";
+    if (ext === "webp") return "webp";
+    return "png";
+  };
+  // Decode a same-format data URL straight to a Blob — no canvas re-encode,
+  // so embedded metadata (prompt/seed/settings) is preserved. Used when the
+  // chosen Save As format matches the source format.
+  function _dataUrlToBlob(dataUrl) {
     try {
-      const handle = await window.showSaveFilePicker({
-        suggestedName: stem + "." + ext,
-        types: [{ description: fmt.toUpperCase() + " image", accept: { [mime]: ["." + ext] } }],
-      });
-      const blob = await _encodeOutputBlob(imgSrc, fmt);
-      if (!blob) return false;
-      const w = await handle.createWritable();
-      await w.write(blob);
-      await w.close();
-      showToast("Saved " + handle.name, "success");
-      return true;
-    } catch (err) {
-      if (err && err.name === "AbortError") return true; // user cancelled
-      console.warn("[Studio] Native save failed:", err);
-      return false;
+      const [head, b64] = dataUrl.split(",");
+      const mime = (head.match(/data:([^;]+)/) || [])[1] || "application/octet-stream";
+      const bin = atob(b64);
+      const arr = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+      return new Blob([arr], { type: mime });
+    } catch { return null; }
+  }
+
+  // Save As… — open the OS native save dialog so the user chooses the name,
+  // location, AND format, exactly like any desktop app. Falls back to a
+  // browser download (with a suggested filename) where the File System Access
+  // API isn't available (Firefox/Safari) — there the browser's own "ask where
+  // to save" setting governs the location prompt.
+  async function _saveAsNative(idx = State.selectedOutputIdx) {
+    const imgSrc = await _resolveOutputAsB64(idx);
+    if (!imgSrc) { showToast("No image to save", "info"); return; }
+    const srcMime = (imgSrc.match(/^data:([^;]+)/) || [])[1] || "image/png";
+    const srcFmt = srcMime === "image/jpeg" ? "jpeg" : (srcMime === "image/webp" ? "webp" : "png");
+    const defFmt = State.saveFormat || srcFmt || "png";
+    const stem = (State.outputFilenames[idx] || `studio_${Date.now()}`).replace(/\.[^.]+$/, "");
+
+    // Reuse the source bytes (keeps embedded metadata) when no format change
+    // is needed; otherwise re-encode via an offscreen canvas.
+    const _bytesFor = async (fmt) =>
+      (fmt === srcFmt) ? _dataUrlToBlob(imgSrc) : await _encodeOutputBlob(imgSrc, fmt);
+
+    if (typeof window.showSaveFilePicker === "function") {
+      // Offer all three formats (default first) so the user can switch format
+      // right in the dialog's file-type dropdown.
+      const order = [defFmt, ...["png", "jpeg", "webp"].filter(f => f !== defFmt)];
+      const types = order.map(f => ({
+        description: f.toUpperCase() + " image",
+        accept: { [_mimeForFmt(f)]: ["." + _extForFmt(f)] },
+      }));
+      try {
+        const handle = await window.showSaveFilePicker({ suggestedName: stem + "." + _extForFmt(defFmt), types });
+        const fmt = _fmtFromName(handle.name);
+        const blob = await _bytesFor(fmt);
+        if (!blob) { showToast("Could not encode image", "error"); return; }
+        const w = await handle.createWritable();
+        await w.write(blob);
+        await w.close();
+        showToast("Saved " + handle.name, "success");
+      } catch (err) {
+        if (err && err.name === "AbortError") return; // user cancelled — no toast
+        console.warn("[Studio] Save As (native) failed:", err);
+        showToast("Save As failed: " + (err?.message || err), "error");
+      }
+      return;
     }
+
+    // Fallback — browser download with a suggested name in the default format.
+    const blob = await _bytesFor(defFmt);
+    if (!blob) { showToast("Could not encode image", "error"); return; }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = stem + "." + _extForFmt(defFmt);
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+    showToast("Saved to your browser downloads", "info");
   }
 
   // Gallery save — anchor a floating popover off the icon button so we
@@ -3257,6 +3298,9 @@ function bindUI() {
     }
   }
 
+  // Secondary "▾" menu beside Save As… — the destinations that aren't a
+  // plain file (Gallery is an internal target; EXR is a niche float export).
+  // Save As… itself opens the OS save dialog directly; it isn't in here.
   function _showOutputSaveMenu(anchor) {
     const existing = document.getElementById("outputSaveMenu");
     if (existing) { existing.remove(); return; }
@@ -3267,24 +3311,12 @@ function bindUI() {
     const _idx = State.selectedOutputIdx;
     const _hasFloat = !!(State.outputFloatPaths && State.outputFloatPaths[_idx]);
     const _exrLabel = _hasFloat ? "Export EXR (High Precision)" : "Export EXR (Standard)";
-
-    // Default the native "Choose location…" to the user's configured output
-    // format so Save As… honors the Settings choice when supported.
     const _fmt = State.saveFormat || "png";
-    const items = [];
-    if (typeof window.showSaveFilePicker === "function") {
-      items.push({ label: "Choose location…", fn: async () => {
-        const ok = await _saveViaNativePicker(_fmt);
-        if (!ok) _saveSelectedOutput(_fmt, false); // fall back to backend/download
-      } });
-    }
-    items.push(
-      { label: "Save as PNG",  fn: () => _saveSelectedOutput("png",  false) },
-      { label: "Save as JPEG", fn: () => _saveSelectedOutput("jpeg", false) },
-      { label: "Save as WebP", fn: () => _saveSelectedOutput("webp", false) },
-      { label: _exrLabel,      fn: () => _exportEXR(_idx, false) },
+
+    const items = [
       { label: "Save to Gallery", fn: () => _saveSelectedOutput(_fmt, true) },
-    );
+      { label: _exrLabel,         fn: () => _exportEXR(_idx, false) },
+    ];
 
     const menu = document.createElement("div");
     menu.id = "outputSaveMenu";
@@ -3328,8 +3360,14 @@ function bindUI() {
     _saveSelectedOutput(State.saveFormat || "png", false);
   });
 
-  // Save As… — format / location / Save to Gallery picker.
-  document.getElementById("outputSaveAs")?.addEventListener("click", (e) => {
+  // Save As… — open the OS native save dialog (name / location / format),
+  // just like any desktop app.
+  document.getElementById("outputSaveAs")?.addEventListener("click", () => {
+    _saveAsNative();
+  });
+
+  // ▾ — secondary destinations (Save to Gallery, Export EXR).
+  document.getElementById("outputSaveMore")?.addEventListener("click", (e) => {
     _showOutputSaveMenu(e.currentTarget);
   });
 
