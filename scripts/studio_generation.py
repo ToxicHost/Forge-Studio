@@ -1907,18 +1907,20 @@ _HP_CAPTURE_ACTIVE = False
 _HP_CAPTURE_BATCHES = []  # list[list[np.ndarray]] — one entry per decode_latent_batch call
 
 
-def _hp_sample_to_hwc(sample):
-    """Normalize one decoded latent sample to an HWC float32 numpy array.
+def _hp_tensor_to_hwc_list(sample):
+    """Convert one decode_latent_batch element into a list of HWC float32
+    images.
 
-    decode_latent_batch yields per-image tensors (iterating its result already
-    consumes the batch dim). Standard image models give CHW; Anima/Cosmos/WAN
-    still images carry an extra singleton temporal dimension (CTHW with T==1).
-    This squeezes that, accepts already-HWC tensors, skips genuine multi-frame
-    (T>1) output, and returns None on anything unsupported.
+    The element's layout varies by model:
+      - 3D  [C, H, W]        (or [H, W, C]) — a single image
+      - 4D  [B, C, H, W]     (or [B, H, W, C]) — a batch of images
+      - 5D  [B, C, T, H, W]  — Anima/Cosmos/WAN; T==1 is a still image
+    The batch dimension is NOT consumed by the caller's loop (some decode
+    paths return a list of batched tensors), so this expands it here.
 
-    Values are remapped [-1,1] → [0,1] WITHOUT clamping — preserving the
-    sub-LSB / out-of-range headroom is the whole point of High Precision.
-    Never raises; HP capture must never break generation.
+    Multi-frame (T>1) and unrecognised layouts return [] with a clear log.
+    Values are remapped [-1,1] → [0,1] WITHOUT clamping (the HP win). Never
+    raises — HP capture must never break generation.
     """
     try:
         try:
@@ -1931,45 +1933,54 @@ def _hp_sample_to_hwc(sample):
         else:
             arr = np.asarray(sample, dtype=np.float32)
 
-        # Remap [-1, 1] → [0, 1] without clamping (the HP win).
+        # Remap [-1, 1] → [0, 1] without clamping (keep sub-LSB headroom).
         arr = (arr + 1.0) / 2.0
         shape0 = tuple(arr.shape)
 
-        # Per-image CTHW (Anima/Cosmos still image): squeeze the singleton
-        # temporal dim (axis 1 once the batch dim is gone). T>1 is real video —
-        # skip it cleanly rather than mangling it.
-        if arr.ndim == 4:
-            if arr.shape[1] == 1:
-                arr = arr[:, 0, :, :]
+        # 5D B,C,T,H,W — squeeze a singleton temporal dim; skip real video.
+        if arr.ndim == 5:
+            if arr.shape[2] == 1:
+                arr = arr[:, :, 0, :, :]
                 print(f"[Studio] High Precision: squeezed singleton temporal dim {shape0} -> {tuple(arr.shape)}")
             else:
                 print(f"[Studio] High Precision: skipping multi-frame tensor shape={shape0}")
-                return None
+                return []
 
-        if arr.ndim != 3:
-            print(f"[Studio] High Precision: unsupported capture tensor shape={shape0}")
-            return None
-
-        # CHW → HWC; accept already-HWC. Forge decode is channels-first, so
-        # prefer that interpretation when axis 0 looks like a channel count.
-        if arr.shape[0] in (1, 3, 4):
-            arr = np.transpose(arr, (1, 2, 0))
-        elif arr.shape[-1] in (1, 3, 4):
-            pass  # already HWC
+        if arr.ndim == 4:
+            # Batched: B,C,H,W → B,H,W,C, or already B,H,W,C.
+            if arr.shape[1] in (1, 3, 4):
+                arr = np.transpose(arr, (0, 2, 3, 1))
+            elif arr.shape[-1] in (1, 3, 4):
+                pass
+            else:
+                print(f"[Studio] High Precision: unsupported channel layout shape={shape0}")
+                return []
+            imgs = [arr[i] for i in range(arr.shape[0])]
+        elif arr.ndim == 3:
+            # Single image: C,H,W → H,W,C, or already H,W,C.
+            if arr.shape[0] in (1, 3, 4):
+                imgs = [np.transpose(arr, (1, 2, 0))]
+            elif arr.shape[-1] in (1, 3, 4):
+                imgs = [arr]
+            else:
+                print(f"[Studio] High Precision: unsupported channel layout shape={shape0}")
+                return []
         else:
-            print(f"[Studio] High Precision: unsupported channel layout shape={shape0}")
-            return None
+            print(f"[Studio] High Precision: unsupported capture tensor shape={shape0}")
+            return []
 
-        # 1-channel → RGB; drop alpha. The HP sidecar is RGB float.
-        if arr.shape[-1] == 1:
-            arr = np.repeat(arr, 3, axis=-1)
-        elif arr.shape[-1] > 3:
-            arr = arr[..., :3]
-
-        return np.ascontiguousarray(arr, dtype=np.float32)
+        out_imgs = []
+        for a in imgs:
+            # 1-channel → RGB; drop alpha. The HP sidecar is RGB float.
+            if a.shape[-1] == 1:
+                a = np.repeat(a, 3, axis=-1)
+            elif a.shape[-1] > 3:
+                a = a[..., :3]
+            out_imgs.append(np.ascontiguousarray(a, dtype=np.float32))
+        return out_imgs
     except Exception as e:
         print(f"[Studio] High Precision: capture normalize error — {e}")
-        return None
+        return []
 
 
 def _hp_install_decode_hook():
@@ -1994,14 +2005,12 @@ def _hp_install_decode_hook():
             return out
         try:
             this_batch = []
-            # `out` is an iterable of per-image tensors in [-1, 1] (Forge
-            # convention). Iterating consumes the batch dim, so each `sample`
-            # is CHW (standard) or CTHW (Anima/Cosmos still). The normalizer is
-            # shape-aware and skips frames it can't represent as an HP sidecar.
+            # `out` is an iterable of decode results. Each element may be a
+            # single image (CHW), a batch (BCHW), or a video tensor (BCTHW) —
+            # the normalizer expands whatever it gets into HWC images and skips
+            # frames it can't represent as an HP sidecar.
             for sample in out:
-                hwc = _hp_sample_to_hwc(sample)
-                if hwc is not None:
-                    this_batch.append(hwc)
+                this_batch.extend(_hp_tensor_to_hwc_list(sample))
             # Only record a non-empty batch — an all-skipped (e.g. multi-frame)
             # decode leaves nothing for _hp_pick_final_floats to match, which
             # correctly results in "no HP sidecar" rather than a broken one.
