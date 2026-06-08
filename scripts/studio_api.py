@@ -363,12 +363,14 @@ _VERSION_FILE = _studio_root / "version.json"
 
 # Exact resolved file paths Studio wrote this session and may serve.
 _SERVED_FILES = set()
-# Directories the LOCAL user explicitly chose via the server-side picker
-# dialog (trusted — not client request data). Used as safe write roots.
-_PICKED_DIRS = set()
 # One-shot Save As tokens: token -> (resolved_path, expiry_epoch).
 _SAVE_TOKENS = {}
 _SAVE_TOKEN_TTL = 300  # seconds
+# Persisted trusted *write* roots. A path becomes trusted only through an
+# explicit local-user action (server-side Browse, or typed-then-"Trust" in the
+# UI) — never just by appearing in a generation/save request. Stored separately
+# from client-writable defaults so the save_defaults endpoint can't inject one.
+_TRUSTED_ROOTS_FILE = _studio_root / "trusted_save_roots.json"
 
 # Only these media/sidecar suffixes may be served by /studio/file. Note the
 # compound suffixes — plain .json/.bin/.txt/.py/.db are deliberately NOT here.
@@ -406,12 +408,102 @@ def _register_served_file(p):
         _SERVED_FILES.add(str(rp))
 
 
-def _register_picked_dir(p):
-    """Record a directory the LOCAL user selected via the server-side picker
-    dialog. Trusted (not client request data) → a safe write root."""
+def _load_trusted_roots():
+    try:
+        with open(_TRUSTED_ROOTS_FILE) as f:
+            data = json.load(f)
+        items = data.get("trusted_save_roots", []) if isinstance(data, dict) else []
+        out = set()
+        for r in items:
+            rp = _resolved(r)
+            if rp is not None:
+                out.add(str(rp))
+        return out
+    except Exception:
+        return set()
+
+
+def _save_trusted_roots(roots):
+    try:
+        _atomic_write_json(_TRUSTED_ROOTS_FILE, {"trusted_save_roots": sorted(roots)})
+    except Exception:
+        pass
+
+
+def _is_dangerous_root(rp):
+    """Reject overly-broad / sensitive directories as trusted save roots."""
+    try:
+        rp = Path(rp).expanduser().resolve()
+    except Exception:
+        return True
+    # Filesystem / drive root ("/", "C:\\").
+    if rp == rp.parent:
+        return True
+    try:
+        if rp == Path.home().resolve():  # the home ROOT (subfolders are fine)
+            return True
+    except Exception:
+        pass
+    sys_dirs = ["/etc", "/bin", "/sbin", "/boot", "/sys", "/proc", "/dev",
+                "/lib", "/lib64", "/usr", "/var", "/root", "/System", "/Library"]
+    for env in ("SystemRoot", "windir", "ProgramFiles", "ProgramFiles(x86)", "ProgramData"):
+        v = os.environ.get(env)
+        if v:
+            sys_dirs.append(v)
+    # System dirs: reject the directory AND anything under it.
+    for d in sys_dirs:
+        dp = _resolved(d)
+        if dp is not None and (rp == dp or _is_under(rp, dp)):
+            return True
+    # Install roots (Forge data dir + Studio extension): reject the root itself
+    # or any ancestor of it (which would expose models/config). Dedicated
+    # SUBfolders under them are allowed (e.g. an outputs subfolder).
+    install_roots = [str(_studio_root)]
+    try:
+        from modules.paths import data_path
+        install_roots.append(str(data_path))
+    except Exception:
+        pass
+    for d in install_roots:
+        dp = _resolved(d)
+        if dp is not None and (rp == dp or _is_under(dp, rp)):
+            return True
+    return False
+
+
+def _probe_writable_path(rp):
+    try:
+        rp.mkdir(parents=True, exist_ok=True)
+        with tempfile.NamedTemporaryFile(dir=str(rp), prefix=".swprobe_", delete=True):
+            pass
+        return True
+    except Exception:
+        return False
+
+
+def _add_trusted_root(p):
+    """Validate and persist a trusted write root. Returns (ok, message). Used
+    by the server-side picker and the explicit 'Trust folder' UI action."""
     rp = _resolved(p)
-    if rp is not None and rp.is_dir():
-        _PICKED_DIRS.add(str(rp))
+    if rp is None:
+        return False, "Path could not be resolved."
+    if _is_dangerous_root(rp):
+        return False, "That folder is too broad or system-level to trust. Pick a dedicated output subfolder."
+    if not _probe_writable_path(rp):
+        return False, "Folder does not exist / could not be created, or isn't writable by Forge Studio."
+    roots = _load_trusted_roots()
+    roots.add(str(rp))
+    _save_trusted_roots(roots)
+    return True, str(rp)
+
+
+def _register_picked_dir(p):
+    """Persist a directory the LOCAL user chose via the server-side picker as a
+    trusted write root (explicit local action). Best-effort; ignores rejects."""
+    try:
+        _add_trusted_root(p)
+    except Exception:
+        pass
 
 
 def _ext_allowed(name):
@@ -443,9 +535,9 @@ def _is_served_file(path):
 
 def _safe_write_roots():
     roots = {_forge_output_root()}
-    roots.update(_PICKED_DIRS)
-    # Operator-configured extra roots (env is trusted) for remote/VM setups
-    # where the user types a path instead of using the server-side dialog.
+    # Persisted, explicitly-trusted roots (Browse-picked or typed-then-Trusted).
+    roots.update(_load_trusted_roots())
+    # Operator-configured extra roots (env is trusted) for remote/VM setups.
     extra = os.environ.get("STUDIO_SAVE_ROOTS", "")
     for chunk in extra.split(os.pathsep):
         rp = _resolved(chunk.strip())
@@ -476,8 +568,8 @@ def _mint_save_token(path):
         _SAVE_TOKENS.pop(k, None)
     tok = secrets.token_urlsafe(24)
     _SAVE_TOKENS[tok] = (str(rp), now + _SAVE_TOKEN_TTL)
-    # The picked file's parent is a trusted write root for the duration.
-    _register_picked_dir(str(rp.parent))
+    # The token alone authorizes this exact one-shot write — we do NOT persist
+    # the parent as a trusted root (Save As shouldn't permanently widen writes).
     return tok
 
 
@@ -3569,6 +3661,41 @@ def setup_studio_routes(app: FastAPI):
             return {"ok": True, "path": target}
         except Exception as e:
             return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+    # ── Trusted save roots (explicit, persisted; enables typed remote/VM paths)
+    class TrustRootRequest(BaseModel):
+        path: str = ""
+
+    @app.post("/studio/trust-save-root")
+    async def trust_save_root(req: TrustRootRequest, request: Request):
+        """Validate a typed server-visible folder and persist it as a trusted
+        write root. This is the explicit user action that makes a typed path
+        usable for save_dir/dest_dir — a path is NEVER trusted just by appearing
+        in a generation/save request. CSRF-guarded."""
+        if not _check_same_origin(request):
+            return JSONResponse({"ok": False, "error": "forbidden"}, status_code=403)
+        raw = (req.path or "").strip()
+        if not raw:
+            return {"ok": False, "error": "No path provided."}
+        ok, msg = _add_trusted_root(raw)
+        if ok:
+            return {"ok": True, "path": msg}
+        return JSONResponse({"ok": False, "error": msg}, status_code=400)
+
+    @app.get("/studio/trusted-save-roots")
+    async def get_trusted_save_roots():
+        return {"roots": sorted(_load_trusted_roots())}
+
+    @app.post("/studio/untrust-save-root")
+    async def untrust_save_root(req: TrustRootRequest, request: Request):
+        if not _check_same_origin(request):
+            return JSONResponse({"ok": False, "error": "forbidden"}, status_code=403)
+        rp = _resolved((req.path or "").strip())
+        roots = _load_trusted_roots()
+        if rp is not None:
+            roots.discard(str(rp))
+        _save_trusted_roots(roots)
+        return {"ok": True}
 
     @app.get("/studio/file")
     async def studio_file(path: str = ""):

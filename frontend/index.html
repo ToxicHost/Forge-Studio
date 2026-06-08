@@ -961,6 +961,7 @@
                 <input type="text" class="param-val" id="settingGalleryFolder" data-i18n-placeholder="settings.gallery.placeholder" placeholder="Leave blank for the default output folder" style="width:100%;box-sizing:border-box;font-size:11px;">
               </div>
               <div class="setting-row" style="gap:6px;justify-content:flex-end;">
+                <button class="defaults-btn" id="galleryFolderTrust" style="font-size:10px;padding:3px 8px;" data-i18n="settings.gallery.trust">Trust folder</button>
                 <button class="defaults-btn" id="galleryFolderBrowse" style="font-size:10px;padding:3px 8px;" data-i18n="settings.gallery.browse">Browse…</button>
                 <button class="defaults-btn" id="galleryFolderOpen" style="font-size:10px;padding:3px 8px;" data-i18n="settings.gallery.open">Open folder</button>
               </div>
@@ -973,10 +974,12 @@
                 <input type="text" class="param-val" id="settingSaveDir" data-i18n-placeholder="settings.saveDir.placeholder" placeholder="Leave blank for the default Forge output folder" style="width:100%;box-sizing:border-box;font-size:11px;">
               </div>
               <div class="setting-row" style="gap:6px;justify-content:flex-end;">
+                <button class="defaults-btn" id="saveDirTrust" style="font-size:10px;padding:3px 8px;" data-i18n="settings.saveDir.trust">Trust folder</button>
                 <button class="defaults-btn" id="saveDirBrowse" style="font-size:10px;padding:3px 8px;" data-i18n="settings.saveDir.browse">Browse…</button>
                 <button class="defaults-btn" id="saveDirOpen" style="font-size:10px;padding:3px 8px;" data-i18n="settings.saveDir.open">Open folder</button>
               </div>
-              <p style="font-size:10px;color:var(--text-4);margin:4px 0 0 0;" data-i18n="settings.saveDir.hint">Where generated images are written automatically. This folder lives on the machine running Forge/Studio. Leave blank to use Forge’s default output folder.</p>
+              <p style="font-size:10px;color:var(--text-4);margin:4px 0 0 0;" data-i18n="settings.saveDir.hint">Where generated images are written automatically. This folder is on the machine running Forge Studio. If you’re using Studio remotely, type a path visible to the server/VM, then click <b>Trust folder</b>. Leave blank for Forge’s default output folder.</p>
+              <div id="trustedRootsList" style="margin-top:6px;display:flex;flex-direction:column;gap:3px;"></div>
             </div>
             <div class="setting-group">
               <div class="setting-group-title">Watermark</div>

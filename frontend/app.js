@@ -365,6 +365,66 @@ function _studioFileUrl(path) {
   return API.base + "/studio/file?path=" + encodeURIComponent(path);
 }
 
+// Explicitly trust a typed server-visible folder so Studio may save there.
+// This is the user action that makes a typed (remote/VM) path usable — paths
+// are never trusted just by appearing in a save/generation request. Returns
+// true on success.
+async function _trustSaveFolder(path) {
+  const p = (path || "").trim();
+  if (!p) { showToast("Type a folder path first", "info"); return false; }
+  try {
+    const r = await fetch(API.base + "/studio/trust-save-root", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: p }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (r.ok && data.ok) { showToast("Folder trusted — Studio can save here", "success"); return true; }
+    showToast(data.error || "Could not trust folder", "error");
+    return false;
+  } catch (e) {
+    showToast("Could not reach server: " + e.message, "error");
+    return false;
+  }
+}
+
+// Render the persisted trusted-save-folder list (with Remove) in Settings.
+async function _renderTrustedRoots() {
+  const el = document.getElementById("trustedRootsList");
+  if (!el) return;
+  try {
+    const r = await fetch(API.base + "/studio/trusted-save-roots");
+    const data = await r.json().catch(() => ({}));
+    const roots = (data && data.roots) || [];
+    el.innerHTML = "";
+    if (!roots.length) return;
+    const title = document.createElement("div");
+    title.style.cssText = "font-size:10px;color:var(--text-4);";
+    title.textContent = "Trusted save folders:";
+    el.appendChild(title);
+    roots.forEach(p => {
+      const row = document.createElement("div");
+      row.style.cssText = "display:flex;align-items:center;gap:6px;";
+      const span = document.createElement("span");
+      span.style.cssText = "flex:1 1 auto;min-width:0;font-size:10px;color:var(--text-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;";
+      span.textContent = p; span.title = p;
+      const rm = document.createElement("button");
+      rm.className = "defaults-btn"; rm.style.cssText = "font-size:9px;padding:1px 6px;";
+      rm.textContent = "Remove";
+      rm.addEventListener("click", async () => {
+        try {
+          await fetch(API.base + "/studio/untrust-save-root", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ path: p }),
+          });
+        } catch (_) {}
+        _renderTrustedRoots();
+      });
+      row.appendChild(span); row.appendChild(rm);
+      el.appendChild(row);
+    });
+  } catch (_) { /* best-effort */ }
+}
+
 async function _resolveOutputAsB64(idx) {
   const src = _pickOutputSource(idx);
   if (!src) return null;
@@ -4051,6 +4111,13 @@ function bindUI() {
       showToast("Could not open folder: " + e.message, "error");
     }
   });
+  document.getElementById("saveDirTrust")?.addEventListener("click", async () => {
+    if (await _trustSaveFolder((_saveDirInput?.value || "").trim())) _renderTrustedRoots();
+  });
+  document.getElementById("galleryFolderTrust")?.addEventListener("click", async () => {
+    if (await _trustSaveFolder((_galFolderInput?.value || "").trim())) _renderTrustedRoots();
+  });
+  _renderTrustedRoots();
 
   // ===== Auto Watermark =====
   const _wmToggle = document.getElementById("toggleWatermark");
@@ -6548,8 +6615,12 @@ function _showFirstRunModal() {
     const fmtSel = document.getElementById("settingSaveFormat");
     if (fmtSel) { fmtSel.value = fmt; fmtSel.dispatchEvent(new Event("change")); }
 
-    // Save location → settingSaveDir (only when a custom folder was picked).
+    // Save location → settingSaveDir (only when a custom folder was chosen).
+    // A custom folder must be explicitly trusted before Studio will write to
+    // it; if trust fails (bad/too-broad path), keep the card open so the user
+    // can fix it rather than silently falling back to the default.
     const useCustom = _pick("saveloc") === "custom" && _customPath;
+    if (useCustom && !(await _trustSaveFolder(_customPath))) return;
     const saveInput = document.getElementById("settingSaveDir");
     if (saveInput) { saveInput.value = useCustom ? _customPath : ""; saveInput.dispatchEvent(new Event("change")); }
     State.saveDir = useCustom ? _customPath : "";
