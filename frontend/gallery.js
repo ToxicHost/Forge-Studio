@@ -82,6 +82,11 @@ const G = {
     selectedFolders: new Set(),
     lastSelectedFolderIdx: -1,
     navContext: null,
+    // Lightbox reliability: a bounded warm-cache of preloaded full-res
+    // images keyed by image id, so arrow-key navigation lands on adjacent
+    // shots instantly instead of re-fetching/decoding the full file each
+    // step. Bounded — never an unbounded pile of full-size bitmaps.
+    _fullCache: new Map(),
 };
 
 // ========================================================================
@@ -1886,6 +1891,13 @@ function _mimeForExt(ext) {
 
 function _navList() { return G.navContext || G.images; }
 function showDetailOverlay() {
+    // Guard against stale async re-renders. A slow _resolveByHash in
+    // _navStep (backoff up to ~3s) can resolve *after* the user has already
+    // closed the lightbox and call us — which used to flash the previous
+    // image for a frame ("every 4-5 closes"). closeDetail() flips G.page
+    // back to "gallery" synchronously, so a non-"detail" page is the signal
+    // that this render is stale and must be dropped.
+    if (G.page !== "detail") return;
     document.getElementById("gal-detail-overlay")?.remove();
     const list = _navList();
     const img = list[G.currentImageIndex]; if (!img) return;
@@ -1917,6 +1929,36 @@ function showDetailOverlay() {
     ov.innerHTML ='<div class="gal-detail-img-area" id="gal-detail-img-area">' + mediaHtml + '</div><div class="gal-detail-sidebar"><div class="gal-detail-panel"><input class="gal-detail-filename" id="gal-rename-input" value="' + esc(img.filename) + '"' + (eph ? ' readonly' : '') + ' />' + (eph ? '' : '<div class="gal-detail-folder"><span class="gal-tree-icon">' + IC.folder + '</span> ' + esc(img.folder) + '</div>') + '' + (img.width ? '<div class="gal-detail-dims">' + img.width + ' \u00d7 ' + img.height + ' px</div>' : '') + (eph ? '' : '<div class="gal-detail-rating" id="gal-detail-rating">' + _buildStarRatingHtml(img.rating || 0, img.id) + '</div>') + '<div class="gal-detail-actions">' + (eph ? '' : '<button class="gal-detail-btn" data-action="explorer" data-img-id="' + img.id + '">' + IC.explorer + " " + _t("gallery.detail.browse", "Browse") + '</button>') + '<button class="gal-detail-btn" data-action="copy-image" data-img-id="' + img.id + '">&#x1F4CB; ' + _t("gallery.detail.copy", "Copy") + '</button><button class="gal-detail-btn" data-action="download-image" data-img-id="' + img.id + '">&#x2B07; ' + _t("gallery.detail.save", "Save") + '</button>' + sendCanvasHtml + '' + (eph ? '' : '<span class="gal-detail-sep"></span><button class="gal-detail-btn" data-action="find-similar" data-img-id="' + img.id + '">' + IC.duplicate + ' Find Similar</button><button class="gal-detail-btn" data-action="strip-metadata" data-img-id="' + img.id + '">' + IC.stripMeta + " " + _t("gallery.toolbar.stripMetadata", "Strip metadata") + '</button><button class="gal-detail-btn" data-action="convert" data-img-id="' + img.id + '">' + IC.convert + " " + _t("gallery.detail.convert", "Convert...") + '</button><button class="gal-detail-btn danger" data-action="delete" data-img-id="' + img.id + '">' + IC.trash + " " + _t("gallery.toolbar.delete", "Delete") + '</button>') + '</div>' + (eph ? '' : '<div class="gal-detail-chars" id="gal-detail-chars">' + buildDetailTagsHtml(img.id, img.characters || []) + '</div>') + '<div class="gal-detail-nav"><button class="gal-detail-btn nav" data-action="prev" ' + (G.currentImageIndex <= 0 ? "disabled" : "") + '>' + IC.chevLeft + '</button><button class="gal-btn" data-action="back" style="flex:1">Back</button><button class="gal-detail-btn nav" data-action="next" ' + (G.currentImageIndex >= list.length - 1 ? "disabled" : "") + '>' + IC.chevRight + '</button></div></div><div class="gal-meta-panel" id="gal-meta-panel"><div class="gal-meta-section-title" data-i18n="gallery.metadata.title">' + _t("gallery.metadata.title", "Metadata") + '</div><div class="gal-meta-empty" data-i18n="gallery.metadata.loading">' + _t("gallery.metadata.loading", "Loading...") + '</div></div></div>';
     document.body.appendChild(ov); G.detailZoom = 1; G.detailPan = { x: 0, y: 0 };
     _wireDetailEvents(ov, img); setTimeout(() => loadMetadata(img), 50);
+    // Warm the neighbours so the next/prev arrow paints instantly.
+    if (!eph && img.id) _preloadFull(img.id);
+    _preloadAdjacent();
+}
+
+// Bounded warm-cache of full-res images around the current index. Only
+// DB-backed stills are preloaded: ephemeral rows already hold their pixels
+// in memory as a data URL, and videos stream on demand. Keeping a live
+// Image reference holds the decoded bitmap so navigating back and forth
+// doesn't re-fetch or re-decode. Map insertion order = eviction order.
+const _FULL_CACHE_MAX = 5;
+function _preloadFull(id) {
+    if (!id || G._fullCache.has(id)) return;
+    const im = new Image();
+    im.decoding = "async";
+    im.src = API_BASE + "/full/" + id;
+    G._fullCache.set(id, im);
+    while (G._fullCache.size > _FULL_CACHE_MAX) {
+        const oldestId = G._fullCache.keys().next().value;
+        const dead = G._fullCache.get(oldestId);
+        if (dead) dead.src = "";   // let the loader release it
+        G._fullCache.delete(oldestId);
+    }
+}
+function _preloadAdjacent() {
+    const list = _navList();
+    for (const d of [1, -1]) {
+        const n = list[G.currentImageIndex + d];
+        if (n && n.id && !n.is_video) _preloadFull(n.id);
+    }
 }
 
 function _wireDetailEvents(ov, img) {
