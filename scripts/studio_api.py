@@ -488,6 +488,7 @@ class GenerateRequest(BaseModel):
     save_quality: int = 80           # JPEG/WebP quality (0-100)
     save_lossless: bool = False      # WebP lossless mode
     embed_metadata: bool = True      # whether to embed generation params in saved files
+    save_dir: str = ""               # optional auto-save folder override (empty = Forge output dir)
     is_txt2img: bool = False
 
     # Extension bridge: {arg_index: value} overrides from auto-bridged extensions
@@ -1727,19 +1728,31 @@ def setup_studio_routes(app: FastAPI):
 
         # Auto-save images to output/studio/{mode}/ (unless disabled by user)
         mode_folder = {"Create": "create", "Edit": "edit", "img2img": "img2img"}.get(req.mode, "create")
-        try:
-            # Use the same output dir logic as the generation pipeline
-            base_outdir = shared.opts.data.get("outdir_samples", "")
-            if not base_outdir:
-                base_outdir = shared.opts.data.get("outdir_img2img_samples", "")
-            if not base_outdir:
-                from modules.paths import data_path
-                base_outdir = os.path.join(data_path, "output")
-            if os.path.basename(base_outdir) in ("txt2img-images", "img2img-images"):
-                base_outdir = os.path.dirname(base_outdir)
-        except Exception:
-            base_outdir = os.path.abspath("output")
-        output_dir = Path(base_outdir) / "studio" / mode_folder / date.today().strftime("%Y-%m-%d")
+        # User-chosen save folder (Settings → Save folder / first-run setup).
+        # When set we use it as the base and keep the {mode}/{date} substructure
+        # for organization; when blank we fall back to Forge's output dir.
+        _save_override = (req.save_dir or "").strip()
+        if _save_override:
+            try:
+                base_outdir = str(Path(_save_override).expanduser())
+                output_dir = Path(base_outdir) / mode_folder / date.today().strftime("%Y-%m-%d")
+            except Exception:
+                log.exception("Invalid save_dir override %r — falling back to default", _save_override)
+                _save_override = ""
+        if not _save_override:
+            try:
+                # Use the same output dir logic as the generation pipeline
+                base_outdir = shared.opts.data.get("outdir_samples", "")
+                if not base_outdir:
+                    base_outdir = shared.opts.data.get("outdir_img2img_samples", "")
+                if not base_outdir:
+                    from modules.paths import data_path
+                    base_outdir = os.path.join(data_path, "output")
+                if os.path.basename(base_outdir) in ("txt2img-images", "img2img-images"):
+                    base_outdir = os.path.dirname(base_outdir)
+            except Exception:
+                base_outdir = os.path.abspath("output")
+            output_dir = Path(base_outdir) / "studio" / mode_folder / date.today().strftime("%Y-%m-%d")
         if req.save_outputs:
             output_dir.mkdir(parents=True, exist_ok=True)
 

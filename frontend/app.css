@@ -2228,6 +2228,18 @@ body {
   border-color: var(--accent);
 }
 .first-run-hint { font-size: 10px; color: var(--text-4); margin-top: 5px; line-height: 1.45; }
+.first-run-browse { display: flex; align-items: center; gap: 8px; margin-top: 7px; }
+.first-run-browse-btn {
+  flex: 0 0 auto; padding: 6px 12px;
+  background: var(--bg-input); color: var(--text-2);
+  border: 1px solid var(--border); border-radius: var(--radius-sm);
+  font-family: var(--font); font-size: 11px; cursor: pointer; transition: all 0.12s;
+}
+.first-run-browse-btn:hover { color: var(--text-1); border-color: var(--accent); }
+.first-run-path {
+  flex: 1 1 auto; min-width: 0; font-size: 10px; color: var(--text-3);
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
 .first-run-foot {
   display: flex; gap: 8px; justify-content: flex-end;
   margin-top: 20px; padding-top: 14px; border-top: 1px solid var(--border-subtle);

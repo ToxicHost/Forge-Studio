@@ -966,6 +966,18 @@
               <p style="font-size:10px;color:var(--text-4);margin:4px 0 0 0;" data-i18n="settings.gallery.hint">Where “Save to Gallery” writes. This folder lives on the machine running Forge/Studio — the Browse dialog opens there, not on your browser. Leave blank to use the default output folder.</p>
             </div>
             <div class="setting-group">
+              <div class="setting-group-title" data-i18n="settings.saveDir.title">Save folder</div>
+              <div class="setting-row" style="align-items:flex-start;flex-direction:column;gap:5px;">
+                <span class="setting-label" data-i18n="settings.saveDir.folder">Auto-save folder</span>
+                <input type="text" class="param-val" id="settingSaveDir" data-i18n-placeholder="settings.saveDir.placeholder" placeholder="Leave blank for the default Forge output folder" style="width:100%;box-sizing:border-box;font-size:11px;">
+              </div>
+              <div class="setting-row" style="gap:6px;justify-content:flex-end;">
+                <button class="defaults-btn" id="saveDirBrowse" style="font-size:10px;padding:3px 8px;" data-i18n="settings.saveDir.browse">Browse…</button>
+                <button class="defaults-btn" id="saveDirOpen" style="font-size:10px;padding:3px 8px;" data-i18n="settings.saveDir.open">Open folder</button>
+              </div>
+              <p style="font-size:10px;color:var(--text-4);margin:4px 0 0 0;" data-i18n="settings.saveDir.hint">Where generated images are written automatically. This folder lives on the machine running Forge/Studio. Leave blank to use Forge’s default output folder.</p>
+            </div>
+            <div class="setting-group">
               <div class="setting-group-title">Watermark</div>
               <div class="setting-row" title="Composite a watermark image onto every generated image as the final step. Drop PNG/WebP files (transparency recommended) into the watermarks folder.">
                 <span class="setting-label">Auto watermark</span>

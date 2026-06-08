@@ -293,6 +293,7 @@ const State = {
   saveQuality: 80,         // JPEG/WebP quality (0-100)
   saveLossless: false,     // WebP lossless mode
   galleryFolder: "",       // optional absolute server-side folder for "Save to Gallery" (empty = output/studio/)
+  saveDir: "",             // optional absolute server-side folder for auto-save on generate (empty = Forge output dir)
   highPrecision: false,    // capture float32 VAE output, save .float32.bin sidecar
   livePreview: true,       // show preview thumbnail during generation
   // Auto Watermark (composited onto the final generated image)
@@ -1832,6 +1833,7 @@ async function doGenerate() {
     save_quality: State.saveQuality || 80,
     save_lossless: State.saveLossless || false,
     embed_metadata: State.embedMetadata ?? true,
+    save_dir: State.saveDir || "",
     high_precision: !!State.highPrecision,
     is_txt2img: isTxt2img,
 
@@ -3916,6 +3918,42 @@ function bindUI() {
     }
   });
 
+  // ===== Auto-save folder (where generated images are written) =====
+  const _saveDirInput = document.getElementById("settingSaveDir");
+  const _syncSaveDir = () => { State.saveDir = (_saveDirInput?.value || "").trim(); };
+  _saveDirInput?.addEventListener("input", _syncSaveDir);
+  _saveDirInput?.addEventListener("change", _syncSaveDir);
+  document.getElementById("saveDirBrowse")?.addEventListener("click", async () => {
+    try {
+      const r = await fetch(API.base + "/studio/gallery/pick-folder", { method: "POST" });
+      const data = await r.json();
+      if (data.error) { showToast("Folder picker unavailable: " + data.error, "info"); return; }
+      if (data.path && _saveDirInput) {
+        _saveDirInput.value = data.path;
+        State.saveDir = data.path.trim();
+        showToast("Save folder set", "success");
+      }
+    } catch (e) {
+      showToast("Folder picker unavailable on this server — type the path manually", "info");
+    }
+  });
+  document.getElementById("saveDirOpen")?.addEventListener("click", async () => {
+    const dir = (_saveDirInput?.value || "").trim();
+    if (!dir) { showToast("No save folder set", "info"); return; }
+    try {
+      const r = await fetch(API.base + "/studio/open_folder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: dir }),
+      });
+      const data = await r.json();
+      if (data.ok) showToast("Opened save folder", "success");
+      else showToast(data.error || "Could not open folder", "error");
+    } catch (e) {
+      showToast("Could not open folder: " + e.message, "error");
+    }
+  });
+
   // ===== Auto Watermark =====
   const _wmToggle = document.getElementById("toggleWatermark");
   const _wmSelect = document.getElementById("settingWatermark");
@@ -4196,6 +4234,7 @@ function bindUI() {
     format: [
       ["settingSaveFormat", "val"], ["settingJpegQuality", "val"], ["settingWebpQuality", "val"],
       ["toggleWebpLossless", "on"], ["settingGalleryFolder", "val"],
+      ["settingSaveDir", "val"],
     ],
     // Watermark settings persist regardless of the enable toggle, so a user's
     // configured mark/position/sliders survive disabling + reload.
@@ -4399,6 +4438,7 @@ function bindUI() {
     State.embedMetadata = document.getElementById("toggleMetadata")?.classList.contains("on") ?? true;
     // Sync output format state
     State.galleryFolder = document.getElementById("settingGalleryFolder")?.value?.trim() || "";
+    State.saveDir = document.getElementById("settingSaveDir")?.value?.trim() || "";
     _syncFormatUI();
     const jq = parseInt(document.getElementById("settingJpegQuality")?.value) || 80;
     const wq = parseInt(document.getElementById("settingWebpQuality")?.value) || 75;
@@ -6288,6 +6328,7 @@ function _setToggleState(id, want) {
 function _showFirstRunModal() {
   if (document.getElementById("firstRunOverlay")) return;
   const _tt = (k, f) => (window.I18N && window.I18N.t) ? window.I18N.t(k, f) : f;
+  let _customPath = "";   // server-side folder picked for auto-save (empty = Forge default)
 
   const ov = document.createElement("div");
   ov.id = "firstRunOverlay";
@@ -6308,36 +6349,67 @@ function _showFirstRunModal() {
         '<div class="first-run-hint">' + _tt("firstRun.format.hint", "PNG is lossless; JPEG/WebP are smaller.") + '</div>' +
       '</div>' +
       '<div class="first-run-group">' +
-        '<div class="first-run-label">' + _tt("firstRun.save.label", "Save generated images to disk") + '</div>' +
-        '<div class="first-run-choices" data-fr="save">' +
-          '<button class="first-run-choice active" data-val="on">' + _tt("firstRun.save.on", "Yes, auto-save outputs") + '</button>' +
-          '<button class="first-run-choice" data-val="off">' + _tt("firstRun.save.off", "No, I’ll save manually") + '</button>' +
+        '<div class="first-run-label">' + _tt("firstRun.saveLoc.label", "Where should images save?") + '</div>' +
+        '<div class="first-run-choices" data-fr="saveloc">' +
+          '<button class="first-run-choice active" data-val="default">' + _tt("firstRun.saveLoc.default", "Forge default folder") + '</button>' +
+          '<button class="first-run-choice" data-val="custom">' + _tt("firstRun.saveLoc.custom", "Choose a folder…") + '</button>' +
         '</div>' +
-        '<div class="first-run-hint">' + _tt("firstRun.save.hint", "Auto-save writes each result to your output folder so the Gallery can find it.") + '</div>' +
+        '<div class="first-run-browse" id="firstRunBrowseRow" style="display:none;">' +
+          '<button class="first-run-browse-btn" id="firstRunBrowse">' + _tt("firstRun.saveLoc.browse", "Browse…") + '</button>' +
+          '<span class="first-run-path" id="firstRunPath">' + _tt("firstRun.saveLoc.none", "No folder chosen yet") + '</span>' +
+        '</div>' +
+        '<div class="first-run-hint">' + _tt("firstRun.saveLoc.hint", "The folder lives on the machine running Forge/Studio. Leave on default to use Forge’s output folder.") + '</div>' +
       '</div>' +
       '<div class="first-run-group">' +
-        '<div class="first-run-label">' + _tt("firstRun.meta.label", "Embed generation metadata") + '</div>' +
+        '<div class="first-run-label">' + _tt("firstRun.meta.label", "Embed metadata into image files") + '</div>' +
         '<div class="first-run-choices" data-fr="meta">' +
           '<button class="first-run-choice active" data-val="on">' + _tt("firstRun.meta.on", "Yes") + '</button>' +
           '<button class="first-run-choice" data-val="off">' + _tt("firstRun.meta.off", "No") + '</button>' +
         '</div>' +
-        '<div class="first-run-hint">' + _tt("firstRun.meta.hint", "Stores prompt/seed/settings inside saved images so they can be recalled later.") + '</div>' +
+        '<div class="first-run-hint">' + _tt("firstRun.meta.hint", "Writes prompt/seed/settings into each saved image so they can be recalled later. (The Gallery indexes this either way.)") + '</div>' +
+      '</div>' +
+      '<div class="first-run-group">' +
+        '<div class="first-run-label">' + _tt("firstRun.monitor.label", "Monitor this folder in the Gallery") + '</div>' +
+        '<div class="first-run-choices" data-fr="monitor">' +
+          '<button class="first-run-choice active" data-val="on">' + _tt("firstRun.monitor.on", "Yes") + '</button>' +
+          '<button class="first-run-choice" data-val="off">' + _tt("firstRun.monitor.off", "No") + '</button>' +
+        '</div>' +
+        '<div class="first-run-hint">' + _tt("firstRun.monitor.hint", "Adds a chosen folder to the Gallery for live auto-sync. The default output folder is already watched.") + '</div>' +
       '</div>' +
       '<div class="first-run-foot">' +
         '<button class="first-run-skip" id="firstRunSkip">' + _tt("firstRun.skip", "Skip") + '</button>' +
         '<button class="first-run-go" id="firstRunGo">' + _tt("firstRun.go", "Get started") + '</button>' +
       '</div>' +
-      '<div class="first-run-note">' + _tt("firstRun.note", "Tip: set a custom Gallery folder and Canvas layout anytime in Settings.") + '</div>' +
+      '<div class="first-run-note">' + _tt("firstRun.note", "Tip: change any of this anytime in Settings.") + '</div>' +
     '</div>';
   document.body.appendChild(ov);
 
-  // Single-select chip groups.
+  const _browseRow = ov.querySelector("#firstRunBrowseRow");
+  const _pathEl = ov.querySelector("#firstRunPath");
+
+  // Single-select chip groups; the save-location group also toggles the
+  // Browse row so the folder picker only appears when "custom" is chosen.
   ov.querySelectorAll(".first-run-choices").forEach(grp => {
     grp.addEventListener("click", e => {
       const btn = e.target.closest(".first-run-choice");
       if (!btn) return;
       grp.querySelectorAll(".first-run-choice").forEach(b => b.classList.toggle("active", b === btn));
+      if (grp.dataset.fr === "saveloc" && _browseRow) {
+        _browseRow.style.display = btn.dataset.val === "custom" ? "" : "none";
+      }
     });
+  });
+
+  // Folder picker — reuses the Gallery's server-side native dialog.
+  ov.querySelector("#firstRunBrowse")?.addEventListener("click", async () => {
+    try {
+      const r = await fetch(API.base + "/studio/gallery/pick-folder", { method: "POST" });
+      const data = await r.json();
+      if (data.error) { showToast("Folder picker unavailable: " + data.error, "info"); return; }
+      if (data.path) { _customPath = data.path.trim(); if (_pathEl) _pathEl.textContent = _customPath; }
+    } catch (_) {
+      showToast("Folder picker unavailable on this server — set it later in Settings", "info");
+    }
   });
 
   const _pick = (group) => ov.querySelector('[data-fr="' + group + '"] .first-run-choice.active')?.dataset.val;
@@ -6345,18 +6417,38 @@ function _showFirstRunModal() {
 
   document.getElementById("firstRunSkip")?.addEventListener("click", _close);
 
-  document.getElementById("firstRunGo")?.addEventListener("click", () => {
+  document.getElementById("firstRunGo")?.addEventListener("click", async () => {
     // Apply through the real controls so State + Settings UI stay in sync.
     const fmt = _pick("format") || "png";
     const fmtSel = document.getElementById("settingSaveFormat");
     if (fmtSel) { fmtSel.value = fmt; fmtSel.dispatchEvent(new Event("change")); }
-    _setToggleState("toggleSaveOutputs", _pick("save") === "on");
+
+    // Save location → settingSaveDir (only when a custom folder was picked).
+    const useCustom = _pick("saveloc") === "custom" && _customPath;
+    const saveInput = document.getElementById("settingSaveDir");
+    if (saveInput) { saveInput.value = useCustom ? _customPath : ""; saveInput.dispatchEvent(new Event("change")); }
+    State.saveDir = useCustom ? _customPath : "";
+
     _setToggleState("toggleMetadata", _pick("meta") === "on");
+
+    // Gallery monitoring — register the chosen folder with the watcher.
+    // Only actionable when a custom path exists (the default output folder is
+    // already watched, and its absolute path isn't known to the browser).
+    if (_pick("monitor") === "on" && useCustom) {
+      try {
+        await fetch(API.base + "/studio/gallery/scan-folders", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path: _customPath }),
+        });
+        fetch(API.base + "/studio/gallery/scan", { method: "POST" }).catch(() => {});
+      } catch (_) { /* non-fatal — folder can be added later in the Gallery */ }
+    }
+
     // Persist via the normal defaults system (also marks the install as
     // configured, so this never reappears).
     if (typeof window._studioSaveDefaults === "function") window._studioSaveDefaults();
     _close();
-    if (typeof showToast === "function") showToast(((window.I18N && window.I18N.t) ? window.I18N.t : (k, f) => f)("firstRun.done", "Preferences saved — welcome aboard!"), "success");
+    if (typeof showToast === "function") showToast(_tt("firstRun.done", "Preferences saved — welcome aboard!"), "success");
   });
 }
 
