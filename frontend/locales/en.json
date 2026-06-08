@@ -15,6 +15,7 @@
   "actions.skip": "Skip",
   "actions.loadImage": "Load Image",
   "actions.resetCanvas": "Reset Canvas",
+  "actions.swapDimensions.tooltip": "Swap width and height",
   "actions.applyToLayer": "Apply to Layer",
   "actions.upscaleCanvas": "UPSCALE CANVAS",
   "actions.resultToCanvas": "Result → Canvas",

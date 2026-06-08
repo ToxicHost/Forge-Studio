@@ -1018,6 +1018,20 @@ body {
 .param-section { padding: 8px 12px; border-bottom: 1px solid var(--border); }
 
 .param-grid { display: grid; gap: 5px; }
+
+/* Width/height swap button — sits beside the W/H pair, aligned to the
+   inputs (the cells carry an uppercase label row above the field). */
+.size-row-wrap { display: flex; gap: 6px; align-items: flex-end; }
+.size-swap-btn {
+  flex: 0 0 auto;
+  width: var(--control-h-sm); min-height: var(--control-h-sm);
+  display: inline-flex; align-items: center; justify-content: center;
+  background: var(--bg-input); color: var(--text-3);
+  border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);
+  cursor: pointer; transition: all 0.12s;
+}
+.size-swap-btn:hover { color: var(--text-1); border-color: var(--border); }
+.size-swap-btn:active { transform: scale(0.94); }
 .param-grid.cols-1 { grid-template-columns: 1fr; }
 .param-grid.cols-2 { grid-template-columns: 1fr 1fr; }
 .param-grid.cols-3 { grid-template-columns: 1fr 1fr 1fr; }

@@ -510,9 +510,12 @@
               <svg class="collapse-arrow open" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg>
             </div>
             <div class="collapse-body open" id="panelCanvas">
-            <div class="param-grid cols-2">
-              <div class="param-cell"><label>Width</label><input class="param-val" id="paramWidth" value="768"></div>
-              <div class="param-cell"><label>Height</label><input class="param-val" id="paramHeight" value="768"></div>
+            <div class="size-row-wrap">
+              <div class="param-grid cols-2" style="flex:1;min-width:0;">
+                <div class="param-cell"><label>Width</label><input class="param-val" id="paramWidth" value="768"></div>
+                <div class="param-cell"><label>Height</label><input class="param-val" id="paramHeight" value="768"></div>
+              </div>
+              <button id="swapWH" class="size-swap-btn" data-i18n-title="actions.swapDimensions.tooltip" title="Swap width and height" aria-label="Swap width and height"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"><polyline points="16 3 21 8 16 13"/><line x1="21" y1="8" x2="4" y2="8"/><polyline points="8 21 3 16 8 11"/><line x1="3" y1="16" x2="20" y2="16"/></svg></button>
             </div>
             <div class="ar-row" id="arBaseButtons">
               <button class="ar-base-btn" data-base="512">512</button>

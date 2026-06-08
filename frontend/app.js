@@ -4701,6 +4701,26 @@ function bindUI() {
     });
   });
 
+  // Width/height swap — flips the two dimensions in place. Independent of
+  // the aspect-ratio presets, works for any custom size, and never triggers
+  // generation. e.g. 832×1216 → 1216×832.
+  document.getElementById("swapWH")?.addEventListener("click", () => {
+    if (State.generating) return;
+    const wEl = document.getElementById("paramWidth");
+    const hEl = document.getElementById("paramHeight");
+    if (!wEl || !hEl) return;
+    const w = parseInt(wEl.value) || 0;
+    const h = parseInt(hEl.value) || 0;
+    if (!w || !h || w === h) return;
+    wEl.value = h;
+    hEl.value = w;
+    // Reuse the existing change pipeline (canvas resize + status); the
+    // listener reads both inputs, so one dispatch is enough.
+    wEl.dispatchEvent(new Event("change"));
+    // Keep the AR orientation buttons in step with the flipped orientation.
+    if (window._syncARToSize) window._syncARToSize(h, w);
+  });
+
   // ---- AR System: base size + ratio + orientation ----
 
   // Current AR state
