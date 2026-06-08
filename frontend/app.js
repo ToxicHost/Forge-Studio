@@ -292,6 +292,7 @@ const State = {
   saveFormat: "png",       // output format: png | jpeg | webp
   saveQuality: 80,         // JPEG/WebP quality (0-100)
   saveLossless: false,     // WebP lossless mode
+  galleryFolder: "",       // optional absolute server-side folder for "Save to Gallery" (empty = output/studio/)
   highPrecision: false,    // capture float32 VAE output, save .float32.bin sidecar
   livePreview: true,       // show preview thumbnail during generation
   // Auto Watermark (composited onto the final generated image)
@@ -3137,6 +3138,60 @@ function bindUI() {
     }
   }
 
+  // Re-encode a resolved output (base64/data-URL or same-origin /file= URL)
+  // into a Blob of the requested format via an offscreen canvas. Used by the
+  // native "Save As…" file-picker path, which writes bytes client-side and
+  // therefore can't lean on the backend encoder. Note: canvas re-encode
+  // drops embedded metadata — the backend menu items keep metadata.
+  function _encodeOutputBlob(src, fmt) {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const c = document.createElement("canvas");
+          c.width = img.naturalWidth; c.height = img.naturalHeight;
+          const ctx = c.getContext("2d");
+          if (fmt === "jpeg") { ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, c.width, c.height); }
+          ctx.drawImage(img, 0, 0);
+          const mime = fmt === "jpeg" ? "image/jpeg" : (fmt === "webp" ? "image/webp" : "image/png");
+          const q = (fmt === "jpeg" || fmt === "webp") ? ((State.saveQuality || 90) / 100) : undefined;
+          c.toBlob((b) => resolve(b), mime, q);
+        } catch (e) { resolve(null); }
+      };
+      img.onerror = () => resolve(null);
+      img.src = src;
+    });
+  }
+
+  // Native "Save As…" via the File System Access API (Chromium). Returns
+  // true when handled (including user-cancel), false when unsupported or
+  // failed so the caller can fall back to the backend/download flow.
+  async function _saveViaNativePicker(fmt) {
+    if (typeof window.showSaveFilePicker !== "function") return false;
+    const imgSrc = await _resolveOutputAsB64(State.selectedOutputIdx);
+    if (!imgSrc) return false;
+    const ext = fmt === "jpeg" ? "jpg" : fmt;
+    const mime = fmt === "jpeg" ? "image/jpeg" : (fmt === "webp" ? "image/webp" : "image/png");
+    const stem = (State.outputFilenames[State.selectedOutputIdx] || `studio_${Date.now()}`).replace(/\.[^.]+$/, "");
+    try {
+      const handle = await window.showSaveFilePicker({
+        suggestedName: stem + "." + ext,
+        types: [{ description: fmt.toUpperCase() + " image", accept: { [mime]: ["." + ext] } }],
+      });
+      const blob = await _encodeOutputBlob(imgSrc, fmt);
+      if (!blob) return false;
+      const w = await handle.createWritable();
+      await w.write(blob);
+      await w.close();
+      showToast("Saved " + handle.name, "success");
+      return true;
+    } catch (err) {
+      if (err && err.name === "AbortError") return true; // user cancelled
+      console.warn("[Studio] Native save failed:", err);
+      return false;
+    }
+  }
+
   // Gallery save — anchor a floating popover off the icon button so we
   // can offer "Save to Gallery" (drops in the watched outputs root) in
   // addition to the format-specific download targets.
@@ -3150,6 +3205,12 @@ function bindUI() {
     const infotext = State.embedMetadata
       ? (State.outputInfotexts[State.selectedOutputIdx] || "")
       : "";
+    // toGallery + a configured "Save to Gallery folder" (server-side absolute
+    // path) routes the write there. Without a configured folder we preserve
+    // the legacy behavior: gallery → output/studio/ (the watched root),
+    // downloads → output/studio/downloads/. Hoisted so the catch can tell a
+    // Gallery-destination failure apart from a plain save failure.
+    const galleryDir = toGallery ? (State.galleryFolder || "").trim() : "";
     try {
       const origName = State.outputFilenames[State.selectedOutputIdx] || null;
       const result = await API.saveImage({
@@ -3157,10 +3218,8 @@ function bindUI() {
         format: fmt,
         quality: 95,
         metadata: infotext || null,
-        // toGallery=true drops the file in output/studio/ (the
-        // gallery-watched root). Anything else lands in
-        // output/studio/downloads/ to keep manual downloads grouped.
         subfolder: toGallery ? "" : "downloads",
+        dest_dir: galleryDir || null,
         filename: origName,
       });
       if (result.ok) {
@@ -3173,8 +3232,15 @@ function bindUI() {
       }
     } catch (e) {
       console.error("[Studio] Save failed:", e);
-      // Server save failed — fall back to a client-side download so the user
-      // doesn't lose the image (parity with the canvas save path).
+      // A misconfigured "Save to Gallery folder" must surface a clear error,
+      // not silently divert to the browser's Downloads — that would defeat
+      // the user's chosen destination. Show the backend message instead.
+      if (galleryDir) {
+        showToast("Save to Gallery failed: " + e.message, "error");
+        return;
+      }
+      // Otherwise (default save) fall back to a client-side download so the
+      // user doesn't lose the image (parity with the canvas save path).
       try {
         const a = document.createElement("a");
         a.href = imgSrc;
@@ -3200,13 +3266,23 @@ function bindUI() {
     const _hasFloat = !!(State.outputFloatPaths && State.outputFloatPaths[_idx]);
     const _exrLabel = _hasFloat ? "Export EXR (High Precision)" : "Export EXR (Standard)";
 
-    const items = [
+    // Default the native "Choose location…" to the user's configured output
+    // format so Save As… honors the Settings choice when supported.
+    const _fmt = State.saveFormat || "png";
+    const items = [];
+    if (typeof window.showSaveFilePicker === "function") {
+      items.push({ label: "Choose location…", fn: async () => {
+        const ok = await _saveViaNativePicker(_fmt);
+        if (!ok) _saveSelectedOutput(_fmt, false); // fall back to backend/download
+      } });
+    }
+    items.push(
       { label: "Save as PNG",  fn: () => _saveSelectedOutput("png",  false) },
       { label: "Save as JPEG", fn: () => _saveSelectedOutput("jpeg", false) },
       { label: "Save as WebP", fn: () => _saveSelectedOutput("webp", false) },
       { label: _exrLabel,      fn: () => _exportEXR(_idx, false) },
-      { label: "Save to Gallery", fn: () => _saveSelectedOutput("png", true) },
-    ];
+      { label: "Save to Gallery", fn: () => _saveSelectedOutput(_fmt, true) },
+    );
 
     const menu = document.createElement("div");
     menu.id = "outputSaveMenu";
@@ -3243,7 +3319,15 @@ function bindUI() {
     }, 0);
   }
 
-  document.getElementById("outputSave")?.addEventListener("click", (e) => {
+  // Save — one click, no prompt. Uses the default output format + folder
+  // from Settings (respects State.saveFormat). Save As… covers everything
+  // else (format / location / Gallery).
+  document.getElementById("outputSave")?.addEventListener("click", () => {
+    _saveSelectedOutput(State.saveFormat || "png", false);
+  });
+
+  // Save As… — format / location / Save to Gallery picker.
+  document.getElementById("outputSaveAs")?.addEventListener("click", (e) => {
     _showOutputSaveMenu(e.currentTarget);
   });
 
@@ -3789,6 +3873,49 @@ function bindUI() {
     if (qRow) qRow.style.display = on ? "none" : "";
   });
 
+  // ===== Save to Gallery folder =====
+  const _galFolderInput = document.getElementById("settingGalleryFolder");
+  _galFolderInput?.addEventListener("input", () => {
+    State.galleryFolder = _galFolderInput.value.trim();
+  });
+  _galFolderInput?.addEventListener("change", () => {
+    State.galleryFolder = _galFolderInput.value.trim();
+  });
+  // Browse — native folder picker on the Forge/Studio server machine.
+  // Reuses the Gallery's existing server-side picker. Manual entry above is
+  // always available (and is the only option for headless/remote servers).
+  document.getElementById("galleryFolderBrowse")?.addEventListener("click", async () => {
+    try {
+      const r = await fetch(API.base + "/studio/gallery/pick-folder", { method: "POST" });
+      const data = await r.json();
+      if (data.error) { showToast("Folder picker unavailable: " + data.error, "info"); return; }
+      if (data.path && _galFolderInput) {
+        _galFolderInput.value = data.path;
+        State.galleryFolder = data.path.trim();
+        showToast("Gallery folder set", "success");
+      }
+    } catch (e) {
+      showToast("Folder picker unavailable on this server — type the path manually", "info");
+    }
+  });
+  // Open — reveal the configured folder on the server machine.
+  document.getElementById("galleryFolderOpen")?.addEventListener("click", async () => {
+    const dir = (_galFolderInput?.value || "").trim();
+    if (!dir) { showToast("No Gallery folder set", "info"); return; }
+    try {
+      const r = await fetch(API.base + "/studio/open_folder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: dir }),
+      });
+      const data = await r.json();
+      if (data.ok) showToast("Opened Gallery folder", "success");
+      else showToast(data.error || "Could not open folder", "error");
+    } catch (e) {
+      showToast("Could not open folder: " + e.message, "error");
+    }
+  });
+
   // ===== Auto Watermark =====
   const _wmToggle = document.getElementById("toggleWatermark");
   const _wmSelect = document.getElementById("settingWatermark");
@@ -4068,7 +4195,7 @@ function bindUI() {
     ],
     format: [
       ["settingSaveFormat", "val"], ["settingJpegQuality", "val"], ["settingWebpQuality", "val"],
-      ["toggleWebpLossless", "on"],
+      ["toggleWebpLossless", "on"], ["settingGalleryFolder", "val"],
     ],
     // Watermark settings persist regardless of the enable toggle, so a user's
     // configured mark/position/sliders survive disabling + reload.
@@ -4268,6 +4395,7 @@ function bindUI() {
     State.livePreview = document.getElementById("toggleLivePreview")?.classList.contains("on") ?? true;
     State.embedMetadata = document.getElementById("toggleMetadata")?.classList.contains("on") ?? true;
     // Sync output format state
+    State.galleryFolder = document.getElementById("settingGalleryFolder")?.value?.trim() || "";
     _syncFormatUI();
     const jq = parseInt(document.getElementById("settingJpegQuality")?.value) || 80;
     const wq = parseInt(document.getElementById("settingWebpQuality")?.value) || 75;

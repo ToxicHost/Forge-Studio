@@ -3281,6 +3281,33 @@ def setup_studio_routes(app: FastAPI):
         except Exception as e:
             return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
+    class OpenFolderRequest(BaseModel):
+        path: str
+
+    @app.post("/studio/open_folder")
+    async def open_folder(req: OpenFolderRequest):
+        """Open an arbitrary folder in the OS file manager on the Forge/Studio
+        server machine. Used by the configurable "Save to Gallery folder"
+        setting. Opens on the server, not the browser client — see the UI
+        helper text for the remote/VM caveat."""
+        import subprocess, platform
+        target = (req.path or "").strip()
+        if not target:
+            return JSONResponse({"ok": False, "error": "No folder specified"}, status_code=400)
+        if not os.path.isdir(target):
+            return JSONResponse({"ok": False, "error": "Folder not found on the server"}, status_code=404)
+        try:
+            system = platform.system()
+            if system == "Windows":
+                os.startfile(target)
+            elif system == "Darwin":
+                subprocess.Popen(["open", target])
+            else:
+                subprocess.Popen(["xdg-open", target])
+            return {"ok": True, "path": target}
+        except Exception as e:
+            return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
     @app.get("/studio/embeddings")
     async def get_embeddings():
         from modules.paths import models_path
@@ -3920,6 +3947,7 @@ def setup_studio_routes(app: FastAPI):
         format: str = "png"          # png | jpeg | webp
         quality: int = 80            # for jpeg/webp; matches GenerateRequest.save_quality default
         subfolder: str = ""          # optional subfolder under output dir
+        dest_dir: Optional[str] = None  # optional absolute folder (configurable "Save to Gallery folder"); overrides subfolder/base
         filename: Optional[str] = None  # optional custom filename (without ext)
         metadata: Optional[str] = None  # infotext to embed (PNG tEXt, JPEG/WebP EXIF UserComment)
 
@@ -3966,31 +3994,47 @@ def setup_studio_routes(app: FastAPI):
                 except Exception:
                     return False
 
-            # Primary location; fall back to an extension-local folder if the
-            # configured output dir isn't writable (the most common cause of
-            # the historical "Save failed: 500"). User-facing notice avoids
-            # leaking absolute paths.
-            primary = Path(base_outdir) / "studio"
-            if safe_sub:
-                primary = primary / safe_sub
             used_fallback = False
-            if _probe_writable(primary):
-                output_dir = primary
-            else:
-                here = Path(__file__).parent
-                ext_root = here if (here / "frontend").is_dir() else here.parent
-                fallback = ext_root / "output" / "studio"
-                if safe_sub:
-                    fallback = fallback / safe_sub
-                if not _probe_writable(fallback):
+
+            # Explicit destination folder (configurable "Save to Gallery
+            # folder") takes precedence — a server-side absolute path the user
+            # chose. No silent fallback here: an unwritable configured folder
+            # must surface a clear error rather than quietly landing somewhere
+            # unexpected.
+            dest_dir = (req.dest_dir or "").strip()
+            if dest_dir:
+                output_dir = Path(dest_dir).expanduser()
+                if not _probe_writable(output_dir):
                     raise RuntimeError(
-                        "Could not write to the output folder or the Studio "
-                        "fallback folder. Check folder permissions."
+                        "The configured Save to Gallery folder could not be "
+                        "written to. Check that the path exists on the Forge/"
+                        "Studio server and is writable."
                     )
-                output_dir = fallback
-                used_fallback = True
-                log.warning("save_image: primary outdir not writable (%s); using fallback %s",
-                            primary, fallback)
+            else:
+                # Primary location; fall back to an extension-local folder if
+                # the configured output dir isn't writable (the most common
+                # cause of the historical "Save failed: 500"). User-facing
+                # notice avoids leaking absolute paths.
+                primary = Path(base_outdir) / "studio"
+                if safe_sub:
+                    primary = primary / safe_sub
+                if _probe_writable(primary):
+                    output_dir = primary
+                else:
+                    here = Path(__file__).parent
+                    ext_root = here if (here / "frontend").is_dir() else here.parent
+                    fallback = ext_root / "output" / "studio"
+                    if safe_sub:
+                        fallback = fallback / safe_sub
+                    if not _probe_writable(fallback):
+                        raise RuntimeError(
+                            "Could not write to the output folder or the Studio "
+                            "fallback folder. Check folder permissions."
+                        )
+                    output_dir = fallback
+                    used_fallback = True
+                    log.warning("save_image: primary outdir not writable (%s); using fallback %s",
+                                primary, fallback)
 
             # Filename
             ext_map = {"png": "png", "jpeg": "jpg", "webp": "webp"}

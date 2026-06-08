@@ -32,7 +32,9 @@ let _els = {};  // cached DOM refs
 
 StudioModules.register("video", {
     label: "Video Lab",
-    icon: "🎬",
+    // Inline SVG (film/clapperboard) — emoji-free, renders consistently
+    // across Windows/browser configs. See _createTabButton markup path.
+    icon: '<svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2" y="3" width="20" height="18" rx="2"/><line x1="7" y1="3" x2="7" y2="21"/><line x1="17" y1="3" x2="17" y2="21"/><line x1="2" y1="9" x2="7" y2="9"/><line x1="2" y1="15" x2="7" y2="15"/><line x1="17" y1="9" x2="22" y2="9"/><line x1="17" y1="15" x2="22" y2="15"/></svg>',
 
     init(container, services) {
         _services = services;

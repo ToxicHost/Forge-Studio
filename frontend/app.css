@@ -447,6 +447,9 @@ body {
   box-shadow: 0 1px 3px #0004;
 }
 .tab-bar button:hover:not(.active) { color: var(--text-3); }
+/* Inline SVG tab icons (emoji-free): align the glyph with the label. */
+.tab-bar button .tab-icon { display: inline-flex; vertical-align: -2px; }
+.tab-bar button .tab-icon svg { width: 13px; height: 13px; }
 
 
 /* ═══════════════════════════════════════════
@@ -1829,12 +1832,19 @@ body {
 }
 .output-actions button {
   flex: 1; height: 24px;
+  display: inline-flex; align-items: center; justify-content: center; gap: 4px;
   background: var(--bg-raised); color: var(--text-4);
   border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);
   font-family: var(--font); font-size: 10px; cursor: pointer;
+  white-space: nowrap; overflow: hidden;
   transition: all 0.12s;
 }
+.output-actions button svg { display: block; flex: 0 0 auto; }
+.output-actions button span { overflow: hidden; text-overflow: ellipsis; }
 .output-actions button:hover { color: var(--text-2); border-color: var(--border); }
+/* Result → Canvas is the primary action — give it a touch more emphasis so
+   the three buttons don't read as one repeated control. */
+.output-actions #outputToCanvas { color: var(--text-2); }
 
 /* Output gallery save — icon-only square button + floating popover. */
 .output-actions .output-save-icon {

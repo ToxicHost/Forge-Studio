@@ -92,23 +92,44 @@ function _getTabBar() {
 function _createTabButton(id, config) {
     const btn = document.createElement("button");
     btn.dataset.module = id;
-    // Tab labels translate via tabs.<id>; the markup English is the
-    // fallback. Both the textContent (with leading icon) and title
-    // attribute re-translate on locale switch via applyToDom().
+    // Tab labels translate via tabs.<id>; the markup English is the fallback.
     const tr = (window.I18N && window.I18N.t) ? window.I18N.t : null;
     const label = tr ? tr("tabs." + id, config.label) : config.label;
+    const icon = config.icon || "";
+    // An icon string starting with "<" is inline SVG/HTML markup (the
+    // emoji-free path); anything else is treated as a text/emoji glyph.
+    const isMarkup = typeof icon === "string" && icon.trim().startsWith("<");
+    btn.title = label;
+
+    if (isMarkup) {
+        // Keep the SVG in a dedicated span and the translatable label in its
+        // own span. data-i18n lives on the label span (not the button) so
+        // applyToDom() retranslates the text without wiping out the icon.
+        const iconSpan = document.createElement("span");
+        iconSpan.className = "tab-icon";
+        iconSpan.innerHTML = icon;
+        const labelSpan = document.createElement("span");
+        labelSpan.className = "tab-label";
+        labelSpan.dataset.i18n = "tabs." + id;
+        labelSpan.textContent = label;
+        btn.dataset.i18nTitle = "tabs." + id;
+        btn.appendChild(iconSpan);
+        btn.appendChild(document.createTextNode(" "));
+        btn.appendChild(labelSpan);
+        return btn;
+    }
+
+    // Text/emoji icon: applyToDom would clobber the icon-prefixed
+    // textContent on locale switch, so re-render on i18n:change instead.
     btn.dataset.i18n = "tabs." + id;
     btn.dataset.i18nTitle = "tabs." + id;
-    btn.textContent = config.icon ? config.icon + " " + label : label;
-    btn.title = label;
-    // applyToDom would clobber the icon-prefixed textContent on locale
-    // switch, so keep the icon by re-rendering on i18n:change.
-    if (config.icon) {
+    btn.textContent = icon ? icon + " " + label : label;
+    if (icon) {
         const renderIcon = () => {
             const newLabel = (window.I18N && window.I18N.t)
                 ? window.I18N.t("tabs." + id, config.label)
                 : config.label;
-            btn.textContent = config.icon + " " + newLabel;
+            btn.textContent = icon + " " + newLabel;
             btn.title = newLabel;
         };
         window.addEventListener("i18n:change", renderIcon);

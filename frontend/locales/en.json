@@ -17,6 +17,12 @@
   "actions.resetCanvas": "Reset Canvas",
   "actions.applyToLayer": "Apply to Layer",
   "actions.upscaleCanvas": "UPSCALE CANVAS",
+  "actions.resultToCanvas": "Result → Canvas",
+  "actions.resultToCanvas.tooltip": "Place this result on the canvas as a new layer",
+  "actions.save": "Save",
+  "actions.save.tooltip": "Save using your default format and folder",
+  "actions.saveAs": "Save As…",
+  "actions.saveAs.tooltip": "Save As… — choose format, location, or Save to Gallery",
 
   "live.strength": "Strength",
 
@@ -35,6 +41,13 @@
   "settings.outputFormat.embedMetadata": "Embed metadata",
   "settings.outputFormat.quality": "Quality",
   "settings.outputFormat.lossless": "Lossless",
+
+  "settings.gallery.title": "Save to Gallery",
+  "settings.gallery.folder": "Gallery folder",
+  "settings.gallery.placeholder": "Leave blank for the default output folder",
+  "settings.gallery.browse": "Browse…",
+  "settings.gallery.open": "Open folder",
+  "settings.gallery.hint": "Where “Save to Gallery” writes. This folder lives on the machine running Forge/Studio — the Browse dialog opens there, not on your browser. Leave blank to use the default output folder.",
 
   "settings.vram.unloadModel": "Unload Model from VRAM",
   "settings.vram.gpuWeights.description": "How much VRAM to use for model weights. 0 = Forge default. Higher values keep more of the model in VRAM for faster generation; lower values offload weights to RAM to free VRAM for inference. Peak usage during generation may still exceed this — it's a loading budget, not a hard cap.",
@@ -498,7 +511,7 @@
   "layer.moveDown.tooltip": "Move down",
   "layer.mergeDown.tooltip": "Merge down",
   "layer.delete.tooltip": "Delete",
-  "layer.export.tooltip": "Export Canvas / PSD",
+  "layer.export.tooltip": "Save Canvas / PSD",
 
   "history.undo.tooltip": "Undo (Ctrl+Z)",
   "history.redo.tooltip": "Redo (Ctrl+Shift+Z)",
