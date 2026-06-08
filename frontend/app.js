@@ -6469,10 +6469,11 @@ function _showFirstRunModal() {
           '<button class="first-run-choice" data-val="custom">' + _tt("firstRun.saveLoc.custom", "Choose a folder…") + '</button>' +
         '</div>' +
         '<div class="first-run-browse" id="firstRunBrowseRow" style="display:none;">' +
+          '<input type="text" class="first-run-path-input" id="firstRunPath" autocomplete="off" spellcheck="false" ' +
+            'placeholder="' + _tt("firstRun.saveLoc.placeholder", "Type a folder path on the Forge server…") + '">' +
           '<button class="first-run-browse-btn" id="firstRunBrowse">' + _tt("firstRun.saveLoc.browse", "Browse…") + '</button>' +
-          '<span class="first-run-path" id="firstRunPath">' + _tt("firstRun.saveLoc.none", "No folder chosen yet") + '</span>' +
         '</div>' +
-        '<div class="first-run-hint">' + _tt("firstRun.saveLoc.hint", "The folder lives on the machine running Forge/Studio. Leave on default to use Forge’s output folder.") + '</div>' +
+        '<div class="first-run-hint">' + _tt("firstRun.saveLoc.hint", "This folder lives on the machine running Forge/Studio. Type the path directly (best for remote/VM), or Browse if the dialog opens on that machine. Leave on default to use Forge’s output folder.") + '</div>' +
       '</div>' +
       '<div class="first-run-group">' +
         '<div class="first-run-label">' + _tt("firstRun.meta.label", "Embed metadata into image files") + '</div>' +
@@ -6501,28 +6502,36 @@ function _showFirstRunModal() {
   const _browseRow = ov.querySelector("#firstRunBrowseRow");
   const _pathEl = ov.querySelector("#firstRunPath");
 
+  // Typing the path directly is the reliable route for remote/VM/headless
+  // setups, where the server-side Browse dialog opens on the Forge machine
+  // (not the user's browser). Keep _customPath in sync as they type.
+  _pathEl?.addEventListener("input", () => { _customPath = (_pathEl.value || "").trim(); });
+
   // Single-select chip groups; the save-location group also toggles the
-  // Browse row so the folder picker only appears when "custom" is chosen.
+  // Browse row so the path field only appears when "custom" is chosen.
   ov.querySelectorAll(".first-run-choices").forEach(grp => {
     grp.addEventListener("click", e => {
       const btn = e.target.closest(".first-run-choice");
       if (!btn) return;
       grp.querySelectorAll(".first-run-choice").forEach(b => b.classList.toggle("active", b === btn));
       if (grp.dataset.fr === "saveloc" && _browseRow) {
-        _browseRow.style.display = btn.dataset.val === "custom" ? "" : "none";
+        const custom = btn.dataset.val === "custom";
+        _browseRow.style.display = custom ? "" : "none";
+        if (custom && _pathEl) _pathEl.focus();
       }
     });
   });
 
-  // Folder picker — reuses the Gallery's server-side native dialog.
+  // Folder picker — reuses the Gallery's server-side native dialog. Opens on
+  // the Forge machine; the text field above is the fallback for remote/VM.
   ov.querySelector("#firstRunBrowse")?.addEventListener("click", async () => {
     try {
       const r = await fetch(API.base + "/studio/gallery/pick-folder", { method: "POST" });
       const data = await r.json();
       if (data.error) { showToast("Folder picker unavailable: " + data.error, "info"); return; }
-      if (data.path) { _customPath = data.path.trim(); if (_pathEl) _pathEl.textContent = _customPath; }
+      if (data.path) { _customPath = data.path.trim(); if (_pathEl) _pathEl.value = _customPath; }
     } catch (_) {
-      showToast("Folder picker unavailable on this server — set it later in Settings", "info");
+      showToast("Folder dialog opens on the Forge server — type the path in the field instead", "info");
     }
   });
 
