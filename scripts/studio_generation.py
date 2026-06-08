@@ -1905,6 +1905,8 @@ _HP_FP16_VAE_WARNED = False
 _HP_HOOK_INSTALLED = False
 _HP_CAPTURE_ACTIVE = False
 _HP_CAPTURE_BATCHES = []  # list[list[np.ndarray]] — one entry per decode_latent_batch call
+_HP_VAE_AUDIT = None          # Phase-2B: (vae_obj, orig_decode) while the audit wrap is active
+_HP_VAE_AUDIT_LOGGED = False  # log only the first VAE decode per capture window
 
 
 def _hp_tensor_to_hwc_list(sample):
@@ -2183,7 +2185,70 @@ def _hp_end_capture():
     """
     global _HP_CAPTURE_ACTIVE
     _HP_CAPTURE_ACTIVE = False
+    _hp_restore_vae_decode_audit()
     return list(_HP_CAPTURE_BATCHES)
+
+
+def _hp_install_vae_decode_audit():
+    """Phase-2B diagnostic: wrap the live VAE's .decode to log its DIRECT
+    output range — i.e. BEFORE any clamp that decode_first_stage /
+    decode_latent_batch may apply. Read-only (returns the original tensor
+    unchanged), logs only the first decode per window (avoids tiled-decode
+    spam), fully guarded, and removed by _hp_restore_vae_decode_audit() after
+    generation. This is architecture-fragile by design, so every step is
+    defensive and a failure never affects generation."""
+    global _HP_VAE_AUDIT, _HP_VAE_AUDIT_LOGGED
+    if _HP_VAE_AUDIT is not None:
+        return
+    _HP_VAE_AUDIT_LOGGED = False
+    try:
+        vae = getattr(getattr(shared, "sd_model", None), "first_stage_model", None)
+        orig = getattr(vae, "decode", None)
+        if vae is None or not callable(orig):
+            return
+
+        def _wrap(*a, **k):
+            out = orig(*a, **k)
+            global _HP_VAE_AUDIT_LOGGED
+            if not _HP_VAE_AUDIT_LOGGED:
+                _HP_VAE_AUDIT_LOGGED = True
+                try:
+                    t = out[0] if isinstance(out, (list, tuple)) and out else out
+                    chw, reason = _hp_raw_to_chw(t)
+                    if chw is not None:
+                        rmn, rmx, r_lo, r_hi = _hp_boundary_stats(chw, -1.0, 1.0)
+                        print(f"[Studio] High Precision VAE-AUDIT (pre-clamp): "
+                              f"shape={tuple(chw.shape)} dtype={getattr(t, 'dtype', '?')} "
+                              f"min={rmn} max={rmx} <=-1={r_lo}% >=1={r_hi}%")
+                    else:
+                        print(f"[Studio] High Precision VAE-AUDIT: skip ({reason})")
+                except Exception as e:
+                    print(f"[Studio] High Precision VAE-AUDIT error — {e}")
+            return out
+
+        vae.decode = _wrap
+        _HP_VAE_AUDIT = (vae, orig)
+        print("[Studio] High Precision: VAE-decode audit wrap installed (diagnostic, pre-clamp)")
+    except Exception as e:
+        print(f"[Studio] High Precision: VAE-decode audit install failed — {e}")
+        _HP_VAE_AUDIT = None
+
+
+def _hp_restore_vae_decode_audit():
+    """Remove the Phase-2B VAE-decode audit wrap, restoring the original."""
+    global _HP_VAE_AUDIT
+    try:
+        if _HP_VAE_AUDIT is not None:
+            vae, orig = _HP_VAE_AUDIT
+            try:
+                del vae.decode          # drop our instance shadow → class method
+            except Exception:
+                try:
+                    vae.decode = orig
+                except Exception:
+                    pass
+    finally:
+        _HP_VAE_AUDIT = None
 
 
 def _hp_warn_fp16_vae_once():
@@ -2678,6 +2743,10 @@ def run_generation(
                     if _hp_install_decode_hook():
                         _hp_warn_fp16_vae_once()
                         _hp_begin_capture()
+                        # Phase-2B: also wrap the VAE decode to see its range
+                        # before any downstream clamp (diagnostic; auto-removed
+                        # in _hp_end_capture).
+                        _hp_install_vae_decode_audit()
                 try:
                     # Native ADetailer fires inside process_images() via its
                     # postprocess_image hook. AD slot params were injected
