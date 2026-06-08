@@ -1885,7 +1885,13 @@ async function doGenerate() {
       // FR-009: Prepend new results to gallery history (max 8 images)
       const MAX_GALLERY = 8;
       let newFileUrls;
-      if (result.image_paths && result.image_paths.length === result.images.length) {
+      // Forge's /file= route only serves its own output tree. When the user
+      // points auto-save at a custom folder, those saved paths aren't served,
+      // so /file= URLs would 404 (black preview + broken thumbnails). Display
+      // straight from the returned base64 in that case; the default output
+      // folder IS served, so keep using the lighter /file= URLs there.
+      const _customSaveDir = (State.saveDir || "").trim();
+      if (result.image_paths && result.image_paths.length === result.images.length && !_customSaveDir) {
         newFileUrls = result.image_paths.map(p => `${API.base}/file=${p}`);
       } else {
         newFileUrls = result.images;
@@ -3943,13 +3949,16 @@ function bindUI() {
   });
 
   // ===== Save to Gallery folder =====
+  // Folder paths are machine config, not per-image workflow params, so they
+  // persist immediately to localStorage (no need to click "Save Defaults").
+  // _restoreFolderSettings() re-applies them on boot, after defaults load.
   const _galFolderInput = document.getElementById("settingGalleryFolder");
-  _galFolderInput?.addEventListener("input", () => {
-    State.galleryFolder = _galFolderInput.value.trim();
-  });
-  _galFolderInput?.addEventListener("change", () => {
-    State.galleryFolder = _galFolderInput.value.trim();
-  });
+  const _syncGalFolder = () => {
+    State.galleryFolder = (_galFolderInput?.value || "").trim();
+    try { localStorage.setItem("studio-gallery-folder", State.galleryFolder); } catch (_) {}
+  };
+  _galFolderInput?.addEventListener("input", _syncGalFolder);
+  _galFolderInput?.addEventListener("change", _syncGalFolder);
   // Browse — native folder picker on the Forge/Studio server machine.
   // Reuses the Gallery's existing server-side picker. Manual entry above is
   // always available (and is the only option for headless/remote servers).
@@ -3960,7 +3969,7 @@ function bindUI() {
       if (data.error) { showToast("Folder picker unavailable: " + data.error, "info"); return; }
       if (data.path && _galFolderInput) {
         _galFolderInput.value = data.path;
-        State.galleryFolder = data.path.trim();
+        _syncGalFolder();
         showToast("Gallery folder set", "success");
       }
     } catch (e) {
@@ -3987,7 +3996,10 @@ function bindUI() {
 
   // ===== Auto-save folder (where generated images are written) =====
   const _saveDirInput = document.getElementById("settingSaveDir");
-  const _syncSaveDir = () => { State.saveDir = (_saveDirInput?.value || "").trim(); };
+  const _syncSaveDir = () => {
+    State.saveDir = (_saveDirInput?.value || "").trim();
+    try { localStorage.setItem("studio-save-dir", State.saveDir); } catch (_) {}
+  };
   _saveDirInput?.addEventListener("input", _syncSaveDir);
   _saveDirInput?.addEventListener("change", _syncSaveDir);
   document.getElementById("saveDirBrowse")?.addEventListener("click", async () => {
@@ -3997,7 +4009,7 @@ function bindUI() {
       if (data.error) { showToast("Folder picker unavailable: " + data.error, "info"); return; }
       if (data.path && _saveDirInput) {
         _saveDirInput.value = data.path;
-        State.saveDir = data.path.trim();
+        _syncSaveDir();
         showToast("Save folder set", "success");
       }
     } catch (e) {
@@ -6038,6 +6050,24 @@ async function init() {
     const h = parseInt(document.getElementById("paramHeight")?.value) || 768;
     StatusBar.setDimensions(w, h);
   }
+
+  // Folder paths persist immediately via localStorage (machine config, not
+  // per-image workflow). Re-apply after defaults load so the most recent
+  // user choice wins regardless of whether "Save Defaults" was clicked.
+  try {
+    const _sd = localStorage.getItem("studio-save-dir");
+    if (_sd != null) {
+      const el = document.getElementById("settingSaveDir");
+      if (el) el.value = _sd;
+      State.saveDir = _sd.trim();
+    }
+    const _gf = localStorage.getItem("studio-gallery-folder");
+    if (_gf != null) {
+      const el = document.getElementById("settingGalleryFolder");
+      if (el) el.value = _gf;
+      State.galleryFolder = _gf.trim();
+    }
+  } catch (_) {}
 
   // Load extension bridge manifest and render controls
   await ExtensionBridge.load();
