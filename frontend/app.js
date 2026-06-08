@@ -3193,15 +3193,43 @@ function bindUI() {
     const srcFmt = srcMime === "image/jpeg" ? "jpeg" : (srcMime === "image/webp" ? "webp" : "png");
     const defFmt = State.saveFormat || srcFmt || "png";
     const stem = (State.outputFilenames[idx] || `studio_${Date.now()}`).replace(/\.[^.]+$/, "");
+    const infotext = State.embedMetadata ? (State.outputInfotexts[idx] || "") : "";
+
+    // 1) Server-side native "Save As…" dialog. This is the reliable path for a
+    //    local Forge install: it pops a real OS dialog regardless of browser
+    //    (the File System Access API needs Chromium + a secure context, so it
+    //    isn't available over a LAN IP or in Firefox), and the backend write
+    //    preserves embedded metadata. A 500/network error means the server has
+    //    no GUI (headless/remote) — fall through to the browser paths.
+    try {
+      const r = await fetch(API.base + "/studio/gallery/pick-save-file", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ suggested: stem + "." + _extForFmt(defFmt), format: defFmt }),
+      });
+      const data = await r.json();
+      if (r.ok && !data.error) {
+        if (!data.path) return;                       // user cancelled the dialog
+        const res = await API.saveImage({
+          image_b64: imgSrc,
+          format: _fmtFromName(data.path),
+          quality: State.saveQuality || 95,
+          metadata: infotext || null,
+          full_path: data.path,                       // exact path the user chose
+        });
+        if (res.ok) showToast("Saved " + res.filename, "success");
+        else showToast(res.error || "Save failed", "error");
+        return;
+      }
+      // data.error present → server dialog unavailable; fall through.
+    } catch (_) { /* headless/remote server — fall through to browser paths */ }
 
     // Reuse the source bytes (keeps embedded metadata) when no format change
     // is needed; otherwise re-encode via an offscreen canvas.
     const _bytesFor = async (fmt) =>
       (fmt === srcFmt) ? _dataUrlToBlob(imgSrc) : await _encodeOutputBlob(imgSrc, fmt);
 
+    // 2) Browser File System Access API (Chromium + secure context).
     if (typeof window.showSaveFilePicker === "function") {
-      // Offer all three formats (default first) so the user can switch format
-      // right in the dialog's file-type dropdown.
       const order = [defFmt, ...["png", "jpeg", "webp"].filter(f => f !== defFmt)];
       const types = order.map(f => ({
         description: f.toUpperCase() + " image",
@@ -3224,7 +3252,8 @@ function bindUI() {
       return;
     }
 
-    // Fallback — browser download with a suggested name in the default format.
+    // 3) Last resort — browser download with a suggested name (the browser's
+    //    own "ask where to save" setting governs any location prompt).
     const blob = await _bytesFor(defFmt);
     if (!blob) { showToast("Could not encode image", "error"); return; }
     const url = URL.createObjectURL(blob);

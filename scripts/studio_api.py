@@ -3962,6 +3962,7 @@ def setup_studio_routes(app: FastAPI):
         subfolder: str = ""          # optional subfolder under output dir
         dest_dir: Optional[str] = None  # optional absolute folder (configurable "Save to Gallery folder"); overrides subfolder/base
         filename: Optional[str] = None  # optional custom filename (without ext)
+        full_path: Optional[str] = None # exact target path chosen via a Save As… dialog (overwrites; bypasses auto-naming)
         metadata: Optional[str] = None  # infotext to embed (PNG tEXt, JPEG/WebP EXIF UserComment)
 
     @app.post("/studio/save_image")
@@ -3978,6 +3979,41 @@ def setup_studio_routes(app: FastAPI):
                 img.load()
             except Exception as de:
                 raise ValueError(f"Invalid image data: {de}")
+
+            # Explicit "Save As…" target — the user already chose the exact path
+            # (and confirmed any overwrite) in the native save dialog, so write
+            # there directly and skip the auto-naming/uniqueness logic used by
+            # quick saves. Format follows the chosen file extension.
+            if (req.full_path or "").strip():
+                target = Path(req.full_path).expanduser()
+                try:
+                    target.parent.mkdir(parents=True, exist_ok=True)
+                except Exception:
+                    pass
+                _ext = target.suffix.lower().lstrip(".")
+                eff_fmt = "jpeg" if _ext in ("jpg", "jpeg") else ("webp" if _ext == "webp" else "png")
+                save_kwargs = {}
+                if eff_fmt == "jpeg":
+                    img = img.convert("RGB")  # drop alpha for JPEG
+                    save_kwargs = {"quality": req.quality, "optimize": True}
+                    if req.metadata:
+                        eb = _build_exif_usercomment(req.metadata)
+                        if eb:
+                            save_kwargs["exif"] = eb
+                elif eff_fmt == "webp":
+                    save_kwargs = {"quality": req.quality}
+                    if req.metadata:
+                        eb = _build_exif_usercomment(req.metadata)
+                        if eb:
+                            save_kwargs["exif"] = eb
+                elif eff_fmt == "png" and req.metadata:
+                    from PIL.PngImagePlugin import PngInfo
+                    pnginfo = PngInfo()
+                    pnginfo.add_text("parameters", req.metadata)
+                    save_kwargs["pnginfo"] = pnginfo
+                img.save(str(target), icc_profile=_SRGB_ICC, **save_kwargs)
+                print(f"{TAG} Saved (Save As) {eff_fmt.upper()} → {target}")
+                return {"ok": True, "path": str(target), "filename": target.name}
 
             # Determine output directory — same logic as generation auto-save
             try:

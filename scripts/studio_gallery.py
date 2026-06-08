@@ -2208,6 +2208,42 @@ def setup_gallery_routes(app: FastAPI):
         except Exception as e:
             return JSONResponse({"error": str(e)}, status_code=500)
 
+    @app.post("/studio/gallery/pick-save-file")
+    async def gallery_pick_save_file(request: Request):
+        """Native OS 'Save As…' dialog — lets the user choose the filename,
+        location, and format. Returns the chosen absolute path (or "" on
+        cancel). 500 when the server has no GUI so the client can fall back."""
+        try:
+            data = {}
+            try:
+                data = await request.json()
+            except Exception:
+                pass
+            suggested = (data.get("suggested") or "").strip()
+            fmt = (data.get("format") or "png").lower()
+            ext_map = {"png": ".png", "jpeg": ".jpg", "jpg": ".jpg", "webp": ".webp"}
+            defext = ext_map.get(fmt, ".png")
+            import tkinter as tk
+            from tkinter import filedialog
+            root = tk.Tk()
+            root.withdraw()
+            root.wm_attributes('-topmost', 1)
+            path = filedialog.asksaveasfilename(
+                title="Save image as",
+                initialfile=suggested or ("studio" + defext),
+                defaultextension=defext,
+                filetypes=[
+                    ("PNG image", "*.png"),
+                    ("JPEG image", "*.jpg *.jpeg"),
+                    ("WebP image", "*.webp"),
+                    ("All files", "*.*"),
+                ],
+            )
+            root.destroy()
+            return {"path": path.replace("/", os.sep) if path else ""}
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
+
     # ==================================================================
     # SCAN
     # ==================================================================
