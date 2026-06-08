@@ -1907,6 +1907,8 @@ _HP_CAPTURE_ACTIVE = False
 _HP_CAPTURE_BATCHES = []  # list[list[np.ndarray]] — one entry per decode_latent_batch call
 _HP_VAE_AUDIT = None          # Phase-2B: (vae_obj, orig_decode) while the audit wrap is active
 _HP_VAE_AUDIT_LOGGED = False  # log only the first VAE decode per capture window
+_HP_DFS_AUDIT = None          # Phase-2A/B: (orig_fn, [patched_modules]) for decode_first_stage probe
+_HP_DFS_AUDIT_LOGGED = False  # log only the first decode_first_stage call per capture window
 
 
 def _hp_tensor_to_hwc_list(sample):
@@ -2186,7 +2188,82 @@ def _hp_end_capture():
     global _HP_CAPTURE_ACTIVE
     _HP_CAPTURE_ACTIVE = False
     _hp_restore_vae_decode_audit()
+    _hp_restore_dfs_audit()
     return list(_HP_CAPTURE_BATCHES)
+
+
+def _hp_install_dfs_audit():
+    """Phase-2A/B diagnostic: wrap Forge's decode_first_stage to log the range
+    of its output — the candidate "assembled image, before clamp" capture point
+    for Option B. decode_first_stage sits between first_stage_model.decode
+    (pre-clamp, possibly per-tile) and decode_latent_batch (assembled, clamped),
+    so this trace pinpoints where tile assembly and the clamp each happen.
+    Read-only, first-call-only, guarded, restored after generation."""
+    global _HP_DFS_AUDIT, _HP_DFS_AUDIT_LOGGED
+    if _HP_DFS_AUDIT is not None:
+        return
+    _HP_DFS_AUDIT_LOGGED = False
+    try:
+        import importlib
+        targets = []
+        for modname in ("modules.sd_samplers_common", "modules.processing"):
+            try:
+                mod = importlib.import_module(modname)
+            except Exception:
+                continue
+            fn = getattr(mod, "decode_first_stage", None)
+            if callable(fn):
+                targets.append((mod, fn))
+        if not targets:
+            print("[Studio] High Precision: decode_first_stage not found — DFS audit unavailable")
+            return
+        orig = targets[0][1]
+
+        def _wrap(*a, **k):
+            out = orig(*a, **k)
+            global _HP_DFS_AUDIT_LOGGED
+            if not _HP_DFS_AUDIT_LOGGED:
+                _HP_DFS_AUDIT_LOGGED = True
+                try:
+                    t = out[0] if isinstance(out, (list, tuple)) and out else out
+                    chw, reason = _hp_raw_to_chw(t)
+                    if chw is not None:
+                        rmn, rmx, r_lo, r_hi = _hp_boundary_stats(chw, -1.0, 1.0)
+                        print(f"[Studio] High Precision DFS-AUDIT (decode_first_stage): "
+                              f"shape={tuple(chw.shape)} dtype={getattr(t, 'dtype', '?')} "
+                              f"min={rmn} max={rmx} <=-1={r_lo}% >=1={r_hi}%")
+                    else:
+                        print(f"[Studio] High Precision DFS-AUDIT: skip ({reason})")
+                except Exception as e:
+                    print(f"[Studio] High Precision DFS-AUDIT error — {e}")
+            return out
+
+        applied = []
+        for mod, fn in targets:
+            if getattr(mod, "decode_first_stage", None) is orig:
+                mod.decode_first_stage = _wrap
+                applied.append(mod)
+        _HP_DFS_AUDIT = (orig, applied)
+        print(f"[Studio] High Precision: decode_first_stage audit wrap installed on "
+              f"{[m.__name__ for m in applied]}")
+    except Exception as e:
+        print(f"[Studio] High Precision: decode_first_stage audit install failed — {e}")
+        _HP_DFS_AUDIT = None
+
+
+def _hp_restore_dfs_audit():
+    """Remove the Phase-2A/B decode_first_stage audit wrap."""
+    global _HP_DFS_AUDIT
+    try:
+        if _HP_DFS_AUDIT is not None:
+            orig, applied = _HP_DFS_AUDIT
+            for mod in applied:
+                try:
+                    mod.decode_first_stage = orig
+                except Exception:
+                    pass
+    finally:
+        _HP_DFS_AUDIT = None
 
 
 def _hp_install_vae_decode_audit():
@@ -2747,6 +2824,9 @@ def run_generation(
                         # before any downstream clamp (diagnostic; auto-removed
                         # in _hp_end_capture).
                         _hp_install_vae_decode_audit()
+                        # Phase-2A/B: and decode_first_stage — the candidate
+                        # "assembled, pre-clamp" seam for Option B.
+                        _hp_install_dfs_audit()
                 try:
                     # Native ADetailer fires inside process_images() via its
                     # postprocess_image hook. AD slot params were injected
