@@ -4469,23 +4469,21 @@ function _updateHpBadge() {
     }
     _hpBadge.style.display = "";
     var st = _floatSrc.stats;
-    // A clamped source (no out-of-range values, max pinned at 1.0) still gives
-    // smoother 8-bit-free editing, but no real highlight/shadow recovery — say
-    // so honestly rather than implying full RAW-like headroom.
-    var clampedOnly = !!(st && st.valid && st.clamped_like && !st.has_headroom);
+    // Per the capture-to-edit plan: user-facing states are only HP / HP
+    // Extended. "Extended Range" is shown ONLY when the sidecar actually
+    // carries out-of-range values (verified). The clamped-vs-in-range
+    // distinction is diagnostic and lives in the tooltip — never as a badge
+    // ("HP Clamped" reads as broken HP).
+    var extended = !!(st && st.valid && st.has_headroom);
+    var clampedDiag = !!(st && st.valid && st.clamped_like && !st.has_headroom);
     if (_floatSrc.hasMask) {
-        _hpBadge.textContent = clampedOnly ? "HP+AD clamped" : "HP+AD";
+        _hpBadge.textContent = extended ? "HP+AD Extended" : "HP+AD";
         _hpBadge.dataset.i18nTitle = "develop.hpBadge.composited";
         _hpBadge.title = _t("develop.hpBadge.composited",
             "High Precision: float buffer composited with AD/brush canvas pixels")
-            + (clampedOnly ? " — values appear clamped to 0..1 (limited highlight recovery)" : "");
-    } else if (clampedOnly) {
-        _hpBadge.textContent = "HP clamped";
-        _hpBadge.dataset.i18nTitle = "develop.hpBadge.clamped";
-        _hpBadge.title = _t("develop.hpBadge.clamped",
-            "High Precision float32 source active, but values appear clamped to 0..1. Edits are smoother than 8-bit, but highlight/shadow recovery is limited.");
-    } else if (st && st.valid && st.has_headroom) {
-        _hpBadge.textContent = "HP";
+            + (extended ? " — contains out-of-range headroom (highlight/shadow recovery)." : "");
+    } else if (extended) {
+        _hpBadge.textContent = "HP Extended";
         _hpBadge.dataset.i18nTitle = "develop.hpBadge.headroom";
         _hpBadge.title = _t("develop.hpBadge.headroom",
             "High Precision float32 source active, with out-of-range headroom (true highlight/shadow recovery).");
@@ -4493,7 +4491,8 @@ function _updateHpBadge() {
         _hpBadge.textContent = "HP";
         _hpBadge.dataset.i18nTitle = "develop.hpBadge.tooltip";
         _hpBadge.title = _t("develop.hpBadge.tooltip",
-            "High Precision: float32 source pixels active");
+            "High Precision: float32 source pixels active")
+            + (clampedDiag ? " (values within 0..1 — cleaner math, no extended-range recovery)" : "");
     }
 }
 

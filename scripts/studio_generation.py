@@ -2047,6 +2047,71 @@ def _hp_float_stats(arr):
         return {"valid": False, "reason": f"stats_error:{e}"}
 
 
+def _hp_raw_to_chw(t):
+    """Reduce a raw decode sample to a CHW float32 numpy array for auditing.
+
+    Handles CHW, BCHW (B==1), and BCTHW (B==1, T==1). Returns (None, reason)
+    for multi-frame video or shapes we can't interpret. Does NOT transform or
+    clamp the values — this is the raw view, straight from decode_latent_batch.
+    """
+    try:
+        try:
+            import torch
+            is_t = isinstance(t, torch.Tensor)
+        except Exception:
+            is_t = False
+        a = t.detach().to("cpu").float().numpy() if is_t else np.asarray(t, dtype=np.float32)
+        s = tuple(a.shape)
+        if a.ndim == 5:                       # B,C,T,H,W
+            if a.shape[2] > 1:
+                return None, f"multi-frame:{s}"
+            a = a[0, :, 0, :, :]
+        elif a.ndim == 4:                     # B,C,H,W
+            a = a[0]
+        if a.ndim != 3:
+            return None, f"shape:{s}"
+        return a, None
+    except Exception as e:
+        return None, f"err:{e}"
+
+
+def _hp_boundary_stats(chw, lo, hi):
+    """Per-channel min/max and % of pixels at/below `lo` and at/above `hi`."""
+    c = min(chw.shape[0], 3)
+    pixels = int(chw.shape[1] * chw.shape[2]) or 1
+    mn = [round(float(np.nanmin(chw[i])), 5) for i in range(c)]
+    mx = [round(float(np.nanmax(chw[i])), 5) for i in range(c)]
+    at_lo = [round(float(np.sum(chw[i] <= lo)) / pixels * 100.0, 4) for i in range(c)]
+    at_hi = [round(float(np.sum(chw[i] >= hi)) / pixels * 100.0, 4) for i in range(c)]
+    return mn, mx, at_lo, at_hi
+
+
+def _hp_log_capture_audit(sample):
+    """Phase-1 capture audit: log raw + denormalized per-channel range stats so
+    we can tell whether decode_latent_batch hands us clamped, in-range, or
+    extended-range data. Privacy-safe (no pixels/paths/prompts). Never raises."""
+    try:
+        chw, reason = _hp_raw_to_chw(sample)
+        if chw is None:
+            print(f"[Studio] High Precision AUDIT: skip ({reason})")
+            return
+        dtype = getattr(sample, "dtype", "?")
+        nan = int(np.isnan(chw).sum())
+        inf = int(np.isinf(chw).sum())
+        # Raw view — VAE convention is [-1, 1]; pinning at the boundaries means
+        # an upstream clamp, values beyond them mean unclamped headroom exists.
+        rmn, rmx, r_lo, r_hi = _hp_boundary_stats(chw, -1.0, 1.0)
+        print(f"[Studio] High Precision AUDIT raw: shape={tuple(chw.shape)} dtype={dtype} "
+              f"min={rmn} max={rmx} <=-1={r_lo}% >=1={r_hi}% nan={nan} inf={inf}")
+        # Denormalized view — what the sidecar actually stores after (x+1)/2.
+        d = (chw + 1.0) / 2.0
+        dmn, dmx, d_lo, d_hi = _hp_boundary_stats(d, 0.0, 1.0)
+        print(f"[Studio] High Precision AUDIT denorm(+1/2): "
+              f"min={dmn} max={dmx} <=0={d_lo}% >=1={d_hi}%")
+    except Exception as e:
+        print(f"[Studio] High Precision AUDIT error — {e}")
+
+
 def _hp_install_decode_hook():
     """Install the decode_latent_batch capture hook (idempotent)."""
     global _HP_HOOK_INSTALLED
@@ -2067,14 +2132,13 @@ def _hp_install_decode_hook():
         out = orig(*args, **kwargs)
         if not _HP_CAPTURE_ACTIVE:
             return out
-        # Diagnostic: what does the hook actually see? dtype/shape here tell us
-        # the capture stage (raw decode vs post-clamp image). The range stats
-        # logged later say whether it's clamped.
+        # Phase-1 capture audit: log raw + denormalized range stats for the
+        # first sample so we can see what stage/range decode_latent_batch gives
+        # us (clamped vs in-range vs extended). Diagnostic only — never mutates.
         try:
             _first = out[0] if (out is not None and len(out)) else None
-            if _first is not None and hasattr(_first, "shape"):
-                print(f"[Studio] High Precision: hook tensor shape={tuple(_first.shape)} "
-                      f"dtype={getattr(_first, 'dtype', '?')}")
+            if _first is not None:
+                _hp_log_capture_audit(_first)
         except Exception:
             pass
         try:
