@@ -2202,10 +2202,11 @@ def _hp_install_dfs_audit():
     (pre-clamp, possibly per-tile) and decode_latent_batch (assembled, clamped),
     so this trace pinpoints where tile assembly and the clamp each happen.
     Read-only, first-call-only, guarded, restored after generation."""
-    global _HP_DFS_AUDIT, _HP_DFS_AUDIT_LOGGED
+    global _HP_DFS_AUDIT, _HP_DFS_AUDIT_LOGGED, _HP_VAE_AUDIT_LOGGED
     if _HP_DFS_AUDIT is not None:
         return
     _HP_DFS_AUDIT_LOGGED = False
+    _HP_VAE_AUDIT_LOGGED = False  # VAE capture now runs inside this wrap
     try:
         import importlib
         targets = []
@@ -2223,8 +2224,55 @@ def _hp_install_dfs_audit():
         orig = targets[0][1]
 
         def _wrap(*a, **k):
-            out = orig(*a, **k)
-            global _HP_DFS_AUDIT_LOGGED
+            # Reload-proof VAE capture. The VAE instance can be swapped between
+            # the base and hires passes (low-VRAM reload), which orphans a
+            # one-time instance patch — so instead we (re)wrap the LIVE VAE here,
+            # on the stable module-level decode_first_stage, for the duration of
+            # this call. _vcap captures the VAE's pre-clamp output BEFORE
+            # decode_first_stage clamps its return value.
+            global _HP_VAE_AUDIT_LOGGED, _HP_DFS_AUDIT_LOGGED
+            vae = getattr(getattr(shared, "sd_model", None), "first_stage_model", None)
+            vdec = getattr(vae, "decode", None)
+            patched = False
+            if _HP_CAPTURE_ACTIVE and vae is not None and callable(vdec):
+                def _vcap(*va, **vk):
+                    global _HP_VAE_AUDIT_LOGGED
+                    vo = vdec(*va, **vk)
+                    try:
+                        if not _HP_VAE_AUDIT_LOGGED:
+                            _HP_VAE_AUDIT_LOGGED = True
+                            t = vo[0] if isinstance(vo, (list, tuple)) and vo else vo
+                            chw, reason = _hp_raw_to_chw(t)
+                            if chw is not None:
+                                rmn, rmx, r_lo, r_hi = _hp_boundary_stats(chw, -1.0, 1.0)
+                                print(f"[Studio] High Precision VAE-AUDIT (pre-clamp): "
+                                      f"shape={tuple(chw.shape)} dtype={getattr(t, 'dtype', '?')} "
+                                      f"min={rmn} max={rmx} <=-1={r_lo}% >=1={r_hi}%")
+                            else:
+                                print(f"[Studio] High Precision VAE-AUDIT: skip ({reason})")
+                        samples = vo if isinstance(vo, (list, tuple)) else [vo]
+                        imgs = []
+                        for s in samples:
+                            imgs.extend(_hp_tensor_to_hwc_list(s))
+                        if imgs:
+                            _HP_VAE_BATCHES.append(imgs)
+                    except Exception as e:
+                        print(f"[Studio] High Precision: VAE capture error — {e}")
+                    return vo
+                try:
+                    vae.decode = _vcap
+                    patched = True
+                except Exception:
+                    patched = False
+            try:
+                out = orig(*a, **k)
+            finally:
+                if patched:
+                    try:
+                        vae.decode = vdec
+                    except Exception:
+                        pass
+            # DFS audit (diagnostic): decode_first_stage's output is post-clamp.
             if not _HP_DFS_AUDIT_LOGGED:
                 _HP_DFS_AUDIT_LOGGED = True
                 try:
@@ -2232,7 +2280,7 @@ def _hp_install_dfs_audit():
                     chw, reason = _hp_raw_to_chw(t)
                     if chw is not None:
                         rmn, rmx, r_lo, r_hi = _hp_boundary_stats(chw, -1.0, 1.0)
-                        print(f"[Studio] High Precision DFS-AUDIT (decode_first_stage): "
+                        print(f"[Studio] High Precision DFS-AUDIT (decode_first_stage, post-clamp): "
                               f"shape={tuple(chw.shape)} dtype={getattr(t, 'dtype', '?')} "
                               f"min={rmn} max={rmx} <=-1={r_lo}% >=1={r_hi}%")
                     else:
@@ -2843,12 +2891,9 @@ def run_generation(
                     if _hp_install_decode_hook():
                         _hp_warn_fp16_vae_once()
                         _hp_begin_capture()
-                        # Phase-2B: also wrap the VAE decode to see its range
-                        # before any downstream clamp (diagnostic; auto-removed
-                        # in _hp_end_capture).
-                        _hp_install_vae_decode_audit()
-                        # Phase-2A/B: and decode_first_stage — the candidate
-                        # "assembled, pre-clamp" seam for Option B.
+                        # Reload-proof pre-clamp VAE capture runs INSIDE the
+                        # decode_first_stage wrap (stable across the VRAM reload
+                        # that can swap the VAE between base and hires passes).
                         _hp_install_dfs_audit()
                 try:
                     # Native ADetailer fires inside process_images() via its
