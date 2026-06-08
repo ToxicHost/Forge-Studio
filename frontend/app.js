@@ -286,6 +286,7 @@ const State = {
   outputContentHashes: [], // SHA256 of decoded RGB pixels, parallel to outputImages; "" when not saved
   outputFloatPaths: [],    // High Precision sidecar paths, parallel to outputImages; "" when none
   outputMaskPaths: [],     // High Precision V2 blend-mask sidecar paths, parallel to outputImages; "" when no AD/brush composite
+  outputFloatStats: [],    // Privacy-safe HP source stats (range/clamp/headroom), parallel to outputImages; null when none
   selectedOutputIdx: 0,
   embedMetadata: true,     // whether to embed generation params in saved images
   saveOutputs: true,       // auto-save generated images to disk
@@ -1908,6 +1909,7 @@ async function doGenerate() {
       const newContentHashes = result.content_hashes || [];
       const newFloatPaths = result.float_paths || [];
       const newMaskPaths = result.mask_paths || [];
+      const newFloatStats = result.float_stats || [];
       // Extract original filenames (without extension) from server paths
       const newFilenames = (result.image_paths || []).map(p => {
         const base = p.replace(/\\/g, "/").split("/").pop() || "";
@@ -1920,6 +1922,7 @@ async function doGenerate() {
       while (newContentHashes.length < newB64.length) newContentHashes.push("");
       while (newFloatPaths.length < newB64.length) newFloatPaths.push("");
       while (newMaskPaths.length < newB64.length) newMaskPaths.push("");
+      while (newFloatStats.length < newB64.length) newFloatStats.push(null);
 
       State.outputImages = [...newFileUrls, ...State.outputImages].slice(0, MAX_GALLERY);
       State.outputImagesB64 = [...newB64, ...State.outputImagesB64].slice(0, MAX_GALLERY);
@@ -1928,6 +1931,7 @@ async function doGenerate() {
       State.outputContentHashes = [...newContentHashes, ...State.outputContentHashes].slice(0, MAX_GALLERY);
       State.outputFloatPaths = [...newFloatPaths, ...State.outputFloatPaths].slice(0, MAX_GALLERY);
       State.outputMaskPaths = [...newMaskPaths, ...State.outputMaskPaths].slice(0, MAX_GALLERY);
+      State.outputFloatStats = [...newFloatStats, ...State.outputFloatStats].slice(0, MAX_GALLERY);
       State.selectedOutputIdx = 0;
       renderOutputGallery();
       addHistoryEntry(`Generate (seed ${result.seed})`);
@@ -2425,7 +2429,7 @@ function displayOnCanvas(imgSrc, opts) {
           // load even when auto-save points at a custom folder outside the
           // Forge output tree. /studio/file serves the default tree too.
           const mUrl = opts.maskPath ? _studioFileUrl(opts.maskPath) : null;
-          SD.setFloatSource(_studioFileUrl(opts.floatPath), mUrl, imgSrc, outW, outH);
+          SD.setFloatSource(_studioFileUrl(opts.floatPath), mUrl, imgSrc, outW, outH, opts.floatStats || null);
         } else {
           SD.setFloatSource(null);
         }
@@ -2875,7 +2879,8 @@ function bindUI() {
     const img = _pickOutputSource(State.selectedOutputIdx);
     const fpath = State.outputFloatPaths[State.selectedOutputIdx] || "";
     const mpath = State.outputMaskPaths[State.selectedOutputIdx] || "";
-    if (img) displayOnCanvas(img, { newLayer: true, layerName: "Output", undoLabel: "Send to canvas", floatPath: fpath, maskPath: mpath });
+    const fstats = State.outputFloatStats[State.selectedOutputIdx] || null;
+    if (img) displayOnCanvas(img, { newLayer: true, layerName: "Output", undoLabel: "Send to canvas", floatPath: fpath, maskPath: mpath, floatStats: fstats });
   });
 
   // Gallery click = select, double-click = lightbox (event delegation, bound once)
@@ -2958,7 +2963,7 @@ function bindUI() {
         const fpath = State.outputFloatPaths[idx] || "";
         const mpath = State.outputMaskPaths[idx] || "";
         if (action === "canvas" && imgSrc) {
-          displayOnCanvas(imgSrc, { newLayer: true, layerName: "Output", undoLabel: "Send to canvas", floatPath: fpath, maskPath: mpath });
+          displayOnCanvas(imgSrc, { newLayer: true, layerName: "Output", undoLabel: "Send to canvas", floatPath: fpath, maskPath: mpath, floatStats: State.outputFloatStats[idx] || null });
         } else if (action === "seed" && seed) {
           navigator.clipboard.writeText(seed).then(() => showToast(`Seed ${seed} copied`, "success"));
         } else if (action === "save-exr") {
@@ -2993,6 +2998,8 @@ function bindUI() {
       // V2: blend-mask sidecar (AD/brush composite). When present,
       // Develop will composite canvas-uint8 over the float buffer.
       maskPath: State.outputMaskPaths[i] || "",
+      // Privacy-safe HP source stats for the Develop quality badge.
+      floatStats: State.outputFloatStats[i] || null,
     }));
   }
 
@@ -3028,7 +3035,7 @@ function bindUI() {
       const img = _pickOutputSource(idx);
       const fpath = State.outputFloatPaths[idx] || "";
       const mpath = State.outputMaskPaths[idx] || "";
-      if (img) displayOnCanvas(img, { newLayer: true, layerName: "Output", undoLabel: "Drag to canvas", floatPath: fpath, maskPath: mpath });
+      if (img) displayOnCanvas(img, { newLayer: true, layerName: "Output", undoLabel: "Drag to canvas", floatPath: fpath, maskPath: mpath, floatStats: State.outputFloatStats[idx] || null });
     }
   });
 

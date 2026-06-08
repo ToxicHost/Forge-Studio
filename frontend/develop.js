@@ -4460,15 +4460,35 @@ if (window.StudioModules) {
 function _updateHpBadge() {
     if (!_hpBadge) return;
     if (!_floatSrc || !_floatSrc.r) {
+        // TODO (HP audit Part F): when there's no float source, surface an
+        // "8-bit"/"JPEG/compressed" badge so users know Develop is editing a
+        // limited source. Needs the active source's format/MIME plumbed into
+        // Develop (it isn't today) — deferred to keep this PR focused.
         _hpBadge.style.display = "none";
         return;
     }
     _hpBadge.style.display = "";
+    var st = _floatSrc.stats;
+    // A clamped source (no out-of-range values, max pinned at 1.0) still gives
+    // smoother 8-bit-free editing, but no real highlight/shadow recovery — say
+    // so honestly rather than implying full RAW-like headroom.
+    var clampedOnly = !!(st && st.valid && st.clamped_like && !st.has_headroom);
     if (_floatSrc.hasMask) {
-        _hpBadge.textContent = "HP+AD";
+        _hpBadge.textContent = clampedOnly ? "HP+AD clamped" : "HP+AD";
         _hpBadge.dataset.i18nTitle = "develop.hpBadge.composited";
         _hpBadge.title = _t("develop.hpBadge.composited",
-            "High Precision: float buffer composited with AD/brush canvas pixels");
+            "High Precision: float buffer composited with AD/brush canvas pixels")
+            + (clampedOnly ? " — values appear clamped to 0..1 (limited highlight recovery)" : "");
+    } else if (clampedOnly) {
+        _hpBadge.textContent = "HP clamped";
+        _hpBadge.dataset.i18nTitle = "develop.hpBadge.clamped";
+        _hpBadge.title = _t("develop.hpBadge.clamped",
+            "High Precision float32 source active, but values appear clamped to 0..1. Edits are smoother than 8-bit, but highlight/shadow recovery is limited.");
+    } else if (st && st.valid && st.has_headroom) {
+        _hpBadge.textContent = "HP";
+        _hpBadge.dataset.i18nTitle = "develop.hpBadge.headroom";
+        _hpBadge.title = _t("develop.hpBadge.headroom",
+            "High Precision float32 source active, with out-of-range headroom (true highlight/shadow recovery).");
     } else {
         _hpBadge.textContent = "HP";
         _hpBadge.dataset.i18nTitle = "develop.hpBadge.tooltip";
@@ -4560,7 +4580,7 @@ function _decodeImageToRGBA(url, w, h) {
     });
 }
 
-function setFloatSource(floatUrl, maskUrl, sourceUrl, w, h) {
+function setFloatSource(floatUrl, maskUrl, sourceUrl, w, h, stats) {
     // Null floatUrl = clear. Same (float, mask, source) URL triple = no-op.
     // Otherwise fetch float + (optional) mask + (optional) source image,
     // composite at load time, and stash the result.
@@ -4626,6 +4646,7 @@ function setFloatSource(floatUrl, maskUrl, sourceUrl, w, h) {
                 w: w, h: h,
                 r: planes.r, g: planes.g, b: planes.b,
                 hasMask: hasMask,
+                stats: stats || null,   // privacy-safe HP source quality (range/clamp/headroom)
             };
             _updateHpBadge();
             _scheduleFullRedraw();

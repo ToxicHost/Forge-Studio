@@ -1983,6 +1983,70 @@ def _hp_tensor_to_hwc_list(sample):
         return []
 
 
+def _hp_float_stats(arr):
+    """Privacy-safe range/clamp stats for one HWC float image.
+
+    Surfaces honestly whether a High Precision sidecar actually carries
+    out-of-range headroom (values <0 / >1 that an 8-bit image clips) or only
+    clamped 0..1 data. Contains NO pixel samples, paths, prompts, or model
+    names. Never raises.
+    """
+    try:
+        if arr is None:
+            return None
+        a = np.asarray(arr)
+        if a.ndim != 3 or a.shape[-1] < 3:
+            return {"valid": False, "reason": f"bad_shape:{tuple(a.shape)}"}
+
+        rgb = a[..., :3]
+        pixels = int(rgb.shape[0] * rgb.shape[1])
+        finite_count = int(np.isfinite(rgb).sum())
+        total_count = int(rgb.size)
+        nan_count = int(np.isnan(rgb).sum())
+        inf_count = int(np.isinf(rgb).sum())
+
+        if finite_count:
+            mn = [float(np.nanmin(rgb[..., c])) for c in range(3)]
+            mx = [float(np.nanmax(rgb[..., c])) for c in range(3)]
+            below = [int(np.sum(rgb[..., c] < 0.0)) for c in range(3)]
+            above = [int(np.sum(rgb[..., c] > 1.0)) for c in range(3)]
+        else:
+            mn = [None, None, None]
+            mx = [None, None, None]
+            below = [0, 0, 0]
+            above = [0, 0, 0]
+
+        below_pct = [round((x / pixels) * 100.0, 6) if pixels else 0 for x in below]
+        above_pct = [round((x / pixels) * 100.0, 6) if pixels else 0 for x in above]
+
+        # Heuristic, not proof: no out-of-range values AND a channel max sitting
+        # exactly at 1.0 suggests the data was clamped before we captured it.
+        clamped_like = (
+            pixels > 0
+            and all(x == 0 for x in below)
+            and all(x == 0 for x in above)
+            and any(v == 1.0 for v in mx if v is not None)
+        )
+
+        return {
+            "valid": True,
+            "shape": [int(rgb.shape[0]), int(rgb.shape[1]), 3],
+            "finite": finite_count == total_count,
+            "nan_count": nan_count,
+            "inf_count": inf_count,
+            "min_rgb": mn,
+            "max_rgb": mx,
+            "below0_counts": below,
+            "above1_counts": above,
+            "below0_pct": below_pct,
+            "above1_pct": above_pct,
+            "clamped_like": clamped_like,
+            "has_headroom": any(x > 0 for x in below) or any(x > 0 for x in above),
+        }
+    except Exception as e:
+        return {"valid": False, "reason": f"stats_error:{e}"}
+
+
 def _hp_install_decode_hook():
     """Install the decode_latent_batch capture hook (idempotent)."""
     global _HP_HOOK_INSTALLED
@@ -2003,6 +2067,16 @@ def _hp_install_decode_hook():
         out = orig(*args, **kwargs)
         if not _HP_CAPTURE_ACTIVE:
             return out
+        # Diagnostic: what does the hook actually see? dtype/shape here tell us
+        # the capture stage (raw decode vs post-clamp image). The range stats
+        # logged later say whether it's clamped.
+        try:
+            _first = out[0] if (out is not None and len(out)) else None
+            if _first is not None and hasattr(_first, "shape"):
+                print(f"[Studio] High Precision: hook tensor shape={tuple(_first.shape)} "
+                      f"dtype={getattr(_first, 'dtype', '?')}")
+        except Exception:
+            pass
         try:
             this_batch = []
             # `out` is an iterable of decode results. Each element may be a
@@ -2023,7 +2097,7 @@ def _hp_install_decode_hook():
     _proc.decode_latent_batch = _hp_decode_wrapper
     _proc._studio_hp_decode_orig = orig
     _HP_HOOK_INSTALLED = True
-    print("[Studio] High Precision: decode_latent_batch hook installed")
+    print("[Studio] High Precision: installed decode hook on modules.processing.decode_latent_batch")
     return True
 
 
@@ -2293,6 +2367,9 @@ def run_generation(
     # uint8 here, black (0.0) = use float here. None when no mask is
     # needed (no AD pass and no brush composite ran).
     all_blend_masks = []
+    # Privacy-safe per-image High Precision capture stats (range/clamp/finite),
+    # parallel to all_float_arrays. None when HP was off or N/A for the branch.
+    all_float_stats = []
     total_images = gp.batch_count * max(1, gp.batch_size)
     shared.state.job_count = total_images
     shared.state.job_no = 0
@@ -2457,6 +2534,8 @@ def run_generation(
                 # capture is N/A for this branch.
                 all_float_arrays.append(None)
                 all_blend_masks.append(None)
+                all_float_stats.append({"valid": False, "skipped": True,
+                                        "reason": "regional pipeline — no single final latent"})
                 region_info = f"Regional inpainting | Seed: {batch_seed}"
                 all_infotexts.append(region_info)
 
@@ -2482,6 +2561,8 @@ def run_generation(
                 # capture path here. Float capture skipped for this branch.
                 all_float_arrays.append(None)
                 all_blend_masks.append(None)
+                all_float_stats.append({"valid": False, "skipped": True,
+                                        "reason": "attention couple — no parallel latent capture"})
                 all_infotexts.append(img_info)
 
             else:
@@ -2695,6 +2776,16 @@ def run_generation(
                         hp_blend_mask = None
                     all_float_arrays.append(fa)
                     all_blend_masks.append(hp_blend_mask)
+                    _st = _hp_float_stats(fa)
+                    all_float_stats.append(_st)
+                    if _st and _st.get("valid"):
+                        print("[Studio] High Precision: float stats "
+                              f"shape={_st['shape']} "
+                              f"R=[{_st['min_rgb'][0]:.5f},{_st['max_rgb'][0]:.5f}] "
+                              f"G=[{_st['min_rgb'][1]:.5f},{_st['max_rgb'][1]:.5f}] "
+                              f"B=[{_st['min_rgb'][2]:.5f},{_st['max_rgb'][2]:.5f}] "
+                              f"below0={_st['below0_pct']}% above1={_st['above1_pct']}% "
+                              f"headroom={_st['has_headroom']} clamped_like={_st['clamped_like']}")
                     if hp_blend_mask is not None:
                         coverage = float(hp_blend_mask.mean()) * 100.0
                         print(f"[Studio] High Precision: captured {fa.shape[1]}x{fa.shape[0]} float "
@@ -2712,7 +2803,10 @@ def run_generation(
                         else:
                             reason = (f"dimension mismatch (float {fa.shape[1]}x{fa.shape[0]} "
                                       f"vs final {result.size[0]}x{result.size[1]})")
+                        all_float_stats.append({"valid": False, "skipped": True, "reason": reason})
                         print(f"[Studio] High Precision: skipped sidecar for image {img_num+1} — {reason}")
+                    else:
+                        all_float_stats.append(None)
 
                 # Collect per-image info text (resolved prompt, seed, etc.)
                 img_info = ""
@@ -2792,8 +2886,9 @@ def run_generation(
             settings_json,
             id_task,
             all_float_arrays,
-            all_blend_masks)
-    return [], "<p>No images generated.</p>", "", "", id_task, [], []
+            all_blend_masks,
+            all_float_stats)
+    return [], "<p>No images generated.</p>", "", "", id_task, [], [], []
 
 
 # =========================================================================

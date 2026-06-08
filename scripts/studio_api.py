@@ -585,6 +585,10 @@ class GenerateResponse(BaseModel):
     # AD/brush blend mask sidecar paths (V2), parallel to float_paths;
     # "" when no post-processing modified pixels (no AD/no brush composite).
     mask_paths: List[str] = []
+    # Privacy-safe High Precision source stats, parallel to images: range,
+    # clamp/headroom flags, finite counts. No paths/prompts/pixels. None when
+    # HP was off or N/A for that image.
+    float_stats: List[Optional[dict]] = []
     content_hashes: List[str] = []  # SHA256 of decoded RGB pixels, "" if not saved
     infotexts: List[str] = []
     settings: dict = {}
@@ -1767,6 +1771,9 @@ def setup_studio_routes(app: FastAPI):
         task_id = result[4]
         float_arrays = list(result[5]) if len(result) >= 6 else []
         blend_masks = list(result[6]) if len(result) >= 7 else []
+        # Privacy-safe HP capture stats, parallel to float_arrays (8th item;
+        # absent on older cached modules → empty list).
+        float_stats = list(result[7]) if len(result) >= 8 else []
 
         images_b64 = []
         image_paths = []
@@ -1999,6 +2006,17 @@ def setup_studio_routes(app: FastAPI):
             float_paths.append(_per_image_float_path)
             mask_paths.append(_per_image_mask_path)
 
+        # Align HP stats to the emitted images and flag sidecars that were
+        # captured but failed to write (stats valid, no path). No paths added.
+        while len(float_stats) < len(images_b64):
+            float_stats.append(None)
+        float_stats = float_stats[:len(images_b64)]
+        for i in range(len(images_b64)):
+            fp = float_paths[i] if i < len(float_paths) else ""
+            fa_present = i < len(float_arrays) and float_arrays[i] is not None
+            if isinstance(float_stats[i], dict) and fa_present and not fp:
+                float_stats[i] = {**float_stats[i], "saved": False}
+
         settings = {}
         infotexts = []
         seed_val = -1
@@ -2027,6 +2045,7 @@ def setup_studio_routes(app: FastAPI):
             image_paths=image_paths,
             float_paths=float_paths,
             mask_paths=mask_paths,
+            float_stats=float_stats,
             content_hashes=content_hashes,
             infotexts=infotexts,
             settings=settings,

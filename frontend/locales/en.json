@@ -189,6 +189,8 @@
   "develop.beforeAfter.tooltip": "Before / After split",
   "develop.hpBadge.tooltip": "High Precision: float32 source pixels active",
   "develop.hpBadge.composited": "High Precision: float buffer composited with AD/brush canvas pixels",
+  "develop.hpBadge.clamped": "High Precision float32 source active, but values appear clamped to 0..1. Edits are smoother than 8-bit, but highlight/shadow recovery is limited.",
+  "develop.hpBadge.headroom": "High Precision float32 source active, with out-of-range headroom (true highlight/shadow recovery).",
 
   "develop.split.before": "Before",
   "develop.split.after": "After",
