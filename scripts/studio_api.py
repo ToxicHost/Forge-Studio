@@ -353,6 +353,54 @@ _GITHUB_API = f"https://api.github.com/repos/{_GITHUB_OWNER}/{_GITHUB_REPO}"
 _VERSION_FILE = _studio_root / "version.json"
 
 
+# Folders Studio has written generated images to this session. Forge's own
+# output tree is always reachable via the /file= route, but a user-chosen
+# save folder lives outside it, so we record it here and serve files from it
+# (path-validated) through /studio/file — keeps previews and the float/mask
+# sidecars loadable regardless of where the user pointed auto-save.
+_STUDIO_SERVE_ROOTS = set()
+
+
+def _register_serve_root(p):
+    try:
+        if p:
+            _STUDIO_SERVE_ROOTS.add(str(Path(p).expanduser().resolve()))
+    except Exception:
+        pass
+
+
+def _forge_output_root():
+    try:
+        base = shared.opts.data.get("outdir_samples", "") or shared.opts.data.get("outdir_img2img_samples", "")
+        if not base:
+            from modules.paths import data_path
+            base = os.path.join(data_path, "output")
+        if os.path.basename(base) in ("txt2img-images", "img2img-images"):
+            base = os.path.dirname(base)
+        return str(Path(base).expanduser().resolve())
+    except Exception:
+        return str(Path("output").resolve())
+
+
+def _path_is_served(path):
+    """True when `path` resolves inside the Forge output tree or a folder
+    Studio has saved to this session — guards /studio/file against traversal
+    and arbitrary filesystem reads."""
+    try:
+        rp = Path(path).expanduser().resolve()
+    except Exception:
+        return False
+    roots = set(_STUDIO_SERVE_ROOTS)
+    roots.add(_forge_output_root())
+    for root in roots:
+        try:
+            rp.relative_to(root)
+            return True
+        except ValueError:
+            continue
+    return False
+
+
 def _read_version():
     """Read current commit hash from version.json, or None."""
     try:
@@ -1736,6 +1784,7 @@ def setup_studio_routes(app: FastAPI):
             try:
                 base_outdir = str(Path(_save_override).expanduser())
                 output_dir = Path(base_outdir) / mode_folder / date.today().strftime("%Y-%m-%d")
+                _register_serve_root(_save_override)
             except Exception:
                 log.exception("Invalid save_dir override %r — falling back to default", _save_override)
                 _save_override = ""
@@ -3321,6 +3370,23 @@ def setup_studio_routes(app: FastAPI):
         except Exception as e:
             return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
+    @app.get("/studio/file")
+    async def studio_file(path: str = ""):
+        """Serve a generated file (image or .float32.bin/mask sidecar) from a
+        folder Studio wrote to. Needed because a user-chosen save folder lives
+        outside Forge's /file= tree. Path-validated against served roots to
+        prevent traversal / arbitrary reads."""
+        if not path or not _path_is_served(path):
+            return JSONResponse({"error": "forbidden"}, status_code=403)
+        rp = Path(path).expanduser()
+        try:
+            rp = rp.resolve()
+        except Exception:
+            return JSONResponse({"error": "bad path"}, status_code=400)
+        if not rp.is_file():
+            return JSONResponse({"error": "not found"}, status_code=404)
+        return FileResponse(str(rp))
+
     @app.get("/studio/embeddings")
     async def get_embeddings():
         from modules.paths import models_path
@@ -3988,6 +4054,7 @@ def setup_studio_routes(app: FastAPI):
                 target = Path(req.full_path).expanduser()
                 try:
                     target.parent.mkdir(parents=True, exist_ok=True)
+                    _register_serve_root(str(target.parent))
                 except Exception:
                     pass
                 _ext = target.suffix.lower().lstrip(".")

@@ -357,6 +357,13 @@ function _pickOutputSource(idx) {
 // base64 data URL. When _pickOutputSource returns a /file= URL, fetch
 // it fresh from disk and convert — this is the byte-faithful source,
 // avoiding the cached b64 that drifts on the affected setups.
+// Same-origin URL for a Studio-written file (image or .float32.bin/mask
+// sidecar). Unlike Forge's /file= route this also serves user-chosen save
+// folders outside the Forge output tree (path-validated server-side).
+function _studioFileUrl(path) {
+  return API.base + "/studio/file?path=" + encodeURIComponent(path);
+}
+
 async function _resolveOutputAsB64(idx) {
   const src = _pickOutputSource(idx);
   if (!src) return null;
@@ -2414,8 +2421,11 @@ function displayOnCanvas(imgSrc, opts) {
       const SD = window.StudioDevelop;
       if (SD && typeof SD.setFloatSource === "function") {
         if (opts.floatPath) {
-          const mUrl = opts.maskPath ? (API.base + "/file=" + opts.maskPath) : null;
-          SD.setFloatSource(API.base + "/file=" + opts.floatPath, mUrl, imgSrc, outW, outH);
+          // Route sidecars through /studio/file (not Forge's /file=) so they
+          // load even when auto-save points at a custom folder outside the
+          // Forge output tree. /studio/file serves the default tree too.
+          const mUrl = opts.maskPath ? _studioFileUrl(opts.maskPath) : null;
+          SD.setFloatSource(_studioFileUrl(opts.floatPath), mUrl, imgSrc, outW, outH);
         } else {
           SD.setFloatSource(null);
         }
