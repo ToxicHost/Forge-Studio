@@ -4298,6 +4298,9 @@ function bindUI() {
       .then(() => console.log("[Studio] Saved defaults:", Object.keys(data).length, "params"))
       .catch(e => console.warn("[Studio] Server defaults save failed:", e));
   }
+  // Exposed so the first-run flow can persist its choices without going
+  // through the Settings button (which fires its own toast).
+  window._studioSaveDefaults = saveDefaults;
 
   // Cached copy of the most recently resolved defaults (server or session).
   // Used by _studioReapplyDefaults so new Canvas tabs can pick up the
@@ -4633,6 +4636,9 @@ function bindUI() {
       console.log("[Studio] Restoring AI components from session/defaults");
       _scheduleRestoredComponentSync("session-restore");
     }
+    // Reported back to init() for first-run detection: a fresh install has
+    // neither server defaults nor a saved session.
+    return hadDefaults || hadSession;
   };
 
   // AD slot checkboxes
@@ -5916,8 +5922,9 @@ async function init() {
 
   // Load saved workflow defaults (must run AFTER dropdowns are populated)
   // _applyDefaults handles canvas resize and status bar updates
+  let _hadStoredConfig = false;
   if (typeof window._studioLoadDefaults === "function") {
-    await window._studioLoadDefaults();
+    _hadStoredConfig = await window._studioLoadDefaults();
   } else {
     // No defaults — set initial status from input values
     const w = parseInt(document.getElementById("paramWidth")?.value) || 768;
@@ -6243,7 +6250,114 @@ async function init() {
     }
   }
 
+  // First-run preferences — only for genuinely fresh installs (no server
+  // defaults, no saved session, and never onboarded/skipped before). Existing
+  // users are never interrupted.
+  _maybeShowFirstRun(_hadStoredConfig);
+
   console.log("[Studio] Ready");
+}
+
+// ═══════════════════════════════════════════
+// FIRST-RUN PREFERENCES (PR 4)
+// ═══════════════════════════════════════════
+// A lightweight onboarding card shown once on a fresh install. It only
+// configures settings that already exist and persists them through the
+// normal defaults system (no second preference store). Everything here is
+// changeable later under Settings.
+const _ONBOARD_KEY = "studio-onboarded";
+
+function _maybeShowFirstRun(hadStoredConfig) {
+  try {
+    if (hadStoredConfig) return;                              // existing user
+    if (localStorage.getItem(_ONBOARD_KEY)) return;           // already chosen/skipped
+  } catch (_) { return; }
+  // Defer a tick so the rest of init settles (dropdowns, theme) first.
+  setTimeout(_showFirstRunModal, 200);
+}
+
+// Flip a Studio on/off toggle to a desired boolean by reusing its own click
+// handler — that keeps the associated State.* field in sync, unlike poking
+// the class directly.
+function _setToggleState(id, want) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  if (el.classList.contains("on") !== !!want) el.click();
+}
+
+function _showFirstRunModal() {
+  if (document.getElementById("firstRunOverlay")) return;
+  const _tt = (k, f) => (window.I18N && window.I18N.t) ? window.I18N.t(k, f) : f;
+
+  const ov = document.createElement("div");
+  ov.id = "firstRunOverlay";
+  ov.className = "first-run-overlay";
+  ov.innerHTML =
+    '<div class="first-run-card" role="dialog" aria-modal="true" aria-labelledby="firstRunTitle">' +
+      '<div class="first-run-head">' +
+        '<h2 id="firstRunTitle">' + _tt("firstRun.title", "Welcome to Forge Studio") + '</h2>' +
+        '<p>' + _tt("firstRun.subtitle", "A couple of quick preferences — you can change all of these later in Settings.") + '</p>' +
+      '</div>' +
+      '<div class="first-run-group">' +
+        '<div class="first-run-label">' + _tt("firstRun.format.label", "Default image format") + '</div>' +
+        '<div class="first-run-choices" data-fr="format">' +
+          '<button class="first-run-choice active" data-val="png">PNG</button>' +
+          '<button class="first-run-choice" data-val="jpeg">JPEG</button>' +
+          '<button class="first-run-choice" data-val="webp">WebP</button>' +
+        '</div>' +
+        '<div class="first-run-hint">' + _tt("firstRun.format.hint", "PNG is lossless; JPEG/WebP are smaller.") + '</div>' +
+      '</div>' +
+      '<div class="first-run-group">' +
+        '<div class="first-run-label">' + _tt("firstRun.save.label", "Save generated images to disk") + '</div>' +
+        '<div class="first-run-choices" data-fr="save">' +
+          '<button class="first-run-choice active" data-val="on">' + _tt("firstRun.save.on", "Yes, auto-save outputs") + '</button>' +
+          '<button class="first-run-choice" data-val="off">' + _tt("firstRun.save.off", "No, I’ll save manually") + '</button>' +
+        '</div>' +
+        '<div class="first-run-hint">' + _tt("firstRun.save.hint", "Auto-save writes each result to your output folder so the Gallery can find it.") + '</div>' +
+      '</div>' +
+      '<div class="first-run-group">' +
+        '<div class="first-run-label">' + _tt("firstRun.meta.label", "Embed generation metadata") + '</div>' +
+        '<div class="first-run-choices" data-fr="meta">' +
+          '<button class="first-run-choice active" data-val="on">' + _tt("firstRun.meta.on", "Yes") + '</button>' +
+          '<button class="first-run-choice" data-val="off">' + _tt("firstRun.meta.off", "No") + '</button>' +
+        '</div>' +
+        '<div class="first-run-hint">' + _tt("firstRun.meta.hint", "Stores prompt/seed/settings inside saved images so they can be recalled later.") + '</div>' +
+      '</div>' +
+      '<div class="first-run-foot">' +
+        '<button class="first-run-skip" id="firstRunSkip">' + _tt("firstRun.skip", "Skip") + '</button>' +
+        '<button class="first-run-go" id="firstRunGo">' + _tt("firstRun.go", "Get started") + '</button>' +
+      '</div>' +
+      '<div class="first-run-note">' + _tt("firstRun.note", "Tip: set a custom Gallery folder and Canvas layout anytime in Settings.") + '</div>' +
+    '</div>';
+  document.body.appendChild(ov);
+
+  // Single-select chip groups.
+  ov.querySelectorAll(".first-run-choices").forEach(grp => {
+    grp.addEventListener("click", e => {
+      const btn = e.target.closest(".first-run-choice");
+      if (!btn) return;
+      grp.querySelectorAll(".first-run-choice").forEach(b => b.classList.toggle("active", b === btn));
+    });
+  });
+
+  const _pick = (group) => ov.querySelector('[data-fr="' + group + '"] .first-run-choice.active')?.dataset.val;
+  const _close = () => { ov.remove(); try { localStorage.setItem(_ONBOARD_KEY, "1"); } catch (_) {} };
+
+  document.getElementById("firstRunSkip")?.addEventListener("click", _close);
+
+  document.getElementById("firstRunGo")?.addEventListener("click", () => {
+    // Apply through the real controls so State + Settings UI stay in sync.
+    const fmt = _pick("format") || "png";
+    const fmtSel = document.getElementById("settingSaveFormat");
+    if (fmtSel) { fmtSel.value = fmt; fmtSel.dispatchEvent(new Event("change")); }
+    _setToggleState("toggleSaveOutputs", _pick("save") === "on");
+    _setToggleState("toggleMetadata", _pick("meta") === "on");
+    // Persist via the normal defaults system (also marks the install as
+    // configured, so this never reappears).
+    if (typeof window._studioSaveDefaults === "function") window._studioSaveDefaults();
+    _close();
+    if (typeof showToast === "function") showToast(((window.I18N && window.I18N.t) ? window.I18N.t : (k, f) => f)("firstRun.done", "Preferences saved — welcome aboard!"), "success");
+  });
 }
 
 // ═══════════════════════════════════════════
