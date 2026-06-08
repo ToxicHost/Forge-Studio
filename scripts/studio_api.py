@@ -719,12 +719,67 @@ def _write_exr_minimal(path: str, rgb) -> None:
         f.write(bytes(out))
 
 
-def _save_float_sidecar(fpath: Path, float_arr) -> str:
-    """Write a {stem}.float32.bin sidecar next to the saved image.
+def _write_float_metadata(bin_path: Path, float_arr, stats) -> None:
+    """Write the companion {stem}.float32.json describing the raw .bin sidecar.
 
-    `float_arr` is an HxWx3 float32 numpy array (the unclamped VAE
-    output, in [0, 1] with small headroom). Returns the sidecar path on
-    success, "" on any failure (so the regular PNG save is unaffected).
+    Best-effort: a failure here never affects the .bin or the saved image. The
+    .bin format is unchanged; this JSON just lets Develop/Gallery/export
+    understand the sidecar after a reload (range, capture provenance, dims).
+    Atomic write; no absolute paths or other sensitive data recorded.
+    """
+    try:
+        import numpy as np
+        a = np.asarray(float_arr)
+        h = int(a.shape[0]); w = int(a.shape[1])
+        ch = int(a.shape[2]) if a.ndim == 3 else 1
+        st = stats if isinstance(stats, dict) else {}
+        meta = {
+            "version": 1,
+            "kind": "forge-studio-high-precision",
+            "pixel": {
+                "file": bin_path.name,
+                "width": w,
+                "height": h,
+                "channels": ch,
+                "dtype": "float32",
+                "layout": "HWC",
+                "interleaved": True,
+                "color": {
+                    "primaries": "sRGB/Rec.709",
+                    "transfer": "sRGB",
+                    "linearized": False,
+                },
+            },
+            "capture": {
+                "source_stage": st.get("source_stage"),
+                "fallback": bool(st.get("fallback", False)),
+                "fallback_reason": st.get("fallback_reason"),
+                "transform": st.get("transform", "(x + 1) / 2"),
+                "range": st.get("range", "unknown"),
+                "headroom": bool(st.get("has_headroom", False)),
+                "clamped_like": bool(st.get("clamped_like", False)),
+                "matched_final_dimensions": st.get("matched_final_dimensions"),
+                "below0_pct": st.get("below0_pct"),
+                "above1_pct": st.get("above1_pct"),
+                "boundary0_pct": st.get("boundary0_pct"),
+                "boundary1_pct": st.get("boundary1_pct"),
+                "min_rgb": st.get("min_rgb"),
+                "max_rgb": st.get("max_rgb"),
+            },
+        }
+        _atomic_write_json(bin_path.with_suffix(".json"), meta)
+    except Exception as e:
+        print(f"{TAG} High Precision: metadata sidecar write failed: {e}")
+
+
+def _save_float_sidecar(fpath: Path, float_arr, stats=None) -> str:
+    """Write a {stem}.float32.bin sidecar next to the saved image, plus a
+    companion {stem}.float32.json describing it.
+
+    `float_arr` is an HxWx3 float32 numpy array (the VAE output after
+    (x+1)/2, in [0, 1] with possible out-of-range headroom). Returns the
+    .bin path on success, "" on any failure (so the regular save is
+    unaffected). The .json is best-effort and never blocks the .bin.
     """
     if float_arr is None:
         return ""
@@ -739,6 +794,7 @@ def _save_float_sidecar(fpath: Path, float_arr) -> str:
         data = np.ascontiguousarray(float_arr, dtype=np.float32).tobytes()
         with open(str(sidecar), "wb") as f:
             f.write(data)
+        _write_float_metadata(sidecar, float_arr, stats)
         return str(sidecar)
     except Exception as e:
         print(f"{TAG} High Precision: sidecar write failed for {fpath.name}: {e}")
@@ -1856,6 +1912,7 @@ def setup_studio_routes(app: FastAPI):
             _per_image_mask_path = ""
             _img_float = float_arrays[i] if i < len(float_arrays) else None
             _img_mask = blend_masks[i] if i < len(blend_masks) else None
+            _img_stats = float_stats[i] if i < len(float_stats) else None
             if isinstance(img, Image.Image):
                 # When saving as PNG, encode once to buffer and reuse for both
                 # disk save and b64 response (avoids double PNG compression).
@@ -1895,7 +1952,7 @@ def setup_studio_routes(app: FastAPI):
                         # to the PNG. Best-effort; failure here doesn't
                         # affect the saved image.
                         if _img_float is not None:
-                            _per_image_float_path = _save_float_sidecar(fpath, _img_float)
+                            _per_image_float_path = _save_float_sidecar(fpath, _img_float, _img_stats)
                             # V2: AD/brush blend-mask sidecar. Only meaningful
                             # when there's a float to composite over, so it's
                             # gated on float having been saved.
@@ -1973,7 +2030,7 @@ def setup_studio_routes(app: FastAPI):
                         # the lossy file. The sidecar holds the true
                         # pre-encode pixels regardless of compression.
                         if _img_float is not None:
-                            _per_image_float_path = _save_float_sidecar(fpath, _img_float)
+                            _per_image_float_path = _save_float_sidecar(fpath, _img_float, _img_stats)
                             if _img_mask is not None:
                                 _per_image_mask_path = _save_mask_sidecar(fpath, _img_mask)
                         # Hash the saved image so the frontend can look it up in

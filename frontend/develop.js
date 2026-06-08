@@ -4474,8 +4474,11 @@ function _updateHpBadge() {
     // carries out-of-range values (verified). The clamped-vs-in-range
     // distinction is diagnostic and lives in the tooltip — never as a badge
     // ("HP Clamped" reads as broken HP).
-    var extended = !!(st && st.valid && st.has_headroom);
-    var clampedDiag = !!(st && st.valid && st.clamped_like && !st.has_headroom);
+    // Prefer the explicit range classification (from the .float32.json
+    // metadata or generation stats); fall back to has_headroom for legacy
+    // stats that predate the range field.
+    var extended = !!(st && (st.range === "extended" || (st.range == null && st.has_headroom)));
+    var clampedDiag = !!(st && !extended && (st.range === "clamped" || st.clamped_like));
     if (_floatSrc.hasMask) {
         _hpBadge.textContent = extended ? "HP+AD Extended" : "HP+AD";
         _hpBadge.dataset.i18nTitle = "develop.hpBadge.composited";
@@ -4579,6 +4582,31 @@ function _decodeImageToRGBA(url, w, h) {
     });
 }
 
+// Best-effort fetch of the companion .float32.json metadata for a sidecar URL.
+// Returns a stats-like object (range/headroom/clamped/source) or null. Used
+// when no generation stats were passed (Gallery/reload). Never throws.
+function _fetchFloatMeta(floatUrl) {
+    try {
+        var jsonUrl = String(floatUrl).replace(/\.float32\.bin/, ".float32.json");
+        if (jsonUrl === floatUrl) return Promise.resolve(null);
+        return fetch(jsonUrl).then(function (r) {
+            if (!r.ok) return null;
+            return r.json();
+        }).then(function (m) {
+            var cap = (m && m.capture) || null;
+            if (!cap) return null;
+            return {
+                valid: true,
+                range: cap.range,
+                has_headroom: !!cap.headroom,
+                clamped_like: !!cap.clamped_like,
+                source_stage: cap.source_stage,
+                fromMetadataFile: true,
+            };
+        }).catch(function () { return null; });
+    } catch (e) { return Promise.resolve(null); }
+}
+
 function setFloatSource(floatUrl, maskUrl, sourceUrl, w, h, stats) {
     // Null floatUrl = clear. Same (float, mask, source) URL triple = no-op.
     // Otherwise fetch float + (optional) mask + (optional) source image,
@@ -4649,6 +4677,17 @@ function setFloatSource(floatUrl, maskUrl, sourceUrl, w, h, stats) {
             };
             _updateHpBadge();
             _scheduleFullRedraw();
+            // No stats passed (e.g. a sidecar opened from the Gallery after a
+            // reload)? Best-effort fetch the .float32.json so the badge can
+            // still reflect extended vs plain HP. Absent/corrupt = legacy HP.
+            if (!stats) {
+                _fetchFloatMeta(floatUrl).then(function (m) {
+                    if (m && _floatSrc && _floatSrc.url === floatUrl) {
+                        _floatSrc.stats = m;
+                        _updateHpBadge();
+                    }
+                });
+            }
         } catch (e) {
             console.warn(TAG, "float sidecar parse failed:", e);
             _floatSrc = null;

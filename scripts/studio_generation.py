@@ -1905,8 +1905,10 @@ _HP_FP16_VAE_WARNED = False
 _HP_HOOK_INSTALLED = False
 _HP_CAPTURE_ACTIVE = False
 _HP_CAPTURE_BATCHES = []  # list[list[np.ndarray]] — one entry per decode_latent_batch call
-_HP_VAE_AUDIT = None          # Phase-2B: (vae_obj, orig_decode) while the audit wrap is active
-_HP_VAE_AUDIT_LOGGED = False  # log only the first VAE decode per capture window
+_HP_VAE_AUDIT_LOGGED = False  # log only the first VAE decode per capture window (debug)
+# Opt-in verbose HP diagnostics (per-stage range probes). Off by default so
+# normal generation logs stay quiet; set STUDIO_HP_DEBUG=1 to re-enable.
+_HP_DEBUG = bool(os.environ.get("STUDIO_HP_DEBUG"))
 _HP_DFS_AUDIT = None          # Phase-2A/B: (orig_fn, [patched_modules]) for decode_first_stage probe
 _HP_DFS_AUDIT_LOGGED = False  # log only the first decode_first_stage call per capture window
 _HP_VAE_BATCHES = []          # Option C: pre-clamp VAE-decode captures (list[list[np.ndarray HWC]])
@@ -1988,8 +1990,10 @@ def _hp_tensor_to_hwc_list(sample):
         return []
 
 
-def _hp_float_stats(arr, source_stage=None):
-    """Privacy-safe range/clamp stats for one HWC float image.
+def _hp_float_stats(arr, source_stage=None, fallback=False, fallback_reason=None,
+                    matched_final_dimensions=None, transform="(x + 1) / 2"):
+    """Privacy-safe range/clamp stats for one HWC float image, plus capture
+    provenance for the .float32.json sidecar.
 
     Surfaces honestly whether a High Precision sidecar actually carries
     out-of-range headroom (values <0 / >1 that an 8-bit image clips) or only
@@ -2001,7 +2005,7 @@ def _hp_float_stats(arr, source_stage=None):
             return None
         a = np.asarray(arr)
         if a.ndim != 3 or a.shape[-1] < 3:
-            return {"valid": False, "reason": f"bad_shape:{tuple(a.shape)}"}
+            return {"valid": False, "reason": f"bad_shape:{tuple(a.shape)}", "range": "unknown"}
 
         rgb = a[..., :3]
         pixels = int(rgb.shape[0] * rgb.shape[1])
@@ -2015,14 +2019,17 @@ def _hp_float_stats(arr, source_stage=None):
             mx = [float(np.nanmax(rgb[..., c])) for c in range(3)]
             below = [int(np.sum(rgb[..., c] < 0.0)) for c in range(3)]
             above = [int(np.sum(rgb[..., c] > 1.0)) for c in range(3)]
+            at0 = [int(np.sum(rgb[..., c] == 0.0)) for c in range(3)]
+            at1 = [int(np.sum(rgb[..., c] == 1.0)) for c in range(3)]
         else:
             mn = [None, None, None]
             mx = [None, None, None]
-            below = [0, 0, 0]
-            above = [0, 0, 0]
+            below = above = at0 = at1 = [0, 0, 0]
 
-        below_pct = [round((x / pixels) * 100.0, 6) if pixels else 0 for x in below]
-        above_pct = [round((x / pixels) * 100.0, 6) if pixels else 0 for x in above]
+        def _pct(counts):
+            return [round((x / pixels) * 100.0, 6) if pixels else 0 for x in counts]
+        below_pct, above_pct = _pct(below), _pct(above)
+        boundary0_pct, boundary1_pct = _pct(at0), _pct(at1)
 
         # Heuristic, not proof: no out-of-range values AND a channel max sitting
         # exactly at 1.0 suggests the data was clamped before we captured it.
@@ -2032,6 +2039,15 @@ def _hp_float_stats(arr, source_stage=None):
             and all(x == 0 for x in above)
             and any(v == 1.0 for v in mx if v is not None)
         )
+        has_headroom = any(x > 0 for x in below) or any(x > 0 for x in above)
+
+        # Range classification for the metadata sidecar / Develop badge.
+        if has_headroom:
+            range_kind = "extended"
+        elif fallback or clamped_like:
+            range_kind = "clamped"
+        else:
+            range_kind = "in_range"
 
         return {
             "valid": True,
@@ -2045,12 +2061,19 @@ def _hp_float_stats(arr, source_stage=None):
             "above1_counts": above,
             "below0_pct": below_pct,
             "above1_pct": above_pct,
+            "boundary0_pct": boundary0_pct,
+            "boundary1_pct": boundary1_pct,
             "clamped_like": clamped_like,
-            "has_headroom": any(x > 0 for x in below) or any(x > 0 for x in above),
+            "has_headroom": has_headroom,
+            "range": range_kind,
             "source_stage": source_stage,
+            "fallback": bool(fallback),
+            "fallback_reason": fallback_reason,
+            "matched_final_dimensions": matched_final_dimensions,
+            "transform": transform,
         }
     except Exception as e:
-        return {"valid": False, "reason": f"stats_error:{e}"}
+        return {"valid": False, "reason": f"stats_error:{e}", "range": "unknown"}
 
 
 def _hp_raw_to_chw(t):
@@ -2190,7 +2213,6 @@ def _hp_end_capture():
     """
     global _HP_CAPTURE_ACTIVE
     _HP_CAPTURE_ACTIVE = False
-    _hp_restore_vae_decode_audit()
     _hp_restore_dfs_audit()
     return list(_HP_CAPTURE_BATCHES)
 
@@ -2239,7 +2261,7 @@ def _hp_install_dfs_audit():
                     global _HP_VAE_AUDIT_LOGGED
                     vo = vdec(*va, **vk)
                     try:
-                        if not _HP_VAE_AUDIT_LOGGED:
+                        if _HP_DEBUG and not _HP_VAE_AUDIT_LOGGED:
                             _HP_VAE_AUDIT_LOGGED = True
                             t = vo[0] if isinstance(vo, (list, tuple)) and vo else vo
                             chw, reason = _hp_raw_to_chw(t)
@@ -2272,8 +2294,9 @@ def _hp_install_dfs_audit():
                         vae.decode = vdec
                     except Exception:
                         pass
-            # DFS audit (diagnostic): decode_first_stage's output is post-clamp.
-            if not _HP_DFS_AUDIT_LOGGED:
+            # DFS audit (diagnostic, opt-in): decode_first_stage output is
+            # post-clamp. Gated behind STUDIO_HP_DEBUG so normal logs stay quiet.
+            if _HP_DEBUG and not _HP_DFS_AUDIT_LOGGED:
                 _HP_DFS_AUDIT_LOGGED = True
                 try:
                     t = out[0] if isinstance(out, (list, tuple)) and out else out
@@ -2315,88 +2338,6 @@ def _hp_restore_dfs_audit():
                     pass
     finally:
         _HP_DFS_AUDIT = None
-
-
-def _hp_install_vae_decode_audit():
-    """Option C / Phase-2B: wrap the live VAE's .decode to (a) log its DIRECT
-    output range before any downstream clamp, and (b) CAPTURE that pre-clamp
-    output as the High Precision source when it matches the final image.
-
-    The decode chain is decode_latent_batch -> decode_first_stage ->
-    first_stage_model.decode. Instrumentation proved the clamp lives INSIDE
-    decode_first_stage (its output is already [-1,1]); the VAE method's output
-    is the only assembled, pre-clamp seam. We capture here and let
-    run_generation prefer it only when its dims match the final image (so a
-    tiled/large decode that returns per-tile chunks safely falls back to the
-    clamped decode_latent_batch capture — never worse than before).
-
-    Read-only w.r.t. the tensor (returns it unchanged). Fully guarded; a
-    failure never affects generation. Removed by _hp_restore_vae_decode_audit."""
-    global _HP_VAE_AUDIT, _HP_VAE_AUDIT_LOGGED
-    if _HP_VAE_AUDIT is not None:
-        return
-    _HP_VAE_AUDIT_LOGGED = False
-    try:
-        vae = getattr(getattr(shared, "sd_model", None), "first_stage_model", None)
-        orig = getattr(vae, "decode", None)
-        if vae is None or not callable(orig):
-            return
-
-        def _wrap(*a, **k):
-            out = orig(*a, **k)
-            if not _HP_CAPTURE_ACTIVE:
-                return out
-            global _HP_VAE_AUDIT_LOGGED
-            if not _HP_VAE_AUDIT_LOGGED:
-                _HP_VAE_AUDIT_LOGGED = True
-                try:
-                    t = out[0] if isinstance(out, (list, tuple)) and out else out
-                    chw, reason = _hp_raw_to_chw(t)
-                    if chw is not None:
-                        rmn, rmx, r_lo, r_hi = _hp_boundary_stats(chw, -1.0, 1.0)
-                        print(f"[Studio] High Precision VAE-AUDIT (pre-clamp): "
-                              f"shape={tuple(chw.shape)} dtype={getattr(t, 'dtype', '?')} "
-                              f"min={rmn} max={rmx} <=-1={r_lo}% >=1={r_hi}%")
-                    else:
-                        print(f"[Studio] High Precision VAE-AUDIT: skip ({reason})")
-                except Exception:
-                    pass
-            # Capture the pre-clamp frame(s) — same HWC float32 + (x+1)/2
-            # normalization as the sidecar. Selection/guarding happens later.
-            try:
-                samples = out if isinstance(out, (list, tuple)) else [out]
-                imgs = []
-                for s in samples:
-                    imgs.extend(_hp_tensor_to_hwc_list(s))
-                if imgs:
-                    _HP_VAE_BATCHES.append(imgs)
-            except Exception as e:
-                print(f"[Studio] High Precision: VAE-decode capture error — {e}")
-            return out
-
-        vae.decode = _wrap
-        _HP_VAE_AUDIT = (vae, orig)
-        print("[Studio] High Precision: VAE-decode capture wrap installed (pre-clamp source)")
-    except Exception as e:
-        print(f"[Studio] High Precision: VAE-decode capture install failed — {e}")
-        _HP_VAE_AUDIT = None
-
-
-def _hp_restore_vae_decode_audit():
-    """Remove the Phase-2B VAE-decode audit wrap, restoring the original."""
-    global _HP_VAE_AUDIT
-    try:
-        if _HP_VAE_AUDIT is not None:
-            vae, orig = _HP_VAE_AUDIT
-            try:
-                del vae.decode          # drop our instance shadow → class method
-            except Exception:
-                try:
-                    vae.decode = orig
-                except Exception:
-                    pass
-    finally:
-        _HP_VAE_AUDIT = None
 
 
 def _hp_warn_fp16_vae_once():
@@ -2958,6 +2899,8 @@ def run_generation(
                 hp_post_processed = False
                 hp_post_reason = ""
                 hp_source_stage = "decode_latent_batch"  # which decode stage fed the sidecar
+                hp_matched_final = False  # True when the pre-clamp VAE frame matched the final dims
+                hp_fallback_reason = None  # why we fell back to the clamped capture (if we did)
                 hp_blend_mask = None  # np.float32 HxW in [0,1]; 1 = use canvas, 0 = use float
                 if high_precision:
                     expected = len(processed.images) if getattr(processed, "images", None) else 1
@@ -2980,11 +2923,15 @@ def run_generation(
                     if _vf is not None and _vf.shape[1] == result.size[0] and _vf.shape[0] == result.size[1]:
                         hp_floats = _vae_floats
                         hp_source_stage = "vae_decode"
+                        hp_matched_final = True
                         print(f"[Studio] High Precision: using pre-clamp VAE-decode source "
                               f"{_vf.shape[1]}x{_vf.shape[0]} (extended range available)")
                     elif _vf is not None:
+                        hp_fallback_reason = "pre_clamp_dimension_mismatch"
                         print(f"[Studio] High Precision: VAE-decode frame {_vf.shape[1]}x{_vf.shape[0]} "
                               f"!= final {result.size[0]}x{result.size[1]} (tiled?) — keeping clamped capture")
+                    else:
+                        hp_fallback_reason = "no_pre_clamp_capture"
 
                 def _hp_or_into_blend_mask(mask_arr_01):
                     """OR a [0,1] float32 HxW mask into hp_blend_mask, resizing if needed."""
@@ -3074,9 +3021,14 @@ def run_generation(
                         hp_blend_mask = None
                     all_float_arrays.append(fa)
                     all_blend_masks.append(hp_blend_mask)
-                    _st = _hp_float_stats(fa, hp_source_stage)
+                    _st = _hp_float_stats(
+                        fa, source_stage=hp_source_stage,
+                        fallback=(hp_source_stage != "vae_decode"),
+                        fallback_reason=hp_fallback_reason,
+                        matched_final_dimensions=hp_matched_final,
+                    )
                     all_float_stats.append(_st)
-                    if _st and _st.get("valid"):
+                    if _HP_DEBUG and _st and _st.get("valid"):
                         print("[Studio] High Precision: float stats "
                               f"shape={_st['shape']} "
                               f"R=[{_st['min_rgb'][0]:.5f},{_st['max_rgb'][0]:.5f}] "
