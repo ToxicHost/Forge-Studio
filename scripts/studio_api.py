@@ -497,15 +497,6 @@ def _add_trusted_root(p):
     return True, str(rp)
 
 
-def _register_picked_dir(p):
-    """Persist a directory the LOCAL user chose via the server-side picker as a
-    trusted write root (explicit local action). Best-effort; ignores rejects."""
-    try:
-        _add_trusted_root(p)
-    except Exception:
-        pass
-
-
 def _ext_allowed(name):
     n = str(name).lower()
     return any(n.endswith(s) for s in _FILE_EXT_ALLOW)
@@ -798,6 +789,9 @@ class GenerateResponse(BaseModel):
     seed: int = -1
     task_id: str = ""
     error: Optional[str] = None
+    # Non-fatal user-facing notice (e.g. a configured save folder was ignored
+    # because it isn't a trusted root). The UI shows it as an info toast.
+    notice: Optional[str] = None
 
 
 class ExrExportRequest(BaseModel):
@@ -2050,12 +2044,16 @@ def setup_studio_routes(app: FastAPI):
         # When set we use it as the base and keep the {mode}/{date} substructure
         # for organization; when blank we fall back to Forge's output dir.
         _save_override = (req.save_dir or "").strip()
+        _save_dir_notice = None
         # Security: only honor a custom save_dir that resolves inside a safe
-        # write root (Forge output tree, a dialog-picked folder, or a
-        # STUDIO_SAVE_ROOTS entry). A random/cross-site client cannot redirect
-        # writes to an arbitrary absolute path; we silently fall back instead.
+        # write root (Forge output tree, a trusted folder, or a STUDIO_SAVE_ROOTS
+        # entry). A random/cross-site client cannot redirect writes to an
+        # arbitrary path. Surface a non-fatal notice so the user knows their
+        # configured folder was skipped rather than silently losing it.
         if _save_override and not _safe_write_root(_save_override):
-            log.warning("save_dir rejected (outside safe roots) — using default output dir")
+            log.warning("save_dir rejected (not a trusted root) — using default output dir")
+            _save_dir_notice = ("Your custom save folder isn't trusted yet, so images were saved to the "
+                                "default output folder. Open Settings → Save folder and click “Trust folder”.")
             _save_override = ""
         if _save_override:
             try:
@@ -2324,6 +2322,7 @@ def setup_studio_routes(app: FastAPI):
             seed=seed_val,
             task_id=task_id or "",
             error=error_msg,
+            notice=_save_dir_notice,
         )
 
     # ------------------------------------------------------------------
@@ -4382,6 +4381,14 @@ def setup_studio_routes(app: FastAPI):
             # honored if it resolves inside a safe write root, so a random/
             # cross-site client cannot write to an arbitrary absolute path.
             _saveas_path = _consume_save_token(req.save_token)
+            # A token that was supplied but didn't resolve (expired, already
+            # used, or unknown) must NOT silently fall through to a default-
+            # location save — that would land the file somewhere other than the
+            # user chose while still reporting success.
+            if req.save_token and not _saveas_path:
+                return JSONResponse(
+                    {"ok": False, "error": "Save As session expired — reopen the Save As dialog and try again."},
+                    status_code=400)
             if not _saveas_path and (req.full_path or "").strip():
                 if _safe_write_root(req.full_path):
                     _saveas_path = str(Path(req.full_path).expanduser())

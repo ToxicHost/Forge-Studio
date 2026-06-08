@@ -2224,12 +2224,12 @@ def setup_gallery_routes(app: FastAPI):
             folder = filedialog.askdirectory(title="Select image folder")
             root.destroy()
             if folder:
-                folder = folder.replace("/", os.sep)
-                # The local user physically chose this folder → trust it as a
-                # safe write root for save_dir/dest_dir confinement.
-                if _api:
-                    _api._register_picked_dir(folder)
-                return {"path": folder}
+                # Intent-neutral: this picker is shared by the Gallery
+                # monitor/read flow, so it does NOT register a trusted WRITE
+                # root or probe-write into the folder. The save-folder /
+                # gallery-folder UI explicitly trusts the chosen path via
+                # /studio/trust-save-root when the intent is to write.
+                return {"path": folder.replace("/", os.sep)}
             return {"path": ""}
         except Exception as e:
             return JSONResponse({"error": str(e)}, status_code=500)

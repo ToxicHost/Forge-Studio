@@ -1997,6 +1997,8 @@ async function doGenerate() {
       addHistoryEntry(`Generate (seed ${result.seed})`);
       const _genElapsed = ((Date.now() - State._genStartTime) / 1000).toFixed(1);
       showToast(`Generated ${result.images.length} image${result.images.length > 1 ? "s" : ""} in ${_genElapsed}s`, "success");
+      // Non-fatal server notice (e.g. an untrusted custom save folder was skipped).
+      if (result.notice) showToast(result.notice, "info");
       _notifyTab(`Done — ${_genElapsed}s`);
 
       // Show result in viewport preview (replaces live preview)
@@ -3292,20 +3294,24 @@ function bindUI() {
       const data = await r.json();
       if (r.ok && !data.error) {
         if (!data.path) return;                       // user cancelled the dialog
-        const res = await API.saveImage({
-          image_b64: imgSrc,
-          format: _fmtFromName(data.path),
-          quality: State.saveQuality || 95,
-          metadata: infotext || null,
-          // Send the one-shot token the dialog minted — the server resolves it
-          // to the chosen path. Never sends a raw client path for the write.
-          save_token: data.token || undefined,
-        });
-        if (res.ok) showToast("Saved " + res.filename, "success");
-        else showToast(res.error || "Save failed", "error");
-        return;
+        // Only do the server-side write when the dialog minted a token. If we
+        // got a path but no token (server couldn't mint), don't send a save
+        // that would land in the default folder — fall through to the browser
+        // save path instead so the file goes where intended.
+        if (data.token) {
+          const res = await API.saveImage({
+            image_b64: imgSrc,
+            format: _fmtFromName(data.path),
+            quality: State.saveQuality || 95,
+            metadata: infotext || null,
+            save_token: data.token,   // server resolves it; never a raw client path
+          });
+          if (res.ok) showToast("Saved " + res.filename, "success");
+          else showToast(res.error || "Save failed", "error");
+          return;
+        }
       }
-      // data.error present → server dialog unavailable; fall through.
+      // data.error present (server dialog unavailable) or no token → fall through.
     } catch (_) { /* headless/remote server — fall through to browser paths */ }
 
     // Reuse the source bytes (keeps embedded metadata) when no format change
@@ -4049,7 +4055,8 @@ function bindUI() {
       if (data.path && _galFolderInput) {
         _galFolderInput.value = data.path;
         _syncGalFolder();
-        showToast("Gallery folder set", "success");
+        // Picking a save destination is an explicit write intent → trust it.
+        if (await _trustSaveFolder(data.path)) _renderTrustedRoots();
       }
     } catch (e) {
       showToast("Folder picker unavailable on this server — type the path manually", "info");
@@ -4089,7 +4096,8 @@ function bindUI() {
       if (data.path && _saveDirInput) {
         _saveDirInput.value = data.path;
         _syncSaveDir();
-        showToast("Save folder set", "success");
+        // Picking a save destination is an explicit write intent → trust it.
+        if (await _trustSaveFolder(data.path)) _renderTrustedRoots();
       }
     } catch (e) {
       showToast("Folder picker unavailable on this server — type the path manually", "info");
