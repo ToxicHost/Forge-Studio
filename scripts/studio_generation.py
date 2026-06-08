@@ -1909,6 +1909,7 @@ _HP_VAE_AUDIT = None          # Phase-2B: (vae_obj, orig_decode) while the audit
 _HP_VAE_AUDIT_LOGGED = False  # log only the first VAE decode per capture window
 _HP_DFS_AUDIT = None          # Phase-2A/B: (orig_fn, [patched_modules]) for decode_first_stage probe
 _HP_DFS_AUDIT_LOGGED = False  # log only the first decode_first_stage call per capture window
+_HP_VAE_BATCHES = []          # Option C: pre-clamp VAE-decode captures (list[list[np.ndarray HWC]])
 
 
 def _hp_tensor_to_hwc_list(sample):
@@ -1987,7 +1988,7 @@ def _hp_tensor_to_hwc_list(sample):
         return []
 
 
-def _hp_float_stats(arr):
+def _hp_float_stats(arr, source_stage=None):
     """Privacy-safe range/clamp stats for one HWC float image.
 
     Surfaces honestly whether a High Precision sidecar actually carries
@@ -2046,6 +2047,7 @@ def _hp_float_stats(arr):
             "above1_pct": above_pct,
             "clamped_like": clamped_like,
             "has_headroom": any(x > 0 for x in below) or any(x > 0 for x in above),
+            "source_stage": source_stage,
         }
     except Exception as e:
         return {"valid": False, "reason": f"stats_error:{e}"}
@@ -2173,6 +2175,7 @@ def _hp_begin_capture():
     """Arm the hook and clear any previous capture buffer."""
     global _HP_CAPTURE_ACTIVE
     _HP_CAPTURE_BATCHES.clear()
+    _HP_VAE_BATCHES.clear()
     _HP_CAPTURE_ACTIVE = True
 
 
@@ -2267,13 +2270,20 @@ def _hp_restore_dfs_audit():
 
 
 def _hp_install_vae_decode_audit():
-    """Phase-2B diagnostic: wrap the live VAE's .decode to log its DIRECT
-    output range — i.e. BEFORE any clamp that decode_first_stage /
-    decode_latent_batch may apply. Read-only (returns the original tensor
-    unchanged), logs only the first decode per window (avoids tiled-decode
-    spam), fully guarded, and removed by _hp_restore_vae_decode_audit() after
-    generation. This is architecture-fragile by design, so every step is
-    defensive and a failure never affects generation."""
+    """Option C / Phase-2B: wrap the live VAE's .decode to (a) log its DIRECT
+    output range before any downstream clamp, and (b) CAPTURE that pre-clamp
+    output as the High Precision source when it matches the final image.
+
+    The decode chain is decode_latent_batch -> decode_first_stage ->
+    first_stage_model.decode. Instrumentation proved the clamp lives INSIDE
+    decode_first_stage (its output is already [-1,1]); the VAE method's output
+    is the only assembled, pre-clamp seam. We capture here and let
+    run_generation prefer it only when its dims match the final image (so a
+    tiled/large decode that returns per-tile chunks safely falls back to the
+    clamped decode_latent_batch capture — never worse than before).
+
+    Read-only w.r.t. the tensor (returns it unchanged). Fully guarded; a
+    failure never affects generation. Removed by _hp_restore_vae_decode_audit."""
     global _HP_VAE_AUDIT, _HP_VAE_AUDIT_LOGGED
     if _HP_VAE_AUDIT is not None:
         return
@@ -2286,6 +2296,8 @@ def _hp_install_vae_decode_audit():
 
         def _wrap(*a, **k):
             out = orig(*a, **k)
+            if not _HP_CAPTURE_ACTIVE:
+                return out
             global _HP_VAE_AUDIT_LOGGED
             if not _HP_VAE_AUDIT_LOGGED:
                 _HP_VAE_AUDIT_LOGGED = True
@@ -2299,15 +2311,26 @@ def _hp_install_vae_decode_audit():
                               f"min={rmn} max={rmx} <=-1={r_lo}% >=1={r_hi}%")
                     else:
                         print(f"[Studio] High Precision VAE-AUDIT: skip ({reason})")
-                except Exception as e:
-                    print(f"[Studio] High Precision VAE-AUDIT error — {e}")
+                except Exception:
+                    pass
+            # Capture the pre-clamp frame(s) — same HWC float32 + (x+1)/2
+            # normalization as the sidecar. Selection/guarding happens later.
+            try:
+                samples = out if isinstance(out, (list, tuple)) else [out]
+                imgs = []
+                for s in samples:
+                    imgs.extend(_hp_tensor_to_hwc_list(s))
+                if imgs:
+                    _HP_VAE_BATCHES.append(imgs)
+            except Exception as e:
+                print(f"[Studio] High Precision: VAE-decode capture error — {e}")
             return out
 
         vae.decode = _wrap
         _HP_VAE_AUDIT = (vae, orig)
-        print("[Studio] High Precision: VAE-decode audit wrap installed (diagnostic, pre-clamp)")
+        print("[Studio] High Precision: VAE-decode capture wrap installed (pre-clamp source)")
     except Exception as e:
-        print(f"[Studio] High Precision: VAE-decode audit install failed — {e}")
+        print(f"[Studio] High Precision: VAE-decode capture install failed — {e}")
         _HP_VAE_AUDIT = None
 
 
@@ -2889,6 +2912,7 @@ def run_generation(
                 hp_floats = []
                 hp_post_processed = False
                 hp_post_reason = ""
+                hp_source_stage = "decode_latent_batch"  # which decode stage fed the sidecar
                 hp_blend_mask = None  # np.float32 HxW in [0,1]; 1 = use canvas, 0 = use float
                 if high_precision:
                     expected = len(processed.images) if getattr(processed, "images", None) else 1
@@ -2900,6 +2924,22 @@ def run_generation(
                         else:
                             print(f"[Studio] High Precision: hook fired {len(_hp_batches)} time(s) but "
                                   f"none matched the expected image count ({expected})")
+                    # Option C: prefer the pre-clamp VAE-decode frame when it's
+                    # assembled to the final size. The clamp lives inside
+                    # decode_first_stage, so this is the only source carrying
+                    # extended range. A dim mismatch (tiled/large decode that
+                    # returns per-tile chunks) safely keeps the clamped capture
+                    # above — never worse than the previous behavior.
+                    _vae_floats = _hp_pick_final_floats(list(_HP_VAE_BATCHES), expected)
+                    _vf = _vae_floats[0] if _vae_floats else None
+                    if _vf is not None and _vf.shape[1] == result.size[0] and _vf.shape[0] == result.size[1]:
+                        hp_floats = _vae_floats
+                        hp_source_stage = "vae_decode"
+                        print(f"[Studio] High Precision: using pre-clamp VAE-decode source "
+                              f"{_vf.shape[1]}x{_vf.shape[0]} (extended range available)")
+                    elif _vf is not None:
+                        print(f"[Studio] High Precision: VAE-decode frame {_vf.shape[1]}x{_vf.shape[0]} "
+                              f"!= final {result.size[0]}x{result.size[1]} (tiled?) — keeping clamped capture")
 
                 def _hp_or_into_blend_mask(mask_arr_01):
                     """OR a [0,1] float32 HxW mask into hp_blend_mask, resizing if needed."""
@@ -2989,7 +3029,7 @@ def run_generation(
                         hp_blend_mask = None
                     all_float_arrays.append(fa)
                     all_blend_masks.append(hp_blend_mask)
-                    _st = _hp_float_stats(fa)
+                    _st = _hp_float_stats(fa, hp_source_stage)
                     all_float_stats.append(_st)
                     if _st and _st.get("valid"):
                         print("[Studio] High Precision: float stats "
