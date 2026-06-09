@@ -1672,6 +1672,41 @@ def _is_live_active():
         return False
 
 
+# Studio-owned preview side stream — created lazily ONLY when Neo's build does
+# not expose shared.state.vae_stream (its creation is gated behind a launch
+# flag, so it is frequently None). Reused across decodes; never recreated.
+_studio_preview_stream = None
+_studio_preview_stream_failed = False
+
+# Reports which stream / downscale branch the LAST preview decode actually took,
+# so the polling thread can emit a truthful status line (F3.1). A silent
+# fallback must never again masquerade as a deployed fix.
+_preview_path_info = {"stream": "default", "downscale": "n/a"}
+
+
+def _get_preview_stream():
+    """Lazily create one low-priority CUDA side stream for preview decodes.
+
+    Raw torch only (no Neo imports) — used when Neo exposes no vae_stream.
+    Returns None on CPU-only builds or if stream creation fails.
+    """
+    global _studio_preview_stream, _studio_preview_stream_failed
+    if _studio_preview_stream_failed:
+        return None
+    if _studio_preview_stream is None:
+        try:
+            import torch
+            if torch.cuda.is_available():
+                _studio_preview_stream = torch.cuda.Stream(priority=-1)  # low priority
+            else:
+                _studio_preview_stream_failed = True
+                return None
+        except Exception:
+            _studio_preview_stream_failed = True
+            return None
+    return _studio_preview_stream
+
+
 def _taesd_decode_preview(latent, max_edge=0):
     """Decode a latent tensor to a PIL Image using TAESD.
 
@@ -1683,41 +1718,37 @@ def _taesd_decode_preview(latent, max_edge=0):
     inline and interpolate on-GPU BEFORE the transfer — shrinking the transfer
     to ~1MB and the CPU pixel pass to ~0.4M pixels.
 
-    The decode also runs on Neo's dedicated, lower-priority VAE stream (the same
-    one Neo's own preview path uses) so it overlaps the sampler on the default
-    stream instead of contending with it. Degrades to the default stream
-    (today's behavior) when the running build exposes neither ``vae_stream`` nor
-    ``backend.stream``.
+    The decode runs on a side CUDA stream so it overlaps the sampler on the
+    default stream instead of serializing with it. Stream preference order:
+    Neo's dedicated ``vae_stream`` (when its launch-flag gate created one) →
+    Studio's own lazily-created side stream → the default stream. The chosen
+    branch is recorded in ``_preview_path_info`` for the status line.
 
     Falls back gracefully if TAESD model isn't available.
     max_edge=0 means no downscale (full generation resolution).
     """
     import numpy as np
     import torch
-    from contextlib import nullcontext
     from modules import sd_samplers_common
 
-    # Wrap the decode on Neo's dedicated VAE stream, exactly as Neo's
-    # State.do_set_current_image does. Best-effort: any absence (older build,
-    # CPU-only, stream module missing) falls back to the default stream.
-    vae_context = nullcontext()
-    try:
-        from backend import stream
-        vs = getattr(shared.state, "vae_stream", None)
-        if vs is not None:
-            vs.wait_stream(stream.current_stream)
-            vae_context = stream.stream_context()(vs)
-    except Exception:
-        vae_context = nullcontext()
+    # ── Stream selection (Neo vae_stream → Studio side stream → default) ──
+    side_stream = None
+    stream_label = "default"
+    neo_stream = getattr(shared.state, "vae_stream", None)
+    if neo_stream is not None:
+        side_stream = neo_stream
+        stream_label = "vae"
+    else:
+        s = _get_preview_stream()
+        if s is not None:
+            side_stream = s
+            stream_label = "studio"
 
-    with torch.inference_mode(), vae_context:
-        # Handle batch dim: latent may be [B,C,H,W] or [C,H,W]
-        sample = latent[0] if latent.ndim == 4 else latent
+    downscale_label = "pre-transfer" if max_edge > 0 else "post-transfer"
 
+    def _decode_and_downscale(sample):
         if max_edge > 0:
-            # Downscale BEFORE the CPU transfer. single_sample_to_image()
-            # materializes the full-res image first; here we keep the decode on
-            # the GPU, interpolate down, and only then transfer.
+            # Downscale BEFORE the CPU transfer (GPU-side interpolate).
             t = sd_samplers_common.samples_to_images_tensor(
                 sample.unsqueeze(0), approximation=3)  # TAESD, on GPU, [-1,1]
             t = t * 0.5 + 0.5
@@ -1730,15 +1761,35 @@ def _taesd_decode_preview(latent, max_edge=0):
                 t = torch.nn.functional.interpolate(
                     t, size=(target_h, target_w),
                     mode="bilinear", align_corners=False)
-            x = t[0].cpu()  # now ~1MB instead of ~63MB at hires
+            # Blocking transfer = the synchronization point that ends the side
+            # stream's work for this decode (no CUDA events needed).
+            x = t[0].to("cpu", non_blocking=False)  # ~1MB instead of ~63MB
             x = (x.clamp(0, 1) * 255.0).round().to(torch.uint8)
-            preview_img = Image.fromarray(np.moveaxis(x.numpy(), 0, 2))
-        else:
-            # Full-resolution path (Live mode): keep the existing decode.
-            # Force TAESD (approximation=3) — ~5-10ms vs 50-150ms full VAE.
-            preview_img = sd_samplers_common.single_sample_to_image(
-                sample, approximation=3)
+            return Image.fromarray(np.moveaxis(x.numpy(), 0, 2))
+        # Full-resolution path (Live mode): keep Neo's decoder.
+        return sd_samplers_common.single_sample_to_image(sample, approximation=3)
 
+    with torch.inference_mode():
+        if side_stream is not None:
+            try:
+                # Clone decouples from the sampler's live latent buffer so the
+                # sampler can overwrite it while the side stream reads our copy
+                # (cheap at latent size, a few MB).
+                lat = latent.detach().clone()
+                side_stream.wait_stream(torch.cuda.current_stream())
+                with torch.cuda.stream(side_stream):
+                    sample = lat[0] if lat.ndim == 4 else lat
+                    preview_img = _decode_and_downscale(sample)
+                _preview_path_info["stream"] = stream_label
+                _preview_path_info["downscale"] = downscale_label
+                return preview_img
+            except Exception:
+                # Side-stream path failed — fall through to the default stream.
+                pass
+        sample = latent[0] if latent.ndim == 4 else latent
+        preview_img = _decode_and_downscale(sample)
+    _preview_path_info["stream"] = "default"
+    _preview_path_info["downscale"] = downscale_label
     return preview_img
 
 
@@ -1759,7 +1810,7 @@ def _progress_polling_thread():
     _logged_error = [False]  # only log first error to avoid spam
     _last_preview_step = [(-1, -1)]  # last (job_no, step) we decoded a preview for
     _last_preview_time = [0.0]  # timestamp of last TAESD decode
-    _taesd_logged = [False]  # log TAESD availability once
+    _last_status_key = [None]  # last preview-path status line emitted (re-log on change)
     # Step-duration tracking — used to scale preview_interval so previews fire
     # at most every other step regardless of resolution (hires steps are slow).
     _last_step_seen = [(-1, -1)]  # last (job_no, step) observed (decoded or not)
@@ -1803,6 +1854,7 @@ def _progress_polling_thread():
                     _last_step_seen[0] = (-1, -1)
                     _last_step_change_time[0] = 0.0
                     _measured_step_dur[0] = 0.0
+                    _last_status_key[0] = None  # re-emit status line next gen
                 continue
 
             _idle_ticks[0] = 0
@@ -1875,12 +1927,26 @@ def _progress_polling_thread():
                             preview_b64 = _pil_to_preview_b64(preview_img)
 
                         if preview_b64:
-                            if not _taesd_logged[0]:
-                                print(f"{TAG} TAESD preview active "
-                                      f"({'Live' if live_mode else 'standard'} mode, "
-                                      f"interval={preview_interval}s, "
-                                      f"max_edge={preview_max_edge or 'full'})")
-                                _taesd_logged[0] = True
+                            # Mandatory status line (F3.1): report the ACTUAL
+                            # stream / interval / downscale this decode used, so
+                            # no change can silently no-op. Re-emit whenever the
+                            # path changes (e.g. base → hires raises the scaled
+                            # interval), so each phase is visible exactly once.
+                            if latent is not None and latent.ndim != 5:
+                                _scaled = (not live_mode) and (
+                                    2.0 * _measured_step_dur[0] > 0.5)
+                                _kind = "scaled" if _scaled else "fixed"
+                                _skey = (_preview_path_info["stream"],
+                                         round(preview_interval, 1), _kind,
+                                         _preview_path_info["downscale"],
+                                         preview_max_edge)
+                                if _skey != _last_status_key[0]:
+                                    _last_status_key[0] = _skey
+                                    print(f"{TAG} Preview path: "
+                                          f"stream={_preview_path_info['stream']} "
+                                          f"interval={preview_interval:.2f}s ({_kind}) "
+                                          f"downscale={_preview_path_info['downscale']} "
+                                          f"max_edge={preview_max_edge}")
                             _last_preview[0] = preview_b64
                             _last_preview_step[0] = current_key
                             _last_preview_time[0] = now
