@@ -3979,6 +3979,32 @@ _JOURNAL_DIR = None
 _JOURNAL_FILE = None
 _JOURNAL_IMAGES = None
 
+# Journal entry ids become filenames (journal_images/<id>.<ext>). A
+# client-supplied id like "../../x" would otherwise let an attacker write or
+# delete files outside the image dir. Ids must match this pattern.
+_JOURNAL_ID_RE = re.compile(r'^[A-Za-z0-9_-]+$')
+
+
+def _is_valid_journal_id(entry_id) -> bool:
+    """True if entry_id is a safe, filename-only journal id."""
+    return bool(entry_id) and isinstance(entry_id, str) and bool(_JOURNAL_ID_RE.match(entry_id))
+
+
+def _journal_image_path(img_dir: str, entry_id: str, ext: str):
+    """Build journal_images/<id>.<ext>, verifying it stays inside img_dir.
+
+    Defense in depth on top of id sanitization — existing journals may still
+    contain old, unsanitized ids. Returns the resolved path string, or None if
+    it would escape img_dir.
+    """
+    filepath = os.path.join(img_dir, f"{entry_id}.{ext}")
+    try:
+        if not Path(filepath).resolve().is_relative_to(Path(img_dir).resolve()):
+            return None
+    except Exception:
+        return None
+    return filepath
+
 
 def _get_journal_paths():
     """Get journal file and image directory paths."""
@@ -5098,8 +5124,15 @@ def setup_workshop_routes(app: FastAPI):
     @app.post("/studio/workshop/journal/add")
     async def workshop_journal_add(req: dict):
         """Add a manual journal entry (model notes, tracking, etc.)."""
+        # Entry ids become image filenames — reject path-traversal payloads.
+        entry_id = req.get("id", f"manual_{int(time.time())}")
+        if not _is_valid_journal_id(entry_id):
+            return JSONResponse(
+                {"error": "Invalid id (allowed: letters, digits, _ and -)"},
+                status_code=400,
+            )
         entry = {
-            "id": req.get("id", f"manual_{int(time.time())}"),
+            "id": entry_id,
             "name": req.get("name", "New Entry"),
             "type": req.get("type", "note"),
             "recipe": req.get("recipe", {}),
@@ -5127,8 +5160,8 @@ def setup_workshop_routes(app: FastAPI):
         # Delete associated image if any
         _, img_dir = _get_journal_paths()
         for ext in ("png", "jpg", "webp"):
-            img_path = os.path.join(img_dir, f"{entry_id}.{ext}")
-            if os.path.exists(img_path):
+            img_path = _journal_image_path(img_dir, entry_id, ext)
+            if img_path and os.path.exists(img_path):
                 os.remove(img_path)
         return {"ok": True}
 
@@ -5152,17 +5185,18 @@ def setup_workshop_routes(app: FastAPI):
             ext = "png"
             if "jpeg" in header or "jpg" in header: ext = "jpg"
             elif "webp" in header: ext = "webp"
-            filename = f"{entry_id}.{ext}"
-            filepath = os.path.join(img_dir, filename)
+            filepath = _journal_image_path(img_dir, entry_id, ext)
+            if not filepath:
+                return JSONResponse({"error": "Invalid id"}, status_code=400)
             with open(filepath, "wb") as f:
                 f.write(b64.b64decode(b64data))
-            entry["image"] = filename
+            entry["image"] = f"{entry_id}.{ext}"
         else:
             # Remove image
             entry["image"] = None
             for ext in ("png", "jpg", "webp"):
-                p = os.path.join(img_dir, f"{entry_id}.{ext}")
-                if os.path.exists(p): os.remove(p)
+                p = _journal_image_path(img_dir, entry_id, ext)
+                if p and os.path.exists(p): os.remove(p)
 
         _save_journal(entries)
         return {"ok": True}

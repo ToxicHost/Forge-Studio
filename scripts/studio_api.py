@@ -68,6 +68,26 @@ def _natural_sort_key(text):
     return [int(c) if c.isdigit() else c for c in _NAT_SORT_RE.split(str(text).lower())]
 
 
+def _is_path_within_roots(resolved, allowed_roots) -> bool:
+    """True if `resolved` lives under any allowed root.
+
+    Uses Path.is_relative_to (Py3.9+; Forge Neo requires >=3.10) instead of a
+    string startswith check, so a root of /forge does not also approve a
+    sibling directory like /forge-evil.
+    """
+    try:
+        resolved_path = Path(resolved).resolve()
+    except Exception:
+        return False
+    for root in allowed_roots:
+        try:
+            if resolved_path.is_relative_to(Path(root).resolve()):
+                return True
+        except Exception:
+            continue
+    return False
+
+
 # =========================================================================
 # MODULE IMPORT HELPER
 # =========================================================================
@@ -1946,8 +1966,7 @@ def setup_studio_routes(app: FastAPI):
         except Exception:
             log.exception("Failed to read output config for allowed-roots check")
 
-        resolved_str = str(resolved)
-        if not any(resolved_str.startswith(root) for root in allowed_roots):
+        if not _is_path_within_roots(resolved, allowed_roots):
             return JSONResponse({"error": "Access denied"}, status_code=403)
         if not resolved.is_file():
             return JSONResponse({"error": "Not found"}, status_code=404)
@@ -4704,8 +4723,7 @@ def setup_studio_routes(app: FastAPI):
                     allowed_roots.append(str(Path(_d).resolve().parent))
         except Exception:
             pass
-        resolved_str = str(resolved)
-        if not any(resolved_str.startswith(root) for root in allowed_roots):
+        if not _is_path_within_roots(resolved, allowed_roots):
             return None
         if not resolved.is_file():
             return None
