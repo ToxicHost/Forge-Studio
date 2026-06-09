@@ -129,6 +129,13 @@ except ImportError:
         run_regional, has_valid_regions,
     )
 
+# WP2 kill-switch (F2). Native batching stays OFF by default until its 8-item
+# validation matrix (plus the F2 zero-traceback hires run) passes on GPU; Tox
+# enables it per validation session with STUDIO_NATIVE_BATCHING=1. When off,
+# run_generation always takes the per-image loop fallback.
+_NATIVE_BATCHING = os.environ.get("STUDIO_NATIVE_BATCHING", "").strip().lower() in (
+    "1", "true", "yes", "on")
+
 _HAS_ATTN_COUPLE = False
 try:
     from scripts.studio_attention_couple import (
@@ -2704,7 +2711,9 @@ def run_generation(
     # and img2img with a post-hires pass (run_hires_fix reuses the processing
     # object per image).
     _fallback_reason = None
-    if is_regional_mode:
+    if not _NATIVE_BATCHING:
+        _fallback_reason = "native batching disabled (set STUDIO_NATIVE_BATCHING=1 to enable)"
+    elif is_regional_mode:
         _fallback_reason = "Regional mode"
     elif is_attention_couple:
         _fallback_reason = "Attention Couple mode"
@@ -2800,6 +2809,18 @@ def run_generation(
             p.seed = seeds_list
             p.subseed = subseeds_list
             p.subseed_strength = gp.subseed_strength
+
+            # F2: hr_prompt / hr_negative_prompt are STRING fields Neo scripts
+            # read directly (comments.py: strip_comments(p.hr_prompt)). With
+            # p.prompt now a list they must not inherit it — empty string is
+            # Neo's "reuse the per-image main prompts" contract (it builds
+            # all_hr_prompts from all_prompts). Studio passes no explicit hires
+            # prompt, so force empty strings here.
+            if hasattr(p, "hr_prompt"):
+                p.hr_prompt = ""
+            if hasattr(p, "hr_negative_prompt"):
+                p.hr_negative_prompt = ""
+
             shared.state.job_count = max(1, gp.batch_count)  # Neo: jobs = iterations
 
             print(f"[Studio] Native batch: {max(1, gp.batch_count)}×"
