@@ -2021,6 +2021,16 @@ def setup_studio_routes(app: FastAPI):
         _cancel_auto_unload()
         run_generation = _import("studio_generation", "run_generation")
 
+        # Diagnostic: log the AR randomization flags exactly as the request
+        # carried them, so logs distinguish "requested" (this line) from
+        # "fired" (studio_generation's "[Studio AR] Randomized" line). If this
+        # logs all-False yet a Randomized line still appears, the bug is
+        # backend-side, not frontend toggle state.
+        if req.ar_rand_base or req.ar_rand_ratio or req.ar_rand_orientation:
+            print(f"{TAG} AR randomize requested by client: "
+                  f"base={req.ar_rand_base} ratio={req.ar_rand_ratio} "
+                  f"orientation={req.ar_rand_orientation}")
+
         ad_slots = req.ad_slots + [ADSlotParams()] * max(0, 3 - len(req.ad_slots))
         ad1_args = _flatten_ad_slot(ad_slots[0])
         ad2_args = _flatten_ad_slot(ad_slots[1])
