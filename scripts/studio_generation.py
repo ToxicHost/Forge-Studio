@@ -198,6 +198,10 @@ def to_rgb(img):
 # If concurrent support is needed, wrap in threading.Lock or use a queue.
 _studio_task_id = None
 
+# One-time guard for logging whether the live Neo build exposes
+# shared.total_tqdm.clear() (see _reset_generation_state).
+_total_tqdm_api_logged = False
+
 
 def get_studio_task_id():
     """Accessor for the API endpoint."""
@@ -222,6 +226,22 @@ def _reset_generation_state():
     shared.state.id_live_preview = 0
     shared.state.textinfo = None
     shared.state.time_start = None
+
+    # Studio bypasses Neo's Gradio wrapper, which normally calls
+    # total_tqdm.updateTotal()/.clear() around each generation. Without this
+    # the "Total progress" console bar accumulates across the session.
+    global _total_tqdm_api_logged
+    if not _total_tqdm_api_logged:
+        _total_tqdm_api_logged = True
+        if hasattr(shared, "total_tqdm") and hasattr(shared.total_tqdm, "clear"):
+            print("[Studio] total_tqdm.clear() available — per-gen progress reset active")
+        else:
+            print("[Studio] total_tqdm.clear() unavailable on this build — "
+                  "console 'Total progress' bar may accumulate")
+    try:
+        shared.total_tqdm.clear()
+    except Exception:
+        pass
 
     global _studio_task_id
     _studio_task_id = None
