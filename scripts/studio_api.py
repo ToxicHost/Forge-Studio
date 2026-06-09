@@ -1656,29 +1656,71 @@ def _is_live_active():
 
 
 def _taesd_decode_preview(latent, max_edge=0):
-    """Decode a latent tensor to a PIL Image using TAESD (~5-10ms).
+    """Decode a latent tensor to a PIL Image using TAESD.
+
+    Fast (~5-10ms) at 512-class latents, but at hires resolutions the cost is
+    dominated by the full-resolution ``.cpu()`` transfer (a 2048x2560x3 float
+    tensor is ~63MB) and the uint8 pixel pass over ~15.7M pixels under the GIL.
+    Neo's ``single_sample_to_image`` hardcodes that full-res transfer, so when a
+    downscale is requested (``max_edge > 0``) we replicate its TAESD decode
+    inline and interpolate on-GPU BEFORE the transfer — shrinking the transfer
+    to ~1MB and the CPU pixel pass to ~0.4M pixels.
+
+    The decode also runs on Neo's dedicated, lower-priority VAE stream (the same
+    one Neo's own preview path uses) so it overlaps the sampler on the default
+    stream instead of contending with it. Degrades to the default stream
+    (today's behavior) when the running build exposes neither ``vae_stream`` nor
+    ``backend.stream``.
 
     Falls back gracefully if TAESD model isn't available.
     max_edge=0 means no downscale (full generation resolution).
     """
+    import numpy as np
     import torch
+    from contextlib import nullcontext
     from modules import sd_samplers_common
 
-    with torch.inference_mode():
+    # Wrap the decode on Neo's dedicated VAE stream, exactly as Neo's
+    # State.do_set_current_image does. Best-effort: any absence (older build,
+    # CPU-only, stream module missing) falls back to the default stream.
+    vae_context = nullcontext()
+    try:
+        from backend import stream
+        vs = getattr(shared.state, "vae_stream", None)
+        if vs is not None:
+            vs.wait_stream(stream.current_stream)
+            vae_context = stream.stream_context()(vs)
+    except Exception:
+        vae_context = nullcontext()
+
+    with torch.inference_mode(), vae_context:
         # Handle batch dim: latent may be [B,C,H,W] or [C,H,W]
         sample = latent[0] if latent.ndim == 4 else latent
-        # Force TAESD (approximation=3) — ~5-10ms vs 50-150ms full VAE
-        preview_img = sd_samplers_common.single_sample_to_image(sample, approximation=3)
 
-    if max_edge > 0:
-        w, h = preview_img.size
-        long_edge = max(w, h)
-        if long_edge > max_edge:
-            scale = max_edge / long_edge
-            preview_img = preview_img.resize(
-                (max(1, int(w * scale)), max(1, int(h * scale))),
-                Image.BILINEAR
-            )
+        if max_edge > 0:
+            # Downscale BEFORE the CPU transfer. single_sample_to_image()
+            # materializes the full-res image first; here we keep the decode on
+            # the GPU, interpolate down, and only then transfer.
+            t = sd_samplers_common.samples_to_images_tensor(
+                sample.unsqueeze(0), approximation=3)  # TAESD, on GPU, [-1,1]
+            t = t * 0.5 + 0.5
+            _, _, h, w = t.shape
+            long_edge = max(w, h)
+            if long_edge > max_edge:
+                scale = max_edge / long_edge
+                target_h = max(1, int(round(h * scale)))
+                target_w = max(1, int(round(w * scale)))
+                t = torch.nn.functional.interpolate(
+                    t, size=(target_h, target_w),
+                    mode="bilinear", align_corners=False)
+            x = t[0].cpu()  # now ~1MB instead of ~63MB at hires
+            x = (x.clamp(0, 1) * 255.0).round().to(torch.uint8)
+            preview_img = Image.fromarray(np.moveaxis(x.numpy(), 0, 2))
+        else:
+            # Full-resolution path (Live mode): keep the existing decode.
+            # Force TAESD (approximation=3) — ~5-10ms vs 50-150ms full VAE.
+            preview_img = sd_samplers_common.single_sample_to_image(
+                sample, approximation=3)
 
     return preview_img
 
@@ -1701,6 +1743,11 @@ def _progress_polling_thread():
     _last_preview_step = [(-1, -1)]  # last (job_no, step) we decoded a preview for
     _last_preview_time = [0.0]  # timestamp of last TAESD decode
     _taesd_logged = [False]  # log TAESD availability once
+    # Step-duration tracking — used to scale preview_interval so previews fire
+    # at most every other step regardless of resolution (hires steps are slow).
+    _last_step_seen = [(-1, -1)]  # last (job_no, step) observed (decoded or not)
+    _last_step_change_time = [0.0]  # timestamp of last observed step change
+    _measured_step_dur = [0.0]  # EMA of seconds-per-step
 
     while True:
         # Adaptive poll rate: faster during Live for snappier previews
@@ -1734,6 +1781,11 @@ def _progress_polling_thread():
                 if _idle_ticks[0] > 3:  # ~1.2s of idle before clearing preview
                     _last_preview[0] = None
                     _last_preview_step[0] = (-1, -1)
+                    # Reset step-duration tracking so the next generation starts
+                    # at the floor interval until it has measured its own steps.
+                    _last_step_seen[0] = (-1, -1)
+                    _last_step_change_time[0] = 0.0
+                    _measured_step_dur[0] = 0.0
                 continue
 
             _idle_ticks[0] = 0
@@ -1747,14 +1799,41 @@ def _progress_polling_thread():
                     sampling_step / sampling_steps
                 )
 
+            now = time.time()
+
+            # Measure seconds-per-step from observed sampling_step advances
+            # (independent of whether we decode a preview this tick). Only count
+            # forward progress within the same job; a job boundary resets step
+            # to 0 and must not be measured as a duration.
+            cur_step_key = (job_no, sampling_step)
+            prev_job, prev_step = _last_step_seen[0]
+            if cur_step_key != (prev_job, prev_step):
+                if (job_no == prev_job and sampling_step > prev_step
+                        and _last_step_change_time[0] > 0):
+                    delta_steps = sampling_step - prev_step
+                    dur = (now - _last_step_change_time[0]) / max(1, delta_steps)
+                    if dur > 0:
+                        if _measured_step_dur[0] <= 0:
+                            _measured_step_dur[0] = dur
+                        else:  # light EMA to smooth poll-rate quantization
+                            _measured_step_dur[0] = (
+                                0.5 * _measured_step_dur[0] + 0.5 * dur)
+                _last_step_seen[0] = cur_step_key
+                _last_step_change_time[0] = now
+
             preview_b64 = None
             # Adaptive preview settings:
             #   Live mode:   decode every 0.3s, full resolution (no downscale)
-            #   Normal gen:  decode every 0.5s, cap at 480px long edge
-            preview_interval = 0.3 if live_mode else 0.5
+            #   Normal gen:  scale the gate with measured step duration so
+            #                previews fire at most every other step (hires steps
+            #                run ~1.7-2.0s each; a fixed 0.5s gate would decode
+            #                every step and contend with the sampler). Floor 0.5s.
+            if live_mode:
+                preview_interval = 0.3
+            else:
+                preview_interval = max(0.5, 2.0 * _measured_step_dur[0])
             preview_max_edge = 0 if live_mode else 480
 
-            now = time.time()
             current_key = (job_no, sampling_step)
             step_changed = current_key != _last_preview_step[0]
             interval_ok = (now - _last_preview_time[0]) >= preview_interval
