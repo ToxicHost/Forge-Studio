@@ -2156,7 +2156,25 @@ def setup_studio_routes(app: FastAPI):
         # arbitrary path. Surface a non-fatal notice so the user knows their
         # configured folder was skipped rather than silently losing it.
         if _save_override and not _safe_write_root(_save_override):
-            log.warning("save_dir rejected (not a trusted root) — using default output dir")
+            # Permanent diagnostic: a rejection must always say WHY. Log the
+            # raw + resolved candidate and the full resolved trusted-roots set
+            # so a "rejected" line is self-explanatory (F1). _safe_write_root
+            # itself was NOT changed by the WP6 is_relative_to swap (that only
+            # touched /studio/file); this line localizes the real cause.
+            try:
+                _cand_resolved = _resolved(_save_override)
+                _cand_resolved = str(_cand_resolved) if _cand_resolved else None
+            except Exception:
+                _cand_resolved = None
+            try:
+                _roots_dump = sorted(_safe_write_roots())
+            except Exception as _re:
+                _roots_dump = [f"<roots unavailable: {_re}>"]
+            log.warning(
+                "save_dir rejected (not a trusted root) — using default output dir. "
+                "candidate=%r resolved=%r trusted_roots=%r",
+                _save_override, _cand_resolved, _roots_dump,
+            )
             _save_dir_notice = ("Your custom save folder isn't trusted yet, so images were saved to the "
                                 "default output folder. Open Settings → Save folder and click “Trust folder”.")
             _save_override = ""
