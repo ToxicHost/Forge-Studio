@@ -364,6 +364,25 @@ def _get_db():
     return conn
 
 
+def get_scan_folders():
+    """Return the list of Gallery-linked/watched folder paths (scan_folders).
+
+    These are folders the user explicitly linked through Studio's own Gallery
+    UI — i.e. trusted save targets. Used by studio_api's save-root check so
+    saving into an off-tree linked folder works. Returns [] on any error
+    (never raises into a request path).
+    """
+    try:
+        db = _get_db()
+        try:
+            rows = db.execute("SELECT path FROM scan_folders").fetchall()
+        finally:
+            db.close()
+        return [r["path"] for r in rows if r and r["path"]]
+    except Exception:
+        return []
+
+
 def _natural_sort_key(text):
     if not text:
         return ""

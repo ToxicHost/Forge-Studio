@@ -546,6 +546,37 @@ def _is_served_file(path):
 
 def _safe_write_roots():
     roots = {_forge_output_root()}
+    # Forge root itself (cwd) — keep.
+    cwd = _resolved(Path.cwd())
+    if cwd is not None:
+        roots.add(str(cwd))
+    # Forge-configured output dirs + each one's parent. The parent entries
+    # cover sibling folders (e.g. output/ when config names
+    # output/txt2img-images/). These are config-sourced, not request-sourced,
+    # so they are trusted by definition — restoring the pre-WP6 accept set.
+    try:
+        for _key in ("outdir_samples", "outdir_txt2img_samples",
+                     "outdir_img2img_samples", "outdir_save"):
+            _d = shared.opts.data.get(_key, "")
+            if _d:
+                rp = _resolved(_d)
+                if rp is not None:
+                    roots.add(str(rp))
+                    roots.add(str(rp.parent))
+    except Exception:
+        log.exception("Failed reading Forge outdir opts for safe-write roots")
+    # Gallery-linked/watched folders — explicit, user-configured off-tree save
+    # targets. Read fresh per call (no cache) so linking a new folder works
+    # without a restart. Use the Gallery's own accessor, not a config re-parse.
+    try:
+        _scan_folders = _import("studio_gallery", "get_scan_folders")()
+        for _f in (_scan_folders or []):
+            rp = _resolved(_f)
+            if rp is not None:
+                roots.add(str(rp))
+    except Exception:
+        # Gallery module/table may be absent on a fresh install — non-fatal.
+        pass
     # Persisted, explicitly-trusted roots (Browse-picked or typed-then-Trusted).
     roots.update(_load_trusted_roots())
     # Operator-configured extra roots (env is trusted) for remote/VM setups.
