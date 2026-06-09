@@ -328,6 +328,21 @@ STRIPPABLE_EXTS = {".png", ".jpg", ".jpeg", ".webp", ".bmp", ".tif", ".tiff"}
 _db_path = None  # set in setup_gallery_routes
 
 
+def _studio_api():
+    """Lazy handle to the studio_api module for shared security helpers
+    (origin check, picked-dir registry, Save As tokens). Returns None if it
+    isn't importable — callers degrade gracefully."""
+    try:
+        import sys
+        mod = sys.modules.get("studio_api")
+        if mod is not None:
+            return mod
+        import importlib
+        return importlib.import_module("studio_api")
+    except Exception:
+        return None
+
+
 def _get_db():
     """Get a thread-local-ish connection. Fine for sync route handlers."""
     global _db_path
@@ -2156,6 +2171,9 @@ def setup_gallery_routes(app: FastAPI):
 
     @app.post("/studio/gallery/scan-folders")
     async def gallery_add_scan_folder(request: Request):
+        _api = _studio_api()
+        if _api and not _api._check_same_origin(request):
+            return JSONResponse({"error": "forbidden"}, status_code=403)
         data = await request.json()
         path = data.get("path", "").strip()
         if not path:
@@ -2193,7 +2211,10 @@ def setup_gallery_routes(app: FastAPI):
             db.close()
 
     @app.post("/studio/gallery/pick-folder")
-    async def gallery_pick_folder():
+    async def gallery_pick_folder(request: Request):
+        _api = _studio_api()
+        if _api and not _api._check_same_origin(request):
+            return JSONResponse({"error": "forbidden"}, status_code=403)
         try:
             import tkinter as tk
             from tkinter import filedialog
@@ -2203,8 +2224,59 @@ def setup_gallery_routes(app: FastAPI):
             folder = filedialog.askdirectory(title="Select image folder")
             root.destroy()
             if folder:
+                # Intent-neutral: this picker is shared by the Gallery
+                # monitor/read flow, so it does NOT register a trusted WRITE
+                # root or probe-write into the folder. The save-folder /
+                # gallery-folder UI explicitly trusts the chosen path via
+                # /studio/trust-save-root when the intent is to write.
                 return {"path": folder.replace("/", os.sep)}
             return {"path": ""}
+        except Exception as e:
+            return JSONResponse({"error": str(e)}, status_code=500)
+
+    @app.post("/studio/gallery/pick-save-file")
+    async def gallery_pick_save_file(request: Request):
+        """Native OS 'Save As…' dialog — lets the LOCAL user choose the
+        filename, location, and format. Returns a one-shot `token` (preferred)
+        plus the chosen `path` for display. The token, not the raw path, is
+        what /studio/save_image accepts — so a client cannot direct a write to
+        an arbitrary path. 500 when the server has no GUI so the client can
+        fall back."""
+        _api = _studio_api()
+        if _api and not _api._check_same_origin(request):
+            return JSONResponse({"error": "forbidden"}, status_code=403)
+        try:
+            data = {}
+            try:
+                data = await request.json()
+            except Exception:
+                pass
+            suggested = (data.get("suggested") or "").strip()
+            fmt = (data.get("format") or "png").lower()
+            ext_map = {"png": ".png", "jpeg": ".jpg", "jpg": ".jpg", "webp": ".webp"}
+            defext = ext_map.get(fmt, ".png")
+            import tkinter as tk
+            from tkinter import filedialog
+            root = tk.Tk()
+            root.withdraw()
+            root.wm_attributes('-topmost', 1)
+            path = filedialog.asksaveasfilename(
+                title="Save image as",
+                initialfile=suggested or ("studio" + defext),
+                defaultextension=defext,
+                filetypes=[
+                    ("PNG image", "*.png"),
+                    ("JPEG image", "*.jpg *.jpeg"),
+                    ("WebP image", "*.webp"),
+                    ("All files", "*.*"),
+                ],
+            )
+            root.destroy()
+            if not path:
+                return {"path": "", "token": ""}
+            path = path.replace("/", os.sep)
+            token = _api._mint_save_token(path) if _api else ""
+            return {"path": path, "token": token}
         except Exception as e:
             return JSONResponse({"error": str(e)}, status_code=500)
 

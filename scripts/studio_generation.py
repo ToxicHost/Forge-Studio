@@ -1905,6 +1905,240 @@ _HP_FP16_VAE_WARNED = False
 _HP_HOOK_INSTALLED = False
 _HP_CAPTURE_ACTIVE = False
 _HP_CAPTURE_BATCHES = []  # list[list[np.ndarray]] — one entry per decode_latent_batch call
+_HP_VAE_AUDIT_LOGGED = False  # log only the first VAE decode per capture window (debug)
+# Opt-in verbose HP diagnostics (per-stage range probes). Off by default so
+# normal generation logs stay quiet; set STUDIO_HP_DEBUG=1 to re-enable.
+_HP_DEBUG = bool(os.environ.get("STUDIO_HP_DEBUG"))
+_HP_DFS_AUDIT = None          # Phase-2A/B: (orig_fn, [patched_modules]) for decode_first_stage probe
+_HP_DFS_AUDIT_LOGGED = False  # log only the first decode_first_stage call per capture window
+_HP_VAE_BATCHES = []          # Option C: pre-clamp VAE-decode captures (list[list[np.ndarray HWC]])
+
+
+def _hp_tensor_to_hwc_list(sample):
+    """Convert one decode_latent_batch element into a list of HWC float32
+    images.
+
+    The element's layout varies by model:
+      - 3D  [C, H, W]        (or [H, W, C]) — a single image
+      - 4D  [B, C, H, W]     (or [B, H, W, C]) — a batch of images
+      - 5D  [B, C, T, H, W]  — Anima/Cosmos/WAN; T==1 is a still image
+    The batch dimension is NOT consumed by the caller's loop (some decode
+    paths return a list of batched tensors), so this expands it here.
+
+    Multi-frame (T>1) and unrecognised layouts return [] with a clear log.
+    Values are remapped [-1,1] → [0,1] WITHOUT clamping (the HP win). Never
+    raises — HP capture must never break generation.
+    """
+    try:
+        try:
+            import torch
+            is_tensor = isinstance(sample, torch.Tensor)
+        except Exception:
+            is_tensor = False
+        if is_tensor:
+            arr = sample.detach().to("cpu").float().numpy()
+        else:
+            arr = np.asarray(sample, dtype=np.float32)
+
+        # Remap [-1, 1] → [0, 1] without clamping (keep sub-LSB headroom).
+        arr = (arr + 1.0) / 2.0
+        shape0 = tuple(arr.shape)
+
+        # 5D B,C,T,H,W — squeeze a singleton temporal dim; skip real video.
+        if arr.ndim == 5:
+            if arr.shape[2] == 1:
+                arr = arr[:, :, 0, :, :]
+                print(f"[Studio] High Precision: squeezed singleton temporal dim {shape0} -> {tuple(arr.shape)}")
+            else:
+                print(f"[Studio] High Precision: skipping multi-frame tensor shape={shape0}")
+                return []
+
+        if arr.ndim == 4:
+            # Batched: B,C,H,W → B,H,W,C, or already B,H,W,C.
+            if arr.shape[1] in (1, 3, 4):
+                arr = np.transpose(arr, (0, 2, 3, 1))
+            elif arr.shape[-1] in (1, 3, 4):
+                pass
+            else:
+                print(f"[Studio] High Precision: unsupported channel layout shape={shape0}")
+                return []
+            imgs = [arr[i] for i in range(arr.shape[0])]
+        elif arr.ndim == 3:
+            # Single image: C,H,W → H,W,C, or already H,W,C.
+            if arr.shape[0] in (1, 3, 4):
+                imgs = [np.transpose(arr, (1, 2, 0))]
+            elif arr.shape[-1] in (1, 3, 4):
+                imgs = [arr]
+            else:
+                print(f"[Studio] High Precision: unsupported channel layout shape={shape0}")
+                return []
+        else:
+            print(f"[Studio] High Precision: unsupported capture tensor shape={shape0}")
+            return []
+
+        out_imgs = []
+        for a in imgs:
+            # 1-channel → RGB; drop alpha. The HP sidecar is RGB float.
+            if a.shape[-1] == 1:
+                a = np.repeat(a, 3, axis=-1)
+            elif a.shape[-1] > 3:
+                a = a[..., :3]
+            out_imgs.append(np.ascontiguousarray(a, dtype=np.float32))
+        return out_imgs
+    except Exception as e:
+        print(f"[Studio] High Precision: capture normalize error — {e}")
+        return []
+
+
+def _hp_float_stats(arr, source_stage=None, fallback=False, fallback_reason=None,
+                    matched_final_dimensions=None, transform="(x + 1) / 2"):
+    """Privacy-safe range/clamp stats for one HWC float image, plus capture
+    provenance for the .float32.json sidecar.
+
+    Surfaces honestly whether a High Precision sidecar actually carries
+    out-of-range headroom (values <0 / >1 that an 8-bit image clips) or only
+    clamped 0..1 data. Contains NO pixel samples, paths, prompts, or model
+    names. Never raises.
+    """
+    try:
+        if arr is None:
+            return None
+        a = np.asarray(arr)
+        if a.ndim != 3 or a.shape[-1] < 3:
+            return {"valid": False, "reason": f"bad_shape:{tuple(a.shape)}", "range": "unknown"}
+
+        rgb = a[..., :3]
+        pixels = int(rgb.shape[0] * rgb.shape[1])
+        finite_count = int(np.isfinite(rgb).sum())
+        total_count = int(rgb.size)
+        nan_count = int(np.isnan(rgb).sum())
+        inf_count = int(np.isinf(rgb).sum())
+
+        if finite_count:
+            mn = [float(np.nanmin(rgb[..., c])) for c in range(3)]
+            mx = [float(np.nanmax(rgb[..., c])) for c in range(3)]
+            below = [int(np.sum(rgb[..., c] < 0.0)) for c in range(3)]
+            above = [int(np.sum(rgb[..., c] > 1.0)) for c in range(3)]
+            at0 = [int(np.sum(rgb[..., c] == 0.0)) for c in range(3)]
+            at1 = [int(np.sum(rgb[..., c] == 1.0)) for c in range(3)]
+        else:
+            mn = [None, None, None]
+            mx = [None, None, None]
+            below = above = at0 = at1 = [0, 0, 0]
+
+        def _pct(counts):
+            return [round((x / pixels) * 100.0, 6) if pixels else 0 for x in counts]
+        below_pct, above_pct = _pct(below), _pct(above)
+        boundary0_pct, boundary1_pct = _pct(at0), _pct(at1)
+
+        # Heuristic, not proof: no out-of-range values AND a channel max sitting
+        # exactly at 1.0 suggests the data was clamped before we captured it.
+        clamped_like = (
+            pixels > 0
+            and all(x == 0 for x in below)
+            and all(x == 0 for x in above)
+            and any(v == 1.0 for v in mx if v is not None)
+        )
+        has_headroom = any(x > 0 for x in below) or any(x > 0 for x in above)
+
+        # Range classification for the metadata sidecar / Develop badge.
+        if has_headroom:
+            range_kind = "extended"
+        elif fallback or clamped_like:
+            range_kind = "clamped"
+        else:
+            range_kind = "in_range"
+
+        return {
+            "valid": True,
+            "shape": [int(rgb.shape[0]), int(rgb.shape[1]), 3],
+            "finite": finite_count == total_count,
+            "nan_count": nan_count,
+            "inf_count": inf_count,
+            "min_rgb": mn,
+            "max_rgb": mx,
+            "below0_counts": below,
+            "above1_counts": above,
+            "below0_pct": below_pct,
+            "above1_pct": above_pct,
+            "boundary0_pct": boundary0_pct,
+            "boundary1_pct": boundary1_pct,
+            "clamped_like": clamped_like,
+            "has_headroom": has_headroom,
+            "range": range_kind,
+            "source_stage": source_stage,
+            "fallback": bool(fallback),
+            "fallback_reason": fallback_reason,
+            "matched_final_dimensions": matched_final_dimensions,
+            "transform": transform,
+        }
+    except Exception as e:
+        return {"valid": False, "reason": f"stats_error:{e}", "range": "unknown"}
+
+
+def _hp_raw_to_chw(t):
+    """Reduce a raw decode sample to a CHW float32 numpy array for auditing.
+
+    Handles CHW, BCHW (B==1), and BCTHW (B==1, T==1). Returns (None, reason)
+    for multi-frame video or shapes we can't interpret. Does NOT transform or
+    clamp the values — this is the raw view, straight from decode_latent_batch.
+    """
+    try:
+        try:
+            import torch
+            is_t = isinstance(t, torch.Tensor)
+        except Exception:
+            is_t = False
+        a = t.detach().to("cpu").float().numpy() if is_t else np.asarray(t, dtype=np.float32)
+        s = tuple(a.shape)
+        if a.ndim == 5:                       # B,C,T,H,W
+            if a.shape[2] > 1:
+                return None, f"multi-frame:{s}"
+            a = a[0, :, 0, :, :]
+        elif a.ndim == 4:                     # B,C,H,W
+            a = a[0]
+        if a.ndim != 3:
+            return None, f"shape:{s}"
+        return a, None
+    except Exception as e:
+        return None, f"err:{e}"
+
+
+def _hp_boundary_stats(chw, lo, hi):
+    """Per-channel min/max and % of pixels at/below `lo` and at/above `hi`."""
+    c = min(chw.shape[0], 3)
+    pixels = int(chw.shape[1] * chw.shape[2]) or 1
+    mn = [round(float(np.nanmin(chw[i])), 5) for i in range(c)]
+    mx = [round(float(np.nanmax(chw[i])), 5) for i in range(c)]
+    at_lo = [round(float(np.sum(chw[i] <= lo)) / pixels * 100.0, 4) for i in range(c)]
+    at_hi = [round(float(np.sum(chw[i] >= hi)) / pixels * 100.0, 4) for i in range(c)]
+    return mn, mx, at_lo, at_hi
+
+
+def _hp_log_capture_audit(sample):
+    """Phase-1 capture audit: log raw + denormalized per-channel range stats so
+    we can tell whether decode_latent_batch hands us clamped, in-range, or
+    extended-range data. Privacy-safe (no pixels/paths/prompts). Never raises."""
+    try:
+        chw, reason = _hp_raw_to_chw(sample)
+        if chw is None:
+            print(f"[Studio] High Precision AUDIT: skip ({reason})")
+            return
+        dtype = getattr(sample, "dtype", "?")
+        nan = int(np.isnan(chw).sum())
+        inf = int(np.isinf(chw).sum())
+        # Raw view — VAE convention is [-1, 1]; pinning at the boundaries means
+        # an upstream clamp, values beyond them mean unclamped headroom exists.
+        rmn, rmx, r_lo, r_hi = _hp_boundary_stats(chw, -1.0, 1.0)
+        print(f"[Studio] High Precision AUDIT raw: shape={tuple(chw.shape)} dtype={dtype} "
+              f"min={rmn} max={rmx} <=-1={r_lo}% >=1={r_hi}% nan={nan} inf={inf}")
+        # Denormalized view — what the sidecar actually stores after (x+1)/2.
+        d = (chw + 1.0) / 2.0
+        dmn, dmx, d_lo, d_hi = _hp_boundary_stats(d, 0.0, 1.0)
+        print(f"[Studio] High Precision AUDIT denorm(+1/2): "
+              f"min={dmn} max={dmx} <=0={d_lo}% >=1={d_hi}%")
+    except Exception as e:
+        print(f"[Studio] High Precision AUDIT error — {e}")
 
 
 def _hp_install_decode_hook():
@@ -1927,18 +2161,28 @@ def _hp_install_decode_hook():
         out = orig(*args, **kwargs)
         if not _HP_CAPTURE_ACTIVE:
             return out
+        # Phase-1 capture audit: log raw + denormalized range stats for the
+        # first sample so we can see what stage/range decode_latent_batch gives
+        # us (clamped vs in-range vs extended). Diagnostic only — never mutates.
+        try:
+            _first = out[0] if (out is not None and len(out)) else None
+            if _first is not None:
+                _hp_log_capture_audit(_first)
+        except Exception:
+            pass
         try:
             this_batch = []
-            # `out` is a list of CHW tensors in [-1, 1] (Forge convention).
+            # `out` is an iterable of decode results. Each element may be a
+            # single image (CHW), a batch (BCHW), or a video tensor (BCTHW) —
+            # the normalizer expands whatever it gets into HWC images and skips
+            # frames it can't represent as an HP sidecar.
             for sample in out:
-                # Remap to [0, 1] WITHOUT clamping. Sub-LSB precision and
-                # values >1 / <0 carry through here — that's the win.
-                float_img = (sample + 1.0) / 2.0
-                np_img = float_img.detach().to("cpu").float().numpy()
-                # CHW → HWC
-                np_img = np.transpose(np_img, (1, 2, 0))
-                this_batch.append(np.ascontiguousarray(np_img, dtype=np.float32))
-            _HP_CAPTURE_BATCHES.append(this_batch)
+                this_batch.extend(_hp_tensor_to_hwc_list(sample))
+            # Only record a non-empty batch — an all-skipped (e.g. multi-frame)
+            # decode leaves nothing for _hp_pick_final_floats to match, which
+            # correctly results in "no HP sidecar" rather than a broken one.
+            if this_batch:
+                _HP_CAPTURE_BATCHES.append(this_batch)
         except Exception as e:
             print(f"[Studio] High Precision: capture-hook error — {e}")
         return out
@@ -1946,7 +2190,7 @@ def _hp_install_decode_hook():
     _proc.decode_latent_batch = _hp_decode_wrapper
     _proc._studio_hp_decode_orig = orig
     _HP_HOOK_INSTALLED = True
-    print("[Studio] High Precision: decode_latent_batch hook installed")
+    print("[Studio] High Precision: installed decode hook on modules.processing.decode_latent_batch")
     return True
 
 
@@ -1954,6 +2198,7 @@ def _hp_begin_capture():
     """Arm the hook and clear any previous capture buffer."""
     global _HP_CAPTURE_ACTIVE
     _HP_CAPTURE_BATCHES.clear()
+    _HP_VAE_BATCHES.clear()
     _HP_CAPTURE_ACTIVE = True
 
 
@@ -1968,7 +2213,131 @@ def _hp_end_capture():
     """
     global _HP_CAPTURE_ACTIVE
     _HP_CAPTURE_ACTIVE = False
+    _hp_restore_dfs_audit()
     return list(_HP_CAPTURE_BATCHES)
+
+
+def _hp_install_dfs_audit():
+    """Phase-2A/B diagnostic: wrap Forge's decode_first_stage to log the range
+    of its output — the candidate "assembled image, before clamp" capture point
+    for Option B. decode_first_stage sits between first_stage_model.decode
+    (pre-clamp, possibly per-tile) and decode_latent_batch (assembled, clamped),
+    so this trace pinpoints where tile assembly and the clamp each happen.
+    Read-only, first-call-only, guarded, restored after generation."""
+    global _HP_DFS_AUDIT, _HP_DFS_AUDIT_LOGGED, _HP_VAE_AUDIT_LOGGED
+    if _HP_DFS_AUDIT is not None:
+        return
+    _HP_DFS_AUDIT_LOGGED = False
+    _HP_VAE_AUDIT_LOGGED = False  # VAE capture now runs inside this wrap
+    try:
+        import importlib
+        targets = []
+        for modname in ("modules.sd_samplers_common", "modules.processing"):
+            try:
+                mod = importlib.import_module(modname)
+            except Exception:
+                continue
+            fn = getattr(mod, "decode_first_stage", None)
+            if callable(fn):
+                targets.append((mod, fn))
+        if not targets:
+            print("[Studio] High Precision: decode_first_stage not found — DFS audit unavailable")
+            return
+        orig = targets[0][1]
+
+        def _wrap(*a, **k):
+            # Reload-proof VAE capture. The VAE instance can be swapped between
+            # the base and hires passes (low-VRAM reload), which orphans a
+            # one-time instance patch — so instead we (re)wrap the LIVE VAE here,
+            # on the stable module-level decode_first_stage, for the duration of
+            # this call. _vcap captures the VAE's pre-clamp output BEFORE
+            # decode_first_stage clamps its return value.
+            global _HP_VAE_AUDIT_LOGGED, _HP_DFS_AUDIT_LOGGED
+            vae = getattr(getattr(shared, "sd_model", None), "first_stage_model", None)
+            vdec = getattr(vae, "decode", None)
+            patched = False
+            if _HP_CAPTURE_ACTIVE and vae is not None and callable(vdec):
+                def _vcap(*va, **vk):
+                    global _HP_VAE_AUDIT_LOGGED
+                    vo = vdec(*va, **vk)
+                    try:
+                        if _HP_DEBUG and not _HP_VAE_AUDIT_LOGGED:
+                            _HP_VAE_AUDIT_LOGGED = True
+                            t = vo[0] if isinstance(vo, (list, tuple)) and vo else vo
+                            chw, reason = _hp_raw_to_chw(t)
+                            if chw is not None:
+                                rmn, rmx, r_lo, r_hi = _hp_boundary_stats(chw, -1.0, 1.0)
+                                print(f"[Studio] High Precision VAE-AUDIT (pre-clamp): "
+                                      f"shape={tuple(chw.shape)} dtype={getattr(t, 'dtype', '?')} "
+                                      f"min={rmn} max={rmx} <=-1={r_lo}% >=1={r_hi}%")
+                            else:
+                                print(f"[Studio] High Precision VAE-AUDIT: skip ({reason})")
+                        samples = vo if isinstance(vo, (list, tuple)) else [vo]
+                        imgs = []
+                        for s in samples:
+                            imgs.extend(_hp_tensor_to_hwc_list(s))
+                        if imgs:
+                            _HP_VAE_BATCHES.append(imgs)
+                    except Exception as e:
+                        print(f"[Studio] High Precision: VAE capture error — {e}")
+                    return vo
+                try:
+                    vae.decode = _vcap
+                    patched = True
+                except Exception:
+                    patched = False
+            try:
+                out = orig(*a, **k)
+            finally:
+                if patched:
+                    try:
+                        vae.decode = vdec
+                    except Exception:
+                        pass
+            # DFS audit (diagnostic, opt-in): decode_first_stage output is
+            # post-clamp. Gated behind STUDIO_HP_DEBUG so normal logs stay quiet.
+            if _HP_DEBUG and not _HP_DFS_AUDIT_LOGGED:
+                _HP_DFS_AUDIT_LOGGED = True
+                try:
+                    t = out[0] if isinstance(out, (list, tuple)) and out else out
+                    chw, reason = _hp_raw_to_chw(t)
+                    if chw is not None:
+                        rmn, rmx, r_lo, r_hi = _hp_boundary_stats(chw, -1.0, 1.0)
+                        print(f"[Studio] High Precision DFS-AUDIT (decode_first_stage, post-clamp): "
+                              f"shape={tuple(chw.shape)} dtype={getattr(t, 'dtype', '?')} "
+                              f"min={rmn} max={rmx} <=-1={r_lo}% >=1={r_hi}%")
+                    else:
+                        print(f"[Studio] High Precision DFS-AUDIT: skip ({reason})")
+                except Exception as e:
+                    print(f"[Studio] High Precision DFS-AUDIT error — {e}")
+            return out
+
+        applied = []
+        for mod, fn in targets:
+            if getattr(mod, "decode_first_stage", None) is orig:
+                mod.decode_first_stage = _wrap
+                applied.append(mod)
+        _HP_DFS_AUDIT = (orig, applied)
+        print(f"[Studio] High Precision: decode_first_stage audit wrap installed on "
+              f"{[m.__name__ for m in applied]}")
+    except Exception as e:
+        print(f"[Studio] High Precision: decode_first_stage audit install failed — {e}")
+        _HP_DFS_AUDIT = None
+
+
+def _hp_restore_dfs_audit():
+    """Remove the Phase-2A/B decode_first_stage audit wrap."""
+    global _HP_DFS_AUDIT
+    try:
+        if _HP_DFS_AUDIT is not None:
+            orig, applied = _HP_DFS_AUDIT
+            for mod in applied:
+                try:
+                    mod.decode_first_stage = orig
+                except Exception:
+                    pass
+    finally:
+        _HP_DFS_AUDIT = None
 
 
 def _hp_warn_fp16_vae_once():
@@ -2216,6 +2585,9 @@ def run_generation(
     # uint8 here, black (0.0) = use float here. None when no mask is
     # needed (no AD pass and no brush composite ran).
     all_blend_masks = []
+    # Privacy-safe per-image High Precision capture stats (range/clamp/finite),
+    # parallel to all_float_arrays. None when HP was off or N/A for the branch.
+    all_float_stats = []
     total_images = gp.batch_count * max(1, gp.batch_size)
     shared.state.job_count = total_images
     shared.state.job_no = 0
@@ -2380,6 +2752,8 @@ def run_generation(
                 # capture is N/A for this branch.
                 all_float_arrays.append(None)
                 all_blend_masks.append(None)
+                all_float_stats.append({"valid": False, "skipped": True,
+                                        "reason": "regional pipeline — no single final latent"})
                 region_info = f"Regional inpainting | Seed: {batch_seed}"
                 all_infotexts.append(region_info)
 
@@ -2405,6 +2779,8 @@ def run_generation(
                 # capture path here. Float capture skipped for this branch.
                 all_float_arrays.append(None)
                 all_blend_masks.append(None)
+                all_float_stats.append({"valid": False, "skipped": True,
+                                        "reason": "attention couple — no parallel latent capture"})
                 all_infotexts.append(img_info)
 
             else:
@@ -2456,6 +2832,10 @@ def run_generation(
                     if _hp_install_decode_hook():
                         _hp_warn_fp16_vae_once()
                         _hp_begin_capture()
+                        # Reload-proof pre-clamp VAE capture runs INSIDE the
+                        # decode_first_stage wrap (stable across the VRAM reload
+                        # that can swap the VAE between base and hires passes).
+                        _hp_install_dfs_audit()
                 try:
                     # Native ADetailer fires inside process_images() via its
                     # postprocess_image hook. AD slot params were injected
@@ -2518,6 +2898,9 @@ def run_generation(
                 hp_floats = []
                 hp_post_processed = False
                 hp_post_reason = ""
+                hp_source_stage = "decode_latent_batch"  # which decode stage fed the sidecar
+                hp_matched_final = False  # True when the pre-clamp VAE frame matched the final dims
+                hp_fallback_reason = None  # why we fell back to the clamped capture (if we did)
                 hp_blend_mask = None  # np.float32 HxW in [0,1]; 1 = use canvas, 0 = use float
                 if high_precision:
                     expected = len(processed.images) if getattr(processed, "images", None) else 1
@@ -2529,6 +2912,26 @@ def run_generation(
                         else:
                             print(f"[Studio] High Precision: hook fired {len(_hp_batches)} time(s) but "
                                   f"none matched the expected image count ({expected})")
+                    # Option C: prefer the pre-clamp VAE-decode frame when it's
+                    # assembled to the final size. The clamp lives inside
+                    # decode_first_stage, so this is the only source carrying
+                    # extended range. A dim mismatch (tiled/large decode that
+                    # returns per-tile chunks) safely keeps the clamped capture
+                    # above — never worse than the previous behavior.
+                    _vae_floats = _hp_pick_final_floats(list(_HP_VAE_BATCHES), expected)
+                    _vf = _vae_floats[0] if _vae_floats else None
+                    if _vf is not None and _vf.shape[1] == result.size[0] and _vf.shape[0] == result.size[1]:
+                        hp_floats = _vae_floats
+                        hp_source_stage = "vae_decode"
+                        hp_matched_final = True
+                        print(f"[Studio] High Precision: using pre-clamp VAE-decode source "
+                              f"{_vf.shape[1]}x{_vf.shape[0]} (extended range available)")
+                    elif _vf is not None:
+                        hp_fallback_reason = "pre_clamp_dimension_mismatch"
+                        print(f"[Studio] High Precision: VAE-decode frame {_vf.shape[1]}x{_vf.shape[0]} "
+                              f"!= final {result.size[0]}x{result.size[1]} (tiled?) — keeping clamped capture")
+                    else:
+                        hp_fallback_reason = "no_pre_clamp_capture"
 
                 def _hp_or_into_blend_mask(mask_arr_01):
                     """OR a [0,1] float32 HxW mask into hp_blend_mask, resizing if needed."""
@@ -2618,6 +3021,21 @@ def run_generation(
                         hp_blend_mask = None
                     all_float_arrays.append(fa)
                     all_blend_masks.append(hp_blend_mask)
+                    _st = _hp_float_stats(
+                        fa, source_stage=hp_source_stage,
+                        fallback=(hp_source_stage != "vae_decode"),
+                        fallback_reason=hp_fallback_reason,
+                        matched_final_dimensions=hp_matched_final,
+                    )
+                    all_float_stats.append(_st)
+                    if _HP_DEBUG and _st and _st.get("valid"):
+                        print("[Studio] High Precision: float stats "
+                              f"shape={_st['shape']} "
+                              f"R=[{_st['min_rgb'][0]:.5f},{_st['max_rgb'][0]:.5f}] "
+                              f"G=[{_st['min_rgb'][1]:.5f},{_st['max_rgb'][1]:.5f}] "
+                              f"B=[{_st['min_rgb'][2]:.5f},{_st['max_rgb'][2]:.5f}] "
+                              f"below0={_st['below0_pct']}% above1={_st['above1_pct']}% "
+                              f"headroom={_st['has_headroom']} clamped_like={_st['clamped_like']}")
                     if hp_blend_mask is not None:
                         coverage = float(hp_blend_mask.mean()) * 100.0
                         print(f"[Studio] High Precision: captured {fa.shape[1]}x{fa.shape[0]} float "
@@ -2635,7 +3053,10 @@ def run_generation(
                         else:
                             reason = (f"dimension mismatch (float {fa.shape[1]}x{fa.shape[0]} "
                                       f"vs final {result.size[0]}x{result.size[1]})")
+                        all_float_stats.append({"valid": False, "skipped": True, "reason": reason})
                         print(f"[Studio] High Precision: skipped sidecar for image {img_num+1} — {reason}")
+                    else:
+                        all_float_stats.append(None)
 
                 # Collect per-image info text (resolved prompt, seed, etc.)
                 img_info = ""
@@ -2715,8 +3136,9 @@ def run_generation(
             settings_json,
             id_task,
             all_float_arrays,
-            all_blend_masks)
-    return [], "<p>No images generated.</p>", "", "", id_task, [], []
+            all_blend_masks,
+            all_float_stats)
+    return [], "<p>No images generated.</p>", "", "", id_task, [], [], []
 
 
 # =========================================================================

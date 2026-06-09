@@ -2332,7 +2332,7 @@ function showSaveMenu(anchor) {
         { label: "Save as PNG", fn: () => saveFlattened("png", "image/png") },
         { label: "Save as JPEG", fn: () => saveFlattened("jpg", "image/jpeg") },
         { label: "Save as WebP", fn: () => saveFlattened("webp", "image/webp") },
-        { label: "Export PSD (layers)", fn: () => savePSD() },
+        { label: "Save as PSD (layers)", fn: () => savePSD() },
     ];
     for (const item of items) {
         const btn = document.createElement("button");
@@ -3477,7 +3477,7 @@ function _showCtxMenu(x, y) {
         { label: "Save as PNG", action: () => _ctxSaveCanvas("png") },
         { label: "Save as JPEG", action: () => _ctxSaveCanvas("jpeg") },
         { label: "Save as WebP", action: () => _ctxSaveCanvas("webp") },
-        { label: "Export PSD (layers)", action: () => savePSD() },
+        { label: "Save as PSD (layers)", action: () => savePSD() },
     ].filter(Boolean);
 
     menu.innerHTML = items.map(item => {

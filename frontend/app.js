@@ -286,12 +286,15 @@ const State = {
   outputContentHashes: [], // SHA256 of decoded RGB pixels, parallel to outputImages; "" when not saved
   outputFloatPaths: [],    // High Precision sidecar paths, parallel to outputImages; "" when none
   outputMaskPaths: [],     // High Precision V2 blend-mask sidecar paths, parallel to outputImages; "" when no AD/brush composite
+  outputFloatStats: [],    // Privacy-safe HP source stats (range/clamp/headroom), parallel to outputImages; null when none
   selectedOutputIdx: 0,
   embedMetadata: true,     // whether to embed generation params in saved images
   saveOutputs: true,       // auto-save generated images to disk
   saveFormat: "png",       // output format: png | jpeg | webp
   saveQuality: 80,         // JPEG/WebP quality (0-100)
   saveLossless: false,     // WebP lossless mode
+  galleryFolder: "",       // optional absolute server-side folder for "Save to Gallery" (empty = output/studio/)
+  saveDir: "",             // optional absolute server-side folder for auto-save on generate (empty = Forge output dir)
   highPrecision: false,    // capture float32 VAE output, save .float32.bin sidecar
   livePreview: true,       // show preview thumbnail during generation
   // Auto Watermark (composited onto the final generated image)
@@ -355,6 +358,73 @@ function _pickOutputSource(idx) {
 // base64 data URL. When _pickOutputSource returns a /file= URL, fetch
 // it fresh from disk and convert — this is the byte-faithful source,
 // avoiding the cached b64 that drifts on the affected setups.
+// Same-origin URL for a Studio-written file (image or .float32.bin/mask
+// sidecar). Unlike Forge's /file= route this also serves user-chosen save
+// folders outside the Forge output tree (path-validated server-side).
+function _studioFileUrl(path) {
+  return API.base + "/studio/file?path=" + encodeURIComponent(path);
+}
+
+// Explicitly trust a typed server-visible folder so Studio may save there.
+// This is the user action that makes a typed (remote/VM) path usable — paths
+// are never trusted just by appearing in a save/generation request. Returns
+// true on success.
+async function _trustSaveFolder(path) {
+  const p = (path || "").trim();
+  if (!p) { showToast("Type a folder path first", "info"); return false; }
+  try {
+    const r = await fetch(API.base + "/studio/trust-save-root", {
+      method: "POST", headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ path: p }),
+    });
+    const data = await r.json().catch(() => ({}));
+    if (r.ok && data.ok) { showToast("Folder trusted — Studio can save here", "success"); return true; }
+    showToast(data.error || "Could not trust folder", "error");
+    return false;
+  } catch (e) {
+    showToast("Could not reach server: " + e.message, "error");
+    return false;
+  }
+}
+
+// Render the persisted trusted-save-folder list (with Remove) in Settings.
+async function _renderTrustedRoots() {
+  const el = document.getElementById("trustedRootsList");
+  if (!el) return;
+  try {
+    const r = await fetch(API.base + "/studio/trusted-save-roots");
+    const data = await r.json().catch(() => ({}));
+    const roots = (data && data.roots) || [];
+    el.innerHTML = "";
+    if (!roots.length) return;
+    const title = document.createElement("div");
+    title.style.cssText = "font-size:10px;color:var(--text-4);";
+    title.textContent = "Trusted save folders:";
+    el.appendChild(title);
+    roots.forEach(p => {
+      const row = document.createElement("div");
+      row.style.cssText = "display:flex;align-items:center;gap:6px;";
+      const span = document.createElement("span");
+      span.style.cssText = "flex:1 1 auto;min-width:0;font-size:10px;color:var(--text-3);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;";
+      span.textContent = p; span.title = p;
+      const rm = document.createElement("button");
+      rm.className = "defaults-btn"; rm.style.cssText = "font-size:9px;padding:1px 6px;";
+      rm.textContent = "Remove";
+      rm.addEventListener("click", async () => {
+        try {
+          await fetch(API.base + "/studio/untrust-save-root", {
+            method: "POST", headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ path: p }),
+          });
+        } catch (_) {}
+        _renderTrustedRoots();
+      });
+      row.appendChild(span); row.appendChild(rm);
+      el.appendChild(row);
+    });
+  } catch (_) { /* best-effort */ }
+}
+
 async function _resolveOutputAsB64(idx) {
   const src = _pickOutputSource(idx);
   if (!src) return null;
@@ -1831,6 +1901,7 @@ async function doGenerate() {
     save_quality: State.saveQuality || 80,
     save_lossless: State.saveLossless || false,
     embed_metadata: State.embedMetadata ?? true,
+    save_dir: State.saveDir || "",
     high_precision: !!State.highPrecision,
     is_txt2img: isTxt2img,
 
@@ -1882,7 +1953,13 @@ async function doGenerate() {
       // FR-009: Prepend new results to gallery history (max 8 images)
       const MAX_GALLERY = 8;
       let newFileUrls;
-      if (result.image_paths && result.image_paths.length === result.images.length) {
+      // Forge's /file= route only serves its own output tree. When the user
+      // points auto-save at a custom folder, those saved paths aren't served,
+      // so /file= URLs would 404 (black preview + broken thumbnails). Display
+      // straight from the returned base64 in that case; the default output
+      // folder IS served, so keep using the lighter /file= URLs there.
+      const _customSaveDir = (State.saveDir || "").trim();
+      if (result.image_paths && result.image_paths.length === result.images.length && !_customSaveDir) {
         newFileUrls = result.image_paths.map(p => `${API.base}/file=${p}`);
       } else {
         newFileUrls = result.images;
@@ -1892,6 +1969,7 @@ async function doGenerate() {
       const newContentHashes = result.content_hashes || [];
       const newFloatPaths = result.float_paths || [];
       const newMaskPaths = result.mask_paths || [];
+      const newFloatStats = result.float_stats || [];
       // Extract original filenames (without extension) from server paths
       const newFilenames = (result.image_paths || []).map(p => {
         const base = p.replace(/\\/g, "/").split("/").pop() || "";
@@ -1904,6 +1982,7 @@ async function doGenerate() {
       while (newContentHashes.length < newB64.length) newContentHashes.push("");
       while (newFloatPaths.length < newB64.length) newFloatPaths.push("");
       while (newMaskPaths.length < newB64.length) newMaskPaths.push("");
+      while (newFloatStats.length < newB64.length) newFloatStats.push(null);
 
       State.outputImages = [...newFileUrls, ...State.outputImages].slice(0, MAX_GALLERY);
       State.outputImagesB64 = [...newB64, ...State.outputImagesB64].slice(0, MAX_GALLERY);
@@ -1912,11 +1991,14 @@ async function doGenerate() {
       State.outputContentHashes = [...newContentHashes, ...State.outputContentHashes].slice(0, MAX_GALLERY);
       State.outputFloatPaths = [...newFloatPaths, ...State.outputFloatPaths].slice(0, MAX_GALLERY);
       State.outputMaskPaths = [...newMaskPaths, ...State.outputMaskPaths].slice(0, MAX_GALLERY);
+      State.outputFloatStats = [...newFloatStats, ...State.outputFloatStats].slice(0, MAX_GALLERY);
       State.selectedOutputIdx = 0;
       renderOutputGallery();
       addHistoryEntry(`Generate (seed ${result.seed})`);
       const _genElapsed = ((Date.now() - State._genStartTime) / 1000).toFixed(1);
       showToast(`Generated ${result.images.length} image${result.images.length > 1 ? "s" : ""} in ${_genElapsed}s`, "success");
+      // Non-fatal server notice (e.g. an untrusted custom save folder was skipped).
+      if (result.notice) showToast(result.notice, "info");
       _notifyTab(`Done — ${_genElapsed}s`);
 
       // Show result in viewport preview (replaces live preview)
@@ -2405,8 +2487,11 @@ function displayOnCanvas(imgSrc, opts) {
       const SD = window.StudioDevelop;
       if (SD && typeof SD.setFloatSource === "function") {
         if (opts.floatPath) {
-          const mUrl = opts.maskPath ? (API.base + "/file=" + opts.maskPath) : null;
-          SD.setFloatSource(API.base + "/file=" + opts.floatPath, mUrl, imgSrc, outW, outH);
+          // Route sidecars through /studio/file (not Forge's /file=) so they
+          // load even when auto-save points at a custom folder outside the
+          // Forge output tree. /studio/file serves the default tree too.
+          const mUrl = opts.maskPath ? _studioFileUrl(opts.maskPath) : null;
+          SD.setFloatSource(_studioFileUrl(opts.floatPath), mUrl, imgSrc, outW, outH, opts.floatStats || null);
         } else {
           SD.setFloatSource(null);
         }
@@ -2856,7 +2941,8 @@ function bindUI() {
     const img = _pickOutputSource(State.selectedOutputIdx);
     const fpath = State.outputFloatPaths[State.selectedOutputIdx] || "";
     const mpath = State.outputMaskPaths[State.selectedOutputIdx] || "";
-    if (img) displayOnCanvas(img, { newLayer: true, layerName: "Output", undoLabel: "Send to canvas", floatPath: fpath, maskPath: mpath });
+    const fstats = State.outputFloatStats[State.selectedOutputIdx] || null;
+    if (img) displayOnCanvas(img, { newLayer: true, layerName: "Output", undoLabel: "Send to canvas", floatPath: fpath, maskPath: mpath, floatStats: fstats });
   });
 
   // Gallery click = select, double-click = lightbox (event delegation, bound once)
@@ -2921,9 +3007,7 @@ function bindUI() {
         { label: "Send to Canvas", action: "canvas" },
         seed ? { label: `Copy Seed (${seed})`, action: "seed" } : null,
         null, // separator
-        { label: "Save as PNG", action: "save-png" },
-        { label: "Save as JPEG", action: "save-jpeg" },
-        { label: "Save as WebP", action: "save-webp" },
+        { label: "Save As…", action: "save-as" },
         { label: _exrCtxLabel, action: "save-exr" },
       ].filter(Boolean).map(item =>
         item.label ? `<div class="gallery-ctx-item" data-action="${item.action}">${item.label}</div>`
@@ -2941,20 +3025,13 @@ function bindUI() {
         const fpath = State.outputFloatPaths[idx] || "";
         const mpath = State.outputMaskPaths[idx] || "";
         if (action === "canvas" && imgSrc) {
-          displayOnCanvas(imgSrc, { newLayer: true, layerName: "Output", undoLabel: "Send to canvas", floatPath: fpath, maskPath: mpath });
+          displayOnCanvas(imgSrc, { newLayer: true, layerName: "Output", undoLabel: "Send to canvas", floatPath: fpath, maskPath: mpath, floatStats: State.outputFloatStats[idx] || null });
         } else if (action === "seed" && seed) {
           navigator.clipboard.writeText(seed).then(() => showToast(`Seed ${seed} copied`, "success"));
         } else if (action === "save-exr") {
           await _exportEXR(idx, false);
-        } else if (action.startsWith("save-")) {
-          const fmt = action.replace("save-", "");
-          const metadata = State.embedMetadata ? (infotext || "") : "";
-          const origName = State.outputFilenames[idx] || null;
-          try {
-            const result = await API.saveImage({ image_b64: imgSrc, format: fmt, quality: 95, metadata: metadata || null, subfolder: "downloads", filename: origName });
-            if (result.ok) showToast(`Saved ${result.filename}`, "success");
-            else showToast(result.error || "Save failed", "error");
-          } catch (err) { showToast("Save failed: " + err.message, "error"); }
+        } else if (action === "save-as") {
+          await _saveAsNative(idx);
         }
       });
 
@@ -2983,6 +3060,8 @@ function bindUI() {
       // V2: blend-mask sidecar (AD/brush composite). When present,
       // Develop will composite canvas-uint8 over the float buffer.
       maskPath: State.outputMaskPaths[i] || "",
+      // Privacy-safe HP source stats for the Develop quality badge.
+      floatStats: State.outputFloatStats[i] || null,
     }));
   }
 
@@ -3018,7 +3097,7 @@ function bindUI() {
       const img = _pickOutputSource(idx);
       const fpath = State.outputFloatPaths[idx] || "";
       const mpath = State.outputMaskPaths[idx] || "";
-      if (img) displayOnCanvas(img, { newLayer: true, layerName: "Output", undoLabel: "Drag to canvas", floatPath: fpath, maskPath: mpath });
+      if (img) displayOnCanvas(img, { newLayer: true, layerName: "Output", undoLabel: "Drag to canvas", floatPath: fpath, maskPath: mpath, floatStats: State.outputFloatStats[idx] || null });
     }
   });
 
@@ -3137,6 +3216,145 @@ function bindUI() {
     }
   }
 
+  // Re-encode a resolved output (base64/data-URL or same-origin /file= URL)
+  // into a Blob of the requested format via an offscreen canvas. Used by the
+  // native "Save As…" file-picker path, which writes bytes client-side and
+  // therefore can't lean on the backend encoder. Note: canvas re-encode
+  // drops embedded metadata — the backend menu items keep metadata.
+  function _encodeOutputBlob(src, fmt) {
+    return new Promise((resolve) => {
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const c = document.createElement("canvas");
+          c.width = img.naturalWidth; c.height = img.naturalHeight;
+          const ctx = c.getContext("2d");
+          if (fmt === "jpeg") { ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, c.width, c.height); }
+          ctx.drawImage(img, 0, 0);
+          const mime = fmt === "jpeg" ? "image/jpeg" : (fmt === "webp" ? "image/webp" : "image/png");
+          const q = (fmt === "jpeg" || fmt === "webp") ? ((State.saveQuality || 90) / 100) : undefined;
+          c.toBlob((b) => resolve(b), mime, q);
+        } catch (e) { resolve(null); }
+      };
+      img.onerror = () => resolve(null);
+      img.src = src;
+    });
+  }
+
+  // Native "Save As…" via the File System Access API (Chromium). Returns
+  // true when handled (including user-cancel), false when unsupported or
+  // failed so the caller can fall back to the backend/download flow.
+  const _extForFmt = (f) => (f === "jpeg" ? "jpg" : f);
+  const _mimeForFmt = (f) => (f === "jpeg" ? "image/jpeg" : (f === "webp" ? "image/webp" : "image/png"));
+  const _fmtFromName = (name) => {
+    const ext = (String(name).split(".").pop() || "").toLowerCase();
+    if (ext === "jpg" || ext === "jpeg") return "jpeg";
+    if (ext === "webp") return "webp";
+    return "png";
+  };
+  // Decode a same-format data URL straight to a Blob — no canvas re-encode,
+  // so embedded metadata (prompt/seed/settings) is preserved. Used when the
+  // chosen Save As format matches the source format.
+  function _dataUrlToBlob(dataUrl) {
+    try {
+      const [head, b64] = dataUrl.split(",");
+      const mime = (head.match(/data:([^;]+)/) || [])[1] || "application/octet-stream";
+      const bin = atob(b64);
+      const arr = new Uint8Array(bin.length);
+      for (let i = 0; i < bin.length; i++) arr[i] = bin.charCodeAt(i);
+      return new Blob([arr], { type: mime });
+    } catch { return null; }
+  }
+
+  // Save As… — open the OS native save dialog so the user chooses the name,
+  // location, AND format, exactly like any desktop app. Falls back to a
+  // browser download (with a suggested filename) where the File System Access
+  // API isn't available (Firefox/Safari) — there the browser's own "ask where
+  // to save" setting governs the location prompt.
+  async function _saveAsNative(idx = State.selectedOutputIdx) {
+    const imgSrc = await _resolveOutputAsB64(idx);
+    if (!imgSrc) { showToast("No image to save", "info"); return; }
+    const srcMime = (imgSrc.match(/^data:([^;]+)/) || [])[1] || "image/png";
+    const srcFmt = srcMime === "image/jpeg" ? "jpeg" : (srcMime === "image/webp" ? "webp" : "png");
+    const defFmt = State.saveFormat || srcFmt || "png";
+    const stem = (State.outputFilenames[idx] || `studio_${Date.now()}`).replace(/\.[^.]+$/, "");
+    const infotext = State.embedMetadata ? (State.outputInfotexts[idx] || "") : "";
+
+    // 1) Server-side native "Save As…" dialog. This is the reliable path for a
+    //    local Forge install: it pops a real OS dialog regardless of browser
+    //    (the File System Access API needs Chromium + a secure context, so it
+    //    isn't available over a LAN IP or in Firefox), and the backend write
+    //    preserves embedded metadata. A 500/network error means the server has
+    //    no GUI (headless/remote) — fall through to the browser paths.
+    try {
+      const r = await fetch(API.base + "/studio/gallery/pick-save-file", {
+        method: "POST", headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ suggested: stem + "." + _extForFmt(defFmt), format: defFmt }),
+      });
+      const data = await r.json();
+      if (r.ok && !data.error) {
+        if (!data.path) return;                       // user cancelled the dialog
+        // Only do the server-side write when the dialog minted a token. If we
+        // got a path but no token (server couldn't mint), don't send a save
+        // that would land in the default folder — fall through to the browser
+        // save path instead so the file goes where intended.
+        if (data.token) {
+          const res = await API.saveImage({
+            image_b64: imgSrc,
+            format: _fmtFromName(data.path),
+            quality: State.saveQuality || 95,
+            metadata: infotext || null,
+            save_token: data.token,   // server resolves it; never a raw client path
+          });
+          if (res.ok) showToast("Saved " + res.filename, "success");
+          else showToast(res.error || "Save failed", "error");
+          return;
+        }
+      }
+      // data.error present (server dialog unavailable) or no token → fall through.
+    } catch (_) { /* headless/remote server — fall through to browser paths */ }
+
+    // Reuse the source bytes (keeps embedded metadata) when no format change
+    // is needed; otherwise re-encode via an offscreen canvas.
+    const _bytesFor = async (fmt) =>
+      (fmt === srcFmt) ? _dataUrlToBlob(imgSrc) : await _encodeOutputBlob(imgSrc, fmt);
+
+    // 2) Browser File System Access API (Chromium + secure context).
+    if (typeof window.showSaveFilePicker === "function") {
+      const order = [defFmt, ...["png", "jpeg", "webp"].filter(f => f !== defFmt)];
+      const types = order.map(f => ({
+        description: f.toUpperCase() + " image",
+        accept: { [_mimeForFmt(f)]: ["." + _extForFmt(f)] },
+      }));
+      try {
+        const handle = await window.showSaveFilePicker({ suggestedName: stem + "." + _extForFmt(defFmt), types });
+        const fmt = _fmtFromName(handle.name);
+        const blob = await _bytesFor(fmt);
+        if (!blob) { showToast("Could not encode image", "error"); return; }
+        const w = await handle.createWritable();
+        await w.write(blob);
+        await w.close();
+        showToast("Saved " + handle.name, "success");
+      } catch (err) {
+        if (err && err.name === "AbortError") return; // user cancelled — no toast
+        console.warn("[Studio] Save As (native) failed:", err);
+        showToast("Save As failed: " + (err?.message || err), "error");
+      }
+      return;
+    }
+
+    // 3) Last resort — browser download with a suggested name (the browser's
+    //    own "ask where to save" setting governs any location prompt).
+    const blob = await _bytesFor(defFmt);
+    if (!blob) { showToast("Could not encode image", "error"); return; }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = stem + "." + _extForFmt(defFmt);
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+    showToast("Saved to your browser downloads", "info");
+  }
+
   // Gallery save — anchor a floating popover off the icon button so we
   // can offer "Save to Gallery" (drops in the watched outputs root) in
   // addition to the format-specific download targets.
@@ -3150,6 +3368,12 @@ function bindUI() {
     const infotext = State.embedMetadata
       ? (State.outputInfotexts[State.selectedOutputIdx] || "")
       : "";
+    // toGallery + a configured "Save to Gallery folder" (server-side absolute
+    // path) routes the write there. Without a configured folder we preserve
+    // the legacy behavior: gallery → output/studio/ (the watched root),
+    // downloads → output/studio/downloads/. Hoisted so the catch can tell a
+    // Gallery-destination failure apart from a plain save failure.
+    const galleryDir = toGallery ? (State.galleryFolder || "").trim() : "";
     try {
       const origName = State.outputFilenames[State.selectedOutputIdx] || null;
       const result = await API.saveImage({
@@ -3157,10 +3381,8 @@ function bindUI() {
         format: fmt,
         quality: 95,
         metadata: infotext || null,
-        // toGallery=true drops the file in output/studio/ (the
-        // gallery-watched root). Anything else lands in
-        // output/studio/downloads/ to keep manual downloads grouped.
         subfolder: toGallery ? "" : "downloads",
+        dest_dir: galleryDir || null,
         filename: origName,
       });
       if (result.ok) {
@@ -3173,8 +3395,15 @@ function bindUI() {
       }
     } catch (e) {
       console.error("[Studio] Save failed:", e);
-      // Server save failed — fall back to a client-side download so the user
-      // doesn't lose the image (parity with the canvas save path).
+      // A misconfigured "Save to Gallery folder" must surface a clear error,
+      // not silently divert to the browser's Downloads — that would defeat
+      // the user's chosen destination. Show the backend message instead.
+      if (galleryDir) {
+        showToast("Save to Gallery failed: " + e.message, "error");
+        return;
+      }
+      // Otherwise (default save) fall back to a client-side download so the
+      // user doesn't lose the image (parity with the canvas save path).
       try {
         const a = document.createElement("a");
         a.href = imgSrc;
@@ -3189,6 +3418,9 @@ function bindUI() {
     }
   }
 
+  // Secondary "▾" menu beside Save As… — the destinations that aren't a
+  // plain file (Gallery is an internal target; EXR is a niche float export).
+  // Save As… itself opens the OS save dialog directly; it isn't in here.
   function _showOutputSaveMenu(anchor) {
     const existing = document.getElementById("outputSaveMenu");
     if (existing) { existing.remove(); return; }
@@ -3199,13 +3431,11 @@ function bindUI() {
     const _idx = State.selectedOutputIdx;
     const _hasFloat = !!(State.outputFloatPaths && State.outputFloatPaths[_idx]);
     const _exrLabel = _hasFloat ? "Export EXR (High Precision)" : "Export EXR (Standard)";
+    const _fmt = State.saveFormat || "png";
 
     const items = [
-      { label: "Save as PNG",  fn: () => _saveSelectedOutput("png",  false) },
-      { label: "Save as JPEG", fn: () => _saveSelectedOutput("jpeg", false) },
-      { label: "Save as WebP", fn: () => _saveSelectedOutput("webp", false) },
-      { label: _exrLabel,      fn: () => _exportEXR(_idx, false) },
-      { label: "Save to Gallery", fn: () => _saveSelectedOutput("png", true) },
+      { label: "Save to Gallery", fn: () => _saveSelectedOutput(_fmt, true) },
+      { label: _exrLabel,         fn: () => _exportEXR(_idx, false) },
     ];
 
     const menu = document.createElement("div");
@@ -3243,7 +3473,21 @@ function bindUI() {
     }, 0);
   }
 
-  document.getElementById("outputSave")?.addEventListener("click", (e) => {
+  // Save — one click, no prompt. Uses the default output format + folder
+  // from Settings (respects State.saveFormat). Save As… covers everything
+  // else (format / location / Gallery).
+  document.getElementById("outputSave")?.addEventListener("click", () => {
+    _saveSelectedOutput(State.saveFormat || "png", false);
+  });
+
+  // Save As… — open the OS native save dialog (name / location / format),
+  // just like any desktop app.
+  document.getElementById("outputSaveAs")?.addEventListener("click", () => {
+    _saveAsNative();
+  });
+
+  // ▾ — secondary destinations (Save to Gallery, Export EXR).
+  document.getElementById("outputSaveMore")?.addEventListener("click", (e) => {
     _showOutputSaveMenu(e.currentTarget);
   });
 
@@ -3789,6 +4033,100 @@ function bindUI() {
     if (qRow) qRow.style.display = on ? "none" : "";
   });
 
+  // ===== Save to Gallery folder =====
+  // Folder paths are machine config, not per-image workflow params, so they
+  // persist immediately to localStorage (no need to click "Save Defaults").
+  // _restoreFolderSettings() re-applies them on boot, after defaults load.
+  const _galFolderInput = document.getElementById("settingGalleryFolder");
+  const _syncGalFolder = () => {
+    State.galleryFolder = (_galFolderInput?.value || "").trim();
+    try { localStorage.setItem("studio-gallery-folder", State.galleryFolder); } catch (_) {}
+  };
+  _galFolderInput?.addEventListener("input", _syncGalFolder);
+  _galFolderInput?.addEventListener("change", _syncGalFolder);
+  // Browse — native folder picker on the Forge/Studio server machine.
+  // Reuses the Gallery's existing server-side picker. Manual entry above is
+  // always available (and is the only option for headless/remote servers).
+  document.getElementById("galleryFolderBrowse")?.addEventListener("click", async () => {
+    try {
+      const r = await fetch(API.base + "/studio/gallery/pick-folder", { method: "POST" });
+      const data = await r.json();
+      if (data.error) { showToast("Folder picker unavailable: " + data.error, "info"); return; }
+      if (data.path && _galFolderInput) {
+        _galFolderInput.value = data.path;
+        _syncGalFolder();
+        // Picking a save destination is an explicit write intent → trust it.
+        if (await _trustSaveFolder(data.path)) _renderTrustedRoots();
+      }
+    } catch (e) {
+      showToast("Folder picker unavailable on this server — type the path manually", "info");
+    }
+  });
+  // Open — reveal the configured folder on the server machine.
+  document.getElementById("galleryFolderOpen")?.addEventListener("click", async () => {
+    const dir = (_galFolderInput?.value || "").trim();
+    if (!dir) { showToast("No Gallery folder set", "info"); return; }
+    try {
+      const r = await fetch(API.base + "/studio/open_folder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: dir }),
+      });
+      const data = await r.json();
+      if (data.ok) showToast("Opened Gallery folder", "success");
+      else showToast(data.error || "Could not open folder", "error");
+    } catch (e) {
+      showToast("Could not open folder: " + e.message, "error");
+    }
+  });
+
+  // ===== Auto-save folder (where generated images are written) =====
+  const _saveDirInput = document.getElementById("settingSaveDir");
+  const _syncSaveDir = () => {
+    State.saveDir = (_saveDirInput?.value || "").trim();
+    try { localStorage.setItem("studio-save-dir", State.saveDir); } catch (_) {}
+  };
+  _saveDirInput?.addEventListener("input", _syncSaveDir);
+  _saveDirInput?.addEventListener("change", _syncSaveDir);
+  document.getElementById("saveDirBrowse")?.addEventListener("click", async () => {
+    try {
+      const r = await fetch(API.base + "/studio/gallery/pick-folder", { method: "POST" });
+      const data = await r.json();
+      if (data.error) { showToast("Folder picker unavailable: " + data.error, "info"); return; }
+      if (data.path && _saveDirInput) {
+        _saveDirInput.value = data.path;
+        _syncSaveDir();
+        // Picking a save destination is an explicit write intent → trust it.
+        if (await _trustSaveFolder(data.path)) _renderTrustedRoots();
+      }
+    } catch (e) {
+      showToast("Folder picker unavailable on this server — type the path manually", "info");
+    }
+  });
+  document.getElementById("saveDirOpen")?.addEventListener("click", async () => {
+    const dir = (_saveDirInput?.value || "").trim();
+    if (!dir) { showToast("No save folder set", "info"); return; }
+    try {
+      const r = await fetch(API.base + "/studio/open_folder", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ path: dir }),
+      });
+      const data = await r.json();
+      if (data.ok) showToast("Opened save folder", "success");
+      else showToast(data.error || "Could not open folder", "error");
+    } catch (e) {
+      showToast("Could not open folder: " + e.message, "error");
+    }
+  });
+  document.getElementById("saveDirTrust")?.addEventListener("click", async () => {
+    if (await _trustSaveFolder((_saveDirInput?.value || "").trim())) _renderTrustedRoots();
+  });
+  document.getElementById("galleryFolderTrust")?.addEventListener("click", async () => {
+    if (await _trustSaveFolder((_galFolderInput?.value || "").trim())) _renderTrustedRoots();
+  });
+  _renderTrustedRoots();
+
   // ===== Auto Watermark =====
   const _wmToggle = document.getElementById("toggleWatermark");
   const _wmSelect = document.getElementById("settingWatermark");
@@ -4068,7 +4406,8 @@ function bindUI() {
     ],
     format: [
       ["settingSaveFormat", "val"], ["settingJpegQuality", "val"], ["settingWebpQuality", "val"],
-      ["toggleWebpLossless", "on"],
+      ["toggleWebpLossless", "on"], ["settingGalleryFolder", "val"],
+      ["settingSaveDir", "val"],
     ],
     // Watermark settings persist regardless of the enable toggle, so a user's
     // configured mark/position/sliders survive disabling + reload.
@@ -4171,6 +4510,9 @@ function bindUI() {
       .then(() => console.log("[Studio] Saved defaults:", Object.keys(data).length, "params"))
       .catch(e => console.warn("[Studio] Server defaults save failed:", e));
   }
+  // Exposed so the first-run flow can persist its choices without going
+  // through the Settings button (which fires its own toast).
+  window._studioSaveDefaults = saveDefaults;
 
   // Cached copy of the most recently resolved defaults (server or session).
   // Used by _studioReapplyDefaults so new Canvas tabs can pick up the
@@ -4268,6 +4610,8 @@ function bindUI() {
     State.livePreview = document.getElementById("toggleLivePreview")?.classList.contains("on") ?? true;
     State.embedMetadata = document.getElementById("toggleMetadata")?.classList.contains("on") ?? true;
     // Sync output format state
+    State.galleryFolder = document.getElementById("settingGalleryFolder")?.value?.trim() || "";
+    State.saveDir = document.getElementById("settingSaveDir")?.value?.trim() || "";
     _syncFormatUI();
     const jq = parseInt(document.getElementById("settingJpegQuality")?.value) || 80;
     const wq = parseInt(document.getElementById("settingWebpQuality")?.value) || 75;
@@ -4505,6 +4849,9 @@ function bindUI() {
       console.log("[Studio] Restoring AI components from session/defaults");
       _scheduleRestoredComponentSync("session-restore");
     }
+    // Reported back to init() for first-run detection: a fresh install has
+    // neither server defaults nor a saved session.
+    return hadDefaults || hadSession;
   };
 
   // AD slot checkboxes
@@ -4571,6 +4918,26 @@ function bindUI() {
       const cs = document.getElementById("canvasStatus");
       if (cs) cs.innerHTML = `${w} &times; ${h} &ensp; ${Math.round((window.StudioCore?.state?.zoom?.scale || 1) * 100)}%`;
     });
+  });
+
+  // Width/height swap — flips the two dimensions in place. Independent of
+  // the aspect-ratio presets, works for any custom size, and never triggers
+  // generation. e.g. 832×1216 → 1216×832.
+  document.getElementById("swapWH")?.addEventListener("click", () => {
+    if (State.generating) return;
+    const wEl = document.getElementById("paramWidth");
+    const hEl = document.getElementById("paramHeight");
+    if (!wEl || !hEl) return;
+    const w = parseInt(wEl.value) || 0;
+    const h = parseInt(hEl.value) || 0;
+    if (!w || !h || w === h) return;
+    wEl.value = h;
+    hEl.value = w;
+    // Reuse the existing change pipeline (canvas resize + status); the
+    // listener reads both inputs, so one dispatch is enough.
+    wEl.dispatchEvent(new Event("change"));
+    // Keep the AR orientation buttons in step with the flipped orientation.
+    if (window._syncARToSize) window._syncARToSize(h, w);
   });
 
   // ---- AR System: base size + ratio + orientation ----
@@ -5768,14 +6135,33 @@ async function init() {
 
   // Load saved workflow defaults (must run AFTER dropdowns are populated)
   // _applyDefaults handles canvas resize and status bar updates
+  let _hadStoredConfig = false;
   if (typeof window._studioLoadDefaults === "function") {
-    await window._studioLoadDefaults();
+    _hadStoredConfig = await window._studioLoadDefaults();
   } else {
     // No defaults — set initial status from input values
     const w = parseInt(document.getElementById("paramWidth")?.value) || 768;
     const h = parseInt(document.getElementById("paramHeight")?.value) || 768;
     StatusBar.setDimensions(w, h);
   }
+
+  // Folder paths persist immediately via localStorage (machine config, not
+  // per-image workflow). Re-apply after defaults load so the most recent
+  // user choice wins regardless of whether "Save Defaults" was clicked.
+  try {
+    const _sd = localStorage.getItem("studio-save-dir");
+    if (_sd != null) {
+      const el = document.getElementById("settingSaveDir");
+      if (el) el.value = _sd;
+      State.saveDir = _sd.trim();
+    }
+    const _gf = localStorage.getItem("studio-gallery-folder");
+    if (_gf != null) {
+      const el = document.getElementById("settingGalleryFolder");
+      if (el) el.value = _gf;
+      State.galleryFolder = _gf.trim();
+    }
+  } catch (_) {}
 
   // Load extension bridge manifest and render controls
   await ExtensionBridge.load();
@@ -6095,7 +6481,179 @@ async function init() {
     }
   }
 
+  // First-run preferences — only for genuinely fresh installs (no server
+  // defaults, no saved session, and never onboarded/skipped before). Existing
+  // users are never interrupted.
+  _maybeShowFirstRun(_hadStoredConfig);
+
   console.log("[Studio] Ready");
+}
+
+// ═══════════════════════════════════════════
+// FIRST-RUN PREFERENCES (PR 4)
+// ═══════════════════════════════════════════
+// A lightweight onboarding card shown once on a fresh install. It only
+// configures settings that already exist and persists them through the
+// normal defaults system (no second preference store). Everything here is
+// changeable later under Settings.
+const _ONBOARD_KEY = "studio-onboarded";
+
+function _maybeShowFirstRun(hadStoredConfig) {
+  try {
+    if (hadStoredConfig) return;                              // existing user
+    if (localStorage.getItem(_ONBOARD_KEY)) return;           // already chosen/skipped
+  } catch (_) { return; }
+  // Defer a tick so the rest of init settles (dropdowns, theme) first.
+  setTimeout(_showFirstRunModal, 200);
+}
+
+// Flip a Studio on/off toggle to a desired boolean by reusing its own click
+// handler — that keeps the associated State.* field in sync, unlike poking
+// the class directly.
+function _setToggleState(id, want) {
+  const el = document.getElementById(id);
+  if (!el) return;
+  if (el.classList.contains("on") !== !!want) el.click();
+}
+
+function _showFirstRunModal() {
+  if (document.getElementById("firstRunOverlay")) return;
+  const _tt = (k, f) => (window.I18N && window.I18N.t) ? window.I18N.t(k, f) : f;
+  let _customPath = "";   // server-side folder picked for auto-save (empty = Forge default)
+
+  const ov = document.createElement("div");
+  ov.id = "firstRunOverlay";
+  ov.className = "first-run-overlay";
+  ov.innerHTML =
+    '<div class="first-run-card" role="dialog" aria-modal="true" aria-labelledby="firstRunTitle">' +
+      '<div class="first-run-head">' +
+        '<h2 id="firstRunTitle">' + _tt("firstRun.title", "Welcome to Forge Studio") + '</h2>' +
+        '<p>' + _tt("firstRun.subtitle", "A couple of quick preferences — you can change all of these later in Settings.") + '</p>' +
+      '</div>' +
+      '<div class="first-run-group">' +
+        '<div class="first-run-label">' + _tt("firstRun.format.label", "Default image format") + '</div>' +
+        '<div class="first-run-choices" data-fr="format">' +
+          '<button class="first-run-choice active" data-val="png">PNG</button>' +
+          '<button class="first-run-choice" data-val="jpeg">JPEG</button>' +
+          '<button class="first-run-choice" data-val="webp">WebP</button>' +
+        '</div>' +
+        '<div class="first-run-hint">' + _tt("firstRun.format.hint", "PNG is lossless; JPEG/WebP are smaller.") + '</div>' +
+      '</div>' +
+      '<div class="first-run-group">' +
+        '<div class="first-run-label">' + _tt("firstRun.saveLoc.label", "Where should images save?") + '</div>' +
+        '<div class="first-run-choices" data-fr="saveloc">' +
+          '<button class="first-run-choice active" data-val="default">' + _tt("firstRun.saveLoc.default", "Forge default folder") + '</button>' +
+          '<button class="first-run-choice" data-val="custom">' + _tt("firstRun.saveLoc.custom", "Choose a folder…") + '</button>' +
+        '</div>' +
+        '<div class="first-run-browse" id="firstRunBrowseRow" style="display:none;">' +
+          '<input type="text" class="first-run-path-input" id="firstRunPath" autocomplete="off" spellcheck="false" ' +
+            'placeholder="' + _tt("firstRun.saveLoc.placeholder", "Type a folder path on the Forge server…") + '">' +
+          '<button class="first-run-browse-btn" id="firstRunBrowse">' + _tt("firstRun.saveLoc.browse", "Browse…") + '</button>' +
+        '</div>' +
+        '<div class="first-run-hint">' + _tt("firstRun.saveLoc.hint", "This folder lives on the machine running Forge/Studio. Type the path directly (best for remote/VM), or Browse if the dialog opens on that machine. Leave on default to use Forge’s output folder.") + '</div>' +
+      '</div>' +
+      '<div class="first-run-group">' +
+        '<div class="first-run-label">' + _tt("firstRun.meta.label", "Embed metadata into image files") + '</div>' +
+        '<div class="first-run-choices" data-fr="meta">' +
+          '<button class="first-run-choice active" data-val="on">' + _tt("firstRun.meta.on", "Yes") + '</button>' +
+          '<button class="first-run-choice" data-val="off">' + _tt("firstRun.meta.off", "No") + '</button>' +
+        '</div>' +
+        '<div class="first-run-hint">' + _tt("firstRun.meta.hint", "Writes prompt/seed/settings into each saved image so they can be recalled later. (The Gallery indexes this either way.)") + '</div>' +
+      '</div>' +
+      '<div class="first-run-group">' +
+        '<div class="first-run-label">' + _tt("firstRun.monitor.label", "Monitor this folder in the Gallery") + '</div>' +
+        '<div class="first-run-choices" data-fr="monitor">' +
+          '<button class="first-run-choice active" data-val="on">' + _tt("firstRun.monitor.on", "Yes") + '</button>' +
+          '<button class="first-run-choice" data-val="off">' + _tt("firstRun.monitor.off", "No") + '</button>' +
+        '</div>' +
+        '<div class="first-run-hint">' + _tt("firstRun.monitor.hint", "Adds a chosen folder to the Gallery for live auto-sync. The default output folder is already watched.") + '</div>' +
+      '</div>' +
+      '<div class="first-run-foot">' +
+        '<button class="first-run-skip" id="firstRunSkip">' + _tt("firstRun.skip", "Skip") + '</button>' +
+        '<button class="first-run-go" id="firstRunGo">' + _tt("firstRun.go", "Get started") + '</button>' +
+      '</div>' +
+      '<div class="first-run-note">' + _tt("firstRun.note", "Tip: change any of this anytime in Settings.") + '</div>' +
+    '</div>';
+  document.body.appendChild(ov);
+
+  const _browseRow = ov.querySelector("#firstRunBrowseRow");
+  const _pathEl = ov.querySelector("#firstRunPath");
+
+  // Typing the path directly is the reliable route for remote/VM/headless
+  // setups, where the server-side Browse dialog opens on the Forge machine
+  // (not the user's browser). Keep _customPath in sync as they type.
+  _pathEl?.addEventListener("input", () => { _customPath = (_pathEl.value || "").trim(); });
+
+  // Single-select chip groups; the save-location group also toggles the
+  // Browse row so the path field only appears when "custom" is chosen.
+  ov.querySelectorAll(".first-run-choices").forEach(grp => {
+    grp.addEventListener("click", e => {
+      const btn = e.target.closest(".first-run-choice");
+      if (!btn) return;
+      grp.querySelectorAll(".first-run-choice").forEach(b => b.classList.toggle("active", b === btn));
+      if (grp.dataset.fr === "saveloc" && _browseRow) {
+        const custom = btn.dataset.val === "custom";
+        _browseRow.style.display = custom ? "" : "none";
+        if (custom && _pathEl) _pathEl.focus();
+      }
+    });
+  });
+
+  // Folder picker — reuses the Gallery's server-side native dialog. Opens on
+  // the Forge machine; the text field above is the fallback for remote/VM.
+  ov.querySelector("#firstRunBrowse")?.addEventListener("click", async () => {
+    try {
+      const r = await fetch(API.base + "/studio/gallery/pick-folder", { method: "POST" });
+      const data = await r.json();
+      if (data.error) { showToast("Folder picker unavailable: " + data.error, "info"); return; }
+      if (data.path) { _customPath = data.path.trim(); if (_pathEl) _pathEl.value = _customPath; }
+    } catch (_) {
+      showToast("Folder dialog opens on the Forge server — type the path in the field instead", "info");
+    }
+  });
+
+  const _pick = (group) => ov.querySelector('[data-fr="' + group + '"] .first-run-choice.active')?.dataset.val;
+  const _close = () => { ov.remove(); try { localStorage.setItem(_ONBOARD_KEY, "1"); } catch (_) {} };
+
+  document.getElementById("firstRunSkip")?.addEventListener("click", _close);
+
+  document.getElementById("firstRunGo")?.addEventListener("click", async () => {
+    // Apply through the real controls so State + Settings UI stay in sync.
+    const fmt = _pick("format") || "png";
+    const fmtSel = document.getElementById("settingSaveFormat");
+    if (fmtSel) { fmtSel.value = fmt; fmtSel.dispatchEvent(new Event("change")); }
+
+    // Save location → settingSaveDir (only when a custom folder was chosen).
+    // A custom folder must be explicitly trusted before Studio will write to
+    // it; if trust fails (bad/too-broad path), keep the card open so the user
+    // can fix it rather than silently falling back to the default.
+    const useCustom = _pick("saveloc") === "custom" && _customPath;
+    if (useCustom && !(await _trustSaveFolder(_customPath))) return;
+    const saveInput = document.getElementById("settingSaveDir");
+    if (saveInput) { saveInput.value = useCustom ? _customPath : ""; saveInput.dispatchEvent(new Event("change")); }
+    State.saveDir = useCustom ? _customPath : "";
+
+    _setToggleState("toggleMetadata", _pick("meta") === "on");
+
+    // Gallery monitoring — register the chosen folder with the watcher.
+    // Only actionable when a custom path exists (the default output folder is
+    // already watched, and its absolute path isn't known to the browser).
+    if (_pick("monitor") === "on" && useCustom) {
+      try {
+        await fetch(API.base + "/studio/gallery/scan-folders", {
+          method: "POST", headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ path: _customPath }),
+        });
+        fetch(API.base + "/studio/gallery/scan", { method: "POST" }).catch(() => {});
+      } catch (_) { /* non-fatal — folder can be added later in the Gallery */ }
+    }
+
+    // Persist via the normal defaults system (also marks the install as
+    // configured, so this never reappears).
+    if (typeof window._studioSaveDefaults === "function") window._studioSaveDefaults();
+    _close();
+    if (typeof showToast === "function") showToast(_tt("firstRun.done", "Preferences saved — welcome aboard!"), "success");
+  });
 }
 
 // ═══════════════════════════════════════════
