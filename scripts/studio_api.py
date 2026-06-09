@@ -1604,6 +1604,13 @@ def _build_layout_tree(controls, runner, layout_id_map):
 _progress_connections: list[WebSocket] = []
 _uvicorn_loop = None  # Captured on first WebSocket connect
 
+# Preview delta protocol: the full ~100KB base64 preview is sent ONLY on the
+# tick it was freshly decoded; intervening ticks send preview=None. These hold
+# the last decoded preview so a client connecting mid-generation can be caught
+# up immediately. preview_id is monotonic per fresh decode, reset on idle-clear.
+_last_preview_b64 = None
+_last_preview_id = 0
+
 
 # =========================================================================
 # VRAM MANAGEMENT — Auto-unload timer
@@ -1836,7 +1843,7 @@ def _progress_polling_thread():
     In Gradio mode, Forge's own progress system may read/write
     shared.state concurrently — all reads are snapshot-guarded.
     """
-    _last_preview = [None]  # mutable ref — cache last known preview
+    global _last_preview_b64, _last_preview_id
     _idle_ticks = [0]  # count consecutive idle polls to debounce
     _logged_error = [False]  # only log first error to avoid spam
     _last_preview_step = [(-1, -1)]  # last (job_no, step) we decoded a preview for
@@ -1878,7 +1885,8 @@ def _progress_polling_thread():
             if not is_active:
                 _idle_ticks[0] += 1
                 if _idle_ticks[0] > 3:  # ~1.2s of idle before clearing preview
-                    _last_preview[0] = None
+                    _last_preview_b64 = None
+                    _last_preview_id = 0
                     _last_preview_step[0] = (-1, -1)
                     # Reset step-duration tracking so the next generation starts
                     # at the floor interval until it has measured its own steps.
@@ -1978,7 +1986,11 @@ def _progress_polling_thread():
                                           f"interval={preview_interval:.2f}s ({_kind}) "
                                           f"downscale={_preview_path_info['downscale']} "
                                           f"max_edge={preview_max_edge}")
-                            _last_preview[0] = preview_b64
+                            # Fresh decode: cache it + bump the monotonic id.
+                            # This tick carries the image; later ticks send
+                            # preview=None until the next fresh decode.
+                            _last_preview_b64 = preview_b64
+                            _last_preview_id += 1
                             _last_preview_step[0] = current_key
                             _last_preview_time[0] = now
                 except Exception:
@@ -1994,7 +2006,11 @@ def _progress_polling_thread():
                 "total_steps": sampling_steps,
                 "job": job_no,
                 "job_count": job_count,
-                "preview": preview_b64 or _last_preview[0],
+                # Delta protocol: carry the image ONLY on the fresh-decode tick
+                # (preview_b64 is None otherwise). preview_id lets the client
+                # skip duplicate paints and detect a missed image.
+                "preview": preview_b64,
+                "preview_id": _last_preview_id,
                 "textinfo": textinfo,
             }
 
@@ -2781,6 +2797,18 @@ def setup_studio_routes(app: FastAPI):
             except Exception:
                 pass  # studio_live may not be installed yet
         print(f"{TAG} WebSocket connected ({len(_progress_connections)} clients)")
+        # Catch-up: under the delta protocol, normal ticks carry preview=None,
+        # so a tab opened/reopened mid-generation would stay blank until the
+        # next fresh decode. Push the cached preview once on connect.
+        if _last_preview_b64:
+            try:
+                await websocket.send_json({
+                    "type": "progress",
+                    "preview": _last_preview_b64,
+                    "preview_id": _last_preview_id,
+                })
+            except Exception:
+                pass
         try:
             while True:
                 data = await websocket.receive_text()
