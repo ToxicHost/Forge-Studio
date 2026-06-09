@@ -2238,11 +2238,18 @@ function handleProgress(data) {
   var preview = document.getElementById("canvasPreview");
   var wrap = document.getElementById("canvasPreviewWrap");
   var liveGuard = window.Live && Live.active && State._resultPreviewActive;
+  // Delta protocol: data.preview is non-null ONLY on a fresh decode; most
+  // ticks send preview=null and we keep the current image (never clear it).
+  // preview_id skips a redundant repaint — e.g. the connect catch-up
+  // re-delivering an image we already painted.
   if (data.preview && State.livePreview && !liveGuard) {
-    if (preview) {
+    if (preview && data.preview_id !== State._lastPreviewId) {
+      State._lastPreviewId = data.preview_id;
       preview.src = data.preview;
       if (wrap) wrap.style.display = "";
       State._previewShown = true;
+    } else if (wrap && State._previewShown) {
+      wrap.style.display = "";
     }
   } else if (State._previewShown && wrap) {
     // Keep wrap visible between passes — don't hide it just because

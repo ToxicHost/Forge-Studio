@@ -129,6 +129,13 @@ except ImportError:
         run_regional, has_valid_regions,
     )
 
+# WP2 kill-switch (F2). Native batching stays OFF by default until its 8-item
+# validation matrix (plus the F2 zero-traceback hires run) passes on GPU; Tox
+# enables it per validation session with STUDIO_NATIVE_BATCHING=1. When off,
+# run_generation always takes the per-image loop fallback.
+_NATIVE_BATCHING = os.environ.get("STUDIO_NATIVE_BATCHING", "").strip().lower() in (
+    "1", "true", "yes", "on")
+
 _HAS_ATTN_COUPLE = False
 try:
     from scripts.studio_attention_couple import (
@@ -198,6 +205,10 @@ def to_rgb(img):
 # If concurrent support is needed, wrap in threading.Lock or use a queue.
 _studio_task_id = None
 
+# One-time guard for logging whether the live Neo build exposes
+# shared.total_tqdm.clear() (see _reset_generation_state).
+_total_tqdm_api_logged = False
+
 
 def get_studio_task_id():
     """Accessor for the API endpoint."""
@@ -222,6 +233,22 @@ def _reset_generation_state():
     shared.state.id_live_preview = 0
     shared.state.textinfo = None
     shared.state.time_start = None
+
+    # Studio bypasses Neo's Gradio wrapper, which normally calls
+    # total_tqdm.updateTotal()/.clear() around each generation. Without this
+    # the "Total progress" console bar accumulates across the session.
+    global _total_tqdm_api_logged
+    if not _total_tqdm_api_logged:
+        _total_tqdm_api_logged = True
+        if hasattr(shared, "total_tqdm") and hasattr(shared.total_tqdm, "clear"):
+            print("[Studio] total_tqdm.clear() available — per-gen progress reset active")
+        else:
+            print("[Studio] total_tqdm.clear() unavailable on this build — "
+                  "console 'Total progress' bar may accumulate")
+    try:
+        shared.total_tqdm.clear()
+    except Exception:
+        pass
 
     global _studio_task_id
     _studio_task_id = None
@@ -2674,8 +2701,284 @@ def run_generation(
     except Exception as e:
         print(f"[Studio] Script removal warning: {e}")
 
+    # ── WP2: native batching fast-path selection ────────────────────────
+    # Default path runs the whole batch_count×batch_size as ONE batched
+    # process_images() (Neo's native batching: a single UNet tensor with
+    # per-image prompt/seed lists). Falls back to the per-image loop below —
+    # left byte-for-byte unmodified — for the cases that can't be expressed
+    # as one batched call: AR randomization (per-image dimensions vary),
+    # Regional multi-pass inpainting, Attention Couple single-pass regional,
+    # and img2img with a post-hires pass (run_hires_fix reuses the processing
+    # object per image).
+    _fallback_reason = None
+    if not _NATIVE_BATCHING:
+        _fallback_reason = "native batching disabled (set STUDIO_NATIVE_BATCHING=1 to enable)"
+    elif is_regional_mode:
+        _fallback_reason = "Regional mode"
+    elif is_attention_couple:
+        _fallback_reason = "Attention Couple mode"
+    elif ar_config and ar_config.any_active:
+        _fallback_reason = "AR randomization active"
+    elif (not is_txt2img) and hr.enable and hr.scale > 1.0:
+        _fallback_reason = "img2img hires fix (per-image post-pass)"
+    use_fast_path = _fallback_reason is None
+    if not use_fast_path:
+        print(f"[Studio] Per-image loop engaged: {_fallback_reason}")
+
     try:
-        for img_num in range(total_images):
+        if use_fast_path:
+            # ── Pre-resolve per-image prompts (mirrors the loop's per-image
+            #    dynamic-prompt expansion: same seed-derived RNG per image, so
+            #    image i gets the identical expansion the loop would produce
+            #    for seed use_seed + i). ──
+            prompts, neg_prompts = [], []
+            for i in range(total_images):
+                _seed_i = use_seed + i
+                _pos = _orig_prompt_template
+                _neg = _orig_neg_prompt_template
+                if _dp_active:
+                    try:
+                        pos_res = _dp_expand_prompt(
+                            _orig_prompt_template, seed=_seed_i,
+                            wildcard_dirs=_dp_wc_dirs)
+                        neg_res = _dp_expand_prompt(
+                            _orig_neg_prompt_template,
+                            seed=(_seed_i ^ 0x9E3779B9) & 0xFFFFFFFF,
+                            wildcard_dirs=_dp_wc_dirs)
+                        _pos = pos_res.expanded
+                        _neg = neg_res.expanded
+                        _used = list(pos_res.used) + list(neg_res.used)
+                        if _used:
+                            print(f"[Studio] Dynamic prompts expanded "
+                                  f"{len(_used)} token(s)")
+                        for w in (list(pos_res.warnings) + list(neg_res.warnings)):
+                            if w not in _dp_warnings_seen:
+                                _dp_warnings_seen.add(w)
+                                print(f"[Studio] {w}")
+                    except Exception as e:
+                        print(f"[Studio] Dynamic prompts expansion failed for "
+                              f"image {i + 1} (non-fatal): {e}")
+                prompts.append(_pos)
+                neg_prompts.append(_neg)
+
+            # ── Seeds (LOAD-BEARING) ──
+            # Replicate the loop's semantics exactly: main seed increments per
+            # image (use_seed + i); subseed stays CONSTANT (the loop sets
+            # p.subseed = gp.subseed for every image). Pass explicit lists so
+            # Neo doesn't apply its own convention (which suppresses the
+            # main-seed bump when subseed_strength != 0).
+            seeds_list = [use_seed + i for i in range(total_images)]
+            subseeds_list = [gp.subseed for _ in range(total_images)]
+
+            # ── Build ONE processing object for the whole batch ──
+            gp.prompt = prompts[0]
+            gp.neg_prompt = neg_prompts[0]
+            if is_txt2img:
+                p = _build_txt2img_obj(
+                    gp, studio_outdir, seeds_list[0], cn_units=cn_units,
+                    extension_args=extension_args, ad_params=ad_params,
+                    studio_dp_active=_dp_active)
+                # Built-in hires fix runs INSIDE process_images for every batch
+                # item (txt2img only; img2img post-hires is a fallback trigger).
+                if hr.enable and hr.scale > 1.0:
+                    p.enable_hr = True
+                    p.hr_upscaler = hr.upscaler or "Latent"
+                    p.hr_scale = hr.scale
+                    p.hr_second_pass_steps = hr.steps if hr.steps > 0 else 0
+                    p.denoising_strength = hr.denoise
+                    p.hr_additional_modules = "Use same choices"
+                    p.hr_cfg_scale = hr.cfg if hr.cfg > 0 else gp.cfg_scale
+                    p.hr_cfg = hr.cfg if hr.cfg > 0 else gp.cfg_scale
+                    if hr.checkpoint and hr.checkpoint not in ("", "None", "Same"):
+                        p.hr_checkpoint_name = hr.checkpoint
+            else:
+                p = _build_processing_obj(
+                    canvas_img, gp, mask_img, has_mask, ip, studio_outdir,
+                    seeds_list[0], cn_units=cn_units,
+                    extension_args=extension_args, ad_params=ad_params,
+                    studio_dp_active=_dp_active)
+
+            # Native batching: per-image prompt/seed lists + Neo n_iter/batch_size.
+            # process_images_inner assigns list-typed seed/subseed to
+            # all_seeds/all_subseeds verbatim and slices all_prompts per
+            # iteration, encoding per-image conds inside the batched UNet call.
+            p.prompt = prompts
+            p.negative_prompt = neg_prompts
+            p.n_iter = max(1, gp.batch_count)
+            p.batch_size = max(1, gp.batch_size)
+            p.seed = seeds_list
+            p.subseed = subseeds_list
+            p.subseed_strength = gp.subseed_strength
+
+            # F2: hr_prompt / hr_negative_prompt are STRING fields Neo scripts
+            # read directly (comments.py: strip_comments(p.hr_prompt)). With
+            # p.prompt now a list they must not inherit it — empty string is
+            # Neo's "reuse the per-image main prompts" contract (it builds
+            # all_hr_prompts from all_prompts). Studio passes no explicit hires
+            # prompt, so force empty strings here.
+            if hasattr(p, "hr_prompt"):
+                p.hr_prompt = ""
+            if hasattr(p, "hr_negative_prompt"):
+                p.hr_negative_prompt = ""
+
+            shared.state.job_count = max(1, gp.batch_count)  # Neo: jobs = iterations
+
+            print(f"[Studio] Native batch: {max(1, gp.batch_count)}×"
+                  f"{max(1, gp.batch_size)}={total_images} image(s), "
+                  f"sampler={p.sampler_name}, steps={p.steps}, cfg={p.cfg_scale}, "
+                  f"seeds={seeds_list[0]}..{seeds_list[-1]}, "
+                  f"enable_hr={getattr(p, 'enable_hr', False)}")
+
+            # High Precision: arm the decode hook for the whole batch.
+            if high_precision:
+                if _hp_install_decode_hook():
+                    _hp_warn_fp16_vae_once()
+                    _hp_begin_capture()
+                    _hp_install_dfs_audit()
+            try:
+                processed = process_images(p)
+            except Exception as e:
+                print(f"[Studio] process_images error (native batch): {e}")
+                traceback.print_exc()
+                if high_precision:
+                    _hp_end_capture()
+                if not getattr(p, '_studio_closed', False):
+                    p._studio_closed = True
+                    try: p.close()
+                    except Exception: pass
+                processed = None
+            _hp_batches = _hp_end_capture() if high_precision else []
+
+            if processed and getattr(processed, "images", None):
+                n_out = len(processed.images)
+                # HP batch mapping: take the LAST decode batch matching the
+                # image count (hires decode supersedes base) and map [i]→image i.
+                hp_floats_all = (_hp_pick_final_floats(_hp_batches, n_out)
+                                 if high_precision else [])
+                vae_floats_all = (_hp_pick_final_floats(list(_HP_VAE_BATCHES), n_out)
+                                  if high_precision else [])
+                if high_precision and len(hp_floats_all) != n_out:
+                    print(f"[Studio] High Precision: batch float count "
+                          f"{len(hp_floats_all)} != image count {n_out} — "
+                          f"unmatched images get no sidecar")
+
+                for i in range(n_out):
+                    result = processed.images[i]
+
+                    # Pick this image's pre-clamp float, preferring the
+                    # full-size VAE-decode frame (extended range) when its dims
+                    # match — exactly as the single-image branch does.
+                    fa = None
+                    hp_source_stage = "decode_latent_batch"
+                    hp_matched_final = False
+                    hp_fallback_reason = None
+                    hp_post_processed = False
+                    hp_post_reason = ""
+                    hp_blend_mask = None
+                    if high_precision:
+                        fa = hp_floats_all[i] if i < len(hp_floats_all) else None
+                        vf = vae_floats_all[i] if i < len(vae_floats_all) else None
+                        if (vf is not None and vf.shape[1] == result.size[0]
+                                and vf.shape[0] == result.size[1]):
+                            fa = vf
+                            hp_source_stage = "vae_decode"
+                            hp_matched_final = True
+                        elif vf is not None:
+                            hp_fallback_reason = "pre_clamp_dimension_mismatch"
+                        else:
+                            hp_fallback_reason = "no_pre_clamp_capture"
+
+                    # Post-process mask composite (img2img inpaint only — clips
+                    # leakage outside the mask; img2img post-hires already fell
+                    # back, so the float stays aligned to the final pixels).
+                    if has_mask and mask_img and canvas_img and not is_txt2img:
+                        try:
+                            result = _clip_to_mask(result, canvas_img, mask_img, ip)
+                            if high_precision:
+                                from PIL import ImageFilter
+                                _soft = mask_img.convert("L").resize(result.size, Image.LANCZOS)
+                                _blur = getattr(ip, 'mask_blur', 4) if ip else 4
+                                if _blur > 0:
+                                    _soft = _soft.filter(ImageFilter.GaussianBlur(radius=_blur))
+                                inv = 1.0 - (np.asarray(_soft, dtype=np.float32) / 255.0)
+                                hp_blend_mask = (inv if hp_blend_mask is None
+                                                 else np.maximum(hp_blend_mask, inv))
+                        except Exception as _ce:
+                            print(f"[Studio] Post-process mask composite error: {_ce}")
+
+                    # Watermark — last pixel-level post-process at final res.
+                    if watermark and watermark.get("enable"):
+                        result, wm_changed = apply_watermark(result, watermark)
+                        if wm_changed:
+                            hp_post_processed = True
+                            hp_post_reason = "watermark composite"
+
+                    all_images.append(result)
+
+                    if high_precision and fa is not None and not hp_post_processed \
+                            and fa.shape[1] == result.size[0] \
+                            and fa.shape[0] == result.size[1]:
+                        if hp_blend_mask is not None and \
+                                float(hp_blend_mask.sum()) / hp_blend_mask.size < 0.005:
+                            hp_blend_mask = None
+                        all_float_arrays.append(fa)
+                        all_blend_masks.append(hp_blend_mask)
+                        all_float_stats.append(_hp_float_stats(
+                            fa, source_stage=hp_source_stage,
+                            fallback=(hp_source_stage != "vae_decode"),
+                            fallback_reason=hp_fallback_reason,
+                            matched_final_dimensions=hp_matched_final))
+                        if hp_blend_mask is not None:
+                            coverage = float(hp_blend_mask.mean()) * 100.0
+                            print(f"[Studio] High Precision: captured "
+                                  f"{fa.shape[1]}x{fa.shape[0]} float + blend mask "
+                                  f"({coverage:.1f}% canvas coverage) for image {i + 1}")
+                        else:
+                            print(f"[Studio] High Precision: captured "
+                                  f"{fa.shape[1]}x{fa.shape[0]} float for image {i + 1}")
+                    else:
+                        all_float_arrays.append(None)
+                        all_blend_masks.append(None)
+                        if high_precision:
+                            if hp_post_processed:
+                                reason = f"post-processing altered pixels ({hp_post_reason})"
+                            elif fa is None:
+                                reason = "decode hook produced no usable batch entry"
+                            else:
+                                reason = (f"dimension mismatch (float {fa.shape[1]}x{fa.shape[0]} "
+                                          f"vs final {result.size[0]}x{result.size[1]})")
+                            all_float_stats.append({"valid": False, "skipped": True, "reason": reason})
+                            print(f"[Studio] High Precision: skipped sidecar for image {i + 1} — {reason}")
+                        else:
+                            all_float_stats.append(None)
+
+                    # Per-image infotext (Processed carries one per image).
+                    img_info = ""
+                    if getattr(processed, "infotexts", None) and i < len(processed.infotexts):
+                        img_info = processed.infotexts[i]
+                    elif getattr(processed, "info", None):
+                        img_info = processed.info
+                    if not img_info:
+                        rp = (p.all_prompts[i] if getattr(p, "all_prompts", None)
+                              and i < len(p.all_prompts) else prompts[i])
+                        rn = (p.all_negative_prompts[i] if getattr(p, "all_negative_prompts", None)
+                              and i < len(p.all_negative_prompts) else neg_prompts[i])
+                        seed_i = (processed.all_seeds[i] if getattr(processed, "all_seeds", None)
+                                  and i < len(processed.all_seeds) else seeds_list[i])
+                        img_info = (
+                            f"{rp}\n"
+                            f"Negative prompt: {rn}\n"
+                            f"Steps: {p.steps}, Sampler: {p.sampler_name}, "
+                            f"Schedule type: {getattr(p, 'scheduler', 'N/A')}, "
+                            f"CFG scale: {p.cfg_scale}, Seed: {seed_i}, "
+                            f"Size: {gp.width}x{gp.height}, "
+                            f"Denoising strength: {gp.denoising}"
+                        )
+                    all_infotexts.append(img_info)
+
+                # NOTE: process_images_inner already closed p — do NOT close here.
+
+        for img_num in range(0 if use_fast_path else total_images):
             shared.state.job_no = img_num
             if shared.state.interrupted:
                 print("[Studio] Generation interrupted between images")

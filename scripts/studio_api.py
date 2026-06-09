@@ -68,6 +68,26 @@ def _natural_sort_key(text):
     return [int(c) if c.isdigit() else c for c in _NAT_SORT_RE.split(str(text).lower())]
 
 
+def _is_path_within_roots(resolved, allowed_roots) -> bool:
+    """True if `resolved` lives under any allowed root.
+
+    Uses Path.is_relative_to (Py3.9+; Forge Neo requires >=3.10) instead of a
+    string startswith check, so a root of /forge does not also approve a
+    sibling directory like /forge-evil.
+    """
+    try:
+        resolved_path = Path(resolved).resolve()
+    except Exception:
+        return False
+    for root in allowed_roots:
+        try:
+            if resolved_path.is_relative_to(Path(root).resolve()):
+                return True
+        except Exception:
+            continue
+    return False
+
+
 # =========================================================================
 # MODULE IMPORT HELPER
 # =========================================================================
@@ -526,6 +546,37 @@ def _is_served_file(path):
 
 def _safe_write_roots():
     roots = {_forge_output_root()}
+    # Forge root itself (cwd) — keep.
+    cwd = _resolved(Path.cwd())
+    if cwd is not None:
+        roots.add(str(cwd))
+    # Forge-configured output dirs + each one's parent. The parent entries
+    # cover sibling folders (e.g. output/ when config names
+    # output/txt2img-images/). These are config-sourced, not request-sourced,
+    # so they are trusted by definition — restoring the pre-WP6 accept set.
+    try:
+        for _key in ("outdir_samples", "outdir_txt2img_samples",
+                     "outdir_img2img_samples", "outdir_save"):
+            _d = shared.opts.data.get(_key, "")
+            if _d:
+                rp = _resolved(_d)
+                if rp is not None:
+                    roots.add(str(rp))
+                    roots.add(str(rp.parent))
+    except Exception:
+        log.exception("Failed reading Forge outdir opts for safe-write roots")
+    # Gallery-linked/watched folders — explicit, user-configured off-tree save
+    # targets. Read fresh per call (no cache) so linking a new folder works
+    # without a restart. Use the Gallery's own accessor, not a config re-parse.
+    try:
+        _scan_folders = _import("studio_gallery", "get_scan_folders")()
+        for _f in (_scan_folders or []):
+            rp = _resolved(_f)
+            if rp is not None:
+                roots.add(str(rp))
+    except Exception:
+        # Gallery module/table may be absent on a fresh install — non-fatal.
+        pass
     # Persisted, explicitly-trusted roots (Browse-picked or typed-then-Trusted).
     roots.update(_load_trusted_roots())
     # Operator-configured extra roots (env is trusted) for remote/VM setups.
@@ -1056,7 +1107,6 @@ def _studio_upscale_image(img, upscaler_name: str, scale: float):
     of 8 so the result is a valid latent size for any downstream img2img
     pass. Falls back to LANCZOS if the requested upscaler is missing.
     """
-    import gc
     import torch
 
     orig_w, orig_h = img.size
@@ -1066,7 +1116,6 @@ def _studio_upscale_image(img, upscaler_name: str, scale: float):
 
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
-        gc.collect()
 
     upscaler = None
     for u in shared.sd_upscalers:
@@ -1086,7 +1135,6 @@ def _studio_upscale_image(img, upscaler_name: str, scale: float):
 
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
-        gc.collect()
 
     return result
 
@@ -1556,6 +1604,13 @@ def _build_layout_tree(controls, runner, layout_id_map):
 _progress_connections: list[WebSocket] = []
 _uvicorn_loop = None  # Captured on first WebSocket connect
 
+# Preview delta protocol: the full ~100KB base64 preview is sent ONLY on the
+# tick it was freshly decoded; intervening ticks send preview=None. These hold
+# the last decoded preview so a client connecting mid-generation can be caught
+# up immediately. preview_id is monotonic per fresh decode, reset on idle-clear.
+_last_preview_b64 = None
+_last_preview_id = 0
+
 
 # =========================================================================
 # VRAM MANAGEMENT — Auto-unload timer
@@ -1655,31 +1710,124 @@ def _is_live_active():
         return False
 
 
+# Studio-owned preview side stream — created lazily ONLY when Neo's build does
+# not expose shared.state.vae_stream (its creation is gated behind a launch
+# flag, so it is frequently None). Reused across decodes; never recreated.
+_studio_preview_stream = None
+_studio_preview_stream_failed = False
+
+# Reports which stream / downscale branch the LAST preview decode actually took,
+# so the polling thread can emit a truthful status line (F3.1). A silent
+# fallback must never again masquerade as a deployed fix.
+_preview_path_info = {"stream": "default", "downscale": "n/a"}
+
+
+def _get_preview_stream():
+    """Lazily create one low-priority CUDA side stream for preview decodes.
+
+    Raw torch only (no Neo imports) — used when Neo exposes no vae_stream.
+    Returns None on CPU-only builds or if stream creation fails.
+    """
+    global _studio_preview_stream, _studio_preview_stream_failed
+    if _studio_preview_stream_failed:
+        return None
+    if _studio_preview_stream is None:
+        try:
+            import torch
+            if torch.cuda.is_available():
+                _studio_preview_stream = torch.cuda.Stream(priority=-1)  # low priority
+            else:
+                _studio_preview_stream_failed = True
+                return None
+        except Exception:
+            _studio_preview_stream_failed = True
+            return None
+    return _studio_preview_stream
+
+
 def _taesd_decode_preview(latent, max_edge=0):
-    """Decode a latent tensor to a PIL Image using TAESD (~5-10ms).
+    """Decode a latent tensor to a PIL Image using TAESD.
+
+    Fast (~5-10ms) at 512-class latents, but at hires resolutions the cost is
+    dominated by the full-resolution ``.cpu()`` transfer (a 2048x2560x3 float
+    tensor is ~63MB) and the uint8 pixel pass over ~15.7M pixels under the GIL.
+    Neo's ``single_sample_to_image`` hardcodes that full-res transfer, so when a
+    downscale is requested (``max_edge > 0``) we replicate its TAESD decode
+    inline and interpolate on-GPU BEFORE the transfer — shrinking the transfer
+    to ~1MB and the CPU pixel pass to ~0.4M pixels.
+
+    The decode runs on a side CUDA stream so it overlaps the sampler on the
+    default stream instead of serializing with it. Stream preference order:
+    Neo's dedicated ``vae_stream`` (when its launch-flag gate created one) →
+    Studio's own lazily-created side stream → the default stream. The chosen
+    branch is recorded in ``_preview_path_info`` for the status line.
 
     Falls back gracefully if TAESD model isn't available.
     max_edge=0 means no downscale (full generation resolution).
     """
+    import numpy as np
     import torch
     from modules import sd_samplers_common
 
+    # ── Stream selection (Neo vae_stream → Studio side stream → default) ──
+    side_stream = None
+    stream_label = "default"
+    neo_stream = getattr(shared.state, "vae_stream", None)
+    if neo_stream is not None:
+        side_stream = neo_stream
+        stream_label = "vae"
+    else:
+        s = _get_preview_stream()
+        if s is not None:
+            side_stream = s
+            stream_label = "studio"
+
+    downscale_label = "pre-transfer" if max_edge > 0 else "post-transfer"
+
+    def _decode_and_downscale(sample):
+        if max_edge > 0:
+            # Downscale BEFORE the CPU transfer (GPU-side interpolate).
+            t = sd_samplers_common.samples_to_images_tensor(
+                sample.unsqueeze(0), approximation=3)  # TAESD, on GPU, [-1,1]
+            t = t * 0.5 + 0.5
+            _, _, h, w = t.shape
+            long_edge = max(w, h)
+            if long_edge > max_edge:
+                scale = max_edge / long_edge
+                target_h = max(1, int(round(h * scale)))
+                target_w = max(1, int(round(w * scale)))
+                t = torch.nn.functional.interpolate(
+                    t, size=(target_h, target_w),
+                    mode="bilinear", align_corners=False)
+            # Blocking transfer = the synchronization point that ends the side
+            # stream's work for this decode (no CUDA events needed).
+            x = t[0].to("cpu", non_blocking=False)  # ~1MB instead of ~63MB
+            x = (x.clamp(0, 1) * 255.0).round().to(torch.uint8)
+            return Image.fromarray(np.moveaxis(x.numpy(), 0, 2))
+        # Full-resolution path (Live mode): keep Neo's decoder.
+        return sd_samplers_common.single_sample_to_image(sample, approximation=3)
+
     with torch.inference_mode():
-        # Handle batch dim: latent may be [B,C,H,W] or [C,H,W]
+        if side_stream is not None:
+            try:
+                # Clone decouples from the sampler's live latent buffer so the
+                # sampler can overwrite it while the side stream reads our copy
+                # (cheap at latent size, a few MB).
+                lat = latent.detach().clone()
+                side_stream.wait_stream(torch.cuda.current_stream())
+                with torch.cuda.stream(side_stream):
+                    sample = lat[0] if lat.ndim == 4 else lat
+                    preview_img = _decode_and_downscale(sample)
+                _preview_path_info["stream"] = stream_label
+                _preview_path_info["downscale"] = downscale_label
+                return preview_img
+            except Exception:
+                # Side-stream path failed — fall through to the default stream.
+                pass
         sample = latent[0] if latent.ndim == 4 else latent
-        # Force TAESD (approximation=3) — ~5-10ms vs 50-150ms full VAE
-        preview_img = sd_samplers_common.single_sample_to_image(sample, approximation=3)
-
-    if max_edge > 0:
-        w, h = preview_img.size
-        long_edge = max(w, h)
-        if long_edge > max_edge:
-            scale = max_edge / long_edge
-            preview_img = preview_img.resize(
-                (max(1, int(w * scale)), max(1, int(h * scale))),
-                Image.BILINEAR
-            )
-
+        preview_img = _decode_and_downscale(sample)
+    _preview_path_info["stream"] = "default"
+    _preview_path_info["downscale"] = downscale_label
     return preview_img
 
 
@@ -1695,12 +1843,17 @@ def _progress_polling_thread():
     In Gradio mode, Forge's own progress system may read/write
     shared.state concurrently — all reads are snapshot-guarded.
     """
-    _last_preview = [None]  # mutable ref — cache last known preview
+    global _last_preview_b64, _last_preview_id
     _idle_ticks = [0]  # count consecutive idle polls to debounce
     _logged_error = [False]  # only log first error to avoid spam
     _last_preview_step = [(-1, -1)]  # last (job_no, step) we decoded a preview for
     _last_preview_time = [0.0]  # timestamp of last TAESD decode
-    _taesd_logged = [False]  # log TAESD availability once
+    _last_status_key = [None]  # last preview-path status line emitted (re-log on change)
+    # Step-duration tracking — used to scale preview_interval so previews fire
+    # at most every other step regardless of resolution (hires steps are slow).
+    _last_step_seen = [(-1, -1)]  # last (job_no, step) observed (decoded or not)
+    _last_step_change_time = [0.0]  # timestamp of last observed step change
+    _measured_step_dur = [0.0]  # EMA of seconds-per-step
 
     while True:
         # Adaptive poll rate: faster during Live for snappier previews
@@ -1732,8 +1885,15 @@ def _progress_polling_thread():
             if not is_active:
                 _idle_ticks[0] += 1
                 if _idle_ticks[0] > 3:  # ~1.2s of idle before clearing preview
-                    _last_preview[0] = None
+                    _last_preview_b64 = None
+                    _last_preview_id = 0
                     _last_preview_step[0] = (-1, -1)
+                    # Reset step-duration tracking so the next generation starts
+                    # at the floor interval until it has measured its own steps.
+                    _last_step_seen[0] = (-1, -1)
+                    _last_step_change_time[0] = 0.0
+                    _measured_step_dur[0] = 0.0
+                    _last_status_key[0] = None  # re-emit status line next gen
                 continue
 
             _idle_ticks[0] = 0
@@ -1747,14 +1907,41 @@ def _progress_polling_thread():
                     sampling_step / sampling_steps
                 )
 
+            now = time.time()
+
+            # Measure seconds-per-step from observed sampling_step advances
+            # (independent of whether we decode a preview this tick). Only count
+            # forward progress within the same job; a job boundary resets step
+            # to 0 and must not be measured as a duration.
+            cur_step_key = (job_no, sampling_step)
+            prev_job, prev_step = _last_step_seen[0]
+            if cur_step_key != (prev_job, prev_step):
+                if (job_no == prev_job and sampling_step > prev_step
+                        and _last_step_change_time[0] > 0):
+                    delta_steps = sampling_step - prev_step
+                    dur = (now - _last_step_change_time[0]) / max(1, delta_steps)
+                    if dur > 0:
+                        if _measured_step_dur[0] <= 0:
+                            _measured_step_dur[0] = dur
+                        else:  # light EMA to smooth poll-rate quantization
+                            _measured_step_dur[0] = (
+                                0.5 * _measured_step_dur[0] + 0.5 * dur)
+                _last_step_seen[0] = cur_step_key
+                _last_step_change_time[0] = now
+
             preview_b64 = None
             # Adaptive preview settings:
             #   Live mode:   decode every 0.3s, full resolution (no downscale)
-            #   Normal gen:  decode every 0.5s, cap at 480px long edge
-            preview_interval = 0.3 if live_mode else 0.5
+            #   Normal gen:  scale the gate with measured step duration so
+            #                previews fire at most every other step (hires steps
+            #                run ~1.7-2.0s each; a fixed 0.5s gate would decode
+            #                every step and contend with the sampler). Floor 0.5s.
+            if live_mode:
+                preview_interval = 0.3
+            else:
+                preview_interval = max(0.5, 2.0 * _measured_step_dur[0])
             preview_max_edge = 0 if live_mode else 480
 
-            now = time.time()
             current_key = (job_no, sampling_step)
             step_changed = current_key != _last_preview_step[0]
             interval_ok = (now - _last_preview_time[0]) >= preview_interval
@@ -1779,13 +1966,31 @@ def _progress_polling_thread():
                             preview_b64 = _pil_to_preview_b64(preview_img)
 
                         if preview_b64:
-                            if not _taesd_logged[0]:
-                                print(f"{TAG} TAESD preview active "
-                                      f"({'Live' if live_mode else 'standard'} mode, "
-                                      f"interval={preview_interval}s, "
-                                      f"max_edge={preview_max_edge or 'full'})")
-                                _taesd_logged[0] = True
-                            _last_preview[0] = preview_b64
+                            # Mandatory status line (F3.1): report the ACTUAL
+                            # stream / interval / downscale this decode used, so
+                            # no change can silently no-op. Re-emit whenever the
+                            # path changes (e.g. base → hires raises the scaled
+                            # interval), so each phase is visible exactly once.
+                            if latent is not None and latent.ndim != 5:
+                                _scaled = (not live_mode) and (
+                                    2.0 * _measured_step_dur[0] > 0.5)
+                                _kind = "scaled" if _scaled else "fixed"
+                                _skey = (_preview_path_info["stream"],
+                                         round(preview_interval, 1), _kind,
+                                         _preview_path_info["downscale"],
+                                         preview_max_edge)
+                                if _skey != _last_status_key[0]:
+                                    _last_status_key[0] = _skey
+                                    print(f"{TAG} Preview path: "
+                                          f"stream={_preview_path_info['stream']} "
+                                          f"interval={preview_interval:.2f}s ({_kind}) "
+                                          f"downscale={_preview_path_info['downscale']} "
+                                          f"max_edge={preview_max_edge}")
+                            # Fresh decode: cache it + bump the monotonic id.
+                            # This tick carries the image; later ticks send
+                            # preview=None until the next fresh decode.
+                            _last_preview_b64 = preview_b64
+                            _last_preview_id += 1
                             _last_preview_step[0] = current_key
                             _last_preview_time[0] = now
                 except Exception:
@@ -1801,7 +2006,11 @@ def _progress_polling_thread():
                 "total_steps": sampling_steps,
                 "job": job_no,
                 "job_count": job_count,
-                "preview": preview_b64 or _last_preview[0],
+                # Delta protocol: carry the image ONLY on the fresh-decode tick
+                # (preview_b64 is None otherwise). preview_id lets the client
+                # skip duplicate paints and detect a missed image.
+                "preview": preview_b64,
+                "preview_id": _last_preview_id,
                 "textinfo": textinfo,
             }
 
@@ -1870,8 +2079,7 @@ def setup_studio_routes(app: FastAPI):
         except Exception:
             log.exception("Failed to read output config for allowed-roots check")
 
-        resolved_str = str(resolved)
-        if not any(resolved_str.startswith(root) for root in allowed_roots):
+        if not _is_path_within_roots(resolved, allowed_roots):
             return JSONResponse({"error": "Access denied"}, status_code=403)
         if not resolved.is_file():
             return JSONResponse({"error": "Not found"}, status_code=404)
@@ -1925,6 +2133,16 @@ def setup_studio_routes(app: FastAPI):
         # --- Normal generation ---
         _cancel_auto_unload()
         run_generation = _import("studio_generation", "run_generation")
+
+        # Diagnostic: log the AR randomization flags exactly as the request
+        # carried them, so logs distinguish "requested" (this line) from
+        # "fired" (studio_generation's "[Studio AR] Randomized" line). If this
+        # logs all-False yet a Randomized line still appears, the bug is
+        # backend-side, not frontend toggle state.
+        if req.ar_rand_base or req.ar_rand_ratio or req.ar_rand_orientation:
+            print(f"{TAG} AR randomize requested by client: "
+                  f"base={req.ar_rand_base} ratio={req.ar_rand_ratio} "
+                  f"orientation={req.ar_rand_orientation}")
 
         ad_slots = req.ad_slots + [ADSlotParams()] * max(0, 3 - len(req.ad_slots))
         ad1_args = _flatten_ad_slot(ad_slots[0])
@@ -2051,7 +2269,25 @@ def setup_studio_routes(app: FastAPI):
         # arbitrary path. Surface a non-fatal notice so the user knows their
         # configured folder was skipped rather than silently losing it.
         if _save_override and not _safe_write_root(_save_override):
-            log.warning("save_dir rejected (not a trusted root) — using default output dir")
+            # Permanent diagnostic: a rejection must always say WHY. Log the
+            # raw + resolved candidate and the full resolved trusted-roots set
+            # so a "rejected" line is self-explanatory (F1). _safe_write_root
+            # itself was NOT changed by the WP6 is_relative_to swap (that only
+            # touched /studio/file); this line localizes the real cause.
+            try:
+                _cand_resolved = _resolved(_save_override)
+                _cand_resolved = str(_cand_resolved) if _cand_resolved else None
+            except Exception:
+                _cand_resolved = None
+            try:
+                _roots_dump = sorted(_safe_write_roots())
+            except Exception as _re:
+                _roots_dump = [f"<roots unavailable: {_re}>"]
+            log.warning(
+                "save_dir rejected (not a trusted root) — using default output dir. "
+                "candidate=%r resolved=%r trusted_roots=%r",
+                _save_override, _cand_resolved, _roots_dump,
+            )
             _save_dir_notice = ("Your custom save folder isn't trusted yet, so images were saved to the "
                                 "default output folder. Open Settings → Save folder and click “Trust folder”.")
             _save_override = ""
@@ -2561,6 +2797,18 @@ def setup_studio_routes(app: FastAPI):
             except Exception:
                 pass  # studio_live may not be installed yet
         print(f"{TAG} WebSocket connected ({len(_progress_connections)} clients)")
+        # Catch-up: under the delta protocol, normal ticks carry preview=None,
+        # so a tab opened/reopened mid-generation would stay blank until the
+        # next fresh decode. Push the cached preview once on connect.
+        if _last_preview_b64:
+            try:
+                await websocket.send_json({
+                    "type": "progress",
+                    "preview": _last_preview_b64,
+                    "preview_id": _last_preview_id,
+                })
+            except Exception:
+                pass
         try:
             while True:
                 data = await websocket.receive_text()
@@ -4628,8 +4876,7 @@ def setup_studio_routes(app: FastAPI):
                     allowed_roots.append(str(Path(_d).resolve().parent))
         except Exception:
             pass
-        resolved_str = str(resolved)
-        if not any(resolved_str.startswith(root) for root in allowed_roots):
+        if not _is_path_within_roots(resolved, allowed_roots):
             return None
         if not resolved.is_file():
             return None
