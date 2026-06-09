@@ -1056,7 +1056,6 @@ def _studio_upscale_image(img, upscaler_name: str, scale: float):
     of 8 so the result is a valid latent size for any downstream img2img
     pass. Falls back to LANCZOS if the requested upscaler is missing.
     """
-    import gc
     import torch
 
     orig_w, orig_h = img.size
@@ -1066,7 +1065,6 @@ def _studio_upscale_image(img, upscaler_name: str, scale: float):
 
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
-        gc.collect()
 
     upscaler = None
     for u in shared.sd_upscalers:
@@ -1086,7 +1084,6 @@ def _studio_upscale_image(img, upscaler_name: str, scale: float):
 
     if torch.cuda.is_available():
         torch.cuda.empty_cache()
-        gc.collect()
 
     return result
 
