@@ -363,6 +363,82 @@ def _remove_session_entry(session_id: str, entry_id: str) -> None:
             pass
 
 
+# ---------------------------------------------------------------------------
+# Layout files (WP-L3)
+# ---------------------------------------------------------------------------
+# Named layout maps live as JSON files under <extension_root>/studio_layouts/.
+# The files ARE the import/export format — dropping a shared file into the
+# folder makes it appear in the UI's Load list. Hardening: slug-only names,
+# fixed parent dir, size-capped payloads, shape validation, atomic writes.
+
+_LAYOUT_NAME_RE = re.compile(r"^[a-z0-9_-]{1,64}$")
+_LAYOUT_MAX_BYTES = 64 * 1024
+_LAYOUT_MAX_BLOCK_IDS = 200
+
+
+def _layout_dir() -> Path:
+    d = _studio_root / "studio_layouts"
+    d.mkdir(exist_ok=True)
+    return d
+
+
+def _layout_path(name: str):
+    """Validated (slug, path) for a layout name, or (None, None). The path
+    is always built from the validated slug — never raw input — and the
+    resolved parent is verified to be the layout dir itself."""
+    slug = str(name or "").strip().lower()
+    if not _LAYOUT_NAME_RE.match(slug):
+        return None, None
+    p = _layout_dir() / f"{slug}.json"
+    try:
+        if p.resolve().parent != _layout_dir().resolve():
+            return None, None
+    except Exception:
+        return None, None
+    return slug, p
+
+
+def _validate_layout_map(m) -> Optional[str]:
+    """Shape-check a layout map. Returns an error string or None. Unknown
+    top-level keys are allowed (forward-compat); known keys must be typed
+    correctly. Booleans are explicitly rejected where ints are expected
+    (bool is an int subclass in Python)."""
+    if not isinstance(m, dict):
+        return "map must be an object"
+    schema = m.get("schema", 1)
+    if isinstance(schema, bool) or not isinstance(schema, int):
+        return "schema must be an integer"
+    n_ids = 0
+    zones = m.get("zones", {})
+    if not isinstance(zones, dict):
+        return "zones must be an object"
+    for zname, blocks in zones.items():
+        if not isinstance(zname, str) or not isinstance(blocks, list):
+            return "zones must map names to lists"
+        for b in blocks:
+            if not isinstance(b, str) or not _LAYOUT_NAME_RE.match(b):
+                return "invalid block id in zones"
+            n_ids += 1
+    hidden = m.get("hidden", [])
+    if not isinstance(hidden, list):
+        return "hidden must be a list"
+    for b in hidden:
+        if not isinstance(b, str) or not _LAYOUT_NAME_RE.match(b):
+            return "invalid block id in hidden"
+        n_ids += 1
+    if n_ids > _LAYOUT_MAX_BLOCK_IDS:
+        return "too many block ids"
+    pw = m.get("panelWidth", 0)
+    if isinstance(pw, bool) or not isinstance(pw, int) or (pw != 0 and not (420 <= pw <= 900)):
+        return "panelWidth must be 0 or 420-900"
+    strip = m.get("strip", {})
+    if not isinstance(strip, dict) or any(not isinstance(v, bool) for v in strip.values()):
+        return "strip must be an object of booleans"
+    if not isinstance(m.get("module", "canvas"), str) or not isinstance(m.get("base", "classic"), str):
+        return "module/base must be strings"
+    return None
+
+
 def _write_session_scratch(session_id: str, img, entry_id: str) -> str:
     """Write one UNSAVED result as `<scratch>/<session_id>/<entry_id>.png`.
     Temporary preview/history asset only — deleted on eviction, clear-
@@ -995,6 +1071,12 @@ class SessionEvictRequest(BaseModel):
 class SessionClearRequest(BaseModel):
     """Body for /studio/session_clear — drop every entry of one session."""
     session_id: str = ""
+
+
+class LayoutSaveRequest(BaseModel):
+    """Body for POST /studio/layouts — a named layout map (WP-L3)."""
+    name: str = ""
+    map: dict = Field(default_factory=dict)
 
 
 # =========================================================================
@@ -2774,6 +2856,77 @@ def setup_studio_routes(app: FastAPI):
         sess = _SESSION_REGISTRY.get(sid) or {}
         for eid in list(sess.keys()):
             _remove_session_entry(sid, eid)
+        return {"ok": True}
+
+    # ------------------------------------------------------------------
+    # Layout files (WP-L3)
+    # ------------------------------------------------------------------
+
+    @app.get("/studio/layouts")
+    async def list_layouts():
+        items = []
+        for f in sorted(_layout_dir().glob("*.json")):
+            if not _LAYOUT_NAME_RE.match(f.stem):
+                continue
+            try:
+                data = json.loads(f.read_text(encoding="utf-8"))
+                items.append({
+                    "name": f.stem,
+                    "module": data.get("module", "canvas"),
+                    "base": data.get("base", "classic"),
+                    "mtime": int(f.stat().st_mtime),
+                })
+            except Exception:
+                continue  # unreadable file — skip, never fail the list
+        return {"layouts": items}
+
+    @app.get("/studio/layouts/{name}")
+    async def get_layout(name: str):
+        slug, p = _layout_path(name)
+        if p is None:
+            return JSONResponse({"error": "invalid layout name"}, status_code=400)
+        if not p.is_file():
+            return JSONResponse({"error": "not found"}, status_code=404)
+        try:
+            return json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            return JSONResponse({"error": "unreadable layout file"}, status_code=500)
+
+    @app.post("/studio/layouts")
+    async def save_layout(req: LayoutSaveRequest):
+        slug, p = _layout_path(req.name)
+        if p is None:
+            return JSONResponse({"error": "invalid layout name"}, status_code=400)
+        try:
+            payload_size = len(json.dumps(req.map))
+        except Exception:
+            return JSONResponse({"error": "map is not JSON-serializable"}, status_code=400)
+        if payload_size > _LAYOUT_MAX_BYTES:
+            return JSONResponse({"error": "layout too large"}, status_code=413)
+        err = _validate_layout_map(req.map)
+        if err:
+            return JSONResponse({"error": err}, status_code=400)
+        data = dict(req.map)
+        data["name"] = slug
+        try:
+            _atomic_write_json(p, data)
+        except Exception:
+            log.exception("Layout write failed")
+            return JSONResponse({"error": "write failed"}, status_code=500)
+        return {"ok": True, "name": slug}
+
+    @app.delete("/studio/layouts/{name}")
+    async def delete_layout(name: str):
+        slug, p = _layout_path(name)
+        if p is None:
+            return JSONResponse({"error": "invalid layout name"}, status_code=400)
+        if not p.is_file():
+            return JSONResponse({"error": "not found"}, status_code=404)
+        try:
+            p.unlink()
+        except Exception:
+            log.exception("Layout delete failed")
+            return JSONResponse({"error": "delete failed"}, status_code=500)
         return {"ok": True}
 
     # ------------------------------------------------------------------

@@ -296,6 +296,7 @@
         <span class="session-strip-label" data-i18n="sessionStrip.label">Session</span>
         <span class="session-strip-count" id="sessionStripCount"></span>
         <button class="session-strip-clear" id="sessionStripClear" data-i18n-title="sessionStrip.clear.tooltip" title="Clear session — saved files on disk are kept">&#x1f5d1;</button>
+        <button class="session-strip-hide" id="sessionStripHide" data-i18n-title="sessionStrip.hide.tooltip" title="Hide session strip">&#x2715;</button>
         <button class="session-strip-collapse" id="sessionStripToggle" data-i18n-title="sessionStrip.collapse.tooltip" title="Collapse">&#x2039;</button>
       </div>
       <div class="session-strip-scroll" id="sessionStripScroll"></div>
@@ -311,6 +312,9 @@
 
     <!-- Right panel -->
     <div class="panel-right" id="panelRight">
+      <!-- Customize mode: resize hit-strip on the panel's left edge.
+           Inert (display:none) unless customizing. -->
+      <div class="customize-divider" id="customizeDivider"></div>
       <div class="panel-tabs" id="panelTabs">
         <button class="panel-tab active" data-panel="generate" data-i18n="panels.generate">Generate</button>
         <button class="panel-tab" data-panel="extensions" data-i18n="panels.extensions">Extensions</button>
@@ -320,7 +324,7 @@
       <div class="panel-content">
 
         <!-- ===== GENERATE TAB ===== -->
-        <div class="panel-page active" id="page-generate">
+        <div class="panel-page active" id="page-generate" data-zone="panel">
 
           <!-- Prompt -->
           <div class="prompt-section">
@@ -421,7 +425,7 @@
           </div>
 
           <!-- Regional Prompting (between gallery and params for quick access) -->
-          <div id="regionSection" style="display:none;">
+          <div id="regionSection" style="display:none;" data-block="regions">
             <div class="section-header">
               <span class="section-label" data-i18n="panels.regions">Regions</span>
               <div class="section-actions">
@@ -458,7 +462,7 @@
           </div>
 
           <!-- Model & VAE (FR-021: always visible at top) -->
-          <div class="param-section" style="padding-bottom:6px;">
+          <div class="param-section" style="padding-bottom:6px;" data-block="model">
             <div class="param-grid cols-1">
               <div class="param-cell">
                 <label>Model</label>
@@ -495,7 +499,7 @@
           </div>
 
           <!-- Sampling (FR-022: collapsible, open by default) -->
-          <div class="collapse-section">
+          <div class="collapse-section" data-block="sampling">
             <div class="collapse-header">
               <span class="collapse-title">Sampling</span>
               <svg class="collapse-arrow open" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg>
@@ -524,7 +528,7 @@
           </div>
 
           <!-- Canvas (FR-022: collapsible, open by default) -->
-          <div class="collapse-section" data-deck-span="2">
+          <div class="collapse-section" data-deck-span="2" data-block="frame">
             <div class="collapse-header">
               <span class="collapse-title">Canvas</span>
               <svg class="collapse-arrow open" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg>
@@ -565,7 +569,7 @@
           </div>
 
           <!-- Seed & Batch (FR-022: collapsible, open by default) -->
-          <div class="collapse-section">
+          <div class="collapse-section" data-block="seedbatch">
             <div class="collapse-header">
               <span class="collapse-title">Seed &amp; Batch</span>
               <svg class="collapse-arrow open" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg>
@@ -607,7 +611,7 @@
           </div>
 
           <!-- Hires Fix -->
-          <div class="collapse-section">
+          <div class="collapse-section" data-block="hires">
             <div class="collapse-header">
               <div class="collapse-check" id="checkHires"></div>
               <span class="collapse-title">Hires Fix</span>
@@ -630,7 +634,7 @@
           </div>
 
           <!-- ADetailer -->
-          <div class="collapse-section">
+          <div class="collapse-section" data-block="adetailer">
             <div class="collapse-header">
               <div class="collapse-check" id="checkAD"></div>
               <span class="collapse-title">ADetailer</span>
@@ -695,7 +699,7 @@
           </div>
 
           <!-- Upscale (standalone, post-generation) -->
-          <div class="collapse-section">
+          <div class="collapse-section" data-block="upscale">
             <div class="collapse-header" id="upscaleHeader">
               <svg class="collapse-arrow" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg>
               <span class="collapse-title">Upscale</span>
@@ -723,7 +727,7 @@
           </div>
 
           <!-- ControlNet -->
-          <div class="collapse-section">
+          <div class="collapse-section" data-block="controlnet">
             <div class="collapse-header">
               <div class="collapse-check" id="checkCN"></div>
               <span class="collapse-title">ControlNet</span>
@@ -854,6 +858,13 @@
             </div>
           </div>
           <div id="historyList" class="section-body"></div>
+
+          <!-- Customize mode: tray of hidden blocks. Inert (display:none)
+               unless customizing or blocks are hidden. -->
+          <div class="hidden-tray" id="hiddenTray">
+            <div class="hidden-tray-label" data-i18n="layout.hiddenTray.label">Hidden blocks — click to restore</div>
+            <div class="hidden-tray-chips" id="hiddenTrayChips"></div>
+          </div>
 
         </div>
 
@@ -1113,6 +1124,25 @@
                 <button class="layout-btn active" data-layout-preset="classic" data-i18n="settings.layout.classic">Classic</button>
                 <button class="layout-btn" data-layout-preset="deck" data-i18n="settings.layout.deck">Deck</button>
               </div>
+              <div class="setting-row" style="margin-top:8px;">
+                <span class="setting-label" data-i18n="settings.layout.customize">Customize layout</span>
+                <div class="toggle-track" id="toggleCustomize"><div class="toggle-knob"></div></div>
+              </div>
+              <div class="setting-row">
+                <span class="setting-label" data-i18n="settings.layout.current">Current layout</span>
+                <span id="layoutCurrentName" style="font-size:11px;color:var(--text-3);font-family:var(--mono);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">&mdash;</span>
+              </div>
+              <div class="setting-row" style="gap:6px;">
+                <select class="param-select" id="layoutLoadSelect" style="flex:1;min-width:0;padding:4px 8px;">
+                  <option value="" data-i18n="layout.load.placeholder">Load layout…</option>
+                </select>
+              </div>
+              <div class="setting-row" style="gap:6px;justify-content:flex-end;">
+                <button class="defaults-btn" id="layoutSaveBtn" style="font-size:10px;padding:3px 8px;" data-i18n="layout.save">Save</button>
+                <button class="defaults-btn" id="layoutSaveAsBtn" style="font-size:10px;padding:3px 8px;" data-i18n="layout.saveAs">Save as…</button>
+                <button class="defaults-btn" id="layoutDeleteBtn" style="font-size:10px;padding:3px 8px;" data-i18n="layout.delete">Delete</button>
+              </div>
+              <p style="font-size:10px;color:var(--text-4);margin:4px 0 0 0;" data-i18n="settings.layout.shareHint">Layouts are JSON files in the extension's studio_layouts/ folder — copy a file there to import a shared layout.</p>
             </div>
             <div class="setting-group">
               <div class="setting-group-title" data-i18n="settings.tagAutocomplete.title">Prompt Autocomplete</div>
@@ -1239,7 +1269,7 @@
   // Optional modules — loaded if available, silently skipped if not.
   // debug.js exposes window.StudioDebug.* — dev-tools-only, no UI.
   const optionalScripts = ["develop.js", "video-lab.js", "workshop.js", "lexicon.js", "education.js", "codex.js", "studio-showme.js", "gallery.js", "module-tours.js", "debug.js", "canvas-webgl-preview.js"];
-  const v = "4.8.0";
+  const v = "4.9.0";
   window.__STUDIO_V = v;
   for (const s of scripts) {
     await new Promise((resolve, reject) => {

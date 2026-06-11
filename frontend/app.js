@@ -567,6 +567,9 @@ const Live = {
   async start() {
     try {
       console.log("[Live] Starting...");
+      // Customize mode exits cleanly before Live begins — no re-mount can
+      // happen mid-session (WP-L3 generation lock).
+      if (window.Customizer?.active) Customizer.exit();
       await API.liveStart();
       // Seed: generate one if not set
       if (this.seed < 0) this.seed = Math.floor(Math.random() * 2147483647);
@@ -574,6 +577,7 @@ const Live = {
       this.lastHash = "";
       this._disableAD();
       this._updateUI();
+      window.Customizer?.updateToggleState();
       console.log("[Live] Active, seed:", this.seed);
       // Trigger an initial submit with current canvas state
       this._scheduleCanvasCheck(0);
@@ -596,6 +600,7 @@ const Live = {
     this._restoreAD();
     this._hidePreviewLayer();
     this._updateUI();
+    window.Customizer?.updateToggleState();
   },
 
   rerollSeed() {
@@ -1822,7 +1827,11 @@ async function doGenerate() {
   // The preflight awaited; bail if a generation started in the meantime.
   if (State.generating) return;
 
+  // Customize mode exits cleanly before a run starts — no re-mount can
+  // happen mid-generation (WP-L3 generation lock).
+  if (Customizer.active) Customizer.exit();
   State.generating = true;
+  Customizer.updateToggleState();
 
   // B-002 fix: Re-read live preview toggle state on each gen start to prevent
   // stale State.livePreview from permanently suppressing the preview.
@@ -2144,6 +2153,7 @@ async function doGenerate() {
   }
 
   State.generating = false;
+  Customizer.updateToggleState();
   clearInterval(State._genTimerInterval);
   Progress.stopPolling();
   if (btn) {
@@ -5622,6 +5632,16 @@ const ExtensionBridge = {
       });
       container.appendChild(group);
 
+      // WP-L3: extension panels are layout blocks. Re-registration with
+      // the freshly rendered element replaces the previous one, so a
+      // re-render can't leave a duplicate of a block that was moved to a
+      // zone or hidden.
+      LayoutBlocks.register("ext-" + LayoutManager.slugify(ext.name), group, {
+        label: ext.title || ext.name,
+        canHide: true,
+        home: "ext",
+      });
+
       // Blueprint path vs AutoBridge path
       if (ext.blueprint) {
         this._wireBlueprintDependencies(group, ext);
@@ -5636,6 +5656,13 @@ const ExtensionBridge = {
           hdr.parentElement.classList.toggle("open");
         });
       });
+    }
+
+    // WP-L3: relocate re-rendered extension blocks per the active layout
+    // map (no-op before the layout system finishes booting).
+    if (window.LayoutManager?._ready) {
+      LayoutManager.reapply({ lift: Customizer.active });
+      if (Customizer.active) Customizer.refreshChrome();
     }
   },
 
@@ -6202,43 +6229,88 @@ const ThemeSwitcher = {
 
 
 // ═══════════════════════════════════════════
-// LAYOUT PRESETS (WP-L1)
+// LAYOUT PRESETS (WP-L1) + BLOCK/ZONE REGISTRY (WP-L3)
 // ═══════════════════════════════════════════
 
-// Re-mount mechanism for the deck blocks. Each [data-block] element gets a
-// hidden marker recording its factory DOM position so mountClassic() can
-// restore the exact original order. Nodes are MOVED (appendChild), never
-// cloned — IDs, state, and listeners survive. Markers are only created on
-// first deck mount, so a session that never leaves Classic gets zero DOM
-// changes.
+// Block registry + marker-based re-mount mechanism. Each [data-block]
+// element gets a hidden marker recording its factory DOM position so a
+// factory restore is always exact. Nodes are MOVED (appendChild /
+// insertBefore), never cloned — IDs, state, and listeners survive.
+// Markers are only created when a layout first deviates from factory, so
+// a session that never customizes gets zero DOM changes.
+//
+// Zones: "panel" (#page-generate) and "deck" (#deckZone). The session
+// strip is its own grid column — registered for hide/restore only, never
+// part of a zone and never drag-targetable (v1).
 const LayoutBlocks = {
-  _order: ["prompt", "lora", "negative", "generate"],
+  _order: ["prompt", "lora", "negative", "generate"], // factory deck-zone blocks
+  registry: new Map(), // id -> {id, el, label, canHide, home: "panel"|"ext"|"strip"}
+  _factoryPanelIds: [],
+  _lastStructured: false, // last applyMap restructured the DOM (custom/lift)
+
+  _STATIC_BLOCKS: [
+    { id: "prompt",     label: "Prompt",        canHide: false },
+    { id: "lora",       label: "LoRAs",         canHide: true  },
+    { id: "negative",   label: "Negative",      canHide: true  },
+    { id: "generate",   label: "Generate",      canHide: false },
+    { id: "regions",    label: "Regions",       canHide: true  },
+    { id: "model",      label: "Model & VAE",   canHide: true  },
+    { id: "sampling",   label: "Sampling",      canHide: true  },
+    { id: "frame",      label: "Canvas",        canHide: true  },
+    { id: "seedbatch",  label: "Seed & Batch",  canHide: true  },
+    { id: "hires",      label: "Hires Fix",     canHide: true  },
+    { id: "adetailer",  label: "ADetailer",     canHide: true  },
+    { id: "upscale",    label: "Upscale",       canHide: true  },
+    { id: "controlnet", label: "ControlNet",    canHide: true  },
+  ],
+
+  registerStatic() {
+    if (this._factoryPanelIds.length) return; // once
+    const byId = Object.fromEntries(this._STATIC_BLOCKS.map(b => [b.id, b]));
+    // Factory panel order = document order at boot (factory DOM).
+    document.querySelectorAll('#page-generate [data-block]').forEach(el => {
+      const def = byId[el.dataset.block];
+      if (!def) return;
+      this.register(def.id, el, { label: def.label, canHide: def.canHide, home: "panel" });
+      this._factoryPanelIds.push(def.id);
+    });
+    const strip = document.getElementById("sessionStrip");
+    if (strip) this.register("strip", strip, { label: "Session strip", canHide: true, home: "strip" });
+  },
+
+  // Dynamic registration (extension-injected panels). Re-registration with
+  // a new element replaces the old one — the stale node is removed so a
+  // re-rendered extension can't end up duplicated in a zone.
+  register(id, el, opts = {}) {
+    const prev = this.registry.get(id);
+    if (prev && prev.el !== el && prev.el?.isConnected) prev.el.remove();
+    el.dataset.block = id;
+    el.dataset.blockLabel = opts.label || id;
+    this.registry.set(id, {
+      id, el,
+      label: opts.label || id,
+      canHide: opts.canHide !== false,
+      home: opts.home || "panel",
+    });
+  },
 
   _ensureMarkers() {
-    document.querySelectorAll("[data-block]").forEach(el => {
-      const id = el.dataset.block;
-      if (document.querySelector(`.layout-home[data-home-for="${id}"]`)) return;
+    for (const { el, id } of this.registry.values()) {
+      if (id === "strip") continue; // never re-mounted
+      if (!el.isConnected) continue;
+      const m = document.querySelector(`.layout-home[data-home-for="${id}"]`);
+      if (m) continue;
       const marker = document.createElement("span");
       marker.className = "layout-home";
       marker.dataset.homeFor = id;
       marker.hidden = true;
       el.parentElement.insertBefore(marker, el);
-    });
-  },
-
-  mountDeck() {
-    this._ensureMarkers();
-    const zone = document.getElementById("deckZone");
-    if (!zone) return;
-    for (const id of this._order) {
-      const el = document.querySelector(`[data-block="${id}"]`);
-      if (el && el.parentElement !== zone) zone.appendChild(el);
     }
   },
 
-  mountClassic() {
-    for (const id of this._order) {
-      const el = document.querySelector(`[data-block="${id}"]`);
+  _restoreAll() {
+    for (const { el, id } of this.registry.values()) {
+      if (id === "strip") continue;
       const marker = document.querySelector(`.layout-home[data-home-for="${id}"]`);
       if (!el || !marker) continue;
       if (el.previousElementSibling !== marker) {
@@ -6246,6 +6318,121 @@ const LayoutBlocks = {
       }
     }
   },
+
+  factoryMap(base) {
+    base = base === "deck" ? "deck" : "classic";
+    const panel = [...this._factoryPanelIds];
+    const zones = base === "deck"
+      ? { panel: panel.filter(id => !this._order.includes(id)), deck: [...this._order] }
+      : { panel, deck: [] };
+    return {
+      schema: 1, module: "canvas", name: "", base,
+      panelWidth: 0, // 0 = unmanaged (leave the panel width alone)
+      zones, hidden: [],
+      strip: { collapsed: SessionStrip.isCollapsed(), visible: true },
+    };
+  },
+
+  // Structural comparison only — strip state and panel width don't make a
+  // layout "custom" (they apply without restructuring the DOM).
+  isFactory(map) {
+    const fac = this.factoryMap(map.base);
+    const eq = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
+    return eq(map.zones.panel, fac.zones.panel)
+        && eq(map.zones.deck, fac.zones.deck)
+        && map.hidden.length === 0;
+  },
+
+  // Merge rules (schema resilience), applied on every load:
+  //  - unknown block ids dropped silently
+  //  - registered blocks missing from the map appended to their factory
+  //    zone in factory order (ext-home blocks just stay at their marker)
+  //  - unknown top-level keys preserved for round-trip
+  //  - schema mismatch -> factory fallback for `base` + toast (the file
+  //    itself is never touched)
+  normalizeMap(raw) {
+    const base = raw?.base === "deck" ? "deck" : "classic";
+    const fac = this.factoryMap(base);
+    if (!raw || typeof raw !== "object") return fac;
+    if (raw.schema !== undefined && raw.schema !== 1) {
+      showToast(_i18n("toast.layout.schema", "Layout file uses an unsupported schema — using the factory layout"), "info");
+      return fac;
+    }
+    const known = id => {
+      const r = this.registry.get(id);
+      return !!r && r.home !== "strip";
+    };
+    const out = { ...raw, schema: 1, module: "canvas", base };
+    const seen = new Set();
+    const clean = list => (Array.isArray(list) ? list : [])
+      .filter(id => typeof id === "string" && known(id) && !seen.has(id) && (seen.add(id), true));
+    const zones = raw.zones || {};
+    out.zones = { panel: clean(zones.panel), deck: clean(zones.deck) };
+    out.hidden = (Array.isArray(raw.hidden) ? raw.hidden : [])
+      .filter(id => typeof id === "string" && known(id)
+        && this.registry.get(id).canHide && !seen.has(id) && (seen.add(id), true));
+    for (const id of fac.zones.panel) if (!seen.has(id)) { out.zones.panel.push(id); seen.add(id); }
+    for (const id of fac.zones.deck) if (!seen.has(id)) { out.zones.deck.push(id); seen.add(id); }
+    let pw = Number.isInteger(raw.panelWidth) ? raw.panelWidth : 0;
+    if (pw !== 0) pw = Math.max(420, Math.min(900, pw));
+    out.panelWidth = pw;
+    out.strip = {
+      collapsed: !!raw.strip?.collapsed,
+      visible: raw.strip?.visible !== false,
+    };
+    out.name = typeof raw.name === "string" ? raw.name : "";
+    return out;
+  },
+
+  // Apply a layout map. Idempotent: factory restore first, then the
+  // custom structure (if any). opts.lift forces the explicit zone-child
+  // structure even for factory-equivalent maps — Customize mode uses it
+  // so dragging and DOM-order sync are uniform.
+  applyMap(map, opts = {}) {
+    map = this.normalizeMap(map);
+    const structured = !this.isFactory(map) || !!opts.lift;
+    if (structured || this._lastStructured || map.base === "deck") this._ensureMarkers();
+    this._restoreAll();
+    const panel = document.querySelector('[data-zone="panel"]');
+    const deck = document.getElementById("deckZone");
+    if (structured) {
+      // Lift the panel blocks to direct zone children, in map order, above
+      // the remaining (non-block) panel content.
+      const anchor = panel ? panel.firstElementChild : null;
+      for (const id of map.zones.panel) {
+        const r = this.registry.get(id);
+        if (r?.el && panel) panel.insertBefore(r.el, anchor);
+      }
+      for (const id of map.zones.deck) {
+        const r = this.registry.get(id);
+        if (r?.el && deck) deck.appendChild(r.el);
+      }
+      for (const id of map.hidden) this.registry.get(id)?.el?.remove();
+      document.documentElement.setAttribute("data-layout-custom", "");
+    } else {
+      if (map.base === "deck" && deck) {
+        for (const id of map.zones.deck) {
+          const r = this.registry.get(id);
+          if (r?.el && r.el.parentElement !== deck) deck.appendChild(r.el);
+        }
+      }
+      document.documentElement.removeAttribute("data-layout-custom");
+    }
+    this._lastStructured = structured;
+    SessionStrip.applyState(map.strip);
+    const panelRight = document.getElementById("panelRight");
+    if (panelRight && map.panelWidth >= 420) {
+      panelRight.style.width = map.panelWidth + "px";
+      document.documentElement.style.setProperty("--studio-panel-width", map.panelWidth + "px");
+    }
+    // Trip the same path a window resize takes so canvas zoom/fit math
+    // recomputes for the new canvas-area size.
+    window.dispatchEvent(new Event("resize"));
+  },
+
+  // Back-compat wrappers (WP-L1 API)
+  mountDeck() { this.applyMap(this.factoryMap("deck")); },
+  mountClassic() { this.applyMap(this.factoryMap("classic")); },
 };
 
 // Vertical rail between canvas and params panel mirroring the output
@@ -6279,16 +6466,33 @@ const SessionStrip = {
     if (count) count.textContent = State.sessionEntries.length ? String(State.sessionEntries.length) : "";
   },
 
+  isCollapsed() {
+    const strip = document.getElementById("sessionStrip");
+    if (strip) return strip.classList.contains("collapsed");
+    return localStorage.getItem("studio-strip-collapsed") === "true";
+  },
+
+  // Strip state lives in the layout map (WP-L3). Visible:false collapses
+  // the grid column entirely; the hidden tray offers restore.
+  applyState(strip) {
+    const el = document.getElementById("sessionStrip");
+    if (!el || !strip) return;
+    el.classList.toggle("collapsed", !!strip.collapsed);
+    el.classList.toggle("strip-hidden", strip.visible === false);
+  },
+
   initCollapse() {
     const strip = document.getElementById("sessionStrip");
     const toggle = document.getElementById("sessionStripToggle");
     if (!strip || !toggle) return;
+    // WP-L1 fallback key — read once for migration; the layout map owns
+    // the state from here on (no further writes to the old key).
     if (localStorage.getItem("studio-strip-collapsed") === "true") {
       strip.classList.add("collapsed");
     }
     toggle.addEventListener("click", () => {
       const collapsed = strip.classList.toggle("collapsed");
-      localStorage.setItem("studio-strip-collapsed", String(collapsed));
+      LayoutManager.setStripState({ collapsed });
       // Canvas-area width changed — recompute zoom/fit
       window.dispatchEvent(new Event("resize"));
     });
@@ -6299,43 +6503,92 @@ const LayoutSwitcher = {
   current: "classic",
 
   init() {
+    LayoutManager.init();
     SessionStrip.initCollapse();
+    Customizer.init();
     const saved = localStorage.getItem("studio-layout-preset") || "classic";
     this.apply(saved, /*boot*/ true);
+    // localStorage wiped but a named layout was active: restore it from
+    // the server file (best-effort, async).
+    if (!LayoutManager.working && LayoutManager.activeName) {
+      LayoutManager.loadByName(LayoutManager.activeName, { silent: true });
+    }
 
-    document.getElementById("layoutSelector")?.addEventListener("click", e => {
+    document.getElementById("layoutSelector")?.addEventListener("click", async e => {
       const btn = e.target.closest(".layout-btn");
       if (!btn) return;
-      this.apply(btn.dataset.layoutPreset === "deck" ? "deck" : "classic");
+      const preset = btn.dataset.layoutPreset === "deck" ? "deck" : "classic";
+      // Preset over a custom layout: confirm (window.confirm is the
+      // repo's confirm pattern; the 3-way Save/Apply/Cancel becomes two
+      // chained confirms).
+      if (LayoutManager.isCustomActive()) {
+        if (window.confirm(_i18n("layout.confirm.savefirst",
+            "Applying a preset will replace your current layout. Save it first?"))) {
+          const ok = await LayoutManager.save();
+          if (!ok) return; // save cancelled/failed -> abort the preset switch
+        } else if (!window.confirm(_i18n("layout.confirm.discard",
+            "Apply the preset without saving? Your current layout will be lost."))) {
+          return; // Cancel
+        }
+      }
+      if (Customizer.active) Customizer.exit({ skipSave: true });
+      LayoutManager.activeName = "";
+      this.apply(preset);
     });
+  },
+
+  // Set the base preset attribute/state without applying a map (used by
+  // layout-file loads, whose map is applied separately).
+  setBase(base) {
+    base = base === "deck" ? "deck" : "classic";
+    if (base === "deck") document.documentElement.setAttribute("data-layout", "deck");
+    else document.documentElement.removeAttribute("data-layout");
+    this.current = base;
+    localStorage.setItem("studio-layout-preset", base);
+    this._updateButtons(base);
   },
 
   apply(preset, boot = false) {
     preset = preset === "deck" ? "deck" : "classic";
-    if (boot && preset === "classic") {
-      // Classic at boot is the factory DOM — touch nothing (no markers,
-      // no storage write, no resize dispatch) so a session that never
-      // switches presets stays byte-identical to pre-WP behavior.
-      this.current = "classic";
-      this._updateButtons("classic");
+    const cached = boot ? LayoutManager.loadCached() : null;
+    if (boot && cached && !LayoutBlocks.isFactory(cached)) {
+      // Custom layout boot — restore the saved structure.
+      this.setBase(cached.base);
+      LayoutManager.setWorking(cached, LayoutManager.activeName);
+      LayoutBlocks.applyMap(cached);
+      if (cached.base === "deck") {
+        SessionStrip.render();
+        this._discloseSections();
+      }
       return;
     }
+    if (boot && preset === "classic") {
+      // Classic at boot is the factory DOM — touch nothing structural
+      // (no markers, no storage write, no resize dispatch) so a session
+      // that never customizes stays byte-identical to pre-WP behavior.
+      this.current = "classic";
+      this._updateButtons("classic");
+      if (cached) {
+        // Factory-equivalent map may still carry strip state / width.
+        LayoutManager.setWorking(cached, LayoutManager.activeName);
+        SessionStrip.applyState(cached.strip);
+        const panelRight = document.getElementById("panelRight");
+        if (panelRight && cached.panelWidth >= 420) {
+          panelRight.style.width = cached.panelWidth + "px";
+        }
+      }
+      return;
+    }
+    this.setBase(preset);
+    const map = (boot && cached && cached.base === preset)
+      ? cached
+      : LayoutBlocks.factoryMap(preset);
+    LayoutManager.setWorking(map, boot ? LayoutManager.activeName : "");
+    LayoutBlocks.applyMap(map); // dispatches the resize event itself
     if (preset === "deck") {
-      document.documentElement.setAttribute("data-layout", "deck");
-      this.current = "deck";
-      LayoutBlocks.mountDeck();
       SessionStrip.render();
       this._discloseSections();
-    } else {
-      document.documentElement.removeAttribute("data-layout");
-      this.current = "classic";
-      LayoutBlocks.mountClassic();
     }
-    localStorage.setItem("studio-layout-preset", this.current);
-    this._updateButtons(this.current);
-    // Trip the same path a window resize takes so canvas zoom/fit math
-    // recomputes for the new canvas-area size (canvas-ui listens on window).
-    window.dispatchEvent(new Event("resize"));
   },
 
   // Disclose all feature sections on entering deck. Sets the accordion's
@@ -6362,6 +6615,525 @@ const LayoutSwitcher = {
   _updateButtons(active) {
     document.querySelectorAll("#layoutSelector .layout-btn").forEach(btn => {
       btn.classList.toggle("active", (btn.dataset.layoutPreset || "classic") === active);
+    });
+  },
+};
+
+
+// ═══════════════════════════════════════════
+// LAYOUT MANAGER (WP-L3) — working map + layout files
+// ═══════════════════════════════════════════
+
+const LayoutManager = {
+  working: null,     // the active (normalized) layout map
+  activeName: "",    // slug of the loaded named layout, "" when unsaved
+  _ready: false,
+
+  init() {
+    LayoutBlocks.registerStatic();
+    this.activeName = localStorage.getItem("studio-layout-name") || "";
+    this._bindUI();
+    this._updateNameDisplay();
+    this.refreshList();
+    this._ready = true;
+  },
+
+  loadCached() {
+    try {
+      const raw = localStorage.getItem("studio-layout-map");
+      return raw ? LayoutBlocks.normalizeMap(JSON.parse(raw)) : null;
+    } catch (_) { return null; }
+  },
+
+  setWorking(map, name = "") {
+    this.working = LayoutBlocks.normalizeMap(map);
+    this.activeName = name || "";
+    this.persistLocal();
+    this._updateNameDisplay();
+  },
+
+  ensureWorking() {
+    if (!this.working) this.working = LayoutBlocks.factoryMap(LayoutSwitcher.current);
+    return this.working;
+  },
+
+  isCustomActive() {
+    return !!this.working && !LayoutBlocks.isFactory(this.working);
+  },
+
+  persistLocal() {
+    try {
+      if (this.working) localStorage.setItem("studio-layout-map", JSON.stringify(this.working));
+      localStorage.setItem("studio-layout-name", this.activeName);
+    } catch (_) {}
+  },
+
+  reapply(opts) {
+    if (this._ready && this.working) LayoutBlocks.applyMap(this.working, opts);
+  },
+
+  setStripState(patch) {
+    Object.assign(this.ensureWorking().strip, patch);
+    this.persistLocal();
+  },
+
+  setPanelWidth(w) {
+    this.ensureWorking().panelWidth = w;
+    this.persistLocal();
+  },
+
+  // Read zone order back from the DOM. Only meaningful while Customize
+  // mode has the blocks lifted to direct zone children.
+  syncFromDOM() {
+    const map = this.ensureWorking();
+    const ids = zone => zone
+      ? [...zone.querySelectorAll(":scope > [data-block]")]
+          .map(b => b.dataset.block)
+          .filter(id => !map.hidden.includes(id))
+      : [];
+    map.zones.panel = ids(document.querySelector('[data-zone="panel"]'));
+    map.zones.deck = ids(document.getElementById("deckZone"));
+    this.persistLocal();
+  },
+
+  slugify(name) {
+    return String(name || "").toLowerCase()
+      .replace(/[^a-z0-9-_]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 64);
+  },
+
+  _updateNameDisplay() {
+    const el = document.getElementById("layoutCurrentName");
+    if (el) el.textContent = this.activeName || "—";
+  },
+
+  async refreshList() {
+    try {
+      const r = await fetch(API.base + "/studio/layouts");
+      if (!r.ok) return;
+      const data = await r.json();
+      const sel = document.getElementById("layoutLoadSelect");
+      if (!sel) return;
+      const ph = sel.querySelector('option[value=""]')?.outerHTML
+        || '<option value="">Load layout…</option>';
+      sel.innerHTML = ph + (data.layouts || []).map(l =>
+        `<option value="${l.name}">${l.name} (${l.base})</option>`).join("");
+      sel.value = "";
+    } catch (_) { /* best-effort; the list refreshes on next save/load */ }
+  },
+
+  async save(opts = {}) {
+    if (!this.activeName) return this.saveAs(opts);
+    return this._post(this.activeName, opts);
+  },
+
+  async saveAs(opts = {}) {
+    const name = window.prompt(_i18n("layout.prompt.name", "Layout name:"), this.activeName || "my-layout");
+    if (name == null) return false; // cancelled
+    const slug = this.slugify(name);
+    if (!slug) {
+      showToast(_i18n("toast.layout.badName", "Invalid layout name"), "error");
+      return false;
+    }
+    return this._post(slug, opts);
+  },
+
+  async _post(slug, opts = {}) {
+    const map = { ...this.ensureWorking(), name: slug };
+    try {
+      const r = await fetch(API.base + "/studio/layouts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: slug, map }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok || data.error) {
+        if (!opts.silent) showToast(data.error || _i18n("toast.layout.saveFailed", "Layout save failed"), "error");
+        return false;
+      }
+      this.activeName = slug;
+      this.working.name = slug;
+      this.persistLocal();
+      this._updateNameDisplay();
+      this.refreshList();
+      if (!opts.silent) showToast(_i18n("toast.layout.saved", "Layout saved"), "success");
+      return true;
+    } catch (e) {
+      if (!opts.silent) showToast("Layout save failed: " + e.message, "error");
+      return false;
+    }
+  },
+
+  // Exit-customize hook: always cache locally; update the named file
+  // silently when one is loaded.
+  saveOnExit() {
+    this.persistLocal();
+    if (this.activeName) this._post(this.activeName, { silent: true });
+  },
+
+  async loadByName(name, opts = {}) {
+    const slug = this.slugify(name);
+    if (!slug) return false;
+    try {
+      const r = await fetch(API.base + "/studio/layouts/" + encodeURIComponent(slug));
+      if (!r.ok) {
+        if (!opts.silent) showToast(_i18n("toast.layout.notFound", "Layout not found"), "error");
+        return false;
+      }
+      const raw = await r.json();
+      this.applyLoaded(raw, slug);
+      if (!opts.silent) showToast(_i18n("toast.layout.loaded", "Layout loaded"), "success");
+      return true;
+    } catch (e) {
+      if (!opts.silent) showToast("Layout load failed: " + e.message, "error");
+      return false;
+    }
+  },
+
+  applyLoaded(raw, name) {
+    const map = LayoutBlocks.normalizeMap(raw); // merge rules / schema fallback
+    LayoutSwitcher.setBase(map.base);
+    this.setWorking(map, name);
+    LayoutBlocks.applyMap(map, { lift: Customizer.active });
+    if (map.base === "deck") {
+      SessionStrip.render();
+      LayoutSwitcher._discloseSections();
+    }
+    if (Customizer.active) Customizer.refreshChrome();
+    else Customizer._renderTray();
+  },
+
+  async deleteActive() {
+    const slug = this.activeName;
+    if (!slug) {
+      showToast(_i18n("toast.layout.noneActive", "No named layout is active"), "info");
+      return;
+    }
+    if (!window.confirm(_i18n("layout.confirm.delete", "Delete this layout file?"))) return;
+    try {
+      const r = await fetch(API.base + "/studio/layouts/" + encodeURIComponent(slug), { method: "DELETE" });
+      if (!r.ok) {
+        showToast(_i18n("toast.layout.deleteFailed", "Layout delete failed"), "error");
+        return;
+      }
+      this.activeName = "";
+      this.persistLocal();
+      this._updateNameDisplay();
+      this.refreshList();
+      showToast(_i18n("toast.layout.deleted", "Layout deleted"), "success");
+    } catch (e) {
+      showToast("Layout delete failed: " + e.message, "error");
+    }
+  },
+
+  _bindUI() {
+    document.getElementById("layoutSaveBtn")?.addEventListener("click", () => {
+      if (Customizer.active) this.syncFromDOM();
+      this.save();
+    });
+    document.getElementById("layoutSaveAsBtn")?.addEventListener("click", () => {
+      if (Customizer.active) this.syncFromDOM();
+      this.saveAs();
+    });
+    document.getElementById("layoutDeleteBtn")?.addEventListener("click", () => this.deleteActive());
+    document.getElementById("layoutLoadSelect")?.addEventListener("change", e => {
+      const name = e.target.value;
+      e.target.value = "";
+      if (name) this.loadByName(name);
+    });
+  },
+};
+
+
+// ═══════════════════════════════════════════
+// CUSTOMIZE MODE (WP-L3)
+// ═══════════════════════════════════════════
+// Explicit edit mode: registered blocks become draggable between zones,
+// hideable (tray restores), and the params panel is resizable. ALL chrome
+// is gated on body.customizing — a user who never customizes sees none
+// of it. The canvas/viewport are never blocks and never move.
+
+const Customizer = {
+  active: false,
+  _drag: null,
+  _ghost: null,
+  _indicator: null,
+
+  init() {
+    document.getElementById("toggleCustomize")?.addEventListener("click", () => this.toggle());
+    document.getElementById("sessionStripHide")?.addEventListener("click", () => this.hideStrip());
+    document.getElementById("hiddenTrayChips")?.addEventListener("click", e => {
+      const chip = e.target.closest("[data-restore]");
+      if (chip) this.restoreBlock(chip.dataset.restore);
+    });
+    document.addEventListener("click", e => {
+      const btn = e.target.closest(".blk-hide");
+      if (btn && this.active) this.hideBlock(btn.dataset.blockHide);
+    });
+    this._bindDrag();
+    this._bindDivider();
+    window.addEventListener("resize", () => this.updateToggleState());
+    document.addEventListener("keydown", e => {
+      if (e.key === "Escape" && this._drag) this._cancelDrag();
+    });
+    this.updateToggleState();
+    this._renderTray();
+  },
+
+  // Generation lock + viewport gate. Checked at entry AND reflected on
+  // the Settings toggle (disabled look + tooltip).
+  blocked() {
+    if (State.generating) return _i18n("layout.customize.blocked.generating", "Not available while generating");
+    if (typeof Live !== "undefined" && Live.active) return _i18n("layout.customize.blocked.live", "Not available during Live Painting");
+    if (window.innerWidth < 1600) return _i18n("layout.customize.blocked.narrow", "Needs a window at least 1600px wide");
+    return "";
+  },
+
+  updateToggleState() {
+    const t = document.getElementById("toggleCustomize");
+    if (!t) return;
+    const reason = this.active ? "" : this.blocked();
+    t.classList.toggle("disabled", !!reason);
+    t.title = reason;
+    t.classList.toggle("on", this.active);
+  },
+
+  toggle() {
+    if (this.active) this.exit();
+    else this.enter();
+  },
+
+  enter() {
+    const reason = this.blocked();
+    if (reason) { showToast(reason, "info"); return; }
+    if (this.active) return;
+    LayoutManager.ensureWorking();
+    this.active = true;
+    document.body.classList.add("customizing");
+    // Normalize: lift the panel blocks to explicit zone children so drag
+    // targets and DOM-order sync are uniform. Exit re-applies without the
+    // lift, restoring factory nesting when the map is factory-equivalent.
+    LayoutManager.reapply({ lift: true });
+    this.refreshChrome();
+    this.updateToggleState();
+  },
+
+  exit(opts = {}) {
+    if (!this.active) return;
+    this.active = false;
+    this._cancelDrag();
+    document.body.classList.remove("customizing");
+    this._removeHideButtons();
+    LayoutManager.syncFromDOM();
+    LayoutManager.reapply();
+    this._renderTray();
+    this.updateToggleState();
+    if (!opts.skipSave) LayoutManager.saveOnExit();
+  },
+
+  refreshChrome() {
+    this._removeHideButtons();
+    this._injectHideButtons();
+    this._renderTray();
+  },
+
+  _injectHideButtons() {
+    if (!this.active) return;
+    for (const r of LayoutBlocks.registry.values()) {
+      // canHide:false blocks (prompt, generate) get no hide control; the
+      // strip has its own × in its header.
+      if (!r.canHide || r.id === "strip" || !r.el.isConnected) continue;
+      if (r.el.querySelector(":scope > .blk-hide")) continue;
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "blk-hide";
+      b.dataset.blockHide = r.id;
+      b.title = _i18n("layout.hide.tooltip", "Hide block");
+      b.textContent = "✕";
+      r.el.appendChild(b);
+    }
+  },
+
+  _removeHideButtons() {
+    document.querySelectorAll(".blk-hide").forEach(b => b.remove());
+  },
+
+  hideBlock(id) {
+    const r = LayoutBlocks.registry.get(id);
+    const map = LayoutManager.ensureWorking();
+    if (!r || !r.canHide || map.hidden.includes(id)) return;
+    map.hidden.push(id);
+    r.el.remove(); // detached — the registry keeps the element alive
+    LayoutManager.syncFromDOM();
+    this._renderTray();
+  },
+
+  hideStrip() {
+    if (!this.active) return;
+    LayoutManager.setStripState({ visible: false });
+    SessionStrip.applyState(LayoutManager.working.strip);
+    this._renderTray();
+    window.dispatchEvent(new Event("resize"));
+  },
+
+  restoreBlock(id) {
+    const map = LayoutManager.ensureWorking();
+    if (id === "strip") {
+      LayoutManager.setStripState({ visible: true });
+      SessionStrip.applyState(map.strip);
+      this._renderTray();
+      window.dispatchEvent(new Event("resize"));
+      return;
+    }
+    const r = LayoutBlocks.registry.get(id);
+    if (!r) return;
+    map.hidden = map.hidden.filter(h => h !== id);
+    if (this.active) {
+      // Blocks are lifted — re-append to the end of the panel zone, above
+      // the pinned tray, and read the order back from the DOM.
+      const panel = document.querySelector('[data-zone="panel"]');
+      const tray = document.getElementById("hiddenTray");
+      if (panel) {
+        panel.insertBefore(r.el, (tray && tray.parentElement === panel) ? tray : null);
+      }
+      LayoutManager.syncFromDOM();
+      this._injectHideButtons();
+    } else {
+      // Tray used outside Customize mode (it stays visible while blocks
+      // are hidden). The DOM isn't lifted here, so syncFromDOM would
+      // corrupt the zone lists — append to the map instead and re-apply.
+      if (!map.zones.panel.includes(id) && !map.zones.deck.includes(id)) {
+        map.zones.panel.push(id);
+      }
+      LayoutManager.persistLocal();
+      LayoutManager.reapply();
+    }
+    this._renderTray();
+    window.dispatchEvent(new Event("resize"));
+  },
+
+  _renderTray() {
+    const tray = document.getElementById("hiddenTray");
+    const chips = document.getElementById("hiddenTrayChips");
+    if (!tray || !chips) return;
+    const map = LayoutManager.working;
+    const items = [];
+    if (map) {
+      for (const id of map.hidden) {
+        items.push({ id, label: LayoutBlocks.registry.get(id)?.label || id });
+      }
+      if (map.strip.visible === false) {
+        items.push({ id: "strip", label: LayoutBlocks.registry.get("strip")?.label || "Session strip" });
+      }
+    }
+    chips.innerHTML = items.map(it =>
+      `<button type="button" class="hidden-chip" data-restore="${it.id}">${it.label}</button>`
+    ).join("");
+    tray.classList.toggle("has-items", items.length > 0);
+  },
+
+  // ── Drag & drop (pointer events) ──
+  _bindDrag() {
+    document.addEventListener("pointerdown", e => {
+      if (!this.active || e.button !== 0) return;
+      if (e.target.closest(".blk-hide") || e.target.closest(".customize-divider")) return;
+      const blk = e.target.closest("[data-block]");
+      // The strip is a grid column, not a zone child — not draggable (v1).
+      if (!blk || blk.dataset.block === "strip") return;
+      e.preventDefault();
+      this._drag = { el: blk, id: blk.dataset.block, started: false, x: e.clientX, y: e.clientY };
+    });
+
+    document.addEventListener("pointermove", e => {
+      const d = this._drag;
+      if (!d) return;
+      if (!d.started) {
+        // 5px threshold so a stray click doesn't ghost
+        if (Math.abs(e.clientX - d.x) + Math.abs(e.clientY - d.y) < 5) return;
+        d.started = true;
+        d.el.classList.add("dragging");
+        this._ghost = document.createElement("div");
+        this._ghost.className = "drag-ghost";
+        this._ghost.textContent = LayoutBlocks.registry.get(d.id)?.label || d.id;
+        document.body.appendChild(this._ghost);
+        if (!this._indicator) {
+          this._indicator = document.createElement("div");
+          this._indicator.className = "drop-indicator";
+        }
+      }
+      this._ghost.style.left = (e.clientX + 12) + "px";
+      this._ghost.style.top = (e.clientY + 12) + "px";
+      // Hit-test beneath the dragged block (spec mechanism: hide → probe →
+      // restore; the ghost and indicator are pointer-events:none).
+      const prevDisplay = d.el.style.display;
+      d.el.style.display = "none";
+      const under = document.elementFromPoint(e.clientX, e.clientY);
+      d.el.style.display = prevDisplay;
+      const zone = under?.closest?.("[data-zone]");
+      // Deck zone is only a drop target while the deck preset is active —
+      // under Classic it isn't rendered (v1 scope).
+      if (!zone || (zone.dataset.zone === "deck" && LayoutSwitcher.current !== "deck")) {
+        this._indicator.remove();
+        return;
+      }
+      const over = under.closest("[data-block]");
+      if (over && over !== d.el && over.parentElement === zone) {
+        const r = over.getBoundingClientRect();
+        const before = zone.dataset.zone === "deck"
+          ? e.clientX < r.left + r.width / 2   // horizontal midpoint in deck
+          : e.clientY < r.top + r.height / 2;  // vertical midpoint in panel
+        zone.insertBefore(this._indicator, before ? over : over.nextSibling);
+      } else {
+        // Zone whitespace → indicator at zone end (panel keeps the hidden
+        // tray pinned last).
+        const tail = zone.dataset.zone === "panel" ? document.getElementById("hiddenTray") : null;
+        zone.insertBefore(this._indicator, (tail && tail.parentElement === zone) ? tail : null);
+      }
+    });
+
+    document.addEventListener("pointerup", () => {
+      const d = this._drag;
+      if (!d) return;
+      if (d.started && this._indicator?.isConnected) {
+        this._indicator.parentElement.insertBefore(d.el, this._indicator);
+        LayoutManager.syncFromDOM();
+      }
+      this._cancelDrag();
+    });
+  },
+
+  _cancelDrag() {
+    if (this._drag?.el) this._drag.el.classList.remove("dragging");
+    this._ghost?.remove();
+    this._ghost = null;
+    this._indicator?.remove();
+    this._drag = null;
+  },
+
+  // ── Panel resize hit-strip (clamped 420–900) ──
+  _bindDivider() {
+    const div = document.getElementById("customizeDivider");
+    const panel = document.getElementById("panelRight");
+    if (!div || !panel) return;
+    div.addEventListener("pointerdown", e => {
+      if (!this.active || e.button !== 0) return;
+      e.preventDefault();
+      const startX = e.clientX;
+      const startW = panel.getBoundingClientRect().width;
+      const move = ev => {
+        const w = Math.max(420, Math.min(900, Math.round(startW + (startX - ev.clientX))));
+        panel.style.width = w + "px";
+        document.documentElement.style.setProperty("--studio-panel-width", w + "px");
+      };
+      const up = () => {
+        document.removeEventListener("pointermove", move);
+        document.removeEventListener("pointerup", up);
+        LayoutManager.setPanelWidth(Math.round(panel.getBoundingClientRect().width));
+        window.dispatchEvent(new Event("resize"));
+      };
+      document.addEventListener("pointermove", move);
+      document.addEventListener("pointerup", up);
     });
   },
 };
@@ -7085,6 +7857,8 @@ window.UpdateBanner = UpdateBanner;
 window.LayoutSwitcher = LayoutSwitcher;
 window.LayoutBlocks = LayoutBlocks;
 window.SessionStrip = SessionStrip;
+window.LayoutManager = LayoutManager;
+window.Customizer = Customizer;
 
 // Go
 if (document.readyState === "loading") {
