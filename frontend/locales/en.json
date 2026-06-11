@@ -92,6 +92,12 @@
 
   "settings.theme.title": "Theme",
 
+  "settings.layout.title": "Layout",
+  "settings.layout.classic": "Classic",
+  "settings.layout.deck": "Deck",
+  "sessionStrip.label": "Session",
+  "sessionStrip.collapse.tooltip": "Collapse",
+
   "settings.tagAutocomplete.title": "Prompt Autocomplete",
   "settings.tagAutocomplete.enabled": "Tag suggestions",
   "settings.tagAutocomplete.source": "Tag source",

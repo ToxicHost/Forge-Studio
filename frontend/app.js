@@ -687,6 +687,7 @@ const Live = {
     if (outputGrid) {
       outputGrid.innerHTML = `<div class="output-thumb selected" data-idx="0"><img src="${data.image}"></div>`;
     }
+    SessionStrip.render();
 
     this._updateUI();
 
@@ -2532,6 +2533,10 @@ function renderOutputGallery() {
 
   // Show infotext for selected image
   _updateOutputInfo();
+
+  // Deck layout: the session strip is a second view of the same arrays
+  // (no-op under Classic).
+  SessionStrip.render();
 }
 
 /** Update the infotext display for the currently selected output image. */
@@ -2963,6 +2968,7 @@ function bindUI() {
       thumb.classList.add("selected");
       _showResultPreview(State.selectedOutputIdx);
       _updateOutputInfo();
+      SessionStrip.render();
     });
     _grid.addEventListener("dblclick", (e) => {
       const thumb = e.target.closest(".output-thumb");
@@ -3049,6 +3055,25 @@ function bindUI() {
           document.removeEventListener("click", _close);
         }, { once: true });
       }, 0);
+    });
+  }
+
+  // Session strip (deck layout) — same selection semantics as #outputGrid.
+  // renderOutputGallery() syncs the grid selection + infotext and re-renders
+  // the strip, so both views stay in lockstep.
+  const _stripScroll = document.getElementById("sessionStripScroll");
+  if (_stripScroll) {
+    _stripScroll.addEventListener("click", (e) => {
+      const thumb = e.target.closest(".session-thumb");
+      if (!thumb) return;
+      State.selectedOutputIdx = parseInt(thumb.dataset.idx);
+      _showResultPreview(State.selectedOutputIdx);
+      renderOutputGallery();
+    });
+    _stripScroll.addEventListener("dblclick", (e) => {
+      const thumb = e.target.closest(".session-thumb");
+      if (!thumb) return;
+      _openCanvasOutput(parseInt(thumb.dataset.idx));
     });
   }
 
@@ -6033,6 +6058,169 @@ const ThemeSwitcher = {
 };
 
 
+// ═══════════════════════════════════════════
+// LAYOUT PRESETS (WP-L1)
+// ═══════════════════════════════════════════
+
+// Re-mount mechanism for the deck blocks. Each [data-block] element gets a
+// hidden marker recording its factory DOM position so mountClassic() can
+// restore the exact original order. Nodes are MOVED (appendChild), never
+// cloned — IDs, state, and listeners survive. Markers are only created on
+// first deck mount, so a session that never leaves Classic gets zero DOM
+// changes.
+const LayoutBlocks = {
+  _order: ["prompt", "lora", "negative", "generate"],
+
+  _ensureMarkers() {
+    document.querySelectorAll("[data-block]").forEach(el => {
+      const id = el.dataset.block;
+      if (document.querySelector(`.layout-home[data-home-for="${id}"]`)) return;
+      const marker = document.createElement("span");
+      marker.className = "layout-home";
+      marker.dataset.homeFor = id;
+      marker.hidden = true;
+      el.parentElement.insertBefore(marker, el);
+    });
+  },
+
+  mountDeck() {
+    this._ensureMarkers();
+    const zone = document.getElementById("deckZone");
+    if (!zone) return;
+    for (const id of this._order) {
+      const el = document.querySelector(`[data-block="${id}"]`);
+      if (el && el.parentElement !== zone) zone.appendChild(el);
+    }
+  },
+
+  mountClassic() {
+    for (const id of this._order) {
+      const el = document.querySelector(`[data-block="${id}"]`);
+      const marker = document.querySelector(`.layout-home[data-home-for="${id}"]`);
+      if (!el || !marker) continue;
+      if (el.previousElementSibling !== marker) {
+        marker.parentElement.insertBefore(el, marker.nextSibling);
+      }
+    }
+  },
+};
+
+// Vertical rail between canvas and params panel mirroring the output
+// gallery. Pure view over the existing State.output* arrays — WP-L2
+// replaces the data layer underneath without touching this.
+const SessionStrip = {
+  render() {
+    if (LayoutSwitcher.current !== "deck") return;
+    const scroll = document.getElementById("sessionStripScroll");
+    if (!scroll) return;
+    scroll.innerHTML = State.outputImages.map((img, i) =>
+      `<div class="session-thumb ${i === State.selectedOutputIdx ? "selected" : ""}" data-idx="${i}">
+        <img loading="lazy" src="${img}" alt="">
+      </div>`
+    ).join("");
+    // Aspect-ratio-correct thumbs: set each thumb's aspect-ratio from the
+    // image's natural dimensions once loaded (auto until then).
+    scroll.querySelectorAll(".session-thumb img").forEach(img => {
+      const apply = () => {
+        if (img.naturalWidth && img.naturalHeight) {
+          img.parentElement.style.aspectRatio = `${img.naturalWidth} / ${img.naturalHeight}`;
+        }
+      };
+      if (img.complete) apply();
+      else img.addEventListener("load", apply, { once: true });
+    });
+    const count = document.getElementById("sessionStripCount");
+    if (count) count.textContent = State.outputImages.length ? String(State.outputImages.length) : "";
+  },
+
+  initCollapse() {
+    const strip = document.getElementById("sessionStrip");
+    const toggle = document.getElementById("sessionStripToggle");
+    if (!strip || !toggle) return;
+    if (localStorage.getItem("studio-strip-collapsed") === "true") {
+      strip.classList.add("collapsed");
+    }
+    toggle.addEventListener("click", () => {
+      const collapsed = strip.classList.toggle("collapsed");
+      localStorage.setItem("studio-strip-collapsed", String(collapsed));
+      // Canvas-area width changed — recompute zoom/fit
+      window.dispatchEvent(new Event("resize"));
+    });
+  },
+};
+
+const LayoutSwitcher = {
+  current: "classic",
+
+  init() {
+    SessionStrip.initCollapse();
+    const saved = localStorage.getItem("studio-layout-preset") || "classic";
+    this.apply(saved, /*boot*/ true);
+
+    document.getElementById("layoutSelector")?.addEventListener("click", e => {
+      const btn = e.target.closest(".layout-btn");
+      if (!btn) return;
+      this.apply(btn.dataset.layoutPreset === "deck" ? "deck" : "classic");
+    });
+  },
+
+  apply(preset, boot = false) {
+    preset = preset === "deck" ? "deck" : "classic";
+    if (boot && preset === "classic") {
+      // Classic at boot is the factory DOM — touch nothing (no markers,
+      // no storage write, no resize dispatch) so a session that never
+      // switches presets stays byte-identical to pre-WP behavior.
+      this.current = "classic";
+      this._updateButtons("classic");
+      return;
+    }
+    if (preset === "deck") {
+      document.documentElement.setAttribute("data-layout", "deck");
+      this.current = "deck";
+      LayoutBlocks.mountDeck();
+      SessionStrip.render();
+      this._discloseSections();
+    } else {
+      document.documentElement.removeAttribute("data-layout");
+      this.current = "classic";
+      LayoutBlocks.mountClassic();
+    }
+    localStorage.setItem("studio-layout-preset", this.current);
+    this._updateButtons(this.current);
+    // Trip the same path a window resize takes so canvas zoom/fit math
+    // recomputes for the new canvas-area size (canvas-ui listens on window).
+    window.dispatchEvent(new Event("resize"));
+  },
+
+  // Disclose all feature sections on entering deck. Sets the accordion's
+  // own steady open state (open class + max-height:none + arrow class —
+  // exactly what _toggleCollapseBody reaches after its transition) instead
+  // of header.click(): the click path measures scrollHeight, which is 0
+  // while the Generate page is hidden (e.g. switching presets from the
+  // Settings tab) and would latch sections shut. Users can still collapse
+  // them afterwards.
+  _discloseSections() {
+    document.querySelectorAll("#page-generate .collapse-section").forEach(sec => {
+      const header = sec.querySelector(".collapse-header");
+      const body = sec.querySelector(".collapse-body");
+      if (!header || !body || body.classList.contains("open")) return;
+      body.classList.add("open");
+      body.style.maxHeight = "none";
+      header.querySelector(".collapse-arrow")?.classList.add("open");
+    });
+    document.querySelectorAll("#page-extensions .ext-group:not(.open)").forEach(g => {
+      g.classList.add("open");
+    });
+  },
+
+  _updateButtons(active) {
+    document.querySelectorAll("#layoutSelector .layout-btn").forEach(btn => {
+      btn.classList.toggle("active", (btn.dataset.layoutPreset || "classic") === active);
+    });
+  },
+};
+
+
 // v6.10: Refine and AD are now truly independent — AD can run standalone
 // on the ESRGAN output without a base img2img pass. Keep the function as
 // a no-op so existing callers don't break, and leave the row always live.
@@ -6175,6 +6363,10 @@ async function init() {
 
   // Initialize theme switcher
   ThemeSwitcher.init();
+
+  // Initialize layout preset switcher (WP-L1) — must run after bindUI so
+  // the accordion handlers and output-gallery bindings already exist.
+  LayoutSwitcher.init();
 
   // Update check is manual — use the "Check for Updates" button in Settings.
 
@@ -6744,6 +6936,9 @@ window.Progress = Progress;
 window.showToast = showToast;
 window.ExtensionBridge = ExtensionBridge;
 window.UpdateBanner = UpdateBanner;
+window.LayoutSwitcher = LayoutSwitcher;
+window.LayoutBlocks = LayoutBlocks;
+window.SessionStrip = SessionStrip;
 
 // Go
 if (document.readyState === "loading") {

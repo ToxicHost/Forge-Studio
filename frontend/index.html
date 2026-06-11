@@ -284,6 +284,22 @@
       <div class="progress-bar"><div class="progress-fill" id="progressFill"></div></div>
     </div>
 
+    <!-- Deck layout only: row beneath the canvas that hosts the prompt /
+         LoRA / negative / generate blocks re-mounted from the params panel.
+         Inert (display:none) under Classic. -->
+    <div class="deck-zone" id="deckZone" data-zone="deck"></div>
+
+    <!-- Deck layout only: vertical session rail between canvas and params
+         panel mirroring the output gallery. Inert (display:none) under Classic. -->
+    <div class="session-strip" id="sessionStrip">
+      <div class="session-strip-head">
+        <span class="session-strip-label" data-i18n="sessionStrip.label">Session</span>
+        <span class="session-strip-count" id="sessionStripCount"></span>
+        <button class="session-strip-collapse" id="sessionStripToggle" data-i18n-title="sessionStrip.collapse.tooltip" title="Collapse">&#x2039;</button>
+      </div>
+      <div class="session-strip-scroll" id="sessionStripScroll"></div>
+    </div>
+
     <!-- Resizable divider for right panel -->
     <div class="panel-divider" id="panelDivider" title="Drag to resize · Double-click to reset"></div>
 
@@ -307,13 +323,13 @@
 
           <!-- Prompt -->
           <div class="prompt-section">
-            <div class="prompt-box">
+            <div class="prompt-box" data-block="prompt">
               <textarea class="prompt-text" id="paramPrompt" rows="3" placeholder="Describe what to generate..."></textarea>
               <div class="prompt-token-bar" id="tokenBar">
                 <span class="token-count" id="tokenCount"></span>
               </div>
             </div>
-            <div class="prompt-box lora-stack-box" id="loraStackBox">
+            <div class="prompt-box lora-stack-box" id="loraStackBox" data-block="lora">
               <div class="lora-stack-header">
                 <span class="lora-stack-label" data-i18n="loraStack.label">LoRAs</span>
                 <div class="lora-stack-actions">
@@ -328,16 +344,18 @@
               </div>
               <input type="hidden" id="paramLoraStack" value="">
             </div>
-            <div class="prompt-box">
+            <div class="prompt-box" data-block="negative">
               <textarea class="prompt-text prompt-neg" id="paramNeg" rows="2" placeholder="Negative prompt..."></textarea>
             </div>
-            <div class="gen-row">
-              <button class="gen-btn" id="genBtn"><span class="gen-shine"></span><span data-i18n="actions.generate">Generate</span></button>
-              <button class="live-btn" id="liveToggleBtn" data-i18n="live.toggle.start" data-i18n-title="live.toggle.start.tooltip" title="Start Live Painting">▶ Live</button>
-            </div>
-            <div class="gen-actions">
-              <button id="interruptBtn" data-i18n="actions.interrupt">Interrupt</button>
-              <button id="skipBtn" data-i18n="actions.skip">Skip</button>
+            <div data-block="generate">
+              <div class="gen-row">
+                <button class="gen-btn" id="genBtn"><span class="gen-shine"></span><span data-i18n="actions.generate">Generate</span></button>
+                <button class="live-btn" id="liveToggleBtn" data-i18n="live.toggle.start" data-i18n-title="live.toggle.start.tooltip" title="Start Live Painting">▶ Live</button>
+              </div>
+              <div class="gen-actions">
+                <button id="interruptBtn" data-i18n="actions.interrupt">Interrupt</button>
+                <button id="skipBtn" data-i18n="actions.skip">Skip</button>
+              </div>
             </div>
 
             <div class="workflow-row" id="workflowRow"
@@ -505,7 +523,7 @@
           </div>
 
           <!-- Canvas (FR-022: collapsible, open by default) -->
-          <div class="collapse-section">
+          <div class="collapse-section" data-deck-span="2">
             <div class="collapse-header">
               <span class="collapse-title">Canvas</span>
               <svg class="collapse-arrow open" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg>
@@ -1082,6 +1100,13 @@
               </div>
             </div>
             <div class="setting-group">
+              <div class="setting-group-title" data-i18n="settings.layout.title">Layout</div>
+              <div class="theme-selector" id="layoutSelector">
+                <button class="layout-btn active" data-layout-preset="classic" data-i18n="settings.layout.classic">Classic</button>
+                <button class="layout-btn" data-layout-preset="deck" data-i18n="settings.layout.deck">Deck</button>
+              </div>
+            </div>
+            <div class="setting-group">
               <div class="setting-group-title" data-i18n="settings.tagAutocomplete.title">Prompt Autocomplete</div>
               <div class="setting-row">
                 <span class="setting-label" data-i18n="settings.tagAutocomplete.enabled">Tag suggestions</span>
@@ -1206,7 +1231,7 @@
   // Optional modules — loaded if available, silently skipped if not.
   // debug.js exposes window.StudioDebug.* — dev-tools-only, no UI.
   const optionalScripts = ["develop.js", "video-lab.js", "workshop.js", "lexicon.js", "education.js", "codex.js", "studio-showme.js", "gallery.js", "module-tours.js", "debug.js", "canvas-webgl-preview.js"];
-  const v = "4.7.3";
+  const v = "4.7.4";
   window.__STUDIO_V = v;
   for (const s of scripts) {
     await new Promise((resolve, reject) => {

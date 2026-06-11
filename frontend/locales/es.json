@@ -46,6 +46,12 @@
 
   "settings.theme.title": "Tema",
 
+  "settings.layout.title": "Diseño",
+  "settings.layout.classic": "Clásico",
+  "settings.layout.deck": "Deck",
+  "sessionStrip.label": "Sesión",
+  "sessionStrip.collapse.tooltip": "Contraer",
+
   "settings.tagAutocomplete.title": "Autocompletado del prompt",
   "settings.tagAutocomplete.enabled": "Sugerencias de tags",
   "settings.tagAutocomplete.source": "Fuente de tags",
