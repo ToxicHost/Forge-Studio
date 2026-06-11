@@ -272,6 +272,17 @@ const Progress = {
 // APP STATE
 // ═══════════════════════════════════════════
 
+// Per-tab session id (WP-L2). Sent with every generation request so the
+// backend can register results (and scratch previews when auto-save is
+// off) under this tab's session. The session dies with the tab; the
+// backend's startup sweep reaps anything a closed tab left behind.
+// crypto.randomUUID is undefined outside secure contexts (Forge over a
+// plain-HTTP LAN IP is common) — the fallback matches the backend's
+// session-id charset gate ([a-zA-Z0-9-]).
+const SESSION_ID = (typeof crypto !== "undefined" && crypto.randomUUID)
+  ? crypto.randomUUID()
+  : `s-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}-${Math.random().toString(36).slice(2, 10)}`;
+
 const State = {
   // Generation
   generating: false,
@@ -279,14 +290,10 @@ const State = {
   _pendingVAESwitch: null,   // VAE name queued while generating
   lastResult: null,        // last GenerateResponse
   lastSeed: -1,            // last resolved seed (for recycle button)
-  outputImages: [],        // array of image URLs (file URLs or data URLs)
-  outputImagesB64: [],     // array of base64 data URLs (for canvas operations)
-  outputInfotexts: [],     // array of infotext strings, parallel to outputImages
-  outputFilenames: [],     // array of original filenames (without ext), parallel to outputImages
-  outputContentHashes: [], // SHA256 of decoded RGB pixels, parallel to outputImages; "" when not saved
-  outputFloatPaths: [],    // High Precision sidecar paths, parallel to outputImages; "" when none
-  outputMaskPaths: [],     // High Precision V2 blend-mask sidecar paths, parallel to outputImages; "" when no AD/brush composite
-  outputFloatStats: [],    // Privacy-safe HP source stats (range/clamp/headroom), parallel to outputImages; null when none
+  // Session history (WP-L2): one SessionEntry per result, newest first.
+  // Replaces the seven parallel output arrays — see _newSessionEntry for
+  // the field contract. Capped at the user-configurable session limit.
+  sessionEntries: [],
   selectedOutputIdx: 0,
   embedMetadata: true,     // whether to embed generation params in saved images
   saveOutputs: true,       // auto-save generated images to disk
@@ -332,26 +339,102 @@ const State = {
 
 
 // ═══════════════════════════════════════════
-// OUTPUT SOURCE PICKER
+// SESSION ENTRIES (WP-L2)
 // ═══════════════════════════════════════════
 //
-// State.outputImages[idx] is a same-origin /file= URL when the image
-// was autosaved (which is the source of truth on disk). State.output
-// ImagesB64[idx] is the cached base64 we received in the generation
-// response — but on Firefox + calibrated wide-gamut, decoding from a
-// data URL produces drifted pixel values vs decoding the same bytes
-// fetched from disk via the /file= URL. Autosave + result-preview <img>
-// (which uses the file URL) read correct; data-URL paths read drifted.
-//
-// Pick the file URL whenever it exists. Fall back to the b64 only for
-// outputs that don't have a saved file (Live Painting results, unsaved
-// outputs).
+// SessionEntry contract:
+//   sessionId     — this tab's SESSION_ID
+//   entryId       — server-minted id (saved/scratch) or client "live-…" id
+//   source        — "saved" | "scratch" | "live"
+//   canDeleteFile — true ONLY for source:"scratch" (backend gates deletion
+//                   on its own registry too; never inferred from a URL)
+//   url           — displayable URL: same-origin file URL for saved/scratch,
+//                   data: URL for "live"
+//   thumbUrl      — /studio/session_thumb?id=… for saved/scratch; === url for "live"
+//   b64           — base64 data URL, kept on the NEWEST entry of the latest
+//                   batch only (canvas fast path); null on all older entries.
+//                   "live" entries are exempt (their url IS the data URL).
+//   infotext, filename, contentHash, floatPath, maskPath, floatStats —
+//                   same semantics as the old parallel arrays
+//   width/height  — from the generation response when known, else 0 (the
+//                   strip fills them from naturalWidth on first load)
+//   ts            — Date.now() at insertion
+
+let _liveEntrySeq = 0;
+
+// User-configurable session history cap (Settings → "Session history size").
+function _sessionLimit() {
+  const raw = parseInt(localStorage.getItem("studio-session-limit") || "", 10);
+  const v = isNaN(raw) ? 50 : raw;
+  return Math.max(8, Math.min(200, v));
+}
+
+// Enforce the cap on State.sessionEntries (newest first) and report the
+// entries that fell off to the backend so scratch files get deleted and
+// registry rows dropped. Saved files are NEVER deleted by eviction — the
+// backend only unlinks source:"scratch" rows it owns.
+function _applySessionLimit() {
+  const limit = _sessionLimit();
+  if (State.sessionEntries.length <= limit) return;
+  const evicted = State.sessionEntries.slice(limit);
+  State.sessionEntries = State.sessionEntries.slice(0, limit);
+  if (State.selectedOutputIdx >= State.sessionEntries.length) State.selectedOutputIdx = 0;
+  _reportEvictedEntries(evicted);
+}
+
+function _reportEvictedEntries(entries) {
+  const ids = entries
+    .filter(e => e && e.entryId && e.source !== "live")
+    .map(e => e.entryId);
+  if (!ids.length) return;
+  fetch(API.base + "/studio/session_evict", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session_id: SESSION_ID, entry_ids: ids }),
+  }).catch(() => { /* best-effort; the startup sweep is the backstop */ });
+}
+
+// Empty the session (strip + grid) and tell the backend to drop this
+// session's registry rows + scratch files. Other tabs' sessions untouched.
+function _clearSession() {
+  State.sessionEntries = [];
+  State.selectedOutputIdx = 0;
+  renderOutputGallery();
+  if (State._resultPreviewActive) _hidePreview();
+  fetch(API.base + "/studio/session_clear", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session_id: SESSION_ID }),
+  }).catch(() => { /* best-effort; the startup sweep is the backstop */ });
+}
+
+// Entry for a Live Painting result: the data URL is the image — no file,
+// no backend round-trip, exempt from scratch lifecycle and b64 retention.
+function _newLiveEntry(dataUrl) {
+  return {
+    sessionId: SESSION_ID,
+    entryId: `live-${Date.now()}-${_liveEntrySeq++}`,
+    source: "live",
+    canDeleteFile: false,
+    url: dataUrl,
+    thumbUrl: dataUrl,
+    b64: dataUrl,
+    infotext: "", filename: "", contentHash: "",
+    floatPath: "", maskPath: "", floatStats: null,
+    width: 0, height: 0,
+    ts: Date.now(),
+  };
+}
+
+// Displayable source for entry `idx`. Prefer the file URL when one exists:
+// on Firefox + calibrated wide-gamut, decoding from a data URL produces
+// drifted pixel values vs decoding the same bytes fetched from disk —
+// the file URL is the byte-faithful source. Fall back to the cached b64
+// only when there's no URL ("live" entries' url IS their data URL).
 function _pickOutputSource(idx) {
-  const fileUrl = (State.outputImages && State.outputImages[idx]) || null;
-  if (typeof fileUrl === "string" && fileUrl.indexOf("/file=") !== -1) return fileUrl;
-  const b64 = (State.outputImagesB64 && State.outputImagesB64[idx]) || null;
-  if (b64) return b64;
-  return fileUrl || null;
+  const e = State.sessionEntries && State.sessionEntries[idx];
+  if (!e) return null;
+  return e.url || e.b64 || null;
 }
 
 // Backend save endpoints (/studio/save_image, /studio/export_exr) want a
@@ -425,18 +508,27 @@ async function _renderTrustedRoots() {
   } catch (_) { /* best-effort */ }
 }
 
-async function _resolveOutputAsB64(idx) {
-  const src = _pickOutputSource(idx);
+async function _resolveEntryB64(entry) {
+  if (!entry) return null;
+  // Newest-of-batch fast path; "live" entries always land here too.
+  if (entry.b64) return entry.b64;
+  const src = entry.url;
   if (!src) return null;
   if (src.startsWith("data:")) return src;
   const resp = await fetch(src);
   const blob = await resp.blob();
+  // Deliberately NOT cached back onto the entry — the newest-only
+  // retention rule is what bounds session memory.
   return await new Promise((resolve, reject) => {
     const r = new FileReader();
     r.onload = () => resolve(r.result);
     r.onerror = reject;
     r.readAsDataURL(blob);
   });
+}
+
+async function _resolveOutputAsB64(idx) {
+  return _resolveEntryB64(State.sessionEntries && State.sessionEntries[idx]);
 }
 
 
@@ -672,22 +764,13 @@ const Live = {
       State._previewShown = true;
     }
 
-    // Also populate output gallery so Result → Canvas works. Live preview
-    // isn't saved (no hash, no DB row) and we don't have its infotext yet,
-    // so all the parallel arrays get reset to length 1 with empties.
-    State.outputImages = [data.image];
-    State.outputImagesB64 = [data.image];
-    State.outputContentHashes = [""];
-    State.outputInfotexts = [""];
-    State.outputFilenames = [""];
+    // Also add to the session so Result → Canvas works. Live results JOIN
+    // the session history (source:"live", data-URL entry) instead of
+    // erasing it — intentional WP-L2 behavior change. No hash/infotext yet.
+    State.sessionEntries.unshift(_newLiveEntry(data.image));
+    _applySessionLimit();
     State.selectedOutputIdx = 0;
-    const outputSection = document.getElementById("outputSection");
-    if (outputSection) outputSection.style.display = "";
-    const outputGrid = document.getElementById("outputGrid");
-    if (outputGrid) {
-      outputGrid.innerHTML = `<div class="output-thumb selected" data-idx="0"><img src="${data.image}"></div>`;
-    }
-    SessionStrip.render();
+    renderOutputGallery();
 
     this._updateUI();
 
@@ -1897,6 +1980,7 @@ async function doGenerate() {
     cn2_upload_b64: window._cnUploadData?.[2] || null,
 
     // Settings
+    session_id: SESSION_ID,
     save_outputs: State.saveOutputs,
     save_format: State.saveFormat || "png",
     save_quality: State.saveQuality || 80,
@@ -1951,48 +2035,79 @@ async function doGenerate() {
         showToast(_label, "info");
         console.warn("[Studio] Dynamic prompts:", _dpWarnings);
       }
-      // FR-009: Prepend new results to gallery history (max 8 images)
-      const MAX_GALLERY = 8;
-      let newFileUrls;
-      // Forge's /file= route only serves its own output tree. When the user
-      // points auto-save at a custom folder, those saved paths aren't served,
-      // so /file= URLs would 404 (black preview + broken thumbnails). Display
-      // straight from the returned base64 in that case; the default output
-      // folder IS served, so keep using the lighter /file= URLs there.
+      // FR-009 / WP-L2: zip the parallel response arrays into SessionEntry
+      // objects and prepend to the session (newest first, capped at the
+      // user-configured limit).
       const _customSaveDir = (State.saveDir || "").trim();
-      if (result.image_paths && result.image_paths.length === result.images.length && !_customSaveDir) {
-        newFileUrls = result.image_paths.map(p => `${API.base}/file=${p}`);
-      } else {
-        newFileUrls = result.images;
-      }
-      const newB64 = result.images;
-      const newInfotexts = result.infotexts || [];
-      const newContentHashes = result.content_hashes || [];
-      const newFloatPaths = result.float_paths || [];
-      const newMaskPaths = result.mask_paths || [];
-      const newFloatStats = result.float_stats || [];
-      // Extract original filenames (without extension) from server paths
-      const newFilenames = (result.image_paths || []).map(p => {
-        const base = p.replace(/\\/g, "/").split("/").pop() || "";
-        return base.replace(/\.[^.]+$/, ""); // strip extension
+      const _srvEntries = result.session_entries || [];
+      // image_paths only appends on save SUCCESS, so it's parallel to
+      // images only when every save succeeded — the per-image truth is
+      // session_entries[i].path; this is just the fallback's guard.
+      const _pathsAligned = !!(result.image_paths && result.image_paths.length === result.images.length);
+      const _batchTs = Date.now();
+      const newEntries = result.images.map((b64, i) => {
+        const srv = _srvEntries[i] || {};
+        const savedPath = (srv.source === "saved" && srv.path)
+          ? srv.path
+          : (_pathsAligned ? result.image_paths[i] : "");
+        // Extract original filename (without extension) from the server path
+        const _base = (savedPath || srv.path || "").replace(/\\/g, "/").split("/").pop() || "";
+        const filename = _base.replace(/\.[^.]+$/, ""); // strip extension
+        let source, url, canDeleteFile = false;
+        if (srv.source === "scratch" && srv.path) {
+          // Unsaved result the backend wrote to session scratch. Served by
+          // /studio/file (exact registered path) — works in both Gradio and
+          // standalone mode, unlike /file= which Gradio handles itself.
+          source = "scratch";
+          canDeleteFile = true;
+          url = _studioFileUrl(srv.path);
+        } else if (savedPath) {
+          source = "saved";
+          // Forge's /file= route only serves its own output tree. When the
+          // user points auto-save at a custom folder, route through
+          // /studio/file instead — it allowlists the exact files Studio
+          // wrote, so custom-folder saves display without retaining base64.
+          url = _customSaveDir ? _studioFileUrl(savedPath) : `${API.base}/file=${savedPath}`;
+        } else {
+          // No file anywhere (save skipped AND scratch write failed):
+          // keep the data URL, same lifecycle as a Live entry.
+          source = "live";
+          url = b64;
+        }
+        const _srvId = srv.entry_id || "";
+        const entryId = _srvId || `live-${_batchTs}-${_liveEntrySeq++}`;
+        return {
+          sessionId: SESSION_ID,
+          entryId,
+          source,
+          canDeleteFile,
+          url,
+          // session_thumb only resolves server-minted ids; entries without
+          // one (live fallback, or saved without registration) show full-res.
+          thumbUrl: _srvId
+            ? `${API.base}/studio/session_thumb?id=${encodeURIComponent(_srvId)}&size=256`
+            : url,
+          // b64 retention: only the newest entry of this batch keeps the
+          // base64 (canvas fast path); everything else resolves on demand.
+          b64: (i === 0 || source === "live") ? b64 : null,
+          infotext: (result.infotexts || [])[i] || "",
+          filename,
+          contentHash: (result.content_hashes || [])[i] || "",
+          floatPath: (result.float_paths || [])[i] || "",
+          maskPath: (result.mask_paths || [])[i] || "",
+          floatStats: (result.float_stats || [])[i] || null,
+          width: result.settings?.width || 0,
+          height: result.settings?.height || 0,
+          ts: _batchTs,
+        };
       });
-      // Pad to match image count
-      while (newFilenames.length < newB64.length) newFilenames.push("");
-      // Pad infotexts to match image count
-      while (newInfotexts.length < newB64.length) newInfotexts.push("");
-      while (newContentHashes.length < newB64.length) newContentHashes.push("");
-      while (newFloatPaths.length < newB64.length) newFloatPaths.push("");
-      while (newMaskPaths.length < newB64.length) newMaskPaths.push("");
-      while (newFloatStats.length < newB64.length) newFloatStats.push(null);
-
-      State.outputImages = [...newFileUrls, ...State.outputImages].slice(0, MAX_GALLERY);
-      State.outputImagesB64 = [...newB64, ...State.outputImagesB64].slice(0, MAX_GALLERY);
-      State.outputInfotexts = [...newInfotexts, ...State.outputInfotexts].slice(0, MAX_GALLERY);
-      State.outputFilenames = [...newFilenames, ...State.outputFilenames].slice(0, MAX_GALLERY);
-      State.outputContentHashes = [...newContentHashes, ...State.outputContentHashes].slice(0, MAX_GALLERY);
-      State.outputFloatPaths = [...newFloatPaths, ...State.outputFloatPaths].slice(0, MAX_GALLERY);
-      State.outputMaskPaths = [...newMaskPaths, ...State.outputMaskPaths].slice(0, MAX_GALLERY);
-      State.outputFloatStats = [...newFloatStats, ...State.outputFloatStats].slice(0, MAX_GALLERY);
+      // Drop cached base64 from all previous entries ("live" exempt — the
+      // data URL is the image itself).
+      for (const e of State.sessionEntries) {
+        if (e.source !== "live") e.b64 = null;
+      }
+      State.sessionEntries = [...newEntries, ...State.sessionEntries];
+      _applySessionLimit();
       State.selectedOutputIdx = 0;
       renderOutputGallery();
       addHistoryEntry(`Generate (seed ${result.seed})`);
@@ -2118,7 +2233,7 @@ function _showResultPreview(idx) {
   const label = document.getElementById("canvasPreviewLabel");
   if (!wrap || !img) return;
 
-  const imgSrc = State.outputImages[idx];
+  const imgSrc = _pickOutputSource(idx);
   if (!imgSrc) return;
 
   img.src = imgSrc;
@@ -2523,11 +2638,13 @@ function renderOutputGallery() {
   if (!grid) return;
 
   // Show the output section
-  if (section) section.style.display = State.outputImages.length ? "" : "none";
+  if (section) section.style.display = State.sessionEntries.length ? "" : "none";
 
-  grid.innerHTML = State.outputImages.map((img, i) =>
+  // Thumbs use thumbUrl (server-side 256px thumbnails for saved/scratch;
+  // the data URL itself for "live") — full-res never loads in the grid.
+  grid.innerHTML = State.sessionEntries.map((e, i) =>
     `<div class="output-thumb ${i === State.selectedOutputIdx ? 'selected' : ''}" data-idx="${i}">
-      <img src="${img}" alt="Output ${i + 1}">
+      <img loading="lazy" src="${e.thumbUrl || e.url}" alt="Output ${i + 1}">
     </div>`
   ).join("");
 
@@ -2544,7 +2661,7 @@ function _updateOutputInfo() {
   const info = document.getElementById("outputInfo");
   if (!info) return;
 
-  const infotext = State.outputInfotexts[State.selectedOutputIdx] || "";
+  const infotext = State.sessionEntries[State.selectedOutputIdx]?.infotext || "";
   if (infotext) {
     const seedMatch = infotext.match(/Seed:\s*(\d+)/);
     const stepsMatch = infotext.match(/Steps:\s*(\d+)/);
@@ -2951,9 +3068,10 @@ function bindUI() {
     // + calibrated wide-gamut. Same-origin file URLs draw to canvas fine (no
     // CORS issue) since they're served by Forge's own /file= route.
     const img = _pickOutputSource(State.selectedOutputIdx);
-    const fpath = State.outputFloatPaths[State.selectedOutputIdx] || "";
-    const mpath = State.outputMaskPaths[State.selectedOutputIdx] || "";
-    const fstats = State.outputFloatStats[State.selectedOutputIdx] || null;
+    const _entry = State.sessionEntries[State.selectedOutputIdx] || {};
+    const fpath = _entry.floatPath || "";
+    const mpath = _entry.maskPath || "";
+    const fstats = _entry.floatStats || null;
     if (img) displayOnCanvas(img, { newLayer: true, layerName: "Output", undoLabel: "Send to canvas", floatPath: fpath, maskPath: mpath, floatStats: fstats });
   });
 
@@ -3008,13 +3126,14 @@ function bindUI() {
       // Remove existing menu
       document.querySelector(".gallery-ctx-menu")?.remove();
 
-      const infotext = State.outputInfotexts[idx] || "";
+      const _ctxEntry = State.sessionEntries[idx] || {};
+      const infotext = _ctxEntry.infotext || "";
       const seedMatch = infotext.match(/Seed:\s*(\d+)/);
       const seed = seedMatch ? seedMatch[1] : null;
 
       const menu = document.createElement("div");
       menu.className = "gallery-ctx-menu";
-      const _hasFloatCtx = !!(State.outputFloatPaths && State.outputFloatPaths[idx]);
+      const _hasFloatCtx = !!_ctxEntry.floatPath;
       const _exrCtxLabel = _hasFloatCtx ? "Export EXR (High Precision)" : "Export EXR (Standard)";
       menu.innerHTML = [
         { label: "Send to Canvas", action: "canvas" },
@@ -3035,10 +3154,10 @@ function bindUI() {
         if (!action) return;
         menu.remove();
         const imgSrc = _pickOutputSource(idx);
-        const fpath = State.outputFloatPaths[idx] || "";
-        const mpath = State.outputMaskPaths[idx] || "";
+        const fpath = _ctxEntry.floatPath || "";
+        const mpath = _ctxEntry.maskPath || "";
         if (action === "canvas" && imgSrc) {
-          displayOnCanvas(imgSrc, { newLayer: true, layerName: "Output", undoLabel: "Send to canvas", floatPath: fpath, maskPath: mpath, floatStats: State.outputFloatStats[idx] || null });
+          displayOnCanvas(imgSrc, { newLayer: true, layerName: "Output", undoLabel: "Send to canvas", floatPath: fpath, maskPath: mpath, floatStats: _ctxEntry.floatStats || null });
         } else if (action === "seed" && seed) {
           navigator.clipboard.writeText(seed).then(() => showToast(`Seed ${seed} copied`, "success"));
         } else if (action === "save-exr") {
@@ -3081,19 +3200,22 @@ function bindUI() {
    * everything Gallery needs for ephemeral fallback (b64Url, filename,
    * infotext) plus the hash for the saved-image lookup path. */
   function _buildCanvasNavContext() {
-    return State.outputImages.map((url, i) => ({
-      hash: State.outputContentHashes[i] || "",
-      b64Url: State.outputImagesB64[i] || url,
-      filename: State.outputFilenames[i] || "",
-      infotext: State.outputInfotexts[i] || "",
+    return State.sessionEntries.map((e) => ({
+      hash: e.contentHash || "",
+      // Gallery's ephemeral view tolerates a same-origin file URL here
+      // (it feeds <img src>, fetch(), displayOnCanvas, and a download
+      // anchor — all URL-capable), so older entries don't need base64.
+      b64Url: e.b64 || e.url,
+      filename: e.filename || "",
+      infotext: e.infotext || "",
       // High Precision sidecar — Gallery threads this through to Develop
       // via setFloatSource when the detail view opens.
-      floatPath: State.outputFloatPaths[i] || "",
+      floatPath: e.floatPath || "",
       // V2: blend-mask sidecar (AD/brush composite). When present,
       // Develop will composite canvas-uint8 over the float buffer.
-      maskPath: State.outputMaskPaths[i] || "",
+      maskPath: e.maskPath || "",
       // Privacy-safe HP source stats for the Develop quality badge.
-      floatStats: State.outputFloatStats[i] || null,
+      floatStats: e.floatStats || null,
     }));
   }
 
@@ -3127,9 +3249,8 @@ function bindUI() {
     const canvasArea = document.getElementById("canvasArea");
     if (canvasArea && canvasArea.contains(e.target)) {
       const img = _pickOutputSource(idx);
-      const fpath = State.outputFloatPaths[idx] || "";
-      const mpath = State.outputMaskPaths[idx] || "";
-      if (img) displayOnCanvas(img, { newLayer: true, layerName: "Output", undoLabel: "Drag to canvas", floatPath: fpath, maskPath: mpath, floatStats: State.outputFloatStats[idx] || null });
+      const _dragEntry = State.sessionEntries[idx] || {};
+      if (img) displayOnCanvas(img, { newLayer: true, layerName: "Output", undoLabel: "Drag to canvas", floatPath: _dragEntry.floatPath || "", maskPath: _dragEntry.maskPath || "", floatStats: _dragEntry.floatStats || null });
     }
   });
 
@@ -3194,8 +3315,9 @@ function bindUI() {
   // pipeline compatibility, just without precision gain.
   async function _exportEXR(idx, toGallery) {
     if (idx == null || idx < 0) return;
-    const floatPath = State.outputFloatPaths[idx] || "";
-    const maskPath  = State.outputMaskPaths[idx]  || "";
+    const _exrEntry = State.sessionEntries[idx] || {};
+    const floatPath = _exrEntry.floatPath || "";
+    const maskPath  = _exrEntry.maskPath  || "";
     // Backend wants image_b64. Pull from the saved /file= URL when one
     // exists (byte-faithful to disk); fall back to the cached base64 only
     // for unsaved outputs.
@@ -3217,7 +3339,7 @@ function bindUI() {
       } catch (e) { /* fall through with w=h=0 */ }
     }
     const subfolder = toGallery ? "" : "downloads";
-    const stem = (State.outputFilenames[idx] || "").trim();
+    const stem = (_exrEntry.filename || "").trim();
     const body = {
       float_path: floatPath,
       // V2: when a mask sidecar exists, also send image_b64 so the
@@ -3309,8 +3431,9 @@ function bindUI() {
     const srcMime = (imgSrc.match(/^data:([^;]+)/) || [])[1] || "image/png";
     const srcFmt = srcMime === "image/jpeg" ? "jpeg" : (srcMime === "image/webp" ? "webp" : "png");
     const defFmt = State.saveFormat || srcFmt || "png";
-    const stem = (State.outputFilenames[idx] || `studio_${Date.now()}`).replace(/\.[^.]+$/, "");
-    const infotext = State.embedMetadata ? (State.outputInfotexts[idx] || "") : "";
+    const _saveEntry = State.sessionEntries[idx] || {};
+    const stem = (_saveEntry.filename || `studio_${Date.now()}`).replace(/\.[^.]+$/, "");
+    const infotext = State.embedMetadata ? (_saveEntry.infotext || "") : "";
 
     // 1) Server-side native "Save As…" dialog. This is the reliable path for a
     //    local Forge install: it pops a real OS dialog regardless of browser
@@ -3397,8 +3520,9 @@ function bindUI() {
     // the source is a URL.
     const imgSrc = await _resolveOutputAsB64(State.selectedOutputIdx);
     if (!imgSrc) return;
+    const _selEntry = State.sessionEntries[State.selectedOutputIdx] || {};
     const infotext = State.embedMetadata
-      ? (State.outputInfotexts[State.selectedOutputIdx] || "")
+      ? (_selEntry.infotext || "")
       : "";
     // toGallery + a configured "Save to Gallery folder" (server-side absolute
     // path) routes the write there. Without a configured folder we preserve
@@ -3407,7 +3531,7 @@ function bindUI() {
     // Gallery-destination failure apart from a plain save failure.
     const galleryDir = toGallery ? (State.galleryFolder || "").trim() : "";
     try {
-      const origName = State.outputFilenames[State.selectedOutputIdx] || null;
+      const origName = _selEntry.filename || null;
       const result = await API.saveImage({
         image_b64: imgSrc,
         format: fmt,
@@ -3439,7 +3563,7 @@ function bindUI() {
       try {
         const a = document.createElement("a");
         a.href = imgSrc;
-        a.download = (State.outputFilenames[State.selectedOutputIdx] || `studio_${Date.now()}`)
+        a.download = (_selEntry.filename || `studio_${Date.now()}`)
           .replace(/\.[^.]+$/, "") + "." + (fmt === "jpeg" ? "jpg" : fmt);
         document.body.appendChild(a); a.click();
         setTimeout(() => document.body.removeChild(a), 100);
@@ -3461,7 +3585,7 @@ function bindUI() {
     // users know whether they're getting true HDR data or a uint8 → EXR
     // conversion.
     const _idx = State.selectedOutputIdx;
-    const _hasFloat = !!(State.outputFloatPaths && State.outputFloatPaths[_idx]);
+    const _hasFloat = !!State.sessionEntries[_idx]?.floatPath;
     const _exrLabel = _hasFloat ? "Export EXR (High Precision)" : "Export EXR (Standard)";
     const _fmt = State.saveFormat || "png";
 
@@ -3882,6 +4006,25 @@ function bindUI() {
   document.getElementById("toggleSaveOutputs")?.addEventListener("click", () => {
     State.saveOutputs = document.getElementById("toggleSaveOutputs")?.classList.contains("on") ?? true;
   });
+
+  // Session history size (WP-L2) — clamped 8–200, persisted, applied
+  // immediately (lowering the limit evicts the overflow right away).
+  {
+    const limitInput = document.getElementById("settingSessionLimit");
+    if (limitInput) {
+      limitInput.value = _sessionLimit();
+      limitInput.addEventListener("change", () => {
+        const v = Math.max(8, Math.min(200, parseInt(limitInput.value, 10) || 50));
+        limitInput.value = v;
+        localStorage.setItem("studio-session-limit", String(v));
+        _applySessionLimit();
+        renderOutputGallery();
+      });
+    }
+  }
+  // Clear session — Settings button + session strip header button (deck)
+  document.getElementById("clearSessionBtn")?.addEventListener("click", _clearSession);
+  document.getElementById("sessionStripClear")?.addEventListener("click", _clearSession);
 
   // High Precision: capture float32 VAE output and save .float32.bin sidecar
   document.getElementById("toggleHighPrecision")?.addEventListener("click", () => {
@@ -6113,14 +6256,17 @@ const SessionStrip = {
     if (LayoutSwitcher.current !== "deck") return;
     const scroll = document.getElementById("sessionStripScroll");
     if (!scroll) return;
-    scroll.innerHTML = State.outputImages.map((img, i) =>
-      `<div class="session-thumb ${i === State.selectedOutputIdx ? "selected" : ""}" data-idx="${i}">
-        <img loading="lazy" src="${img}" alt="">
+    // thumbUrl only — the strip never loads full-res images. Entries that
+    // know their dimensions get the aspect-ratio inline up front.
+    scroll.innerHTML = State.sessionEntries.map((e, i) =>
+      `<div class="session-thumb ${i === State.selectedOutputIdx ? "selected" : ""}" data-idx="${i}"${
+        (e.width && e.height) ? ` style="aspect-ratio:${e.width} / ${e.height}"` : ""}>
+        <img loading="lazy" src="${e.thumbUrl || e.url}" alt="">
       </div>`
     ).join("");
-    // Aspect-ratio-correct thumbs: set each thumb's aspect-ratio from the
-    // image's natural dimensions once loaded (auto until then).
-    scroll.querySelectorAll(".session-thumb img").forEach(img => {
+    // Fallback for entries without known dimensions: set aspect-ratio from
+    // the thumb's natural dimensions once loaded (auto until then).
+    scroll.querySelectorAll(".session-thumb:not([style]) img").forEach(img => {
       const apply = () => {
         if (img.naturalWidth && img.naturalHeight) {
           img.parentElement.style.aspectRatio = `${img.naturalWidth} / ${img.naturalHeight}`;
@@ -6130,7 +6276,7 @@ const SessionStrip = {
       else img.addEventListener("load", apply, { once: true });
     });
     const count = document.getElementById("sessionStripCount");
-    if (count) count.textContent = State.outputImages.length ? String(State.outputImages.length) : "";
+    if (count) count.textContent = State.sessionEntries.length ? String(State.sessionEntries.length) : "";
   },
 
   initCollapse() {

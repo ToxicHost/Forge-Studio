@@ -25,6 +25,11 @@
 
   "settings.generation.title": "Generierung",
   "settings.generation.saveOutputs": "Ergebnisse speichern",
+  "settings.generation.sessionLimit": "Größe des Sitzungsverlaufs",
+  "settings.generation.sessionLimit.tooltip": "Wie viele aktuelle Ergebnisse die Sitzung behält (8–200). Herausfallende Einträge verschwinden aus der Sitzung; ungespeicherte temporäre Vorschauen werden mit ihnen gelöscht. Gespeicherte Dateien auf der Festplatte bleiben unangetastet.",
+  "settings.generation.clearSession": "Sitzung leeren",
+  "settings.generation.clearSession.tooltip": "Leert den Sitzungsverlauf und löscht die temporären Vorschau-Dateien. Gespeicherte Ausgabedateien werden niemals gelöscht.",
+  "sessionStrip.clear.tooltip": "Sitzung leeren — gespeicherte Dateien bleiben erhalten",
   "settings.generation.highPrecision": "Hohe Präzision",
   "settings.generation.highPrecision.tooltip": "Speichert hochpräzise Float-Daten neben jedem Bild. Verhindert Bänderbildung und gibt dem Entwickeln-Modul ~0,5 Blendenstufen Lichter-Spielraum. Erzeugt ~0,5–3 s zusätzliche Zeit und ~12 MB pro Bild. Am besten mit fp32-VAE.",
   "settings.generation.livePreview": "Live-Vorschau",

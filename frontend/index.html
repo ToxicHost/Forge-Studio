@@ -295,6 +295,7 @@
       <div class="session-strip-head">
         <span class="session-strip-label" data-i18n="sessionStrip.label">Session</span>
         <span class="session-strip-count" id="sessionStripCount"></span>
+        <button class="session-strip-clear" id="sessionStripClear" data-i18n-title="sessionStrip.clear.tooltip" title="Clear session — saved files on disk are kept">&#x1f5d1;</button>
         <button class="session-strip-collapse" id="sessionStripToggle" data-i18n-title="sessionStrip.collapse.tooltip" title="Collapse">&#x2039;</button>
       </div>
       <div class="session-strip-scroll" id="sessionStripScroll"></div>
@@ -876,6 +877,13 @@
             <div class="setting-group">
               <div class="setting-group-title" data-i18n="settings.generation.title">Generation</div>
               <div class="setting-row"><span class="setting-label" data-i18n="settings.generation.saveOutputs">Save outputs</span><div class="toggle-track on" id="toggleSaveOutputs"><div class="toggle-knob"></div></div></div>
+              <div class="setting-row" data-i18n-title="settings.generation.sessionLimit.tooltip" title="How many recent results the session keeps (8–200). Entries that fall off are gone from the session; unsaved scratch previews are deleted with them. Saved files on disk are never touched.">
+                <span class="setting-label" data-i18n="settings.generation.sessionLimit">Session history size</span>
+                <input type="number" class="param-val" id="settingSessionLimit" min="8" max="200" step="1" value="50" style="width:64px;">
+              </div>
+              <div class="setting-row" style="gap:6px;justify-content:flex-end;">
+                <button class="defaults-btn" id="clearSessionBtn" style="font-size:10px;padding:3px 8px;" data-i18n-title="settings.generation.clearSession.tooltip" title="Empty the session history and delete its temporary scratch previews. Saved output files are never deleted." data-i18n="settings.generation.clearSession">Clear session</button>
+              </div>
               <div class="setting-row" data-i18n-title="settings.generation.highPrecision.tooltip" title="Saves high-precision float data alongside each image. Eliminates banding and gives the Develop module ~0.5 stops of highlight headroom. Adds ~0.5–3s and ~12 MB per image. Best with fp32 VAE."><span class="setting-label" data-i18n="settings.generation.highPrecision">High precision</span><div class="toggle-track" id="toggleHighPrecision"><div class="toggle-knob"></div></div></div>
               <div class="setting-row"><span class="setting-label" data-i18n="settings.generation.livePreview">Live preview</span><div class="toggle-track on" id="toggleLivePreview"><div class="toggle-knob"></div></div></div>
               <div class="setting-row"><span class="setting-label" data-i18n="settings.generation.rememberSession">Remember last session</span><div class="toggle-track" id="toggleRememberSession"><div class="toggle-knob"></div></div></div>
@@ -1231,7 +1239,7 @@
   // Optional modules — loaded if available, silently skipped if not.
   // debug.js exposes window.StudioDebug.* — dev-tools-only, no UI.
   const optionalScripts = ["develop.js", "video-lab.js", "workshop.js", "lexicon.js", "education.js", "codex.js", "studio-showme.js", "gallery.js", "module-tours.js", "debug.js", "canvas-webgl-preview.js"];
-  const v = "4.7.4";
+  const v = "4.8.0";
   window.__STUDIO_V = v;
   for (const s of scripts) {
     await new Promise((resolve, reject) => {

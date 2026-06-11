@@ -3566,8 +3566,9 @@ async function _ctxSaveCanvas(fmt) {
     // Embed generation metadata when available (all formats that support it)
     const State = window.State;
     let metadata = null;
-    if (State?.embedMetadata && State.outputInfotexts?.length) {
-        metadata = State.outputInfotexts[State.selectedOutputIdx] || State.outputInfotexts[0] || null;
+    if (State?.embedMetadata && State.sessionEntries?.length) {
+        metadata = State.sessionEntries[State.selectedOutputIdx]?.infotext
+            || State.sessionEntries[0]?.infotext || null;
     }
 
     // Use the active Canvas document's name as the save filename hint so

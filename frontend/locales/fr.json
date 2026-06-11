@@ -25,6 +25,11 @@
 
   "settings.generation.title": "Génération",
   "settings.generation.saveOutputs": "Enregistrer les résultats",
+  "settings.generation.sessionLimit": "Taille de l'historique de session",
+  "settings.generation.sessionLimit.tooltip": "Nombre de résultats récents conservés par la session (8–200). Les entrées qui sortent disparaissent de la session ; les aperçus temporaires non enregistrés sont supprimés avec elles. Les fichiers enregistrés sur le disque ne sont jamais touchés.",
+  "settings.generation.clearSession": "Vider la session",
+  "settings.generation.clearSession.tooltip": "Vide l'historique de session et supprime ses aperçus temporaires. Les fichiers de sortie enregistrés ne sont jamais supprimés.",
+  "sessionStrip.clear.tooltip": "Vider la session — les fichiers enregistrés sur le disque sont conservés",
   "settings.generation.highPrecision": "Haute précision",
   "settings.generation.highPrecision.tooltip": "Enregistre des données flottantes haute précision en parallèle de chaque image. Élimine les bandes et offre au module Développer environ 0,5 IL de marge dans les hautes lumières. Ajoute environ 0,5–3 s et 12 Mo par image. Idéal avec un VAE fp32.",
   "settings.generation.livePreview": "Aperçu en direct",

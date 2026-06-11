@@ -64,6 +64,11 @@
 
   "settings.generation.title": "Generation",
   "settings.generation.saveOutputs": "Save outputs",
+  "settings.generation.sessionLimit": "Session history size",
+  "settings.generation.sessionLimit.tooltip": "How many recent results the session keeps (8–200). Entries that fall off are gone from the session; unsaved scratch previews are deleted with them. Saved files on disk are never touched.",
+  "settings.generation.clearSession": "Clear session",
+  "settings.generation.clearSession.tooltip": "Empty the session history and delete its temporary scratch previews. Saved output files are never deleted.",
+  "sessionStrip.clear.tooltip": "Clear session — saved files on disk are kept",
   "settings.generation.highPrecision": "High precision",
   "settings.generation.highPrecision.tooltip": "Saves high-precision float data alongside each image. Eliminates banding and gives the Develop module ~0.5 stops of highlight headroom. Adds ~0.5–3s and ~12 MB per image. Best with fp32 VAE.",
   "settings.generation.livePreview": "Live preview",
