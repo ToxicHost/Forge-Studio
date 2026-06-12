@@ -6486,6 +6486,17 @@ const SessionStrip = {
   syncStripCol() {
     const on = LayoutSwitcher.current === "deck" || this.classicEnabled();
     document.documentElement.toggleAttribute("data-strip-col", on);
+    this.syncLive();
+  },
+
+  // data-strip-live = the strip is actually on screen (column active AND
+  // not hidden via the layout map). While live, the panel's duplicate
+  // thumbnail grid is hidden (CSS) — info + action buttons remain.
+  syncLive() {
+    const strip = document.getElementById("sessionStrip");
+    const live = document.documentElement.hasAttribute("data-strip-col")
+      && !!strip && !strip.classList.contains("strip-hidden");
+    document.documentElement.toggleAttribute("data-strip-live", live);
   },
 
   initClassicToggle() {
@@ -6512,6 +6523,7 @@ const SessionStrip = {
     if (!el || !strip) return;
     el.classList.toggle("collapsed", !!strip.collapsed);
     el.classList.toggle("strip-hidden", strip.visible === false);
+    this.syncLive();
   },
 
   initCollapse() {

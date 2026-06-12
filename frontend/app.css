@@ -2698,3 +2698,17 @@ body.customizing .customize-divider:hover { background: var(--accent); opacity: 
 
 /* The drop indicator must never straddle a column break. */
 [data-zone="panel"] > .drop-indicator { break-inside: avoid; }
+
+
+/* ═══════════════════════════════════════════
+   SESSION STRIP REPLACES THE PANEL GRID (WP-L3.3)
+   While the strip is on screen (data-strip-live), the panel's thumbnail
+   grid is a duplicate — hide it and keep the selected-result info +
+   action buttons (Result → Canvas / Save / Save As live only there).
+   ═══════════════════════════════════════════ */
+:root[data-strip-live] #outputGrid { display: none; }
+/* Below 1600px the strip force-collapses to a rail, so the grid must
+   come back or there'd be no usable gallery at all. */
+@media (max-width: 1600px) {
+  :root[data-strip-live] #outputGrid { display: grid; }
+}
