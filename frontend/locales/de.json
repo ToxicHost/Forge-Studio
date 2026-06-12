@@ -55,6 +55,8 @@
   "settings.layout.classic": "Klassisch",
   "settings.layout.deck": "Deck",
   "settings.layout.customize": "Layout anpassen",
+  "settings.layout.classicStrip": "Sitzungsleiste im klassischen Layout",
+  "settings.layout.classicStrip.tooltip": "Zeigt die Sitzungsverlaufs-Leiste neben der Leinwand auch im klassischen Layout.",
   "settings.layout.current": "Aktuelles Layout",
   "settings.layout.shareHint": "Layouts sind JSON-Dateien im Ordner studio_layouts/ der Erweiterung — kopiere eine Datei dorthin, um ein geteiltes Layout zu importieren.",
   "layout.save": "Speichern",

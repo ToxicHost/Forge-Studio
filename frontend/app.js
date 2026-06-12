@@ -6253,6 +6253,9 @@ const LayoutBlocks = {
     { id: "lora",       label: "LoRAs",         canHide: true  },
     { id: "negative",   label: "Negative",      canHide: true  },
     { id: "generate",   label: "Generate",      canHide: false },
+    { id: "output",     label: "Output gallery", canHide: true },
+    { id: "layers",     label: "Layers",        canHide: true  },
+    { id: "history",    label: "History",       canHide: true  },
     { id: "regions",    label: "Regions",       canHide: true  },
     { id: "model",      label: "Model & VAE",   canHide: true  },
     { id: "sampling",   label: "Sampling",      canHide: true  },
@@ -6440,7 +6443,9 @@ const LayoutBlocks = {
 // replaces the data layer underneath without touching this.
 const SessionStrip = {
   render() {
-    if (LayoutSwitcher.current !== "deck") return;
+    // The strip column is active under the deck preset or Classic with
+    // the "Session strip in Classic" setting — both set data-strip-col.
+    if (!document.documentElement.hasAttribute("data-strip-col")) return;
     const scroll = document.getElementById("sessionStripScroll");
     if (!scroll) return;
     // thumbUrl only — the strip never loads full-res images. Entries that
@@ -6472,6 +6477,30 @@ const SessionStrip = {
     return localStorage.getItem("studio-strip-collapsed") === "true";
   },
 
+  // "Session strip in Classic" — user opt-in; the strip column itself is
+  // gated by the data-strip-col root attribute in CSS.
+  classicEnabled() {
+    return localStorage.getItem("studio-classic-strip") === "true";
+  },
+
+  syncStripCol() {
+    const on = LayoutSwitcher.current === "deck" || this.classicEnabled();
+    document.documentElement.toggleAttribute("data-strip-col", on);
+  },
+
+  initClassicToggle() {
+    const t = document.getElementById("toggleClassicStrip");
+    if (!t) return;
+    t.classList.toggle("on", this.classicEnabled());
+    t.addEventListener("click", () => {
+      const on = t.classList.toggle("on");
+      localStorage.setItem("studio-classic-strip", String(on));
+      this.syncStripCol();
+      this.render();
+      window.dispatchEvent(new Event("resize"));
+    });
+  },
+
   // Strip state lives in the layout map (WP-L3). Visible:false collapses
   // the grid column entirely; the hidden tray offers restore.
   applyState(strip) {
@@ -6496,6 +6525,16 @@ const SessionStrip = {
       // Canvas-area width changed — recompute zoom/fit
       window.dispatchEvent(new Event("resize"));
     });
+    // Collapsed rail: clicking anywhere on it expands (the slim rail's
+    // dedicated button is easy to miss). Buttons keep their own handlers;
+    // the toggle's click above already flips the class before this runs.
+    strip.addEventListener("click", e => {
+      if (!strip.classList.contains("collapsed")) return;
+      if (e.target.closest("button")) return;
+      strip.classList.remove("collapsed");
+      LayoutManager.setStripState({ collapsed: false });
+      window.dispatchEvent(new Event("resize"));
+    });
   },
 };
 
@@ -6505,6 +6544,7 @@ const LayoutSwitcher = {
   init() {
     LayoutManager.init();
     SessionStrip.initCollapse();
+    SessionStrip.initClassicToggle();
     Customizer.init();
     const saved = localStorage.getItem("studio-layout-preset") || "classic";
     this.apply(saved, /*boot*/ true);
@@ -6546,6 +6586,7 @@ const LayoutSwitcher = {
     this.current = base;
     localStorage.setItem("studio-layout-preset", base);
     this._updateButtons(base);
+    SessionStrip.syncStripCol();
   },
 
   apply(preset, boot = false) {
@@ -6556,18 +6597,19 @@ const LayoutSwitcher = {
       this.setBase(cached.base);
       LayoutManager.setWorking(cached, LayoutManager.activeName);
       LayoutBlocks.applyMap(cached);
-      if (cached.base === "deck") {
-        SessionStrip.render();
-        this._discloseSections();
-      }
+      SessionStrip.render();
+      if (cached.base === "deck") this._discloseSections();
       return;
     }
     if (boot && preset === "classic") {
       // Classic at boot is the factory DOM — touch nothing structural
       // (no markers, no storage write, no resize dispatch) so a session
       // that never customizes stays byte-identical to pre-WP behavior.
+      // (Classic + "Session strip in Classic" is an explicit opt-in.)
       this.current = "classic";
       this._updateButtons("classic");
+      SessionStrip.syncStripCol();
+      if (SessionStrip.classicEnabled()) SessionStrip.render();
       if (cached) {
         // Factory-equivalent map may still carry strip state / width.
         LayoutManager.setWorking(cached, LayoutManager.activeName);
@@ -6585,10 +6627,8 @@ const LayoutSwitcher = {
       : LayoutBlocks.factoryMap(preset);
     LayoutManager.setWorking(map, boot ? LayoutManager.activeName : "");
     LayoutBlocks.applyMap(map); // dispatches the resize event itself
-    if (preset === "deck") {
-      SessionStrip.render();
-      this._discloseSections();
-    }
+    SessionStrip.render();
+    if (preset === "deck") this._discloseSections();
   },
 
   // Disclose all feature sections on entering deck. Sets the accordion's
@@ -6796,10 +6836,8 @@ const LayoutManager = {
     LayoutSwitcher.setBase(map.base);
     this.setWorking(map, name);
     LayoutBlocks.applyMap(map, { lift: Customizer.active });
-    if (map.base === "deck") {
-      SessionStrip.render();
-      LayoutSwitcher._discloseSections();
-    }
+    SessionStrip.render();
+    if (map.base === "deck") LayoutSwitcher._discloseSections();
     if (Customizer.active) Customizer.refreshChrome();
     else Customizer._renderTray();
   },
@@ -7077,16 +7115,29 @@ const Customizer = {
         this._indicator.remove();
         return;
       }
-      const over = under.closest("[data-block]");
-      if (over && over !== d.el && over.parentElement === zone) {
-        const r = over.getBoundingClientRect();
-        const before = zone.dataset.zone === "deck"
+      // Forgiving targeting: anywhere inside a zone snaps to the NEAREST
+      // block (by center distance), before/after by its midpoint on the
+      // zone's flow axis. The pointer never has to sit exactly on a block.
+      const horizontal = zone.dataset.zone === "deck";
+      let best = null, bestDist = Infinity;
+      for (const b of zone.querySelectorAll(":scope > [data-block]")) {
+        if (b === d.el) continue;
+        const r = b.getBoundingClientRect();
+        if (!r.width && !r.height) continue; // display:none block (e.g. Regions)
+        const dx = e.clientX - (r.left + r.width / 2);
+        const dy = e.clientY - (r.top + r.height / 2);
+        const dist = dx * dx + dy * dy;
+        if (dist < bestDist) { bestDist = dist; best = b; }
+      }
+      if (best) {
+        const r = best.getBoundingClientRect();
+        const before = horizontal
           ? e.clientX < r.left + r.width / 2   // horizontal midpoint in deck
           : e.clientY < r.top + r.height / 2;  // vertical midpoint in panel
-        zone.insertBefore(this._indicator, before ? over : over.nextSibling);
+        zone.insertBefore(this._indicator, before ? best : best.nextSibling);
       } else {
-        // Zone whitespace → indicator at zone end (panel keeps the hidden
-        // tray pinned last).
+        // Empty zone → indicator at zone end (panel keeps the hidden tray
+        // pinned last).
         const tail = zone.dataset.zone === "panel" ? document.getElementById("hiddenTray") : null;
         zone.insertBefore(this._indicator, (tail && tail.parentElement === zone) ? tail : null);
       }

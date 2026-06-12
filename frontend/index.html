@@ -413,7 +413,7 @@
           </div>
 
           <!-- Output gallery -->
-          <div class="output-section" id="outputSection" style="display:none;">
+          <div class="output-section" id="outputSection" style="display:none;" data-block="output">
             <div class="output-grid" id="outputGrid"></div>
             <div class="output-info" id="outputInfo"></div>
             <div class="output-actions">
@@ -816,7 +816,8 @@
             </div>
           </div>
 
-          <!-- Layers -->
+          <!-- Layers (wrapper makes the header+body pair one layout block) -->
+          <div data-block="layers">
           <div class="section-header" data-collapse="layersList">
             <span class="section-arrow">&#x25BC;</span>
             <span class="section-label" data-i18n="panels.layers">Layers</span>
@@ -847,8 +848,10 @@
               <div class="layer-vis"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 12s4-8 11-8 11 8 11 8-4 8-11 8-11-8-11-8z"/><circle cx="12" cy="12" r="3"/></svg></div>
             </div>
           </div>
+          </div>
 
-          <!-- Action History -->
+          <!-- Action History (wrapper makes the header+body pair one layout block) -->
+          <div data-block="history">
           <div class="section-header" data-collapse="historyList">
             <span class="section-arrow">&#x25BC;</span>
             <span class="section-label" data-i18n="panels.history">History</span>
@@ -858,6 +861,7 @@
             </div>
           </div>
           <div id="historyList" class="section-body"></div>
+          </div>
 
           <!-- Customize mode: tray of hidden blocks. Inert (display:none)
                unless customizing or blocks are hidden. -->
@@ -1128,6 +1132,10 @@
                 <span class="setting-label" data-i18n="settings.layout.customize">Customize layout</span>
                 <div class="toggle-track" id="toggleCustomize"><div class="toggle-knob"></div></div>
               </div>
+              <div class="setting-row" data-i18n-title="settings.layout.classicStrip.tooltip" title="Show the session history strip next to the canvas in the Classic layout too.">
+                <span class="setting-label" data-i18n="settings.layout.classicStrip">Session strip in Classic</span>
+                <div class="toggle-track" id="toggleClassicStrip"><div class="toggle-knob"></div></div>
+              </div>
               <div class="setting-row">
                 <span class="setting-label" data-i18n="settings.layout.current">Current layout</span>
                 <span id="layoutCurrentName" style="font-size:11px;color:var(--text-3);font-family:var(--mono);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">&mdash;</span>
@@ -1269,7 +1277,7 @@
   // Optional modules — loaded if available, silently skipped if not.
   // debug.js exposes window.StudioDebug.* — dev-tools-only, no UI.
   const optionalScripts = ["develop.js", "video-lab.js", "workshop.js", "lexicon.js", "education.js", "codex.js", "studio-showme.js", "gallery.js", "module-tours.js", "debug.js", "canvas-webgl-preview.js"];
-  const v = "4.9.0";
+  const v = "4.9.1";
   window.__STUDIO_V = v;
   for (const s of scripts) {
     await new Promise((resolve, reject) => {

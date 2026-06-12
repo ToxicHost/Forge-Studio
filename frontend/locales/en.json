@@ -101,6 +101,8 @@
   "settings.layout.classic": "Classic",
   "settings.layout.deck": "Deck",
   "settings.layout.customize": "Customize layout",
+  "settings.layout.classicStrip": "Session strip in Classic",
+  "settings.layout.classicStrip.tooltip": "Show the session history strip next to the canvas in the Classic layout too.",
   "settings.layout.current": "Current layout",
   "settings.layout.shareHint": "Layouts are JSON files in the extension's studio_layouts/ folder — copy a file there to import a shared layout.",
   "layout.save": "Save",

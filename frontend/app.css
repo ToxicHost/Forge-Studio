@@ -2274,10 +2274,11 @@ body {
 
 /* ═══════════════════════════════════════════
    LAYOUT PRESETS (WP-L1)
-   Everything below is gated behind [data-layout="deck"] except the two
-   base rules that keep the deck zone and session strip inert under the
-   Classic (default) layout. Theme tokens only — all themes and
-   colorblind modes inherit.
+   Everything below is gated behind [data-layout="deck"] or
+   [data-strip-col] — the latter is set by JS whenever the session-strip
+   column is active (deck preset, or Classic with the "Session strip in
+   Classic" setting on), so it never applies to an untouched Classic.
+   Theme tokens only — all themes and colorblind modes inherit.
    ═══════════════════════════════════════════ */
 
 /* Inert under Classic */
@@ -2289,18 +2290,18 @@ body {
    Deck switches the Studio page to a 2-row grid so the deck zone stacks
    beneath the canvas and the session strip becomes its own column.
    The fixed-position #hsvPopup is out of flow and unaffected. */
-[data-layout="deck"] #app-studio.active {
+[data-strip-col] #app-studio.active {
   display: grid;
   grid-template-columns: auto minmax(0, 1fr) auto auto auto auto;
   grid-template-rows: minmax(0, 1fr) auto;
 }
-[data-layout="deck"] #app-studio > .toolstrip          { grid-column: 1; grid-row: 1 / 3; }
-[data-layout="deck"] #app-studio > .canvas-area        { grid-column: 2; grid-row: 1; }
-[data-layout="deck"] #app-studio > .deck-zone          { grid-column: 2; grid-row: 2; }
-[data-layout="deck"] #app-studio > .session-strip      { grid-column: 3; grid-row: 1 / 3; }
-[data-layout="deck"] #app-studio > .panel-divider      { grid-column: 4; grid-row: 1 / 3; }
-[data-layout="deck"] #app-studio > .panel-collapse-btn { grid-column: 5; grid-row: 1 / 3; }
-[data-layout="deck"] #app-studio > .panel-right        { grid-column: 6; grid-row: 1 / 3; }
+[data-strip-col] #app-studio > .toolstrip          { grid-column: 1; grid-row: 1 / 3; }
+[data-strip-col] #app-studio > .canvas-area        { grid-column: 2; grid-row: 1; }
+[data-strip-col] #app-studio > .deck-zone          { grid-column: 2; grid-row: 2; }
+[data-strip-col] #app-studio > .session-strip      { grid-column: 3; grid-row: 1 / 3; }
+[data-strip-col] #app-studio > .panel-divider      { grid-column: 4; grid-row: 1 / 3; }
+[data-strip-col] #app-studio > .panel-collapse-btn { grid-column: 5; grid-row: 1 / 3; }
+[data-strip-col] #app-studio > .panel-right        { grid-column: 6; grid-row: 1 / 3; }
 
 /* ── Deck zone ── */
 [data-layout="deck"] .deck-zone:not(:empty) {
@@ -2324,7 +2325,7 @@ body {
 [data-layout="deck"] .deck-zone .prompt-text { min-height: 80px; }
 
 /* ── Session strip ── */
-[data-layout="deck"] .session-strip {
+[data-strip-col] .session-strip {
   display: flex;
   flex-direction: column;
   width: 192px;
@@ -2332,30 +2333,30 @@ body {
   background: var(--bg-surface);
   border-left: 1px solid var(--border-subtle);
 }
-[data-layout="deck"] .session-strip-head {
+[data-strip-col] .session-strip-head {
   display: flex; align-items: center; gap: 6px;
   padding: 8px 10px;
   border-bottom: 1px solid var(--border-subtle);
   flex-shrink: 0;
 }
-[data-layout="deck"] .session-strip-label {
+[data-strip-col] .session-strip-label {
   flex: 1;
   font-size: 10px; font-weight: 600; letter-spacing: 0.8px;
   text-transform: uppercase; color: var(--text-3);
 }
-[data-layout="deck"] .session-strip-count {
+[data-strip-col] .session-strip-count {
   font-family: var(--mono); font-size: 9px; color: var(--text-4);
 }
-[data-layout="deck"] .session-strip-collapse,
-[data-layout="deck"] .session-strip-clear {
+[data-strip-col] .session-strip-collapse,
+[data-strip-col] .session-strip-clear {
   background: none; border: none; padding: 0 2px;
   color: var(--text-4); cursor: pointer;
   font-size: 13px; line-height: 1;
 }
-[data-layout="deck"] .session-strip-collapse:hover { color: var(--text-1); }
-[data-layout="deck"] .session-strip-clear { font-size: 11px; }
-[data-layout="deck"] .session-strip-clear:hover { color: var(--red, var(--text-1)); }
-[data-layout="deck"] .session-strip-scroll {
+[data-strip-col] .session-strip-collapse:hover { color: var(--text-1); }
+[data-strip-col] .session-strip-clear { font-size: 11px; }
+[data-strip-col] .session-strip-clear:hover { color: var(--red, var(--text-1)); }
+[data-strip-col] .session-strip-scroll {
   flex: 1; min-height: 0;
   overflow-y: auto; overflow-x: hidden;
   padding: 8px;
@@ -2364,34 +2365,35 @@ body {
 }
 /* Own class (not .output-thumb) to avoid colliding with the grid's
    delegated handlers/styles; selected reuses the accent semantics. */
-[data-layout="deck"] .session-thumb {
+[data-strip-col] .session-thumb {
   width: 100%; flex-shrink: 0;
   border: 1px solid var(--border-subtle); border-radius: 4px;
   overflow: hidden; cursor: pointer;
   background: var(--bg-input);
   transition: border-color 0.15s;
 }
-[data-layout="deck"] .session-thumb:hover { border-color: var(--accent); }
-[data-layout="deck"] .session-thumb.selected { border: 2px solid var(--accent); }
-[data-layout="deck"] .session-thumb img {
+[data-strip-col] .session-thumb:hover { border-color: var(--accent); }
+[data-strip-col] .session-thumb.selected { border: 2px solid var(--accent); }
+[data-strip-col] .session-thumb img {
   width: 100%; height: 100%; object-fit: cover; display: block;
 }
 
-/* Collapsed strip: ~22px rail with rotated label, toggle points › */
-[data-layout="deck"] .session-strip.collapsed { width: 22px; }
-[data-layout="deck"] .session-strip.collapsed .session-strip-scroll,
-[data-layout="deck"] .session-strip.collapsed .session-strip-count,
-[data-layout="deck"] .session-strip.collapsed .session-strip-clear { display: none; }
-[data-layout="deck"] .session-strip.collapsed .session-strip-head {
-  flex-direction: column; gap: 8px;
+/* Collapsed strip: ~22px rail, expand control centered in the bar. The
+   whole rail is clickable to expand (JS), hence the pointer cursor. */
+[data-strip-col] .session-strip.collapsed { width: 22px; cursor: pointer; }
+[data-strip-col] .session-strip.collapsed .session-strip-scroll,
+[data-strip-col] .session-strip.collapsed .session-strip-count,
+[data-strip-col] .session-strip.collapsed .session-strip-clear { display: none; }
+[data-strip-col] .session-strip.collapsed .session-strip-head {
+  flex: 1; flex-direction: column; justify-content: center; gap: 8px;
   padding: 8px 2px;
   border-bottom: none;
 }
-[data-layout="deck"] .session-strip.collapsed .session-strip-label {
+[data-strip-col] .session-strip.collapsed .session-strip-label {
   flex: 0 0 auto;
   writing-mode: vertical-rl; transform: rotate(180deg);
 }
-[data-layout="deck"] .session-strip.collapsed .session-strip-collapse {
+[data-strip-col] .session-strip.collapsed .session-strip-collapse {
   order: -1;
   transform: rotate(180deg);
 }
@@ -2481,20 +2483,20 @@ body {
 /* ── Responsive: below 1600px the strip auto-collapses and the params
    panel returns to single column. The deck row persists at all widths. ── */
 @media (max-width: 1600px) {
-  [data-layout="deck"] .session-strip { width: 22px; }
-  [data-layout="deck"] .session-strip .session-strip-scroll,
-  [data-layout="deck"] .session-strip .session-strip-count,
-  [data-layout="deck"] .session-strip .session-strip-clear { display: none; }
-  [data-layout="deck"] .session-strip .session-strip-head {
-    flex-direction: column; gap: 8px;
+  [data-strip-col] .session-strip { width: 22px; }
+  [data-strip-col] .session-strip .session-strip-scroll,
+  [data-strip-col] .session-strip .session-strip-count,
+  [data-strip-col] .session-strip .session-strip-clear { display: none; }
+  [data-strip-col] .session-strip .session-strip-head {
+    flex: 1; flex-direction: column; justify-content: center; gap: 8px;
     padding: 8px 2px;
     border-bottom: none;
   }
-  [data-layout="deck"] .session-strip .session-strip-label {
+  [data-strip-col] .session-strip .session-strip-label {
     flex: 0 0 auto;
     writing-mode: vertical-rl; transform: rotate(180deg);
   }
-  [data-layout="deck"] .session-strip .session-strip-collapse {
+  [data-strip-col] .session-strip .session-strip-collapse {
     order: -1;
     transform: rotate(180deg);
   }
@@ -2530,7 +2532,7 @@ body {
 [data-layout="deck"] #page-generate > [data-block="generate"],
 [data-layout="deck"] #page-generate > [data-block="model"] { grid-column: 1 / -1; }
 /* Strip hidden via the layout map */
-[data-layout="deck"] .session-strip.strip-hidden { display: none; }
+[data-strip-col] .session-strip.strip-hidden { display: none; }
 
 /* ── Edit affordances ── */
 body.customizing [data-block] {
@@ -2672,3 +2674,29 @@ body.customizing .customize-divider:hover { background: var(--accent); opacity: 
 
 /* Disabled customize toggle (generating / Live / narrow viewport) */
 .toggle-track.disabled { opacity: 0.35; }
+
+
+/* ═══════════════════════════════════════════
+   CUSTOMIZE MODE — usability fixes (WP-L3.1)
+   ═══════════════════════════════════════════ */
+
+/* Pack the two-column params grid: dense flow back-fills the holes that
+   span-2 items leave behind, instead of stranding empty cells. */
+[data-layout="deck"] #page-generate.active { grid-auto-flow: row dense; }
+
+/* Uniform block sizing in CUSTOM layouts: every section flows as a normal
+   (span-1) grid item; only the core prompt/lora/negative/generate blocks
+   and the full-width lists span both columns. Factory Deck keeps its
+   original spans (no data-layout-custom attribute). */
+:root[data-layout="deck"][data-layout-custom] #page-generate > [data-deck-span="2"],
+:root[data-layout="deck"][data-layout-custom] #page-generate > .param-section,
+:root[data-layout="deck"][data-layout-custom] #page-generate > [data-block="model"] {
+  grid-column: auto;
+}
+/* Layers / History / Output wrappers are list-like — always full width. */
+[data-layout="deck"] #page-generate > [data-block="layers"],
+[data-layout="deck"] #page-generate > [data-block="history"],
+[data-layout="deck"] #page-generate > [data-block="output"] { grid-column: 1 / -1; }
+
+/* The drop indicator must read as a full row marker inside the grid. */
+[data-zone="panel"] > .drop-indicator { grid-column: 1 / -1; }

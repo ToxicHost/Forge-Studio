@@ -55,6 +55,8 @@
   "settings.layout.classic": "Clásico",
   "settings.layout.deck": "Deck",
   "settings.layout.customize": "Personalizar diseño",
+  "settings.layout.classicStrip": "Franja de sesión en Clásico",
+  "settings.layout.classicStrip.tooltip": "Muestra la franja del historial de sesión junto al lienzo también en el diseño Clásico.",
   "settings.layout.current": "Diseño actual",
   "settings.layout.shareHint": "Los diseños son archivos JSON en la carpeta studio_layouts/ de la extensión — copia un archivo allí para importar un diseño compartido.",
   "layout.save": "Guardar",

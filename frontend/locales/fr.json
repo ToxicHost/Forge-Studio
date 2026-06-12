@@ -55,6 +55,8 @@
   "settings.layout.classic": "Classique",
   "settings.layout.deck": "Deck",
   "settings.layout.customize": "Personnaliser la disposition",
+  "settings.layout.classicStrip": "Bande de session en Classique",
+  "settings.layout.classicStrip.tooltip": "Affiche la bande d'historique de session à côté du canevas aussi dans la disposition Classique.",
   "settings.layout.current": "Disposition actuelle",
   "settings.layout.shareHint": "Les dispositions sont des fichiers JSON dans le dossier studio_layouts/ de l'extension — copiez-y un fichier pour importer une disposition partagée.",
   "layout.save": "Enregistrer",
