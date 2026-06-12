@@ -6493,7 +6493,9 @@ const SessionStrip = {
     if (!t) return;
     t.classList.toggle("on", this.classicEnabled());
     t.addEventListener("click", () => {
-      const on = t.classList.toggle("on");
+      // The global .toggle-track handler (bound earlier in bindUI) already
+      // flipped the class — READ it; toggling again would cancel it out.
+      const on = t.classList.contains("on");
       localStorage.setItem("studio-classic-strip", String(on));
       this.syncStripCol();
       this.render();
@@ -6944,7 +6946,13 @@ const Customizer = {
 
   enter() {
     const reason = this.blocked();
-    if (reason) { showToast(reason, "info"); return; }
+    if (reason) {
+      showToast(reason, "info");
+      // The global .toggle-track handler flipped the knob before us —
+      // force it back to the real (inactive) state.
+      this.updateToggleState();
+      return;
+    }
     if (this.active) return;
     LayoutManager.ensureWorking();
     this.active = true;

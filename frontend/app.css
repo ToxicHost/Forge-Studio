@@ -2398,14 +2398,16 @@ body {
   transform: rotate(180deg);
 }
 
-/* ── Two-column params panel ── */
+/* ── Two-column params panel ──
+   CSS multi-columns, not grid: sections pack sequentially and the column
+   heights balance, so a tall section (ADetailer) never strands dead space
+   beside its shorter row-mate the way grid rows did. Full-width items use
+   column-span: all. */
 [data-layout="deck"] #page-generate.active {
-  display: grid;
-  grid-template-columns: 1fr 1fr;
-  gap: 0 18px;
-  align-items: start;
-  align-content: start;
+  column-count: 2;
+  column-gap: 18px;
 }
+[data-layout="deck"] #page-generate > * { break-inside: avoid; }
 [data-layout="deck"] #page-generate > .prompt-section,
 [data-layout="deck"] #page-generate > .output-section,
 [data-layout="deck"] #page-generate > #regionSection,
@@ -2413,7 +2415,7 @@ body {
 [data-layout="deck"] #page-generate > .param-section,
 [data-layout="deck"] #page-generate > .section-header,
 [data-layout="deck"] #page-generate > .section-body,
-[data-layout="deck"] #page-generate > [data-deck-span="2"] { grid-column: 1 / -1; }
+[data-layout="deck"] #page-generate > [data-deck-span="2"] { column-span: all; }
 
 /* ── Hairline section treatment (params panel, deck only) ──
    Flat sections: no fill, no radius, hairline top border, 2px left rail
@@ -2500,7 +2502,7 @@ body {
     order: -1;
     transform: rotate(180deg);
   }
-  [data-layout="deck"] #page-generate.active { grid-template-columns: 1fr; }
+  [data-layout="deck"] #page-generate.active { column-count: 1; }
 }
 
 
@@ -2525,12 +2527,12 @@ body {
 :root[data-layout-custom] #page-generate > [data-block="generate"] {
   margin: 8px var(--section-pad);
 }
-/* Under deck's two-column params grid the lifted core blocks span both. */
+/* Under deck's two-column params panel the lifted core blocks span both. */
 [data-layout="deck"] #page-generate > [data-block="prompt"],
 [data-layout="deck"] #page-generate > [data-block="lora"],
 [data-layout="deck"] #page-generate > [data-block="negative"],
 [data-layout="deck"] #page-generate > [data-block="generate"],
-[data-layout="deck"] #page-generate > [data-block="model"] { grid-column: 1 / -1; }
+[data-layout="deck"] #page-generate > [data-block="model"] { column-span: all; }
 /* Strip hidden via the layout map */
 [data-strip-col] .session-strip.strip-hidden { display: none; }
 
@@ -2680,23 +2682,19 @@ body.customizing .customize-divider:hover { background: var(--accent); opacity: 
    CUSTOMIZE MODE — usability fixes (WP-L3.1)
    ═══════════════════════════════════════════ */
 
-/* Pack the two-column params grid: dense flow back-fills the holes that
-   span-2 items leave behind, instead of stranding empty cells. */
-[data-layout="deck"] #page-generate.active { grid-auto-flow: row dense; }
-
 /* Uniform block sizing in CUSTOM layouts: every section flows as a normal
-   (span-1) grid item; only the core prompt/lora/negative/generate blocks
+   single-column item; only the core prompt/lora/negative/generate blocks
    and the full-width lists span both columns. Factory Deck keeps its
    original spans (no data-layout-custom attribute). */
 :root[data-layout="deck"][data-layout-custom] #page-generate > [data-deck-span="2"],
 :root[data-layout="deck"][data-layout-custom] #page-generate > .param-section,
 :root[data-layout="deck"][data-layout-custom] #page-generate > [data-block="model"] {
-  grid-column: auto;
+  column-span: none;
 }
 /* Layers / History / Output wrappers are list-like — always full width. */
 [data-layout="deck"] #page-generate > [data-block="layers"],
 [data-layout="deck"] #page-generate > [data-block="history"],
-[data-layout="deck"] #page-generate > [data-block="output"] { grid-column: 1 / -1; }
+[data-layout="deck"] #page-generate > [data-block="output"] { column-span: all; }
 
-/* The drop indicator must read as a full row marker inside the grid. */
-[data-zone="panel"] > .drop-indicator { grid-column: 1 / -1; }
+/* The drop indicator must never straddle a column break. */
+[data-zone="panel"] > .drop-indicator { break-inside: avoid; }
