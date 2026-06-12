@@ -3312,8 +3312,17 @@ function bindUI() {
       const thumb = e.target.closest(".session-thumb");
       if (!thumb) return;
       State.selectedOutputIdx = parseInt(thumb.dataset.idx);
+      // Sync selection by toggling classes IN PLACE. Re-rendering here
+      // destroys the clicked node mid-double-click — the browser's click
+      // counter resets on the replacement node and dblclick (the gallery
+      // lightbox) never fires. Same reason the #outputGrid handler
+      // toggles classes instead of re-rendering.
+      _stripScroll.querySelectorAll(".session-thumb").forEach(t =>
+        t.classList.toggle("selected", parseInt(t.dataset.idx) === State.selectedOutputIdx));
+      document.querySelectorAll("#outputGrid .output-thumb").forEach(t =>
+        t.classList.toggle("selected", parseInt(t.dataset.idx) === State.selectedOutputIdx));
       _showResultPreview(State.selectedOutputIdx);
-      renderOutputGallery();
+      _updateOutputInfo();
     });
     _stripScroll.addEventListener("dblclick", (e) => {
       const thumb = e.target.closest(".session-thumb");
