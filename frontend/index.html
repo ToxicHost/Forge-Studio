@@ -9,11 +9,11 @@
 <!-- Keep the ?v= in sync with `const v` in the loader script at the bottom
      of this file — stylesheets had no cache-buster, so deploys kept serving
      stale CSS even after the versioned JS refreshed. -->
-<link rel="stylesheet" href="/studio/static/app.css?v=4.9.5">
-<link rel="stylesheet" href="/studio/static/searchable-select.css?v=4.9.5">
-<link rel="stylesheet" href="/studio/static/education.css?v=4.9.5">
-<link rel="stylesheet" href="/studio/static/studio-tour.css?v=4.9.5">
-<link rel="stylesheet" href="/studio/static/studio-docs.css?v=4.9.5">
+<link rel="stylesheet" href="/studio/static/app.css?v=4.9.6">
+<link rel="stylesheet" href="/studio/static/searchable-select.css?v=4.9.6">
+<link rel="stylesheet" href="/studio/static/education.css?v=4.9.6">
+<link rel="stylesheet" href="/studio/static/studio-tour.css?v=4.9.6">
+<link rel="stylesheet" href="/studio/static/studio-docs.css?v=4.9.6">
 </head>
 <body>
 
@@ -1281,7 +1281,7 @@
   // Optional modules — loaded if available, silently skipped if not.
   // debug.js exposes window.StudioDebug.* — dev-tools-only, no UI.
   const optionalScripts = ["develop.js", "video-lab.js", "workshop.js", "lexicon.js", "education.js", "codex.js", "studio-showme.js", "gallery.js", "module-tours.js", "debug.js", "canvas-webgl-preview.js"];
-  const v = "4.9.5";
+  const v = "4.9.6";
   window.__STUDIO_V = v;
   for (const s of scripts) {
     await new Promise((resolve, reject) => {
