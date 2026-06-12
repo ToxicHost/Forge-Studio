@@ -5346,6 +5346,50 @@ def setup_studio_routes(app: FastAPI):
     #
     # Privacy: never returns or logs paths/prompts/filenames/image bytes.
 
+    def _pil_to_srgb_rgba(img):
+        """Convert an opened PIL image to RGBA in sRGB. Honors an embedded
+        ICC profile (converted via ImageCms); untagged images are treated
+        as sRGB. Returns (rgba_image, profile_state) with profile_state in
+        "srgb" | "converted" | "unknown" | "missing"."""
+        icc = img.info.get("icc_profile")
+        if not icc:
+            return img.convert("RGBA"), "missing"
+        try:
+            from PIL import ImageCms
+            src_profile = ImageCms.ImageCmsProfile(io.BytesIO(icc))
+            desc = (ImageCms.getProfileDescription(src_profile) or "").strip()
+            if desc and ("sRGB" in desc or "srgb" in desc.lower()):
+                return img.convert("RGBA"), "srgb"
+            try:
+                dst_profile = ImageCms.ImageCmsProfile(io.BytesIO(_SRGB_ICC))
+                converted = ImageCms.profileToProfile(
+                    img, src_profile, dst_profile, outputMode="RGBA"
+                )
+                return converted, "converted"
+            except Exception:
+                print(f"{TAG} Failed ICC conversion during pixel import")
+                return img.convert("RGBA"), "unknown"
+        except Exception:
+            # ICC bytes present but unparseable; treat as sRGB to keep
+            # the import alive rather than failing the whole call.
+            return img.convert("RGBA"), "unknown"
+
+    def _raw_rgba_response(img, profile_state):
+        try:
+            raw = img.tobytes()
+        except Exception:
+            print(f"{TAG} Failed pixel import (tobytes)")
+            return JSONResponse({"error": "encode failed"}, status_code=500)
+        return Response(
+            content=raw,
+            media_type="application/octet-stream",
+            headers={
+                "X-Width": str(img.width),
+                "X-Height": str(img.height),
+                "X-Color-Profile": profile_state,
+            },
+        )
+
     class ImagePixelsRequest(BaseModel):
         source: str
 
@@ -5362,51 +5406,42 @@ def setup_studio_routes(app: FastAPI):
             print(f"{TAG} Failed pixel import (open)")
             return JSONResponse({"error": "open failed"}, status_code=500)
 
-        profile_state = "missing"
-        icc = img.info.get("icc_profile")
-        if icc:
-            try:
-                from PIL import ImageCms
-                src_profile = ImageCms.ImageCmsProfile(io.BytesIO(icc))
-                desc = (ImageCms.getProfileDescription(src_profile) or "").strip()
-                if desc and ("sRGB" in desc or "srgb" in desc.lower()):
-                    img = img.convert("RGBA")
-                    profile_state = "srgb"
-                else:
-                    try:
-                        dst_profile = ImageCms.ImageCmsProfile(io.BytesIO(_SRGB_ICC))
-                        img = ImageCms.profileToProfile(
-                            img, src_profile, dst_profile, outputMode="RGBA"
-                        )
-                        profile_state = "converted"
-                    except Exception:
-                        print(f"{TAG} Failed ICC conversion during pixel import")
-                        img = img.convert("RGBA")
-                        profile_state = "unknown"
-            except Exception:
-                # ICC bytes present but unparseable; treat as sRGB to keep
-                # the import alive rather than failing the whole call.
-                img = img.convert("RGBA")
-                profile_state = "unknown"
-        else:
-            img = img.convert("RGBA")
-            profile_state = "missing"
+        img, profile_state = _pil_to_srgb_rgba(img)
+        return _raw_rgba_response(img, profile_state)
 
+    # POST /studio/import_pixels — same contract as /studio/image_pixels,
+    # but for image files that exist only in the browser (Load Image
+    # button, canvas drag-drop, data-URL results). The client uploads the
+    # original encoded bytes; Pillow decodes + ICC-converts to sRGB and
+    # returns raw RGBA, so the browser's image decode — which bakes the
+    # display ICC into pixels on calibrated Firefox setups and dulls every
+    # re-imported image — never touches them.
+    #
+    # Privacy: decoded in memory only; nothing is written or logged.
+
+    class ImportPixelsRequest(BaseModel):
+        image_b64: str = ""
+
+    @app.post("/studio/import_pixels")
+    def studio_import_pixels(req: ImportPixelsRequest):
+        b64 = req.image_b64 or ""
+        if b64.startswith("data:"):
+            b64 = b64.partition(",")[2]
         try:
-            raw = img.tobytes()
+            raw_bytes = base64.b64decode(b64)
         except Exception:
-            print(f"{TAG} Failed pixel import (tobytes)")
-            return JSONResponse({"error": "encode failed"}, status_code=500)
+            return JSONResponse({"error": "bad image data"}, status_code=400)
+        if not raw_bytes or len(raw_bytes) > 128 * 1024 * 1024:
+            return JSONResponse({"error": "bad image size"}, status_code=400)
+        try:
+            img = Image.open(io.BytesIO(raw_bytes))
+            img.load()
+        except Exception:
+            # Includes PIL's decompression-bomb guard.
+            return JSONResponse({"error": "decode failed"}, status_code=400)
 
-        return Response(
-            content=raw,
-            media_type="application/octet-stream",
-            headers={
-                "X-Width": str(img.width),
-                "X-Height": str(img.height),
-                "X-Color-Profile": profile_state,
-            },
-        )
+        img, profile_state = _pil_to_srgb_rgba(img)
+        return _raw_rgba_response(img, profile_state)
 
     # ------------------------------------------------------------------
     # Blueprint Bridge — discovery

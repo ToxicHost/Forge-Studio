@@ -2433,12 +2433,7 @@ function _isStudioFileSource(src) {
 // ICC-converted to sRGB on the backend). Returns { width, height,
 // imageData, profile }. Throws on any failure so the caller falls back
 // to <img> + drawImage.
-async function _loadServerImagePixels(src) {
-  const resp = await fetch(API.base + "/studio/image_pixels", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ source: src }),
-  });
+async function _parsePixelResponse(resp) {
   if (!resp.ok) throw new Error("pixel import failed: " + resp.status);
   const w = parseInt(resp.headers.get("X-Width"), 10);
   const h = parseInt(resp.headers.get("X-Height"), 10);
@@ -2457,6 +2452,117 @@ async function _loadServerImagePixels(src) {
     imageData: new ImageData(bytes, w, h),
     profile: resp.headers.get("X-Color-Profile") || "unknown",
   };
+}
+
+async function _loadServerImagePixels(src) {
+  const resp = await fetch(API.base + "/studio/image_pixels", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ source: src }),
+  });
+  return _parsePixelResponse(resp);
+}
+
+// Same contract for images that exist only in the browser (Load Image,
+// drag-drop, data-URL results): upload the encoded bytes, the backend
+// decodes with Pillow + ICC→sRGB and returns raw RGBA.
+async function _loadUploadedImagePixels(dataUrl) {
+  const resp = await fetch(API.base + "/studio/import_pixels", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ image_b64: dataUrl }),
+  });
+  return _parsePixelResponse(resp);
+}
+
+// Shared import path for local image files (Load Image button + canvas
+// drag-drop). The pixels go through the backend decode (Pillow + ICC →
+// sRGB) — the browser's own image decode bakes the display ICC into the
+// pixels on calibrated Firefox setups, and once that lands on a layer,
+// every downstream export / img2img / inpaint carries the dulled colors
+// no display setting can undo. Falls back to <img> + drawImage when the
+// endpoint is unavailable.
+async function _importLocalImageFile(file, opts) {
+  if (!file || !file.type.startsWith("image/") || !window.StudioCore) return;
+  const Core = window.StudioCore;
+
+  // Read PNG metadata in parallel with the decode
+  const metaPromise = (file.type === "image/png" && window.PngMetadata)
+    ? PngMetadata.read(file).catch(() => ({}))
+    : Promise.resolve({});
+
+  let dataUrl;
+  try {
+    dataUrl = await new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = ev => resolve(ev.target.result);
+      r.onerror = () => reject(new Error("file read failed"));
+      r.readAsDataURL(file);
+    });
+  } catch (e) {
+    console.error("[Studio] Image import: file read failed", e);
+    return;
+  }
+
+  let decoded = null;
+  try {
+    decoded = await _loadUploadedImagePixels(dataUrl);
+  } catch (e) {
+    console.warn("[Studio] Backend pixel import failed, falling back to browser decode:", e.message || e);
+  }
+  let img = null;
+  if (!decoded) {
+    img = new Image();
+    img.src = dataUrl;
+    try {
+      await new Promise((resolve, reject) => {
+        img.onload = resolve;
+        img.onerror = () => reject(new Error("image load failed"));
+      });
+    } catch (e) {
+      console.error("[Studio] Image import: decode failed", e);
+      return;
+    }
+  }
+
+  const newW = decoded ? decoded.width : img.naturalWidth;
+  const newH = decoded ? decoded.height : img.naturalHeight;
+  Core.saveStructuralUndo(opts.undoLabel);
+  Core.resizeCanvas(newW, newH);
+  const wInput = document.getElementById("paramWidth");
+  const hInput = document.getElementById("paramHeight");
+  if (wInput) wInput.value = newW;
+  if (hInput) hInput.value = newH;
+  StatusBar.setDimensions(newW, newH);
+  if (window._syncARToSize) window._syncARToSize(newW, newH);
+
+  const S = Core.state;
+  const newL = Core.makeLayer(opts.layerName, "paint");
+  if (decoded) newL.ctx.putImageData(decoded.imageData, 0, 0);
+  else newL.ctx.drawImage(img, 0, 0, newW, newH);
+  S.layers.splice(S.activeLayerIdx + 1, 0, newL);
+  S.activeLayerIdx++;
+  if (window.StudioUI) {
+    window.StudioUI.renderLayerPanel();
+    window.StudioUI.syncCanvasToViewport();
+    Core.zoomFit();
+    window.StudioUI.updateStatus();
+    window.StudioUI.redraw();
+  }
+  Core.composite();
+
+  // Apply metadata to UI fields if present
+  const meta = await metaPromise;
+  if (meta.parameters) {
+    _applyInfotextToUI(meta.parameters);
+    showToast(`${opts.verb} ${newW}×${newH} (params imported)`, "success");
+  } else {
+    showToast(`${opts.verb} ${newW}×${newH}`, "success");
+  }
+
+  // Auto-disable Hires Fix — imported images are already at native
+  // resolution, so hires would double their size unexpectedly.
+  _disableHiresFix();
 }
 
 function displayOnCanvas(imgSrc, opts) {
@@ -2499,6 +2605,16 @@ function displayOnCanvas(imgSrc, opts) {
         decoded = await _loadServerImagePixels(imgSrc);
       } catch (e) {
         console.warn("[Studio] Raw pixel import failed, falling back to image import:", e.message || e);
+        decoded = null;
+      }
+    } else if (typeof imgSrc === "string" && imgSrc.startsWith("data:image")) {
+      // Data-URL sources (Live results, unsaved outputs) get the same
+      // backend decode via upload — the browser decode would bake the
+      // display ICC into the pixels on calibrated setups.
+      try {
+        decoded = await _loadUploadedImagePixels(imgSrc);
+      } catch (e) {
+        console.warn("[Studio] Uploaded pixel import failed, falling back to image import:", e.message || e);
         decoded = null;
       }
     }
@@ -3270,52 +3386,11 @@ function bindUI() {
     _canvasArea.addEventListener("dragover", e => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; });
     _canvasArea.addEventListener("drop", e => {
       e.preventDefault();
-      // External file drop
+      // External file drop - backend-decoded so the browser's image
+      // decode can't bake the display ICC into the layer pixels.
       const file = e.dataTransfer.files?.[0];
-      if (file && file.type.startsWith("image/") && window.StudioCore) {
-        const Core = window.StudioCore;
-        const metaPromise = (file.type === "image/png" && window.PngMetadata)
-          ? PngMetadata.read(file).catch(() => ({}))
-          : Promise.resolve({});
-        const r = new FileReader();
-        r.onload = ev => {
-          const img = new Image();
-          img.onload = async () => {
-            const newW = img.naturalWidth, newH = img.naturalHeight;
-            Core.saveStructuralUndo("Drop image");
-            Core.resizeCanvas(newW, newH);
-            const wInput = document.getElementById("paramWidth");
-            const hInput = document.getElementById("paramHeight");
-            if (wInput) wInput.value = newW;
-            if (hInput) hInput.value = newH;
-            StatusBar.setDimensions(newW, newH);
-            if (window._syncARToSize) window._syncARToSize(newW, newH);
-            const S = Core.state;
-            const newL = Core.makeLayer("Dropped", "paint");
-            newL.ctx.drawImage(img, 0, 0, newW, newH);
-            S.layers.splice(S.activeLayerIdx + 1, 0, newL);
-            S.activeLayerIdx++;
-            if (window.StudioUI) {
-              window.StudioUI.renderLayerPanel();
-              window.StudioUI.syncCanvasToViewport();
-              Core.zoomFit();
-              window.StudioUI.updateStatus();
-              window.StudioUI.redraw();
-            }
-            Core.composite();
-            const meta = await metaPromise;
-            if (meta.parameters) {
-              _applyInfotextToUI(meta.parameters);
-              showToast(`Dropped ${newW}\u00d7${newH} (params imported)`, "success");
-            } else {
-              showToast(`Dropped ${newW}\u00d7${newH}`, "success");
-            }
-            // Auto-disable Hires Fix for dropped images
-            _disableHiresFix();
-          };
-          img.src = ev.target.result;
-        };
-        r.readAsDataURL(file);
+      if (file && file.type.startsWith("image/")) {
+        _importLocalImageFile(file, { undoLabel: "Drop image", layerName: "Dropped", verb: "Dropped" });
       }
     });
   }
@@ -5466,57 +5541,12 @@ function bindUI() {
     document.getElementById("loadImageInput")?.click();
   });
   document.getElementById("loadImageInput")?.addEventListener("change", e => {
+    // Backend-decoded so the browser's image decode can't bake the
+    // display ICC into the layer pixels (see _importLocalImageFile).
     const file = e.target.files?.[0];
-    if (!file || !file.type.startsWith("image/") || !window.StudioCore) return;
-    const Core = window.StudioCore;
-
-    // Read PNG metadata in parallel with image decode
-    const metaPromise = (file.type === "image/png" && window.PngMetadata)
-      ? PngMetadata.read(file).catch(() => ({}))
-      : Promise.resolve({});
-
-    const r = new FileReader();
-    r.onload = ev => {
-      const img = new Image();
-      img.onload = async () => {
-        const newW = img.naturalWidth;
-        const newH = img.naturalHeight;
-        Core.saveStructuralUndo("Load image");
-        Core.resizeCanvas(newW, newH);
-        const wInput = document.getElementById("paramWidth");
-        const hInput = document.getElementById("paramHeight");
-        if (wInput) wInput.value = newW;
-        if (hInput) hInput.value = newH;
-        if (window._syncARToSize) window._syncARToSize(newW, newH);
-
-        const S = Core.state;
-        const newL = Core.makeLayer("Loaded", "paint");
-        newL.ctx.drawImage(img, 0, 0, newW, newH);
-        S.layers.splice(S.activeLayerIdx + 1, 0, newL);
-        S.activeLayerIdx++;
-        if (window.StudioUI) {
-          window.StudioUI.renderLayerPanel();
-          window.StudioUI.syncCanvasToViewport();
-          Core.zoomFit();
-        }
-        Core.composite();
-
-        // Apply metadata to UI fields if present
-        const meta = await metaPromise;
-        if (meta.parameters) {
-          _applyInfotextToUI(meta.parameters);
-          showToast(`Loaded ${newW}\u00d7${newH} (params imported)`, "success");
-        } else {
-          showToast(`Loaded ${newW}\u00d7${newH}`, "success");
-        }
-
-        // Auto-disable Hires Fix — loaded images are already at native
-        // resolution, so hires would double their size unexpectedly.
-        _disableHiresFix();
-      };
-      img.src = ev.target.result;
-    };
-    r.readAsDataURL(file);
+    if (file && file.type.startsWith("image/")) {
+      _importLocalImageFile(file, { undoLabel: "Load image", layerName: "Loaded", verb: "Loaded" });
+    }
     e.target.value = "";
   });
 
