@@ -6493,10 +6493,12 @@ const SessionStrip = {
     if (!t) return;
     t.classList.toggle("on", this.classicEnabled());
     t.addEventListener("click", () => {
-      // The global .toggle-track handler (bound earlier in bindUI) already
-      // flipped the class — READ it; toggling again would cancel it out.
-      const on = t.classList.contains("on");
+      // localStorage is the source of truth — invert it and FORCE the
+      // knob class to match. Robust regardless of whether the global
+      // .toggle-track handler fired before, after, or not at all.
+      const on = !this.classicEnabled();
       localStorage.setItem("studio-classic-strip", String(on));
+      t.classList.toggle("on", on);
       this.syncStripCol();
       this.render();
       window.dispatchEvent(new Event("resize"));
@@ -6560,17 +6562,13 @@ const LayoutSwitcher = {
       const btn = e.target.closest(".layout-btn");
       if (!btn) return;
       const preset = btn.dataset.layoutPreset === "deck" ? "deck" : "classic";
-      // Preset over a custom layout: confirm (window.confirm is the
-      // repo's confirm pattern; the 3-way Save/Apply/Cancel becomes two
-      // chained confirms).
-      if (LayoutManager.isCustomActive()) {
-        if (window.confirm(_i18n("layout.confirm.savefirst",
-            "Applying a preset will replace your current layout. Save it first?"))) {
-          const ok = await LayoutManager.save();
-          if (!ok) return; // save cancelled/failed -> abort the preset switch
-        } else if (!window.confirm(_i18n("layout.confirm.discard",
-            "Apply the preset without saving? Your current layout will be lost."))) {
-          return; // Cancel
+      // Only an UNSAVED custom layout needs a heads-up (a single confirm,
+      // never a forced save). Named layouts live on the server and stay
+      // loadable, so switching away from one is silent.
+      if (LayoutManager.isCustomActive() && !LayoutManager.activeName) {
+        if (!window.confirm(_i18n("layout.confirm.replaceUnsaved",
+            "Replace your current custom layout? It isn't saved — Cancel and use Save as… first to keep it."))) {
+          return;
         }
       }
       if (Customizer.active) Customizer.exit({ skipSave: true });
@@ -6814,6 +6812,19 @@ const LayoutManager = {
     if (this.activeName) this._post(this.activeName, { silent: true });
   },
 
+  // One-click escape hatch back to the factory layout for the current
+  // base preset. Never touches layout files on disk.
+  resetToFactory() {
+    if (Customizer.active) Customizer.exit({ skipSave: true });
+    const base = LayoutSwitcher.current;
+    this.setWorking(LayoutBlocks.factoryMap(base), "");
+    LayoutBlocks.applyMap(this.working);
+    SessionStrip.render();
+    if (base === "deck") LayoutSwitcher._discloseSections();
+    Customizer._renderTray();
+    showToast(_i18n("toast.layout.reset", "Layout reset to default"), "success");
+  },
+
   async loadByName(name, opts = {}) {
     const slug = this.slugify(name);
     if (!slug) return false;
@@ -6877,6 +6888,7 @@ const LayoutManager = {
       this.saveAs();
     });
     document.getElementById("layoutDeleteBtn")?.addEventListener("click", () => this.deleteActive());
+    document.getElementById("layoutResetBtn")?.addEventListener("click", () => this.resetToFactory());
     document.getElementById("layoutLoadSelect")?.addEventListener("change", e => {
       const name = e.target.value;
       e.target.value = "";

@@ -6,11 +6,14 @@
 <title>Forge Studio</title>
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>🎨</text></svg>">
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
-<link rel="stylesheet" href="/studio/static/app.css">
-<link rel="stylesheet" href="/studio/static/searchable-select.css">
-<link rel="stylesheet" href="/studio/static/education.css">
-<link rel="stylesheet" href="/studio/static/studio-tour.css">
-<link rel="stylesheet" href="/studio/static/studio-docs.css">
+<!-- Keep the ?v= in sync with `const v` in the loader script at the bottom
+     of this file — stylesheets had no cache-buster, so deploys kept serving
+     stale CSS even after the versioned JS refreshed. -->
+<link rel="stylesheet" href="/studio/static/app.css?v=4.9.3">
+<link rel="stylesheet" href="/studio/static/searchable-select.css?v=4.9.3">
+<link rel="stylesheet" href="/studio/static/education.css?v=4.9.3">
+<link rel="stylesheet" href="/studio/static/studio-tour.css?v=4.9.3">
+<link rel="stylesheet" href="/studio/static/studio-docs.css?v=4.9.3">
 </head>
 <body>
 
@@ -1146,6 +1149,7 @@
                 </select>
               </div>
               <div class="setting-row" style="gap:6px;justify-content:flex-end;">
+                <button class="defaults-btn defaults-btn-reset" id="layoutResetBtn" style="font-size:10px;padding:3px 8px;" data-i18n-title="layout.reset.tooltip" title="Back to the default layout for the current preset (saved layout files are kept)" data-i18n="layout.reset">Reset</button>
                 <button class="defaults-btn" id="layoutSaveBtn" style="font-size:10px;padding:3px 8px;" data-i18n="layout.save">Save</button>
                 <button class="defaults-btn" id="layoutSaveAsBtn" style="font-size:10px;padding:3px 8px;" data-i18n="layout.saveAs">Save as…</button>
                 <button class="defaults-btn" id="layoutDeleteBtn" style="font-size:10px;padding:3px 8px;" data-i18n="layout.delete">Delete</button>
@@ -1277,7 +1281,7 @@
   // Optional modules — loaded if available, silently skipped if not.
   // debug.js exposes window.StudioDebug.* — dev-tools-only, no UI.
   const optionalScripts = ["develop.js", "video-lab.js", "workshop.js", "lexicon.js", "education.js", "codex.js", "studio-showme.js", "gallery.js", "module-tours.js", "debug.js", "canvas-webgl-preview.js"];
-  const v = "4.9.2";
+  const v = "4.9.3";
   window.__STUDIO_V = v;
   for (const s of scripts) {
     await new Promise((resolve, reject) => {
