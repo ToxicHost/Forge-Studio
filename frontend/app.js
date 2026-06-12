@@ -272,6 +272,17 @@ const Progress = {
 // APP STATE
 // ═══════════════════════════════════════════
 
+// Per-tab session id (WP-L2). Sent with every generation request so the
+// backend can register results (and scratch previews when auto-save is
+// off) under this tab's session. The session dies with the tab; the
+// backend's startup sweep reaps anything a closed tab left behind.
+// crypto.randomUUID is undefined outside secure contexts (Forge over a
+// plain-HTTP LAN IP is common) — the fallback matches the backend's
+// session-id charset gate ([a-zA-Z0-9-]).
+const SESSION_ID = (typeof crypto !== "undefined" && crypto.randomUUID)
+  ? crypto.randomUUID()
+  : `s-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}-${Math.random().toString(36).slice(2, 10)}`;
+
 const State = {
   // Generation
   generating: false,
@@ -279,14 +290,10 @@ const State = {
   _pendingVAESwitch: null,   // VAE name queued while generating
   lastResult: null,        // last GenerateResponse
   lastSeed: -1,            // last resolved seed (for recycle button)
-  outputImages: [],        // array of image URLs (file URLs or data URLs)
-  outputImagesB64: [],     // array of base64 data URLs (for canvas operations)
-  outputInfotexts: [],     // array of infotext strings, parallel to outputImages
-  outputFilenames: [],     // array of original filenames (without ext), parallel to outputImages
-  outputContentHashes: [], // SHA256 of decoded RGB pixels, parallel to outputImages; "" when not saved
-  outputFloatPaths: [],    // High Precision sidecar paths, parallel to outputImages; "" when none
-  outputMaskPaths: [],     // High Precision V2 blend-mask sidecar paths, parallel to outputImages; "" when no AD/brush composite
-  outputFloatStats: [],    // Privacy-safe HP source stats (range/clamp/headroom), parallel to outputImages; null when none
+  // Session history (WP-L2): one SessionEntry per result, newest first.
+  // Replaces the seven parallel output arrays — see _newSessionEntry for
+  // the field contract. Capped at the user-configurable session limit.
+  sessionEntries: [],
   selectedOutputIdx: 0,
   embedMetadata: true,     // whether to embed generation params in saved images
   saveOutputs: true,       // auto-save generated images to disk
@@ -332,26 +339,102 @@ const State = {
 
 
 // ═══════════════════════════════════════════
-// OUTPUT SOURCE PICKER
+// SESSION ENTRIES (WP-L2)
 // ═══════════════════════════════════════════
 //
-// State.outputImages[idx] is a same-origin /file= URL when the image
-// was autosaved (which is the source of truth on disk). State.output
-// ImagesB64[idx] is the cached base64 we received in the generation
-// response — but on Firefox + calibrated wide-gamut, decoding from a
-// data URL produces drifted pixel values vs decoding the same bytes
-// fetched from disk via the /file= URL. Autosave + result-preview <img>
-// (which uses the file URL) read correct; data-URL paths read drifted.
-//
-// Pick the file URL whenever it exists. Fall back to the b64 only for
-// outputs that don't have a saved file (Live Painting results, unsaved
-// outputs).
+// SessionEntry contract:
+//   sessionId     — this tab's SESSION_ID
+//   entryId       — server-minted id (saved/scratch) or client "live-…" id
+//   source        — "saved" | "scratch" | "live"
+//   canDeleteFile — true ONLY for source:"scratch" (backend gates deletion
+//                   on its own registry too; never inferred from a URL)
+//   url           — displayable URL: same-origin file URL for saved/scratch,
+//                   data: URL for "live"
+//   thumbUrl      — /studio/session_thumb?id=… for saved/scratch; === url for "live"
+//   b64           — base64 data URL, kept on the NEWEST entry of the latest
+//                   batch only (canvas fast path); null on all older entries.
+//                   "live" entries are exempt (their url IS the data URL).
+//   infotext, filename, contentHash, floatPath, maskPath, floatStats —
+//                   same semantics as the old parallel arrays
+//   width/height  — from the generation response when known, else 0 (the
+//                   strip fills them from naturalWidth on first load)
+//   ts            — Date.now() at insertion
+
+let _liveEntrySeq = 0;
+
+// User-configurable session history cap (Settings → "Session history size").
+function _sessionLimit() {
+  const raw = parseInt(localStorage.getItem("studio-session-limit") || "", 10);
+  const v = isNaN(raw) ? 50 : raw;
+  return Math.max(8, Math.min(200, v));
+}
+
+// Enforce the cap on State.sessionEntries (newest first) and report the
+// entries that fell off to the backend so scratch files get deleted and
+// registry rows dropped. Saved files are NEVER deleted by eviction — the
+// backend only unlinks source:"scratch" rows it owns.
+function _applySessionLimit() {
+  const limit = _sessionLimit();
+  if (State.sessionEntries.length <= limit) return;
+  const evicted = State.sessionEntries.slice(limit);
+  State.sessionEntries = State.sessionEntries.slice(0, limit);
+  if (State.selectedOutputIdx >= State.sessionEntries.length) State.selectedOutputIdx = 0;
+  _reportEvictedEntries(evicted);
+}
+
+function _reportEvictedEntries(entries) {
+  const ids = entries
+    .filter(e => e && e.entryId && e.source !== "live")
+    .map(e => e.entryId);
+  if (!ids.length) return;
+  fetch(API.base + "/studio/session_evict", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session_id: SESSION_ID, entry_ids: ids }),
+  }).catch(() => { /* best-effort; the startup sweep is the backstop */ });
+}
+
+// Empty the session (strip + grid) and tell the backend to drop this
+// session's registry rows + scratch files. Other tabs' sessions untouched.
+function _clearSession() {
+  State.sessionEntries = [];
+  State.selectedOutputIdx = 0;
+  renderOutputGallery();
+  if (State._resultPreviewActive) _hidePreview();
+  fetch(API.base + "/studio/session_clear", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ session_id: SESSION_ID }),
+  }).catch(() => { /* best-effort; the startup sweep is the backstop */ });
+}
+
+// Entry for a Live Painting result: the data URL is the image — no file,
+// no backend round-trip, exempt from scratch lifecycle and b64 retention.
+function _newLiveEntry(dataUrl) {
+  return {
+    sessionId: SESSION_ID,
+    entryId: `live-${Date.now()}-${_liveEntrySeq++}`,
+    source: "live",
+    canDeleteFile: false,
+    url: dataUrl,
+    thumbUrl: dataUrl,
+    b64: dataUrl,
+    infotext: "", filename: "", contentHash: "",
+    floatPath: "", maskPath: "", floatStats: null,
+    width: 0, height: 0,
+    ts: Date.now(),
+  };
+}
+
+// Displayable source for entry `idx`. Prefer the file URL when one exists:
+// on Firefox + calibrated wide-gamut, decoding from a data URL produces
+// drifted pixel values vs decoding the same bytes fetched from disk —
+// the file URL is the byte-faithful source. Fall back to the cached b64
+// only when there's no URL ("live" entries' url IS their data URL).
 function _pickOutputSource(idx) {
-  const fileUrl = (State.outputImages && State.outputImages[idx]) || null;
-  if (typeof fileUrl === "string" && fileUrl.indexOf("/file=") !== -1) return fileUrl;
-  const b64 = (State.outputImagesB64 && State.outputImagesB64[idx]) || null;
-  if (b64) return b64;
-  return fileUrl || null;
+  const e = State.sessionEntries && State.sessionEntries[idx];
+  if (!e) return null;
+  return e.url || e.b64 || null;
 }
 
 // Backend save endpoints (/studio/save_image, /studio/export_exr) want a
@@ -425,18 +508,27 @@ async function _renderTrustedRoots() {
   } catch (_) { /* best-effort */ }
 }
 
-async function _resolveOutputAsB64(idx) {
-  const src = _pickOutputSource(idx);
+async function _resolveEntryB64(entry) {
+  if (!entry) return null;
+  // Newest-of-batch fast path; "live" entries always land here too.
+  if (entry.b64) return entry.b64;
+  const src = entry.url;
   if (!src) return null;
   if (src.startsWith("data:")) return src;
   const resp = await fetch(src);
   const blob = await resp.blob();
+  // Deliberately NOT cached back onto the entry — the newest-only
+  // retention rule is what bounds session memory.
   return await new Promise((resolve, reject) => {
     const r = new FileReader();
     r.onload = () => resolve(r.result);
     r.onerror = reject;
     r.readAsDataURL(blob);
   });
+}
+
+async function _resolveOutputAsB64(idx) {
+  return _resolveEntryB64(State.sessionEntries && State.sessionEntries[idx]);
 }
 
 
@@ -475,6 +567,9 @@ const Live = {
   async start() {
     try {
       console.log("[Live] Starting...");
+      // Customize mode exits cleanly before Live begins — no re-mount can
+      // happen mid-session (WP-L3 generation lock).
+      if (window.Customizer?.active) Customizer.exit();
       await API.liveStart();
       // Seed: generate one if not set
       if (this.seed < 0) this.seed = Math.floor(Math.random() * 2147483647);
@@ -482,6 +577,7 @@ const Live = {
       this.lastHash = "";
       this._disableAD();
       this._updateUI();
+      window.Customizer?.updateToggleState();
       console.log("[Live] Active, seed:", this.seed);
       // Trigger an initial submit with current canvas state
       this._scheduleCanvasCheck(0);
@@ -504,6 +600,7 @@ const Live = {
     this._restoreAD();
     this._hidePreviewLayer();
     this._updateUI();
+    window.Customizer?.updateToggleState();
   },
 
   rerollSeed() {
@@ -672,21 +769,13 @@ const Live = {
       State._previewShown = true;
     }
 
-    // Also populate output gallery so Result → Canvas works. Live preview
-    // isn't saved (no hash, no DB row) and we don't have its infotext yet,
-    // so all the parallel arrays get reset to length 1 with empties.
-    State.outputImages = [data.image];
-    State.outputImagesB64 = [data.image];
-    State.outputContentHashes = [""];
-    State.outputInfotexts = [""];
-    State.outputFilenames = [""];
+    // Also add to the session so Result → Canvas works. Live results JOIN
+    // the session history (source:"live", data-URL entry) instead of
+    // erasing it — intentional WP-L2 behavior change. No hash/infotext yet.
+    State.sessionEntries.unshift(_newLiveEntry(data.image));
+    _applySessionLimit();
     State.selectedOutputIdx = 0;
-    const outputSection = document.getElementById("outputSection");
-    if (outputSection) outputSection.style.display = "";
-    const outputGrid = document.getElementById("outputGrid");
-    if (outputGrid) {
-      outputGrid.innerHTML = `<div class="output-thumb selected" data-idx="0"><img src="${data.image}"></div>`;
-    }
+    renderOutputGallery();
 
     this._updateUI();
 
@@ -1738,7 +1827,11 @@ async function doGenerate() {
   // The preflight awaited; bail if a generation started in the meantime.
   if (State.generating) return;
 
+  // Customize mode exits cleanly before a run starts — no re-mount can
+  // happen mid-generation (WP-L3 generation lock).
+  if (Customizer.active) Customizer.exit();
   State.generating = true;
+  Customizer.updateToggleState();
 
   // B-002 fix: Re-read live preview toggle state on each gen start to prevent
   // stale State.livePreview from permanently suppressing the preview.
@@ -1896,6 +1989,7 @@ async function doGenerate() {
     cn2_upload_b64: window._cnUploadData?.[2] || null,
 
     // Settings
+    session_id: SESSION_ID,
     save_outputs: State.saveOutputs,
     save_format: State.saveFormat || "png",
     save_quality: State.saveQuality || 80,
@@ -1950,48 +2044,79 @@ async function doGenerate() {
         showToast(_label, "info");
         console.warn("[Studio] Dynamic prompts:", _dpWarnings);
       }
-      // FR-009: Prepend new results to gallery history (max 8 images)
-      const MAX_GALLERY = 8;
-      let newFileUrls;
-      // Forge's /file= route only serves its own output tree. When the user
-      // points auto-save at a custom folder, those saved paths aren't served,
-      // so /file= URLs would 404 (black preview + broken thumbnails). Display
-      // straight from the returned base64 in that case; the default output
-      // folder IS served, so keep using the lighter /file= URLs there.
+      // FR-009 / WP-L2: zip the parallel response arrays into SessionEntry
+      // objects and prepend to the session (newest first, capped at the
+      // user-configured limit).
       const _customSaveDir = (State.saveDir || "").trim();
-      if (result.image_paths && result.image_paths.length === result.images.length && !_customSaveDir) {
-        newFileUrls = result.image_paths.map(p => `${API.base}/file=${p}`);
-      } else {
-        newFileUrls = result.images;
-      }
-      const newB64 = result.images;
-      const newInfotexts = result.infotexts || [];
-      const newContentHashes = result.content_hashes || [];
-      const newFloatPaths = result.float_paths || [];
-      const newMaskPaths = result.mask_paths || [];
-      const newFloatStats = result.float_stats || [];
-      // Extract original filenames (without extension) from server paths
-      const newFilenames = (result.image_paths || []).map(p => {
-        const base = p.replace(/\\/g, "/").split("/").pop() || "";
-        return base.replace(/\.[^.]+$/, ""); // strip extension
+      const _srvEntries = result.session_entries || [];
+      // image_paths only appends on save SUCCESS, so it's parallel to
+      // images only when every save succeeded — the per-image truth is
+      // session_entries[i].path; this is just the fallback's guard.
+      const _pathsAligned = !!(result.image_paths && result.image_paths.length === result.images.length);
+      const _batchTs = Date.now();
+      const newEntries = result.images.map((b64, i) => {
+        const srv = _srvEntries[i] || {};
+        const savedPath = (srv.source === "saved" && srv.path)
+          ? srv.path
+          : (_pathsAligned ? result.image_paths[i] : "");
+        // Extract original filename (without extension) from the server path
+        const _base = (savedPath || srv.path || "").replace(/\\/g, "/").split("/").pop() || "";
+        const filename = _base.replace(/\.[^.]+$/, ""); // strip extension
+        let source, url, canDeleteFile = false;
+        if (srv.source === "scratch" && srv.path) {
+          // Unsaved result the backend wrote to session scratch. Served by
+          // /studio/file (exact registered path) — works in both Gradio and
+          // standalone mode, unlike /file= which Gradio handles itself.
+          source = "scratch";
+          canDeleteFile = true;
+          url = _studioFileUrl(srv.path);
+        } else if (savedPath) {
+          source = "saved";
+          // Forge's /file= route only serves its own output tree. When the
+          // user points auto-save at a custom folder, route through
+          // /studio/file instead — it allowlists the exact files Studio
+          // wrote, so custom-folder saves display without retaining base64.
+          url = _customSaveDir ? _studioFileUrl(savedPath) : `${API.base}/file=${savedPath}`;
+        } else {
+          // No file anywhere (save skipped AND scratch write failed):
+          // keep the data URL, same lifecycle as a Live entry.
+          source = "live";
+          url = b64;
+        }
+        const _srvId = srv.entry_id || "";
+        const entryId = _srvId || `live-${_batchTs}-${_liveEntrySeq++}`;
+        return {
+          sessionId: SESSION_ID,
+          entryId,
+          source,
+          canDeleteFile,
+          url,
+          // session_thumb only resolves server-minted ids; entries without
+          // one (live fallback, or saved without registration) show full-res.
+          thumbUrl: _srvId
+            ? `${API.base}/studio/session_thumb?id=${encodeURIComponent(_srvId)}&size=256`
+            : url,
+          // b64 retention: only the newest entry of this batch keeps the
+          // base64 (canvas fast path); everything else resolves on demand.
+          b64: (i === 0 || source === "live") ? b64 : null,
+          infotext: (result.infotexts || [])[i] || "",
+          filename,
+          contentHash: (result.content_hashes || [])[i] || "",
+          floatPath: (result.float_paths || [])[i] || "",
+          maskPath: (result.mask_paths || [])[i] || "",
+          floatStats: (result.float_stats || [])[i] || null,
+          width: result.settings?.width || 0,
+          height: result.settings?.height || 0,
+          ts: _batchTs,
+        };
       });
-      // Pad to match image count
-      while (newFilenames.length < newB64.length) newFilenames.push("");
-      // Pad infotexts to match image count
-      while (newInfotexts.length < newB64.length) newInfotexts.push("");
-      while (newContentHashes.length < newB64.length) newContentHashes.push("");
-      while (newFloatPaths.length < newB64.length) newFloatPaths.push("");
-      while (newMaskPaths.length < newB64.length) newMaskPaths.push("");
-      while (newFloatStats.length < newB64.length) newFloatStats.push(null);
-
-      State.outputImages = [...newFileUrls, ...State.outputImages].slice(0, MAX_GALLERY);
-      State.outputImagesB64 = [...newB64, ...State.outputImagesB64].slice(0, MAX_GALLERY);
-      State.outputInfotexts = [...newInfotexts, ...State.outputInfotexts].slice(0, MAX_GALLERY);
-      State.outputFilenames = [...newFilenames, ...State.outputFilenames].slice(0, MAX_GALLERY);
-      State.outputContentHashes = [...newContentHashes, ...State.outputContentHashes].slice(0, MAX_GALLERY);
-      State.outputFloatPaths = [...newFloatPaths, ...State.outputFloatPaths].slice(0, MAX_GALLERY);
-      State.outputMaskPaths = [...newMaskPaths, ...State.outputMaskPaths].slice(0, MAX_GALLERY);
-      State.outputFloatStats = [...newFloatStats, ...State.outputFloatStats].slice(0, MAX_GALLERY);
+      // Drop cached base64 from all previous entries ("live" exempt — the
+      // data URL is the image itself).
+      for (const e of State.sessionEntries) {
+        if (e.source !== "live") e.b64 = null;
+      }
+      State.sessionEntries = [...newEntries, ...State.sessionEntries];
+      _applySessionLimit();
       State.selectedOutputIdx = 0;
       renderOutputGallery();
       addHistoryEntry(`Generate (seed ${result.seed})`);
@@ -2028,6 +2153,7 @@ async function doGenerate() {
   }
 
   State.generating = false;
+  Customizer.updateToggleState();
   clearInterval(State._genTimerInterval);
   Progress.stopPolling();
   if (btn) {
@@ -2117,7 +2243,7 @@ function _showResultPreview(idx) {
   const label = document.getElementById("canvasPreviewLabel");
   if (!wrap || !img) return;
 
-  const imgSrc = State.outputImages[idx];
+  const imgSrc = _pickOutputSource(idx);
   if (!imgSrc) return;
 
   img.src = imgSrc;
@@ -2307,12 +2433,7 @@ function _isStudioFileSource(src) {
 // ICC-converted to sRGB on the backend). Returns { width, height,
 // imageData, profile }. Throws on any failure so the caller falls back
 // to <img> + drawImage.
-async function _loadServerImagePixels(src) {
-  const resp = await fetch(API.base + "/studio/image_pixels", {
-    method: "POST",
-    headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ source: src }),
-  });
+async function _parsePixelResponse(resp) {
   if (!resp.ok) throw new Error("pixel import failed: " + resp.status);
   const w = parseInt(resp.headers.get("X-Width"), 10);
   const h = parseInt(resp.headers.get("X-Height"), 10);
@@ -2331,6 +2452,117 @@ async function _loadServerImagePixels(src) {
     imageData: new ImageData(bytes, w, h),
     profile: resp.headers.get("X-Color-Profile") || "unknown",
   };
+}
+
+async function _loadServerImagePixels(src) {
+  const resp = await fetch(API.base + "/studio/image_pixels", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ source: src }),
+  });
+  return _parsePixelResponse(resp);
+}
+
+// Same contract for images that exist only in the browser (Load Image,
+// drag-drop, data-URL results): upload the encoded bytes, the backend
+// decodes with Pillow + ICC→sRGB and returns raw RGBA.
+async function _loadUploadedImagePixels(dataUrl) {
+  const resp = await fetch(API.base + "/studio/import_pixels", {
+    method: "POST",
+    headers: { "Content-Type": "application/json" },
+    body: JSON.stringify({ image_b64: dataUrl }),
+  });
+  return _parsePixelResponse(resp);
+}
+
+// Shared import path for local image files (Load Image button + canvas
+// drag-drop). The pixels go through the backend decode (Pillow + ICC →
+// sRGB) — the browser's own image decode bakes the display ICC into the
+// pixels on calibrated Firefox setups, and once that lands on a layer,
+// every downstream export / img2img / inpaint carries the dulled colors
+// no display setting can undo. Falls back to <img> + drawImage when the
+// endpoint is unavailable.
+async function _importLocalImageFile(file, opts) {
+  if (!file || !file.type.startsWith("image/") || !window.StudioCore) return;
+  const Core = window.StudioCore;
+
+  // Read PNG metadata in parallel with the decode
+  const metaPromise = (file.type === "image/png" && window.PngMetadata)
+    ? PngMetadata.read(file).catch(() => ({}))
+    : Promise.resolve({});
+
+  let dataUrl;
+  try {
+    dataUrl = await new Promise((resolve, reject) => {
+      const r = new FileReader();
+      r.onload = ev => resolve(ev.target.result);
+      r.onerror = () => reject(new Error("file read failed"));
+      r.readAsDataURL(file);
+    });
+  } catch (e) {
+    console.error("[Studio] Image import: file read failed", e);
+    return;
+  }
+
+  let decoded = null;
+  try {
+    decoded = await _loadUploadedImagePixels(dataUrl);
+  } catch (e) {
+    console.warn("[Studio] Backend pixel import failed, falling back to browser decode:", e.message || e);
+  }
+  let img = null;
+  if (!decoded) {
+    img = new Image();
+    img.src = dataUrl;
+    try {
+      await new Promise((resolve, reject) => {
+        img.onload = resolve;
+        img.onerror = () => reject(new Error("image load failed"));
+      });
+    } catch (e) {
+      console.error("[Studio] Image import: decode failed", e);
+      return;
+    }
+  }
+
+  const newW = decoded ? decoded.width : img.naturalWidth;
+  const newH = decoded ? decoded.height : img.naturalHeight;
+  Core.saveStructuralUndo(opts.undoLabel);
+  Core.resizeCanvas(newW, newH);
+  const wInput = document.getElementById("paramWidth");
+  const hInput = document.getElementById("paramHeight");
+  if (wInput) wInput.value = newW;
+  if (hInput) hInput.value = newH;
+  StatusBar.setDimensions(newW, newH);
+  if (window._syncARToSize) window._syncARToSize(newW, newH);
+
+  const S = Core.state;
+  const newL = Core.makeLayer(opts.layerName, "paint");
+  if (decoded) newL.ctx.putImageData(decoded.imageData, 0, 0);
+  else newL.ctx.drawImage(img, 0, 0, newW, newH);
+  S.layers.splice(S.activeLayerIdx + 1, 0, newL);
+  S.activeLayerIdx++;
+  if (window.StudioUI) {
+    window.StudioUI.renderLayerPanel();
+    window.StudioUI.syncCanvasToViewport();
+    Core.zoomFit();
+    window.StudioUI.updateStatus();
+    window.StudioUI.redraw();
+  }
+  Core.composite();
+
+  // Apply metadata to UI fields if present
+  const meta = await metaPromise;
+  if (meta.parameters) {
+    _applyInfotextToUI(meta.parameters);
+    showToast(`${opts.verb} ${newW}×${newH} (params imported)`, "success");
+  } else {
+    showToast(`${opts.verb} ${newW}×${newH}`, "success");
+  }
+
+  // Auto-disable Hires Fix — imported images are already at native
+  // resolution, so hires would double their size unexpectedly.
+  _disableHiresFix();
 }
 
 function displayOnCanvas(imgSrc, opts) {
@@ -2373,6 +2605,16 @@ function displayOnCanvas(imgSrc, opts) {
         decoded = await _loadServerImagePixels(imgSrc);
       } catch (e) {
         console.warn("[Studio] Raw pixel import failed, falling back to image import:", e.message || e);
+        decoded = null;
+      }
+    } else if (typeof imgSrc === "string" && imgSrc.startsWith("data:image")) {
+      // Data-URL sources (Live results, unsaved outputs) get the same
+      // backend decode via upload — the browser decode would bake the
+      // display ICC into the pixels on calibrated setups.
+      try {
+        decoded = await _loadUploadedImagePixels(imgSrc);
+      } catch (e) {
+        console.warn("[Studio] Uploaded pixel import failed, falling back to image import:", e.message || e);
         decoded = null;
       }
     }
@@ -2522,16 +2764,22 @@ function renderOutputGallery() {
   if (!grid) return;
 
   // Show the output section
-  if (section) section.style.display = State.outputImages.length ? "" : "none";
+  if (section) section.style.display = State.sessionEntries.length ? "" : "none";
 
-  grid.innerHTML = State.outputImages.map((img, i) =>
+  // Thumbs use thumbUrl (server-side 256px thumbnails for saved/scratch;
+  // the data URL itself for "live") — full-res never loads in the grid.
+  grid.innerHTML = State.sessionEntries.map((e, i) =>
     `<div class="output-thumb ${i === State.selectedOutputIdx ? 'selected' : ''}" data-idx="${i}">
-      <img src="${img}" alt="Output ${i + 1}">
+      <img loading="lazy" src="${e.thumbUrl || e.url}" alt="Output ${i + 1}">
     </div>`
   ).join("");
 
   // Show infotext for selected image
   _updateOutputInfo();
+
+  // Deck layout: the session strip is a second view of the same arrays
+  // (no-op under Classic).
+  SessionStrip.render();
 }
 
 /** Update the infotext display for the currently selected output image. */
@@ -2539,7 +2787,7 @@ function _updateOutputInfo() {
   const info = document.getElementById("outputInfo");
   if (!info) return;
 
-  const infotext = State.outputInfotexts[State.selectedOutputIdx] || "";
+  const infotext = State.sessionEntries[State.selectedOutputIdx]?.infotext || "";
   if (infotext) {
     const seedMatch = infotext.match(/Seed:\s*(\d+)/);
     const stepsMatch = infotext.match(/Steps:\s*(\d+)/);
@@ -2946,9 +3194,10 @@ function bindUI() {
     // + calibrated wide-gamut. Same-origin file URLs draw to canvas fine (no
     // CORS issue) since they're served by Forge's own /file= route.
     const img = _pickOutputSource(State.selectedOutputIdx);
-    const fpath = State.outputFloatPaths[State.selectedOutputIdx] || "";
-    const mpath = State.outputMaskPaths[State.selectedOutputIdx] || "";
-    const fstats = State.outputFloatStats[State.selectedOutputIdx] || null;
+    const _entry = State.sessionEntries[State.selectedOutputIdx] || {};
+    const fpath = _entry.floatPath || "";
+    const mpath = _entry.maskPath || "";
+    const fstats = _entry.floatStats || null;
     if (img) displayOnCanvas(img, { newLayer: true, layerName: "Output", undoLabel: "Send to canvas", floatPath: fpath, maskPath: mpath, floatStats: fstats });
   });
 
@@ -2963,6 +3212,7 @@ function bindUI() {
       thumb.classList.add("selected");
       _showResultPreview(State.selectedOutputIdx);
       _updateOutputInfo();
+      SessionStrip.render();
     });
     _grid.addEventListener("dblclick", (e) => {
       const thumb = e.target.closest(".output-thumb");
@@ -3002,13 +3252,14 @@ function bindUI() {
       // Remove existing menu
       document.querySelector(".gallery-ctx-menu")?.remove();
 
-      const infotext = State.outputInfotexts[idx] || "";
+      const _ctxEntry = State.sessionEntries[idx] || {};
+      const infotext = _ctxEntry.infotext || "";
       const seedMatch = infotext.match(/Seed:\s*(\d+)/);
       const seed = seedMatch ? seedMatch[1] : null;
 
       const menu = document.createElement("div");
       menu.className = "gallery-ctx-menu";
-      const _hasFloatCtx = !!(State.outputFloatPaths && State.outputFloatPaths[idx]);
+      const _hasFloatCtx = !!_ctxEntry.floatPath;
       const _exrCtxLabel = _hasFloatCtx ? "Export EXR (High Precision)" : "Export EXR (Standard)";
       menu.innerHTML = [
         { label: "Send to Canvas", action: "canvas" },
@@ -3029,10 +3280,10 @@ function bindUI() {
         if (!action) return;
         menu.remove();
         const imgSrc = _pickOutputSource(idx);
-        const fpath = State.outputFloatPaths[idx] || "";
-        const mpath = State.outputMaskPaths[idx] || "";
+        const fpath = _ctxEntry.floatPath || "";
+        const mpath = _ctxEntry.maskPath || "";
         if (action === "canvas" && imgSrc) {
-          displayOnCanvas(imgSrc, { newLayer: true, layerName: "Output", undoLabel: "Send to canvas", floatPath: fpath, maskPath: mpath, floatStats: State.outputFloatStats[idx] || null });
+          displayOnCanvas(imgSrc, { newLayer: true, layerName: "Output", undoLabel: "Send to canvas", floatPath: fpath, maskPath: mpath, floatStats: _ctxEntry.floatStats || null });
         } else if (action === "seed" && seed) {
           navigator.clipboard.writeText(seed).then(() => showToast(`Seed ${seed} copied`, "success"));
         } else if (action === "save-exr") {
@@ -3052,23 +3303,45 @@ function bindUI() {
     });
   }
 
+  // Session strip (deck layout) — same selection semantics as #outputGrid.
+  // renderOutputGallery() syncs the grid selection + infotext and re-renders
+  // the strip, so both views stay in lockstep.
+  const _stripScroll = document.getElementById("sessionStripScroll");
+  if (_stripScroll) {
+    _stripScroll.addEventListener("click", (e) => {
+      const thumb = e.target.closest(".session-thumb");
+      if (!thumb) return;
+      State.selectedOutputIdx = parseInt(thumb.dataset.idx);
+      _showResultPreview(State.selectedOutputIdx);
+      renderOutputGallery();
+    });
+    _stripScroll.addEventListener("dblclick", (e) => {
+      const thumb = e.target.closest(".session-thumb");
+      if (!thumb) return;
+      _openCanvasOutput(parseInt(thumb.dataset.idx));
+    });
+  }
+
   /** Build a navContext from the current Canvas batch. Each slot carries
    * everything Gallery needs for ephemeral fallback (b64Url, filename,
    * infotext) plus the hash for the saved-image lookup path. */
   function _buildCanvasNavContext() {
-    return State.outputImages.map((url, i) => ({
-      hash: State.outputContentHashes[i] || "",
-      b64Url: State.outputImagesB64[i] || url,
-      filename: State.outputFilenames[i] || "",
-      infotext: State.outputInfotexts[i] || "",
+    return State.sessionEntries.map((e) => ({
+      hash: e.contentHash || "",
+      // Gallery's ephemeral view tolerates a same-origin file URL here
+      // (it feeds <img src>, fetch(), displayOnCanvas, and a download
+      // anchor — all URL-capable), so older entries don't need base64.
+      b64Url: e.b64 || e.url,
+      filename: e.filename || "",
+      infotext: e.infotext || "",
       // High Precision sidecar — Gallery threads this through to Develop
       // via setFloatSource when the detail view opens.
-      floatPath: State.outputFloatPaths[i] || "",
+      floatPath: e.floatPath || "",
       // V2: blend-mask sidecar (AD/brush composite). When present,
       // Develop will composite canvas-uint8 over the float buffer.
-      maskPath: State.outputMaskPaths[i] || "",
+      maskPath: e.maskPath || "",
       // Privacy-safe HP source stats for the Develop quality badge.
-      floatStats: State.outputFloatStats[i] || null,
+      floatStats: e.floatStats || null,
     }));
   }
 
@@ -3102,9 +3375,8 @@ function bindUI() {
     const canvasArea = document.getElementById("canvasArea");
     if (canvasArea && canvasArea.contains(e.target)) {
       const img = _pickOutputSource(idx);
-      const fpath = State.outputFloatPaths[idx] || "";
-      const mpath = State.outputMaskPaths[idx] || "";
-      if (img) displayOnCanvas(img, { newLayer: true, layerName: "Output", undoLabel: "Drag to canvas", floatPath: fpath, maskPath: mpath, floatStats: State.outputFloatStats[idx] || null });
+      const _dragEntry = State.sessionEntries[idx] || {};
+      if (img) displayOnCanvas(img, { newLayer: true, layerName: "Output", undoLabel: "Drag to canvas", floatPath: _dragEntry.floatPath || "", maskPath: _dragEntry.maskPath || "", floatStats: _dragEntry.floatStats || null });
     }
   });
 
@@ -3114,52 +3386,11 @@ function bindUI() {
     _canvasArea.addEventListener("dragover", e => { e.preventDefault(); e.dataTransfer.dropEffect = "copy"; });
     _canvasArea.addEventListener("drop", e => {
       e.preventDefault();
-      // External file drop
+      // External file drop - backend-decoded so the browser's image
+      // decode can't bake the display ICC into the layer pixels.
       const file = e.dataTransfer.files?.[0];
-      if (file && file.type.startsWith("image/") && window.StudioCore) {
-        const Core = window.StudioCore;
-        const metaPromise = (file.type === "image/png" && window.PngMetadata)
-          ? PngMetadata.read(file).catch(() => ({}))
-          : Promise.resolve({});
-        const r = new FileReader();
-        r.onload = ev => {
-          const img = new Image();
-          img.onload = async () => {
-            const newW = img.naturalWidth, newH = img.naturalHeight;
-            Core.saveStructuralUndo("Drop image");
-            Core.resizeCanvas(newW, newH);
-            const wInput = document.getElementById("paramWidth");
-            const hInput = document.getElementById("paramHeight");
-            if (wInput) wInput.value = newW;
-            if (hInput) hInput.value = newH;
-            StatusBar.setDimensions(newW, newH);
-            if (window._syncARToSize) window._syncARToSize(newW, newH);
-            const S = Core.state;
-            const newL = Core.makeLayer("Dropped", "paint");
-            newL.ctx.drawImage(img, 0, 0, newW, newH);
-            S.layers.splice(S.activeLayerIdx + 1, 0, newL);
-            S.activeLayerIdx++;
-            if (window.StudioUI) {
-              window.StudioUI.renderLayerPanel();
-              window.StudioUI.syncCanvasToViewport();
-              Core.zoomFit();
-              window.StudioUI.updateStatus();
-              window.StudioUI.redraw();
-            }
-            Core.composite();
-            const meta = await metaPromise;
-            if (meta.parameters) {
-              _applyInfotextToUI(meta.parameters);
-              showToast(`Dropped ${newW}\u00d7${newH} (params imported)`, "success");
-            } else {
-              showToast(`Dropped ${newW}\u00d7${newH}`, "success");
-            }
-            // Auto-disable Hires Fix for dropped images
-            _disableHiresFix();
-          };
-          img.src = ev.target.result;
-        };
-        r.readAsDataURL(file);
+      if (file && file.type.startsWith("image/")) {
+        _importLocalImageFile(file, { undoLabel: "Drop image", layerName: "Dropped", verb: "Dropped" });
       }
     });
   }
@@ -3169,8 +3400,9 @@ function bindUI() {
   // pipeline compatibility, just without precision gain.
   async function _exportEXR(idx, toGallery) {
     if (idx == null || idx < 0) return;
-    const floatPath = State.outputFloatPaths[idx] || "";
-    const maskPath  = State.outputMaskPaths[idx]  || "";
+    const _exrEntry = State.sessionEntries[idx] || {};
+    const floatPath = _exrEntry.floatPath || "";
+    const maskPath  = _exrEntry.maskPath  || "";
     // Backend wants image_b64. Pull from the saved /file= URL when one
     // exists (byte-faithful to disk); fall back to the cached base64 only
     // for unsaved outputs.
@@ -3192,7 +3424,7 @@ function bindUI() {
       } catch (e) { /* fall through with w=h=0 */ }
     }
     const subfolder = toGallery ? "" : "downloads";
-    const stem = (State.outputFilenames[idx] || "").trim();
+    const stem = (_exrEntry.filename || "").trim();
     const body = {
       float_path: floatPath,
       // V2: when a mask sidecar exists, also send image_b64 so the
@@ -3284,8 +3516,9 @@ function bindUI() {
     const srcMime = (imgSrc.match(/^data:([^;]+)/) || [])[1] || "image/png";
     const srcFmt = srcMime === "image/jpeg" ? "jpeg" : (srcMime === "image/webp" ? "webp" : "png");
     const defFmt = State.saveFormat || srcFmt || "png";
-    const stem = (State.outputFilenames[idx] || `studio_${Date.now()}`).replace(/\.[^.]+$/, "");
-    const infotext = State.embedMetadata ? (State.outputInfotexts[idx] || "") : "";
+    const _saveEntry = State.sessionEntries[idx] || {};
+    const stem = (_saveEntry.filename || `studio_${Date.now()}`).replace(/\.[^.]+$/, "");
+    const infotext = State.embedMetadata ? (_saveEntry.infotext || "") : "";
 
     // 1) Server-side native "Save As…" dialog. This is the reliable path for a
     //    local Forge install: it pops a real OS dialog regardless of browser
@@ -3372,8 +3605,9 @@ function bindUI() {
     // the source is a URL.
     const imgSrc = await _resolveOutputAsB64(State.selectedOutputIdx);
     if (!imgSrc) return;
+    const _selEntry = State.sessionEntries[State.selectedOutputIdx] || {};
     const infotext = State.embedMetadata
-      ? (State.outputInfotexts[State.selectedOutputIdx] || "")
+      ? (_selEntry.infotext || "")
       : "";
     // toGallery + a configured "Save to Gallery folder" (server-side absolute
     // path) routes the write there. Without a configured folder we preserve
@@ -3382,7 +3616,7 @@ function bindUI() {
     // Gallery-destination failure apart from a plain save failure.
     const galleryDir = toGallery ? (State.galleryFolder || "").trim() : "";
     try {
-      const origName = State.outputFilenames[State.selectedOutputIdx] || null;
+      const origName = _selEntry.filename || null;
       const result = await API.saveImage({
         image_b64: imgSrc,
         format: fmt,
@@ -3414,7 +3648,7 @@ function bindUI() {
       try {
         const a = document.createElement("a");
         a.href = imgSrc;
-        a.download = (State.outputFilenames[State.selectedOutputIdx] || `studio_${Date.now()}`)
+        a.download = (_selEntry.filename || `studio_${Date.now()}`)
           .replace(/\.[^.]+$/, "") + "." + (fmt === "jpeg" ? "jpg" : fmt);
         document.body.appendChild(a); a.click();
         setTimeout(() => document.body.removeChild(a), 100);
@@ -3436,7 +3670,7 @@ function bindUI() {
     // users know whether they're getting true HDR data or a uint8 → EXR
     // conversion.
     const _idx = State.selectedOutputIdx;
-    const _hasFloat = !!(State.outputFloatPaths && State.outputFloatPaths[_idx]);
+    const _hasFloat = !!State.sessionEntries[_idx]?.floatPath;
     const _exrLabel = _hasFloat ? "Export EXR (High Precision)" : "Export EXR (Standard)";
     const _fmt = State.saveFormat || "png";
 
@@ -3857,6 +4091,25 @@ function bindUI() {
   document.getElementById("toggleSaveOutputs")?.addEventListener("click", () => {
     State.saveOutputs = document.getElementById("toggleSaveOutputs")?.classList.contains("on") ?? true;
   });
+
+  // Session history size (WP-L2) — clamped 8–200, persisted, applied
+  // immediately (lowering the limit evicts the overflow right away).
+  {
+    const limitInput = document.getElementById("settingSessionLimit");
+    if (limitInput) {
+      limitInput.value = _sessionLimit();
+      limitInput.addEventListener("change", () => {
+        const v = Math.max(8, Math.min(200, parseInt(limitInput.value, 10) || 50));
+        limitInput.value = v;
+        localStorage.setItem("studio-session-limit", String(v));
+        _applySessionLimit();
+        renderOutputGallery();
+      });
+    }
+  }
+  // Clear session — Settings button + session strip header button (deck)
+  document.getElementById("clearSessionBtn")?.addEventListener("click", _clearSession);
+  document.getElementById("sessionStripClear")?.addEventListener("click", _clearSession);
 
   // High Precision: capture float32 VAE output and save .float32.bin sidecar
   document.getElementById("toggleHighPrecision")?.addEventListener("click", () => {
@@ -5288,57 +5541,12 @@ function bindUI() {
     document.getElementById("loadImageInput")?.click();
   });
   document.getElementById("loadImageInput")?.addEventListener("change", e => {
+    // Backend-decoded so the browser's image decode can't bake the
+    // display ICC into the layer pixels (see _importLocalImageFile).
     const file = e.target.files?.[0];
-    if (!file || !file.type.startsWith("image/") || !window.StudioCore) return;
-    const Core = window.StudioCore;
-
-    // Read PNG metadata in parallel with image decode
-    const metaPromise = (file.type === "image/png" && window.PngMetadata)
-      ? PngMetadata.read(file).catch(() => ({}))
-      : Promise.resolve({});
-
-    const r = new FileReader();
-    r.onload = ev => {
-      const img = new Image();
-      img.onload = async () => {
-        const newW = img.naturalWidth;
-        const newH = img.naturalHeight;
-        Core.saveStructuralUndo("Load image");
-        Core.resizeCanvas(newW, newH);
-        const wInput = document.getElementById("paramWidth");
-        const hInput = document.getElementById("paramHeight");
-        if (wInput) wInput.value = newW;
-        if (hInput) hInput.value = newH;
-        if (window._syncARToSize) window._syncARToSize(newW, newH);
-
-        const S = Core.state;
-        const newL = Core.makeLayer("Loaded", "paint");
-        newL.ctx.drawImage(img, 0, 0, newW, newH);
-        S.layers.splice(S.activeLayerIdx + 1, 0, newL);
-        S.activeLayerIdx++;
-        if (window.StudioUI) {
-          window.StudioUI.renderLayerPanel();
-          window.StudioUI.syncCanvasToViewport();
-          Core.zoomFit();
-        }
-        Core.composite();
-
-        // Apply metadata to UI fields if present
-        const meta = await metaPromise;
-        if (meta.parameters) {
-          _applyInfotextToUI(meta.parameters);
-          showToast(`Loaded ${newW}\u00d7${newH} (params imported)`, "success");
-        } else {
-          showToast(`Loaded ${newW}\u00d7${newH}`, "success");
-        }
-
-        // Auto-disable Hires Fix — loaded images are already at native
-        // resolution, so hires would double their size unexpectedly.
-        _disableHiresFix();
-      };
-      img.src = ev.target.result;
-    };
-    r.readAsDataURL(file);
+    if (file && file.type.startsWith("image/")) {
+      _importLocalImageFile(file, { undoLabel: "Load image", layerName: "Loaded", verb: "Loaded" });
+    }
     e.target.value = "";
   });
 
@@ -5454,6 +5662,16 @@ const ExtensionBridge = {
       });
       container.appendChild(group);
 
+      // WP-L3: extension panels are layout blocks. Re-registration with
+      // the freshly rendered element replaces the previous one, so a
+      // re-render can't leave a duplicate of a block that was moved to a
+      // zone or hidden.
+      LayoutBlocks.register("ext-" + LayoutManager.slugify(ext.name), group, {
+        label: ext.title || ext.name,
+        canHide: true,
+        home: "ext",
+      });
+
       // Blueprint path vs AutoBridge path
       if (ext.blueprint) {
         this._wireBlueprintDependencies(group, ext);
@@ -5468,6 +5686,13 @@ const ExtensionBridge = {
           hdr.parentElement.classList.toggle("open");
         });
       });
+    }
+
+    // WP-L3: relocate re-rendered extension blocks per the active layout
+    // map (no-op before the layout system finishes booting).
+    if (window.LayoutManager?._ready) {
+      LayoutManager.reapply({ lift: Customizer.active });
+      if (Customizer.active) Customizer.refreshChrome();
     }
   },
 
@@ -6033,6 +6258,1000 @@ const ThemeSwitcher = {
 };
 
 
+// ═══════════════════════════════════════════
+// LAYOUT PRESETS (WP-L1) + BLOCK/ZONE REGISTRY (WP-L3)
+// ═══════════════════════════════════════════
+
+// Block registry + marker-based re-mount mechanism. Each [data-block]
+// element gets a hidden marker recording its factory DOM position so a
+// factory restore is always exact. Nodes are MOVED (appendChild /
+// insertBefore), never cloned — IDs, state, and listeners survive.
+// Markers are only created when a layout first deviates from factory, so
+// a session that never customizes gets zero DOM changes.
+//
+// Zones: "panel" (#page-generate) and "deck" (#deckZone). The session
+// strip is its own grid column — registered for hide/restore only, never
+// part of a zone and never drag-targetable (v1).
+const LayoutBlocks = {
+  _order: ["prompt", "lora", "negative", "generate"], // factory deck-zone blocks
+  registry: new Map(), // id -> {id, el, label, canHide, home: "panel"|"ext"|"strip"}
+  _factoryPanelIds: [],
+  _lastStructured: false, // last applyMap restructured the DOM (custom/lift)
+
+  _STATIC_BLOCKS: [
+    { id: "prompt",     label: "Prompt",        canHide: false },
+    { id: "lora",       label: "LoRAs",         canHide: true  },
+    { id: "negative",   label: "Negative",      canHide: true  },
+    { id: "generate",   label: "Generate",      canHide: false },
+    { id: "output",     label: "Output gallery", canHide: true },
+    { id: "layers",     label: "Layers",        canHide: true  },
+    { id: "history",    label: "History",       canHide: true  },
+    { id: "regions",    label: "Regions",       canHide: true  },
+    { id: "model",      label: "Model & VAE",   canHide: true  },
+    { id: "sampling",   label: "Sampling",      canHide: true  },
+    { id: "frame",      label: "Canvas",        canHide: true  },
+    { id: "seedbatch",  label: "Seed & Batch",  canHide: true  },
+    { id: "hires",      label: "Hires Fix",     canHide: true  },
+    { id: "adetailer",  label: "ADetailer",     canHide: true  },
+    { id: "upscale",    label: "Upscale",       canHide: true  },
+    { id: "controlnet", label: "ControlNet",    canHide: true  },
+  ],
+
+  registerStatic() {
+    if (this._factoryPanelIds.length) return; // once
+    const byId = Object.fromEntries(this._STATIC_BLOCKS.map(b => [b.id, b]));
+    // Factory panel order = document order at boot (factory DOM).
+    document.querySelectorAll('#page-generate [data-block]').forEach(el => {
+      const def = byId[el.dataset.block];
+      if (!def) return;
+      this.register(def.id, el, { label: def.label, canHide: def.canHide, home: "panel" });
+      this._factoryPanelIds.push(def.id);
+    });
+    const strip = document.getElementById("sessionStrip");
+    if (strip) this.register("strip", strip, { label: "Session strip", canHide: true, home: "strip" });
+  },
+
+  // Dynamic registration (extension-injected panels). Re-registration with
+  // a new element replaces the old one — the stale node is removed so a
+  // re-rendered extension can't end up duplicated in a zone.
+  register(id, el, opts = {}) {
+    const prev = this.registry.get(id);
+    if (prev && prev.el !== el && prev.el?.isConnected) prev.el.remove();
+    el.dataset.block = id;
+    el.dataset.blockLabel = opts.label || id;
+    this.registry.set(id, {
+      id, el,
+      label: opts.label || id,
+      canHide: opts.canHide !== false,
+      home: opts.home || "panel",
+    });
+  },
+
+  _ensureMarkers() {
+    for (const { el, id } of this.registry.values()) {
+      if (id === "strip") continue; // never re-mounted
+      if (!el.isConnected) continue;
+      const m = document.querySelector(`.layout-home[data-home-for="${id}"]`);
+      if (m) continue;
+      const marker = document.createElement("span");
+      marker.className = "layout-home";
+      marker.dataset.homeFor = id;
+      marker.hidden = true;
+      el.parentElement.insertBefore(marker, el);
+    }
+  },
+
+  _restoreAll() {
+    for (const { el, id } of this.registry.values()) {
+      if (id === "strip") continue;
+      const marker = document.querySelector(`.layout-home[data-home-for="${id}"]`);
+      if (!el || !marker) continue;
+      if (el.previousElementSibling !== marker) {
+        marker.parentElement.insertBefore(el, marker.nextSibling);
+      }
+    }
+  },
+
+  factoryMap(base) {
+    base = base === "deck" ? "deck" : "classic";
+    const panel = [...this._factoryPanelIds];
+    const zones = base === "deck"
+      ? { panel: panel.filter(id => !this._order.includes(id)), deck: [...this._order] }
+      : { panel, deck: [] };
+    return {
+      schema: 1, module: "canvas", name: "", base,
+      panelWidth: 0, // 0 = unmanaged (leave the panel width alone)
+      zones, hidden: [],
+      strip: { collapsed: SessionStrip.isCollapsed(), visible: true },
+    };
+  },
+
+  // Structural comparison only — strip state and panel width don't make a
+  // layout "custom" (they apply without restructuring the DOM).
+  isFactory(map) {
+    const fac = this.factoryMap(map.base);
+    const eq = (a, b) => a.length === b.length && a.every((v, i) => v === b[i]);
+    return eq(map.zones.panel, fac.zones.panel)
+        && eq(map.zones.deck, fac.zones.deck)
+        && map.hidden.length === 0;
+  },
+
+  // Merge rules (schema resilience), applied on every load:
+  //  - unknown block ids dropped silently
+  //  - registered blocks missing from the map appended to their factory
+  //    zone in factory order (ext-home blocks just stay at their marker)
+  //  - unknown top-level keys preserved for round-trip
+  //  - schema mismatch -> factory fallback for `base` + toast (the file
+  //    itself is never touched)
+  normalizeMap(raw) {
+    const base = raw?.base === "deck" ? "deck" : "classic";
+    const fac = this.factoryMap(base);
+    if (!raw || typeof raw !== "object") return fac;
+    if (raw.schema !== undefined && raw.schema !== 1) {
+      showToast(_i18n("toast.layout.schema", "Layout file uses an unsupported schema — using the factory layout"), "info");
+      return fac;
+    }
+    const known = id => {
+      const r = this.registry.get(id);
+      return !!r && r.home !== "strip";
+    };
+    const out = { ...raw, schema: 1, module: "canvas", base };
+    const seen = new Set();
+    const clean = list => (Array.isArray(list) ? list : [])
+      .filter(id => typeof id === "string" && known(id) && !seen.has(id) && (seen.add(id), true));
+    const zones = raw.zones || {};
+    out.zones = { panel: clean(zones.panel), deck: clean(zones.deck) };
+    out.hidden = (Array.isArray(raw.hidden) ? raw.hidden : [])
+      .filter(id => typeof id === "string" && known(id)
+        && this.registry.get(id).canHide && !seen.has(id) && (seen.add(id), true));
+    for (const id of fac.zones.panel) if (!seen.has(id)) { out.zones.panel.push(id); seen.add(id); }
+    for (const id of fac.zones.deck) if (!seen.has(id)) { out.zones.deck.push(id); seen.add(id); }
+    let pw = Number.isInteger(raw.panelWidth) ? raw.panelWidth : 0;
+    if (pw !== 0) pw = Math.max(420, Math.min(900, pw));
+    out.panelWidth = pw;
+    out.strip = {
+      collapsed: !!raw.strip?.collapsed,
+      visible: raw.strip?.visible !== false,
+    };
+    out.name = typeof raw.name === "string" ? raw.name : "";
+    return out;
+  },
+
+  // Apply a layout map. Idempotent: factory restore first, then the
+  // custom structure (if any). opts.lift forces the explicit zone-child
+  // structure even for factory-equivalent maps — Customize mode uses it
+  // so dragging and DOM-order sync are uniform.
+  applyMap(map, opts = {}) {
+    map = this.normalizeMap(map);
+    const structured = !this.isFactory(map) || !!opts.lift;
+    if (structured || this._lastStructured || map.base === "deck") this._ensureMarkers();
+    this._restoreAll();
+    const panel = document.querySelector('[data-zone="panel"]');
+    const deck = document.getElementById("deckZone");
+    if (structured) {
+      // Lift the panel blocks to direct zone children, in map order, above
+      // the remaining (non-block) panel content.
+      const anchor = panel ? panel.firstElementChild : null;
+      for (const id of map.zones.panel) {
+        const r = this.registry.get(id);
+        if (r?.el && panel) panel.insertBefore(r.el, anchor);
+      }
+      for (const id of map.zones.deck) {
+        const r = this.registry.get(id);
+        if (r?.el && deck) deck.appendChild(r.el);
+      }
+      for (const id of map.hidden) this.registry.get(id)?.el?.remove();
+      document.documentElement.setAttribute("data-layout-custom", "");
+    } else {
+      if (map.base === "deck" && deck) {
+        for (const id of map.zones.deck) {
+          const r = this.registry.get(id);
+          if (r?.el && r.el.parentElement !== deck) deck.appendChild(r.el);
+        }
+      }
+      document.documentElement.removeAttribute("data-layout-custom");
+    }
+    this._lastStructured = structured;
+    SessionStrip.applyState(map.strip);
+    const panelRight = document.getElementById("panelRight");
+    if (panelRight && map.panelWidth >= 420) {
+      panelRight.style.width = map.panelWidth + "px";
+      document.documentElement.style.setProperty("--studio-panel-width", map.panelWidth + "px");
+    }
+    // Trip the same path a window resize takes so canvas zoom/fit math
+    // recomputes for the new canvas-area size.
+    window.dispatchEvent(new Event("resize"));
+  },
+
+  // Back-compat wrappers (WP-L1 API)
+  mountDeck() { this.applyMap(this.factoryMap("deck")); },
+  mountClassic() { this.applyMap(this.factoryMap("classic")); },
+};
+
+// Vertical rail between canvas and params panel mirroring the output
+// gallery. Pure view over the existing State.output* arrays — WP-L2
+// replaces the data layer underneath without touching this.
+const SessionStrip = {
+  render() {
+    // The strip column is active under the deck preset or Classic with
+    // the "Session strip in Classic" setting — both set data-strip-col.
+    if (!document.documentElement.hasAttribute("data-strip-col")) return;
+    const scroll = document.getElementById("sessionStripScroll");
+    if (!scroll) return;
+    // thumbUrl only — the strip never loads full-res images. Entries that
+    // know their dimensions get the aspect-ratio inline up front.
+    scroll.innerHTML = State.sessionEntries.map((e, i) =>
+      `<div class="session-thumb ${i === State.selectedOutputIdx ? "selected" : ""}" data-idx="${i}"${
+        (e.width && e.height) ? ` style="aspect-ratio:${e.width} / ${e.height}"` : ""}>
+        <img loading="lazy" src="${e.thumbUrl || e.url}" alt="">
+      </div>`
+    ).join("");
+    // Fallback for entries without known dimensions: set aspect-ratio from
+    // the thumb's natural dimensions once loaded (auto until then).
+    scroll.querySelectorAll(".session-thumb:not([style]) img").forEach(img => {
+      const apply = () => {
+        if (img.naturalWidth && img.naturalHeight) {
+          img.parentElement.style.aspectRatio = `${img.naturalWidth} / ${img.naturalHeight}`;
+        }
+      };
+      if (img.complete) apply();
+      else img.addEventListener("load", apply, { once: true });
+    });
+    const count = document.getElementById("sessionStripCount");
+    if (count) count.textContent = State.sessionEntries.length ? String(State.sessionEntries.length) : "";
+  },
+
+  isCollapsed() {
+    const strip = document.getElementById("sessionStrip");
+    if (strip) return strip.classList.contains("collapsed");
+    return localStorage.getItem("studio-strip-collapsed") === "true";
+  },
+
+  // "Session strip in Classic" — user opt-in; the strip column itself is
+  // gated by the data-strip-col root attribute in CSS.
+  classicEnabled() {
+    return localStorage.getItem("studio-classic-strip") === "true";
+  },
+
+  syncStripCol() {
+    const on = LayoutSwitcher.current === "deck" || this.classicEnabled();
+    document.documentElement.toggleAttribute("data-strip-col", on);
+    this.syncLive();
+  },
+
+  // data-strip-live = the strip is actually on screen (column active AND
+  // not hidden via the layout map). While live, the panel's duplicate
+  // thumbnail grid is hidden (CSS) — info + action buttons remain.
+  syncLive() {
+    const strip = document.getElementById("sessionStrip");
+    const live = document.documentElement.hasAttribute("data-strip-col")
+      && !!strip && !strip.classList.contains("strip-hidden");
+    document.documentElement.toggleAttribute("data-strip-live", live);
+  },
+
+  initClassicToggle() {
+    const t = document.getElementById("toggleClassicStrip");
+    if (!t) return;
+    t.classList.toggle("on", this.classicEnabled());
+    t.addEventListener("click", () => {
+      // localStorage is the source of truth — invert it and FORCE the
+      // knob class to match. Robust regardless of whether the global
+      // .toggle-track handler fired before, after, or not at all.
+      const on = !this.classicEnabled();
+      localStorage.setItem("studio-classic-strip", String(on));
+      t.classList.toggle("on", on);
+      this.syncStripCol();
+      this.render();
+      window.dispatchEvent(new Event("resize"));
+    });
+  },
+
+  // Strip state lives in the layout map (WP-L3). Visible:false collapses
+  // the grid column entirely; the hidden tray offers restore.
+  applyState(strip) {
+    const el = document.getElementById("sessionStrip");
+    if (!el || !strip) return;
+    el.classList.toggle("collapsed", !!strip.collapsed);
+    el.classList.toggle("strip-hidden", strip.visible === false);
+    this.syncLive();
+  },
+
+  initCollapse() {
+    const strip = document.getElementById("sessionStrip");
+    const toggle = document.getElementById("sessionStripToggle");
+    if (!strip || !toggle) return;
+    // WP-L1 fallback key — read once for migration; the layout map owns
+    // the state from here on (no further writes to the old key).
+    if (localStorage.getItem("studio-strip-collapsed") === "true") {
+      strip.classList.add("collapsed");
+    }
+    toggle.addEventListener("click", () => {
+      const collapsed = strip.classList.toggle("collapsed");
+      LayoutManager.setStripState({ collapsed });
+      // Canvas-area width changed — recompute zoom/fit
+      window.dispatchEvent(new Event("resize"));
+    });
+    // Collapsed rail: clicking anywhere on it expands (the slim rail's
+    // dedicated button is easy to miss). Buttons keep their own handlers;
+    // the toggle's click above already flips the class before this runs.
+    strip.addEventListener("click", e => {
+      if (!strip.classList.contains("collapsed")) return;
+      if (e.target.closest("button")) return;
+      strip.classList.remove("collapsed");
+      LayoutManager.setStripState({ collapsed: false });
+      window.dispatchEvent(new Event("resize"));
+    });
+  },
+};
+
+const LayoutSwitcher = {
+  current: "classic",
+
+  init() {
+    LayoutManager.init();
+    SessionStrip.initCollapse();
+    SessionStrip.initClassicToggle();
+    Customizer.init();
+    const saved = localStorage.getItem("studio-layout-preset") || "classic";
+    this.apply(saved, /*boot*/ true);
+    // localStorage wiped but a named layout was active: restore it from
+    // the server file (best-effort, async).
+    if (!LayoutManager.working && LayoutManager.activeName) {
+      LayoutManager.loadByName(LayoutManager.activeName, { silent: true });
+    }
+
+    document.getElementById("layoutSelector")?.addEventListener("click", async e => {
+      const btn = e.target.closest(".layout-btn");
+      if (!btn) return;
+      const preset = btn.dataset.layoutPreset === "deck" ? "deck" : "classic";
+      // Only an UNSAVED custom layout needs a heads-up (a single confirm,
+      // never a forced save). Named layouts live on the server and stay
+      // loadable, so switching away from one is silent.
+      if (LayoutManager.isCustomActive() && !LayoutManager.activeName) {
+        if (!window.confirm(_i18n("layout.confirm.replaceUnsaved",
+            "Replace your current custom layout? It isn't saved — Cancel and use Save as… first to keep it."))) {
+          return;
+        }
+      }
+      if (Customizer.active) Customizer.exit({ skipSave: true });
+      LayoutManager.activeName = "";
+      this.apply(preset);
+    });
+  },
+
+  // Set the base preset attribute/state without applying a map (used by
+  // layout-file loads, whose map is applied separately).
+  setBase(base) {
+    base = base === "deck" ? "deck" : "classic";
+    if (base === "deck") document.documentElement.setAttribute("data-layout", "deck");
+    else document.documentElement.removeAttribute("data-layout");
+    this.current = base;
+    localStorage.setItem("studio-layout-preset", base);
+    this._updateButtons(base);
+    SessionStrip.syncStripCol();
+  },
+
+  apply(preset, boot = false) {
+    preset = preset === "deck" ? "deck" : "classic";
+    const cached = boot ? LayoutManager.loadCached() : null;
+    if (boot && cached && !LayoutBlocks.isFactory(cached)) {
+      // Custom layout boot — restore the saved structure.
+      this.setBase(cached.base);
+      LayoutManager.setWorking(cached, LayoutManager.activeName);
+      LayoutBlocks.applyMap(cached);
+      SessionStrip.render();
+      if (cached.base === "deck") this._discloseSections();
+      return;
+    }
+    if (boot && preset === "classic") {
+      // Classic at boot is the factory DOM — touch nothing structural
+      // (no markers, no storage write, no resize dispatch) so a session
+      // that never customizes stays byte-identical to pre-WP behavior.
+      // (Classic + "Session strip in Classic" is an explicit opt-in.)
+      this.current = "classic";
+      this._updateButtons("classic");
+      SessionStrip.syncStripCol();
+      if (SessionStrip.classicEnabled()) SessionStrip.render();
+      if (cached) {
+        // Factory-equivalent map may still carry strip state / width.
+        LayoutManager.setWorking(cached, LayoutManager.activeName);
+        SessionStrip.applyState(cached.strip);
+        const panelRight = document.getElementById("panelRight");
+        if (panelRight && cached.panelWidth >= 420) {
+          panelRight.style.width = cached.panelWidth + "px";
+        }
+      }
+      return;
+    }
+    this.setBase(preset);
+    const map = (boot && cached && cached.base === preset)
+      ? cached
+      : LayoutBlocks.factoryMap(preset);
+    LayoutManager.setWorking(map, boot ? LayoutManager.activeName : "");
+    LayoutBlocks.applyMap(map); // dispatches the resize event itself
+    SessionStrip.render();
+    if (preset === "deck") this._discloseSections();
+  },
+
+  // Disclose all feature sections on entering deck. Sets the accordion's
+  // own steady open state (open class + max-height:none + arrow class —
+  // exactly what _toggleCollapseBody reaches after its transition) instead
+  // of header.click(): the click path measures scrollHeight, which is 0
+  // while the Generate page is hidden (e.g. switching presets from the
+  // Settings tab) and would latch sections shut. Users can still collapse
+  // them afterwards.
+  _discloseSections() {
+    document.querySelectorAll("#page-generate .collapse-section").forEach(sec => {
+      const header = sec.querySelector(".collapse-header");
+      const body = sec.querySelector(".collapse-body");
+      if (!header || !body || body.classList.contains("open")) return;
+      body.classList.add("open");
+      body.style.maxHeight = "none";
+      header.querySelector(".collapse-arrow")?.classList.add("open");
+    });
+    document.querySelectorAll("#page-extensions .ext-group:not(.open)").forEach(g => {
+      g.classList.add("open");
+    });
+  },
+
+  _updateButtons(active) {
+    document.querySelectorAll("#layoutSelector .layout-btn").forEach(btn => {
+      btn.classList.toggle("active", (btn.dataset.layoutPreset || "classic") === active);
+    });
+  },
+};
+
+
+// ═══════════════════════════════════════════
+// LAYOUT MANAGER (WP-L3) — working map + layout files
+// ═══════════════════════════════════════════
+
+const LayoutManager = {
+  working: null,     // the active (normalized) layout map
+  activeName: "",    // slug of the loaded named layout, "" when unsaved
+  _ready: false,
+
+  init() {
+    LayoutBlocks.registerStatic();
+    this.activeName = localStorage.getItem("studio-layout-name") || "";
+    this._bindUI();
+    this._updateNameDisplay();
+    this.refreshList();
+    this._ready = true;
+  },
+
+  loadCached() {
+    try {
+      const raw = localStorage.getItem("studio-layout-map");
+      return raw ? LayoutBlocks.normalizeMap(JSON.parse(raw)) : null;
+    } catch (_) { return null; }
+  },
+
+  setWorking(map, name = "") {
+    this.working = LayoutBlocks.normalizeMap(map);
+    this.activeName = name || "";
+    this.persistLocal();
+    this._updateNameDisplay();
+  },
+
+  ensureWorking() {
+    if (!this.working) this.working = LayoutBlocks.factoryMap(LayoutSwitcher.current);
+    return this.working;
+  },
+
+  isCustomActive() {
+    return !!this.working && !LayoutBlocks.isFactory(this.working);
+  },
+
+  persistLocal() {
+    try {
+      if (this.working) localStorage.setItem("studio-layout-map", JSON.stringify(this.working));
+      localStorage.setItem("studio-layout-name", this.activeName);
+    } catch (_) {}
+  },
+
+  reapply(opts) {
+    if (this._ready && this.working) LayoutBlocks.applyMap(this.working, opts);
+  },
+
+  setStripState(patch) {
+    Object.assign(this.ensureWorking().strip, patch);
+    this.persistLocal();
+  },
+
+  setPanelWidth(w) {
+    this.ensureWorking().panelWidth = w;
+    this.persistLocal();
+  },
+
+  // Read zone order back from the DOM. Only meaningful while Customize
+  // mode has the blocks lifted to direct zone children.
+  syncFromDOM() {
+    const map = this.ensureWorking();
+    const ids = zone => zone
+      ? [...zone.querySelectorAll(":scope > [data-block]")]
+          .map(b => b.dataset.block)
+          .filter(id => !map.hidden.includes(id))
+      : [];
+    map.zones.panel = ids(document.querySelector('[data-zone="panel"]'));
+    map.zones.deck = ids(document.getElementById("deckZone"));
+    this.persistLocal();
+  },
+
+  slugify(name) {
+    return String(name || "").toLowerCase()
+      .replace(/[^a-z0-9-_]+/g, "-")
+      .replace(/^-+|-+$/g, "")
+      .slice(0, 64);
+  },
+
+  _updateNameDisplay() {
+    const el = document.getElementById("layoutCurrentName");
+    if (el) el.textContent = this.activeName || "—";
+  },
+
+  async refreshList() {
+    try {
+      const r = await fetch(API.base + "/studio/layouts");
+      if (!r.ok) return;
+      const data = await r.json();
+      const sel = document.getElementById("layoutLoadSelect");
+      if (!sel) return;
+      const ph = sel.querySelector('option[value=""]')?.outerHTML
+        || '<option value="">Load layout…</option>';
+      sel.innerHTML = ph + (data.layouts || []).map(l =>
+        `<option value="${l.name}">${l.name} (${l.base})</option>`).join("");
+      sel.value = "";
+    } catch (_) { /* best-effort; the list refreshes on next save/load */ }
+  },
+
+  async save(opts = {}) {
+    if (!this.activeName) return this.saveAs(opts);
+    return this._post(this.activeName, opts);
+  },
+
+  async saveAs(opts = {}) {
+    const name = window.prompt(_i18n("layout.prompt.name", "Layout name:"), this.activeName || "my-layout");
+    if (name == null) return false; // cancelled
+    const slug = this.slugify(name);
+    if (!slug) {
+      showToast(_i18n("toast.layout.badName", "Invalid layout name"), "error");
+      return false;
+    }
+    return this._post(slug, opts);
+  },
+
+  async _post(slug, opts = {}) {
+    const map = { ...this.ensureWorking(), name: slug };
+    try {
+      const r = await fetch(API.base + "/studio/layouts", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ name: slug, map }),
+      });
+      const data = await r.json().catch(() => ({}));
+      if (!r.ok || data.error) {
+        if (!opts.silent) showToast(data.error || _i18n("toast.layout.saveFailed", "Layout save failed"), "error");
+        return false;
+      }
+      this.activeName = slug;
+      this.working.name = slug;
+      this.persistLocal();
+      this._updateNameDisplay();
+      this.refreshList();
+      if (!opts.silent) showToast(_i18n("toast.layout.saved", "Layout saved"), "success");
+      return true;
+    } catch (e) {
+      if (!opts.silent) showToast("Layout save failed: " + e.message, "error");
+      return false;
+    }
+  },
+
+  // Exit-customize hook: always cache locally; update the named file
+  // silently when one is loaded.
+  saveOnExit() {
+    this.persistLocal();
+    if (this.activeName) this._post(this.activeName, { silent: true });
+  },
+
+  // One-click escape hatch back to the factory layout for the current
+  // base preset. Never touches layout files on disk.
+  resetToFactory() {
+    if (Customizer.active) Customizer.exit({ skipSave: true });
+    const base = LayoutSwitcher.current;
+    this.setWorking(LayoutBlocks.factoryMap(base), "");
+    LayoutBlocks.applyMap(this.working);
+    SessionStrip.render();
+    if (base === "deck") LayoutSwitcher._discloseSections();
+    Customizer._renderTray();
+    showToast(_i18n("toast.layout.reset", "Layout reset to default"), "success");
+  },
+
+  async loadByName(name, opts = {}) {
+    const slug = this.slugify(name);
+    if (!slug) return false;
+    try {
+      const r = await fetch(API.base + "/studio/layouts/" + encodeURIComponent(slug));
+      if (!r.ok) {
+        if (!opts.silent) showToast(_i18n("toast.layout.notFound", "Layout not found"), "error");
+        return false;
+      }
+      const raw = await r.json();
+      this.applyLoaded(raw, slug);
+      if (!opts.silent) showToast(_i18n("toast.layout.loaded", "Layout loaded"), "success");
+      return true;
+    } catch (e) {
+      if (!opts.silent) showToast("Layout load failed: " + e.message, "error");
+      return false;
+    }
+  },
+
+  applyLoaded(raw, name) {
+    const map = LayoutBlocks.normalizeMap(raw); // merge rules / schema fallback
+    LayoutSwitcher.setBase(map.base);
+    this.setWorking(map, name);
+    LayoutBlocks.applyMap(map, { lift: Customizer.active });
+    SessionStrip.render();
+    if (map.base === "deck") LayoutSwitcher._discloseSections();
+    if (Customizer.active) Customizer.refreshChrome();
+    else Customizer._renderTray();
+  },
+
+  async deleteActive() {
+    const slug = this.activeName;
+    if (!slug) {
+      showToast(_i18n("toast.layout.noneActive", "No named layout is active"), "info");
+      return;
+    }
+    if (!window.confirm(_i18n("layout.confirm.delete", "Delete this layout file?"))) return;
+    try {
+      const r = await fetch(API.base + "/studio/layouts/" + encodeURIComponent(slug), { method: "DELETE" });
+      if (!r.ok) {
+        showToast(_i18n("toast.layout.deleteFailed", "Layout delete failed"), "error");
+        return;
+      }
+      this.activeName = "";
+      this.persistLocal();
+      this._updateNameDisplay();
+      this.refreshList();
+      showToast(_i18n("toast.layout.deleted", "Layout deleted"), "success");
+    } catch (e) {
+      showToast("Layout delete failed: " + e.message, "error");
+    }
+  },
+
+  _bindUI() {
+    document.getElementById("layoutSaveBtn")?.addEventListener("click", () => {
+      if (Customizer.active) this.syncFromDOM();
+      this.save();
+    });
+    document.getElementById("layoutSaveAsBtn")?.addEventListener("click", () => {
+      if (Customizer.active) this.syncFromDOM();
+      this.saveAs();
+    });
+    document.getElementById("layoutDeleteBtn")?.addEventListener("click", () => this.deleteActive());
+    document.getElementById("layoutResetBtn")?.addEventListener("click", () => this.resetToFactory());
+    document.getElementById("layoutLoadSelect")?.addEventListener("change", e => {
+      const name = e.target.value;
+      e.target.value = "";
+      if (name) this.loadByName(name);
+    });
+  },
+};
+
+
+// ═══════════════════════════════════════════
+// CUSTOMIZE MODE (WP-L3)
+// ═══════════════════════════════════════════
+// Explicit edit mode: registered blocks become draggable between zones,
+// hideable (tray restores), and the params panel is resizable. ALL chrome
+// is gated on body.customizing — a user who never customizes sees none
+// of it. The canvas/viewport are never blocks and never move.
+
+const Customizer = {
+  active: false,
+  _drag: null,
+  _ghost: null,
+  _indicator: null,
+
+  init() {
+    document.getElementById("toggleCustomize")?.addEventListener("click", () => this.toggle());
+    document.getElementById("sessionStripHide")?.addEventListener("click", () => this.hideStrip());
+    document.getElementById("hiddenTrayChips")?.addEventListener("click", e => {
+      const chip = e.target.closest("[data-restore]");
+      if (chip) this.restoreBlock(chip.dataset.restore);
+    });
+    document.addEventListener("click", e => {
+      const btn = e.target.closest(".blk-hide");
+      if (btn && this.active) this.hideBlock(btn.dataset.blockHide);
+    });
+    this._bindDrag();
+    this._bindDivider();
+    window.addEventListener("resize", () => this.updateToggleState());
+    document.addEventListener("keydown", e => {
+      if (e.key === "Escape" && this._drag) this._cancelDrag();
+    });
+    this.updateToggleState();
+    this._renderTray();
+  },
+
+  // Generation lock + viewport gate. Checked at entry AND reflected on
+  // the Settings toggle (disabled look + tooltip).
+  blocked() {
+    if (State.generating) return _i18n("layout.customize.blocked.generating", "Not available while generating");
+    if (typeof Live !== "undefined" && Live.active) return _i18n("layout.customize.blocked.live", "Not available during Live Painting");
+    if (window.innerWidth < 1600) return _i18n("layout.customize.blocked.narrow", "Needs a window at least 1600px wide");
+    return "";
+  },
+
+  updateToggleState() {
+    const t = document.getElementById("toggleCustomize");
+    if (!t) return;
+    const reason = this.active ? "" : this.blocked();
+    t.classList.toggle("disabled", !!reason);
+    t.title = reason;
+    t.classList.toggle("on", this.active);
+  },
+
+  toggle() {
+    if (this.active) this.exit();
+    else this.enter();
+  },
+
+  enter() {
+    const reason = this.blocked();
+    if (reason) {
+      showToast(reason, "info");
+      // The global .toggle-track handler flipped the knob before us —
+      // force it back to the real (inactive) state.
+      this.updateToggleState();
+      return;
+    }
+    if (this.active) return;
+    LayoutManager.ensureWorking();
+    this.active = true;
+    document.body.classList.add("customizing");
+    // Normalize: lift the panel blocks to explicit zone children so drag
+    // targets and DOM-order sync are uniform. Exit re-applies without the
+    // lift, restoring factory nesting when the map is factory-equivalent.
+    LayoutManager.reapply({ lift: true });
+    this.refreshChrome();
+    this.updateToggleState();
+  },
+
+  exit(opts = {}) {
+    if (!this.active) return;
+    this.active = false;
+    this._cancelDrag();
+    document.body.classList.remove("customizing");
+    this._removeHideButtons();
+    LayoutManager.syncFromDOM();
+    LayoutManager.reapply();
+    this._renderTray();
+    this.updateToggleState();
+    if (!opts.skipSave) LayoutManager.saveOnExit();
+  },
+
+  refreshChrome() {
+    this._removeHideButtons();
+    this._injectHideButtons();
+    this._renderTray();
+  },
+
+  _injectHideButtons() {
+    if (!this.active) return;
+    for (const r of LayoutBlocks.registry.values()) {
+      // canHide:false blocks (prompt, generate) get no hide control; the
+      // strip has its own × in its header.
+      if (!r.canHide || r.id === "strip" || !r.el.isConnected) continue;
+      if (r.el.querySelector(":scope > .blk-hide")) continue;
+      const b = document.createElement("button");
+      b.type = "button";
+      b.className = "blk-hide";
+      b.dataset.blockHide = r.id;
+      b.title = _i18n("layout.hide.tooltip", "Hide block");
+      b.textContent = "✕";
+      r.el.appendChild(b);
+    }
+  },
+
+  _removeHideButtons() {
+    document.querySelectorAll(".blk-hide").forEach(b => b.remove());
+  },
+
+  hideBlock(id) {
+    const r = LayoutBlocks.registry.get(id);
+    const map = LayoutManager.ensureWorking();
+    if (!r || !r.canHide || map.hidden.includes(id)) return;
+    map.hidden.push(id);
+    r.el.remove(); // detached — the registry keeps the element alive
+    LayoutManager.syncFromDOM();
+    this._renderTray();
+  },
+
+  hideStrip() {
+    if (!this.active) return;
+    LayoutManager.setStripState({ visible: false });
+    SessionStrip.applyState(LayoutManager.working.strip);
+    this._renderTray();
+    window.dispatchEvent(new Event("resize"));
+  },
+
+  restoreBlock(id) {
+    const map = LayoutManager.ensureWorking();
+    if (id === "strip") {
+      LayoutManager.setStripState({ visible: true });
+      SessionStrip.applyState(map.strip);
+      this._renderTray();
+      window.dispatchEvent(new Event("resize"));
+      return;
+    }
+    const r = LayoutBlocks.registry.get(id);
+    if (!r) return;
+    map.hidden = map.hidden.filter(h => h !== id);
+    if (this.active) {
+      // Blocks are lifted — re-append to the end of the panel zone, above
+      // the pinned tray, and read the order back from the DOM.
+      const panel = document.querySelector('[data-zone="panel"]');
+      const tray = document.getElementById("hiddenTray");
+      if (panel) {
+        panel.insertBefore(r.el, (tray && tray.parentElement === panel) ? tray : null);
+      }
+      LayoutManager.syncFromDOM();
+      this._injectHideButtons();
+    } else {
+      // Tray used outside Customize mode (it stays visible while blocks
+      // are hidden). The DOM isn't lifted here, so syncFromDOM would
+      // corrupt the zone lists — append to the map instead and re-apply.
+      if (!map.zones.panel.includes(id) && !map.zones.deck.includes(id)) {
+        map.zones.panel.push(id);
+      }
+      LayoutManager.persistLocal();
+      LayoutManager.reapply();
+    }
+    this._renderTray();
+    window.dispatchEvent(new Event("resize"));
+  },
+
+  _renderTray() {
+    const tray = document.getElementById("hiddenTray");
+    const chips = document.getElementById("hiddenTrayChips");
+    if (!tray || !chips) return;
+    const map = LayoutManager.working;
+    const items = [];
+    if (map) {
+      for (const id of map.hidden) {
+        items.push({ id, label: LayoutBlocks.registry.get(id)?.label || id });
+      }
+      if (map.strip.visible === false) {
+        items.push({ id: "strip", label: LayoutBlocks.registry.get("strip")?.label || "Session strip" });
+      }
+    }
+    chips.innerHTML = items.map(it =>
+      `<button type="button" class="hidden-chip" data-restore="${it.id}">${it.label}</button>`
+    ).join("");
+    tray.classList.toggle("has-items", items.length > 0);
+  },
+
+  // ── Drag & drop (pointer events) ──
+  _bindDrag() {
+    document.addEventListener("pointerdown", e => {
+      if (!this.active || e.button !== 0) return;
+      if (e.target.closest(".blk-hide") || e.target.closest(".customize-divider")) return;
+      const blk = e.target.closest("[data-block]");
+      // The strip is a grid column, not a zone child — not draggable (v1).
+      if (!blk || blk.dataset.block === "strip") return;
+      e.preventDefault();
+      this._drag = { el: blk, id: blk.dataset.block, started: false, x: e.clientX, y: e.clientY };
+    });
+
+    document.addEventListener("pointermove", e => {
+      const d = this._drag;
+      if (!d) return;
+      if (!d.started) {
+        // 5px threshold so a stray click doesn't ghost
+        if (Math.abs(e.clientX - d.x) + Math.abs(e.clientY - d.y) < 5) return;
+        d.started = true;
+        d.el.classList.add("dragging");
+        this._ghost = document.createElement("div");
+        this._ghost.className = "drag-ghost";
+        this._ghost.textContent = LayoutBlocks.registry.get(d.id)?.label || d.id;
+        document.body.appendChild(this._ghost);
+        if (!this._indicator) {
+          this._indicator = document.createElement("div");
+          this._indicator.className = "drop-indicator";
+        }
+      }
+      this._ghost.style.left = (e.clientX + 12) + "px";
+      this._ghost.style.top = (e.clientY + 12) + "px";
+      // Hit-test beneath the dragged block (spec mechanism: hide → probe →
+      // restore; the ghost and indicator are pointer-events:none).
+      const prevDisplay = d.el.style.display;
+      d.el.style.display = "none";
+      const under = document.elementFromPoint(e.clientX, e.clientY);
+      d.el.style.display = prevDisplay;
+      const zone = under?.closest?.("[data-zone]");
+      // Deck zone is only a drop target while the deck preset is active —
+      // under Classic it isn't rendered (v1 scope).
+      if (!zone || (zone.dataset.zone === "deck" && LayoutSwitcher.current !== "deck")) {
+        this._indicator.remove();
+        return;
+      }
+      // Forgiving targeting: anywhere inside a zone snaps to the NEAREST
+      // block (by center distance), before/after by its midpoint on the
+      // zone's flow axis. The pointer never has to sit exactly on a block.
+      const horizontal = zone.dataset.zone === "deck";
+      let best = null, bestDist = Infinity;
+      for (const b of zone.querySelectorAll(":scope > [data-block]")) {
+        if (b === d.el) continue;
+        const r = b.getBoundingClientRect();
+        if (!r.width && !r.height) continue; // display:none block (e.g. Regions)
+        const dx = e.clientX - (r.left + r.width / 2);
+        const dy = e.clientY - (r.top + r.height / 2);
+        const dist = dx * dx + dy * dy;
+        if (dist < bestDist) { bestDist = dist; best = b; }
+      }
+      if (best) {
+        const r = best.getBoundingClientRect();
+        const before = horizontal
+          ? e.clientX < r.left + r.width / 2   // horizontal midpoint in deck
+          : e.clientY < r.top + r.height / 2;  // vertical midpoint in panel
+        zone.insertBefore(this._indicator, before ? best : best.nextSibling);
+      } else {
+        // Empty zone → indicator at zone end (panel keeps the hidden tray
+        // pinned last).
+        const tail = zone.dataset.zone === "panel" ? document.getElementById("hiddenTray") : null;
+        zone.insertBefore(this._indicator, (tail && tail.parentElement === zone) ? tail : null);
+      }
+    });
+
+    document.addEventListener("pointerup", () => {
+      const d = this._drag;
+      if (!d) return;
+      if (d.started && this._indicator?.isConnected) {
+        this._indicator.parentElement.insertBefore(d.el, this._indicator);
+        LayoutManager.syncFromDOM();
+      }
+      this._cancelDrag();
+    });
+  },
+
+  _cancelDrag() {
+    if (this._drag?.el) this._drag.el.classList.remove("dragging");
+    this._ghost?.remove();
+    this._ghost = null;
+    this._indicator?.remove();
+    this._drag = null;
+  },
+
+  // ── Panel resize hit-strip (clamped 420–900) ──
+  _bindDivider() {
+    const div = document.getElementById("customizeDivider");
+    const panel = document.getElementById("panelRight");
+    if (!div || !panel) return;
+    div.addEventListener("pointerdown", e => {
+      if (!this.active || e.button !== 0) return;
+      e.preventDefault();
+      const startX = e.clientX;
+      const startW = panel.getBoundingClientRect().width;
+      const move = ev => {
+        const w = Math.max(420, Math.min(900, Math.round(startW + (startX - ev.clientX))));
+        panel.style.width = w + "px";
+        document.documentElement.style.setProperty("--studio-panel-width", w + "px");
+      };
+      const up = () => {
+        document.removeEventListener("pointermove", move);
+        document.removeEventListener("pointerup", up);
+        LayoutManager.setPanelWidth(Math.round(panel.getBoundingClientRect().width));
+        window.dispatchEvent(new Event("resize"));
+      };
+      document.addEventListener("pointermove", move);
+      document.addEventListener("pointerup", up);
+    });
+  },
+};
+
+
 // v6.10: Refine and AD are now truly independent — AD can run standalone
 // on the ESRGAN output without a base img2img pass. Keep the function as
 // a no-op so existing callers don't break, and leave the row always live.
@@ -6175,6 +7394,10 @@ async function init() {
 
   // Initialize theme switcher
   ThemeSwitcher.init();
+
+  // Initialize layout preset switcher (WP-L1) — must run after bindUI so
+  // the accordion handlers and output-gallery bindings already exist.
+  LayoutSwitcher.init();
 
   // Update check is manual — use the "Check for Updates" button in Settings.
 
@@ -6744,6 +7967,11 @@ window.Progress = Progress;
 window.showToast = showToast;
 window.ExtensionBridge = ExtensionBridge;
 window.UpdateBanner = UpdateBanner;
+window.LayoutSwitcher = LayoutSwitcher;
+window.LayoutBlocks = LayoutBlocks;
+window.SessionStrip = SessionStrip;
+window.LayoutManager = LayoutManager;
+window.Customizer = Customizer;
 
 // Go
 if (document.readyState === "loading") {

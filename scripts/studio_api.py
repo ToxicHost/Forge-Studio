@@ -25,6 +25,7 @@ import time
 import traceback
 import urllib.error
 import urllib.request
+import uuid
 import zipfile
 
 # Enable OpenCV's optional OpenEXR codec — used by /studio/export/exr.
@@ -296,6 +297,178 @@ def _workflow_metadata(wf: dict) -> dict:
     }
 
 
+# ---------------------------------------------------------------------------
+# Session registry (WP-L2)
+# ---------------------------------------------------------------------------
+# In-memory, module-level. Tracks every generated image of every live browser
+# tab session so the frontend can request thumbnails by entry id and report
+# evictions. Sessions die with the server process by design — the startup
+# sweep below removes the whole scratch root and resets these structures.
+#
+# INVARIANT: a saved user output is NEVER deleted by any session operation.
+# File deletion is gated on the registry's own source == "scratch" — never
+# inferred from a URL or path supplied by a client.
+
+_SESSION_REGISTRY = {}       # session_id -> entry_id -> {"path": str, "source": "saved"|"scratch"}
+_SESSION_ENTRY_INDEX = {}    # entry_id -> (session_id, path) — O(1) thumb lookup
+_SESSION_ALLOWED_FILES = set()  # resolved absolute paths of registered SCRATCH files
+# Client session ids are crypto.randomUUID() strings; the gate also keeps
+# them safe to use as a scratch directory name (no separators/dots).
+_SESSION_ID_RE = re.compile(r"^[a-zA-Z0-9-]{8,64}$")
+
+
+def _session_scratch_root() -> Path:
+    return _studio_root / "session_scratch"
+
+
+def _register_session_entry(session_id: str, path, source: str, entry_id: str = "") -> str:
+    """Register one generated image under a session; returns the entry id.
+    Scratch entries pass their pre-minted id (the scratch filename stem)."""
+    eid = entry_id or uuid.uuid4().hex
+    rp = _resolved(path)
+    p = str(rp) if rp is not None else str(path)
+    _SESSION_REGISTRY.setdefault(session_id, {})[eid] = {"path": p, "source": source}
+    _SESSION_ENTRY_INDEX[eid] = (session_id, p)
+    if source == "scratch":
+        _SESSION_ALLOWED_FILES.add(p)
+    return eid
+
+
+def _remove_session_entry(session_id: str, entry_id: str) -> None:
+    """Drop one entry of `session_id`. Deletes the file ONLY for scratch
+    entries (see invariant above); saved entries lose their registry row
+    and nothing else."""
+    sess = _SESSION_REGISTRY.get(session_id)
+    if not sess:
+        return
+    meta = sess.pop(entry_id, None)
+    if meta is None:
+        return
+    _SESSION_ENTRY_INDEX.pop(entry_id, None)
+    if meta.get("source") == "scratch":
+        p = meta.get("path") or ""
+        _SESSION_ALLOWED_FILES.discard(p)
+        try:
+            Path(p).unlink(missing_ok=True)
+        except Exception:
+            log.exception("Failed to delete session scratch file")
+    if not sess:
+        _SESSION_REGISTRY.pop(session_id, None)
+        # Best-effort: drop the now-empty per-session scratch dir.
+        try:
+            sdir = _session_scratch_root() / session_id
+            if sdir.is_dir():
+                sdir.rmdir()
+        except Exception:
+            pass
+
+
+# ---------------------------------------------------------------------------
+# Layout files (WP-L3)
+# ---------------------------------------------------------------------------
+# Named layout maps live as JSON files under <extension_root>/studio_layouts/.
+# The files ARE the import/export format — dropping a shared file into the
+# folder makes it appear in the UI's Load list. Hardening: slug-only names,
+# fixed parent dir, size-capped payloads, shape validation, atomic writes.
+
+_LAYOUT_NAME_RE = re.compile(r"^[a-z0-9_-]{1,64}$")
+_LAYOUT_MAX_BYTES = 64 * 1024
+_LAYOUT_MAX_BLOCK_IDS = 200
+
+
+def _layout_dir() -> Path:
+    d = _studio_root / "studio_layouts"
+    d.mkdir(exist_ok=True)
+    return d
+
+
+def _layout_path(name: str):
+    """Validated (slug, path) for a layout name, or (None, None). The path
+    is always built from the validated slug — never raw input — and the
+    resolved parent is verified to be the layout dir itself."""
+    slug = str(name or "").strip().lower()
+    if not _LAYOUT_NAME_RE.match(slug):
+        return None, None
+    p = _layout_dir() / f"{slug}.json"
+    try:
+        if p.resolve().parent != _layout_dir().resolve():
+            return None, None
+    except Exception:
+        return None, None
+    return slug, p
+
+
+def _validate_layout_map(m) -> Optional[str]:
+    """Shape-check a layout map. Returns an error string or None. Unknown
+    top-level keys are allowed (forward-compat); known keys must be typed
+    correctly. Booleans are explicitly rejected where ints are expected
+    (bool is an int subclass in Python)."""
+    if not isinstance(m, dict):
+        return "map must be an object"
+    schema = m.get("schema", 1)
+    if isinstance(schema, bool) or not isinstance(schema, int):
+        return "schema must be an integer"
+    n_ids = 0
+    zones = m.get("zones", {})
+    if not isinstance(zones, dict):
+        return "zones must be an object"
+    for zname, blocks in zones.items():
+        if not isinstance(zname, str) or not isinstance(blocks, list):
+            return "zones must map names to lists"
+        for b in blocks:
+            if not isinstance(b, str) or not _LAYOUT_NAME_RE.match(b):
+                return "invalid block id in zones"
+            n_ids += 1
+    hidden = m.get("hidden", [])
+    if not isinstance(hidden, list):
+        return "hidden must be a list"
+    for b in hidden:
+        if not isinstance(b, str) or not _LAYOUT_NAME_RE.match(b):
+            return "invalid block id in hidden"
+        n_ids += 1
+    if n_ids > _LAYOUT_MAX_BLOCK_IDS:
+        return "too many block ids"
+    pw = m.get("panelWidth", 0)
+    if isinstance(pw, bool) or not isinstance(pw, int) or (pw != 0 and not (420 <= pw <= 900)):
+        return "panelWidth must be 0 or 420-900"
+    strip = m.get("strip", {})
+    if not isinstance(strip, dict) or any(not isinstance(v, bool) for v in strip.values()):
+        return "strip must be an object of booleans"
+    if not isinstance(m.get("module", "canvas"), str) or not isinstance(m.get("base", "classic"), str):
+        return "module/base must be strings"
+    return None
+
+
+def _write_session_scratch(session_id: str, img, entry_id: str) -> str:
+    """Write one UNSAVED result as `<scratch>/<session_id>/<entry_id>.png`.
+    Temporary preview/history asset only — deleted on eviction, clear-
+    session, and the startup sweep; never written for saved outputs.
+    Returns the resolved path, or "" on failure (caller emits source
+    "none" and the frontend keeps the data URL instead)."""
+    try:
+        sdir = _session_scratch_root() / session_id
+        sdir.mkdir(parents=True, exist_ok=True)
+        fpath = sdir / f"{entry_id}.png"
+        if isinstance(img, Image.Image):
+            img.save(str(fpath), format="PNG", icc_profile=_SRGB_ICC)
+        elif isinstance(img, str) and img.startswith("data:image"):
+            # Pipeline already returned encoded bytes — write them as-is.
+            # PIL (thumbnails) and browsers sniff content, so a non-PNG
+            # payload behind a .png name still displays correctly.
+            raw = base64.b64decode(img.partition(",")[2])
+            fpath.write_bytes(raw)
+        else:
+            return ""
+        # /studio/file serves exact registered paths in both Gradio and
+        # standalone mode — this is the scratch entry's display route.
+        _register_served_file(str(fpath))
+        rp = _resolved(fpath)
+        return str(rp) if rp is not None else str(fpath)
+    except Exception:
+        log.exception("Session scratch write failed")
+        return ""
+
+
 def _cleanup_stale_tmp_files() -> None:
     """Sweep stale `.json.tmp` files left behind by killed processes.
     Only scans directories where `_atomic_write_json` actually writes —
@@ -313,6 +486,18 @@ def _cleanup_stale_tmp_files() -> None:
                 tmp.unlink()
             except Exception:
                 log.exception("Failed to clean stale tmp file")
+    # Session scratch files are per-tab preview assets; every session is
+    # dead by definition at process start, so remove the entire root.
+    # Saved outputs never live under this root, so this cannot touch them.
+    try:
+        scratch = _session_scratch_root()
+        if scratch.is_dir():
+            shutil.rmtree(scratch, ignore_errors=True)
+    except Exception:
+        log.exception("Failed to sweep session scratch root")
+    _SESSION_REGISTRY.clear()
+    _SESSION_ENTRY_INDEX.clear()
+    _SESSION_ALLOWED_FILES.clear()
 
 
 _cleanup_stale_tmp_files()
@@ -776,6 +961,10 @@ class GenerateRequest(BaseModel):
     cn2_upload_b64: Optional[str] = None
 
     # Settings
+    # Per-tab session id (WP-L2) — results are registered under it so the
+    # session_thumb/evict/clear endpoints can resolve them. Optional; an
+    # invalid/missing id just skips registration (no thumbs, no scratch).
+    session_id: str = ""
     save_outputs: bool = True
     save_format: str = "png"         # png | jpeg | webp
     save_quality: int = 80           # JPEG/WebP quality (0-100)
@@ -836,6 +1025,10 @@ class GenerateResponse(BaseModel):
     float_stats: List[Optional[dict]] = []
     content_hashes: List[str] = []  # SHA256 of decoded RGB pixels, "" if not saved
     infotexts: List[str] = []
+    # WP-L2: one {entry_id, source, path} per image (parallel to `images`).
+    # source is "saved" | "scratch" | "none" ("none" = no file exists for
+    # this image — registration skipped or scratch write failed).
+    session_entries: List[dict] = []
     settings: dict = {}
     seed: int = -1
     task_id: str = ""
@@ -866,6 +1059,24 @@ class ExrExportRequest(BaseModel):
     # mirroring the regular save-image endpoint's contract.
     subfolder: str = "downloads"
     filename: Optional[str] = None
+
+
+class SessionEvictRequest(BaseModel):
+    """Body for /studio/session_evict — entries that fell off the client's
+    session history cap."""
+    session_id: str = ""
+    entry_ids: List[str] = []
+
+
+class SessionClearRequest(BaseModel):
+    """Body for /studio/session_clear — drop every entry of one session."""
+    session_id: str = ""
+
+
+class LayoutSaveRequest(BaseModel):
+    """Body for POST /studio/layouts — a named layout map (WP-L3)."""
+    name: str = ""
+    map: dict = Field(default_factory=dict)
 
 
 # =========================================================================
@@ -2079,7 +2290,11 @@ def setup_studio_routes(app: FastAPI):
         except Exception:
             log.exception("Failed to read output config for allowed-roots check")
 
-        if not _is_path_within_roots(resolved, allowed_roots):
+        # WP-L2: registered session scratch files live under the extension
+        # root (outside the output roots above) — allow exact matches only.
+        # Everything else about this route's validation is untouched (F1).
+        if not _is_path_within_roots(resolved, allowed_roots) \
+                and str(resolved) not in _SESSION_ALLOWED_FILES:
             return JSONResponse({"error": "Access denied"}, status_code=403)
         if not resolved.is_file():
             return JSONResponse({"error": "Not found"}, status_code=404)
@@ -2255,6 +2470,9 @@ def setup_studio_routes(app: FastAPI):
         float_paths = []  # parallel to images_b64; "" when no sidecar saved
         mask_paths = []   # parallel to images_b64; "" when no blend-mask sidecar
         content_hashes = []  # parallel to images_b64; "" when not saved/hashed
+        session_entries = []  # parallel to images_b64; {entry_id, source, path} (WP-L2)
+        _sid = (req.session_id or "").strip()
+        _sid_ok = bool(_SESSION_ID_RE.match(_sid))
 
         # Auto-save images to output/studio/{mode}/ (unless disabled by user)
         mode_folder = {"Create": "create", "Edit": "edit", "img2img": "img2img"}.get(req.mode, "create")
@@ -2360,6 +2578,9 @@ def setup_studio_routes(app: FastAPI):
             _img_float = float_arrays[i] if i < len(float_arrays) else None
             _img_mask = blend_masks[i] if i < len(blend_masks) else None
             _img_stats = float_stats[i] if i < len(float_stats) else None
+            # Detect whether THIS image gets saved below (the save branches
+            # append to image_paths only on success).
+            _n_paths_before = len(image_paths)
             if isinstance(img, Image.Image):
                 # When saving as PNG, encode once to buffer and reuse for both
                 # disk save and b64 response (avoids double PNG compression).
@@ -2511,6 +2732,29 @@ def setup_studio_routes(app: FastAPI):
             content_hashes.append(_per_image_hash)
             float_paths.append(_per_image_float_path)
             mask_paths.append(_per_image_mask_path)
+            # WP-L2: register this image with the tab's session. Saved files
+            # get a registry row only (never deletable by session ops);
+            # unsaved images are written to per-session scratch so history
+            # can display them without the client retaining base64.
+            _entry = {"entry_id": "", "source": "none", "path": ""}
+            if _sid_ok:
+                _saved_path = image_paths[-1] if len(image_paths) > _n_paths_before else ""
+                if _saved_path:
+                    _entry = {
+                        "entry_id": _register_session_entry(_sid, _saved_path, "saved"),
+                        "source": "saved",
+                        "path": _saved_path,
+                    }
+                else:
+                    _scratch_eid = uuid.uuid4().hex
+                    _scratch_path = _write_session_scratch(_sid, img, _scratch_eid)
+                    if _scratch_path:
+                        _entry = {
+                            "entry_id": _register_session_entry(_sid, _scratch_path, "scratch", entry_id=_scratch_eid),
+                            "source": "scratch",
+                            "path": _scratch_path,
+                        }
+            session_entries.append(_entry)
 
         # Align HP stats to the emitted images and flag sidecars that were
         # captured but failed to write (stats valid, no path). No paths added.
@@ -2554,12 +2798,136 @@ def setup_studio_routes(app: FastAPI):
             float_stats=float_stats,
             content_hashes=content_hashes,
             infotexts=infotexts,
+            session_entries=session_entries,
             settings=settings,
             seed=seed_val,
             task_id=task_id or "",
             error=error_msg,
             notice=_save_dir_notice,
         )
+
+    # ------------------------------------------------------------------
+    # Session history (WP-L2)
+    # ------------------------------------------------------------------
+
+    @app.get("/studio/session_thumb")
+    async def session_thumb(id: str = "", size: int = 256):
+        """Thumbnail for a registered session entry — ID-based only, no
+        path parameter. 404 for unregistered ids."""
+        hit = _SESSION_ENTRY_INDEX.get((id or "").strip())
+        if not hit:
+            return JSONResponse({"error": "not found"}, status_code=404)
+        _sid, path = hit
+        try:
+            size = max(64, min(640, int(size)))
+        except Exception:
+            size = 256
+        headers = {"Cache-Control": "max-age=3600"}
+        gen_thumb = _import("studio_gallery", "generate_thumbnail_bytes")
+        data = gen_thumb(path, max_size=size) if gen_thumb else None
+        if data is not None:
+            return Response(content=data, media_type="image/webp", headers=headers)
+        # Pillow missing or decode failed — serve the original file (it's a
+        # registered path, same trust level as the thumbnail would be).
+        if Path(path).is_file():
+            return FileResponse(path, headers=headers)
+        return JSONResponse({"error": "not found"}, status_code=404)
+
+    @app.post("/studio/session_evict")
+    async def session_evict(req: SessionEvictRequest):
+        """Drop entries that fell off the client's history cap. Scratch
+        files are deleted; saved entries lose their registry row only —
+        a saved output file is never touched. Scoped strictly to the
+        supplied session_id."""
+        sid = (req.session_id or "").strip()
+        if not sid:
+            return {"ok": False}
+        for eid in (req.entry_ids or []):
+            _remove_session_entry(sid, str(eid))
+        return {"ok": True}
+
+    @app.post("/studio/session_clear")
+    async def session_clear(req: SessionClearRequest):
+        """Drop every entry of one session (same per-entry semantics as
+        evict). Other sessions — other tabs — are untouched."""
+        sid = (req.session_id or "").strip()
+        if not sid:
+            return {"ok": False}
+        sess = _SESSION_REGISTRY.get(sid) or {}
+        for eid in list(sess.keys()):
+            _remove_session_entry(sid, eid)
+        return {"ok": True}
+
+    # ------------------------------------------------------------------
+    # Layout files (WP-L3)
+    # ------------------------------------------------------------------
+
+    @app.get("/studio/layouts")
+    async def list_layouts():
+        items = []
+        for f in sorted(_layout_dir().glob("*.json")):
+            if not _LAYOUT_NAME_RE.match(f.stem):
+                continue
+            try:
+                data = json.loads(f.read_text(encoding="utf-8"))
+                items.append({
+                    "name": f.stem,
+                    "module": data.get("module", "canvas"),
+                    "base": data.get("base", "classic"),
+                    "mtime": int(f.stat().st_mtime),
+                })
+            except Exception:
+                continue  # unreadable file — skip, never fail the list
+        return {"layouts": items}
+
+    @app.get("/studio/layouts/{name}")
+    async def get_layout(name: str):
+        slug, p = _layout_path(name)
+        if p is None:
+            return JSONResponse({"error": "invalid layout name"}, status_code=400)
+        if not p.is_file():
+            return JSONResponse({"error": "not found"}, status_code=404)
+        try:
+            return json.loads(p.read_text(encoding="utf-8"))
+        except Exception:
+            return JSONResponse({"error": "unreadable layout file"}, status_code=500)
+
+    @app.post("/studio/layouts")
+    async def save_layout(req: LayoutSaveRequest):
+        slug, p = _layout_path(req.name)
+        if p is None:
+            return JSONResponse({"error": "invalid layout name"}, status_code=400)
+        try:
+            payload_size = len(json.dumps(req.map))
+        except Exception:
+            return JSONResponse({"error": "map is not JSON-serializable"}, status_code=400)
+        if payload_size > _LAYOUT_MAX_BYTES:
+            return JSONResponse({"error": "layout too large"}, status_code=413)
+        err = _validate_layout_map(req.map)
+        if err:
+            return JSONResponse({"error": err}, status_code=400)
+        data = dict(req.map)
+        data["name"] = slug
+        try:
+            _atomic_write_json(p, data)
+        except Exception:
+            log.exception("Layout write failed")
+            return JSONResponse({"error": "write failed"}, status_code=500)
+        return {"ok": True, "name": slug}
+
+    @app.delete("/studio/layouts/{name}")
+    async def delete_layout(name: str):
+        slug, p = _layout_path(name)
+        if p is None:
+            return JSONResponse({"error": "invalid layout name"}, status_code=400)
+        if not p.is_file():
+            return JSONResponse({"error": "not found"}, status_code=404)
+        try:
+            p.unlink()
+        except Exception:
+            log.exception("Layout delete failed")
+            return JSONResponse({"error": "delete failed"}, status_code=500)
+        return {"ok": True}
 
     # ------------------------------------------------------------------
     # Interrupt / Skip / Task ID
@@ -4978,6 +5346,50 @@ def setup_studio_routes(app: FastAPI):
     #
     # Privacy: never returns or logs paths/prompts/filenames/image bytes.
 
+    def _pil_to_srgb_rgba(img):
+        """Convert an opened PIL image to RGBA in sRGB. Honors an embedded
+        ICC profile (converted via ImageCms); untagged images are treated
+        as sRGB. Returns (rgba_image, profile_state) with profile_state in
+        "srgb" | "converted" | "unknown" | "missing"."""
+        icc = img.info.get("icc_profile")
+        if not icc:
+            return img.convert("RGBA"), "missing"
+        try:
+            from PIL import ImageCms
+            src_profile = ImageCms.ImageCmsProfile(io.BytesIO(icc))
+            desc = (ImageCms.getProfileDescription(src_profile) or "").strip()
+            if desc and ("sRGB" in desc or "srgb" in desc.lower()):
+                return img.convert("RGBA"), "srgb"
+            try:
+                dst_profile = ImageCms.ImageCmsProfile(io.BytesIO(_SRGB_ICC))
+                converted = ImageCms.profileToProfile(
+                    img, src_profile, dst_profile, outputMode="RGBA"
+                )
+                return converted, "converted"
+            except Exception:
+                print(f"{TAG} Failed ICC conversion during pixel import")
+                return img.convert("RGBA"), "unknown"
+        except Exception:
+            # ICC bytes present but unparseable; treat as sRGB to keep
+            # the import alive rather than failing the whole call.
+            return img.convert("RGBA"), "unknown"
+
+    def _raw_rgba_response(img, profile_state):
+        try:
+            raw = img.tobytes()
+        except Exception:
+            print(f"{TAG} Failed pixel import (tobytes)")
+            return JSONResponse({"error": "encode failed"}, status_code=500)
+        return Response(
+            content=raw,
+            media_type="application/octet-stream",
+            headers={
+                "X-Width": str(img.width),
+                "X-Height": str(img.height),
+                "X-Color-Profile": profile_state,
+            },
+        )
+
     class ImagePixelsRequest(BaseModel):
         source: str
 
@@ -4994,51 +5406,42 @@ def setup_studio_routes(app: FastAPI):
             print(f"{TAG} Failed pixel import (open)")
             return JSONResponse({"error": "open failed"}, status_code=500)
 
-        profile_state = "missing"
-        icc = img.info.get("icc_profile")
-        if icc:
-            try:
-                from PIL import ImageCms
-                src_profile = ImageCms.ImageCmsProfile(io.BytesIO(icc))
-                desc = (ImageCms.getProfileDescription(src_profile) or "").strip()
-                if desc and ("sRGB" in desc or "srgb" in desc.lower()):
-                    img = img.convert("RGBA")
-                    profile_state = "srgb"
-                else:
-                    try:
-                        dst_profile = ImageCms.ImageCmsProfile(io.BytesIO(_SRGB_ICC))
-                        img = ImageCms.profileToProfile(
-                            img, src_profile, dst_profile, outputMode="RGBA"
-                        )
-                        profile_state = "converted"
-                    except Exception:
-                        print(f"{TAG} Failed ICC conversion during pixel import")
-                        img = img.convert("RGBA")
-                        profile_state = "unknown"
-            except Exception:
-                # ICC bytes present but unparseable; treat as sRGB to keep
-                # the import alive rather than failing the whole call.
-                img = img.convert("RGBA")
-                profile_state = "unknown"
-        else:
-            img = img.convert("RGBA")
-            profile_state = "missing"
+        img, profile_state = _pil_to_srgb_rgba(img)
+        return _raw_rgba_response(img, profile_state)
 
+    # POST /studio/import_pixels — same contract as /studio/image_pixels,
+    # but for image files that exist only in the browser (Load Image
+    # button, canvas drag-drop, data-URL results). The client uploads the
+    # original encoded bytes; Pillow decodes + ICC-converts to sRGB and
+    # returns raw RGBA, so the browser's image decode — which bakes the
+    # display ICC into pixels on calibrated Firefox setups and dulls every
+    # re-imported image — never touches them.
+    #
+    # Privacy: decoded in memory only; nothing is written or logged.
+
+    class ImportPixelsRequest(BaseModel):
+        image_b64: str = ""
+
+    @app.post("/studio/import_pixels")
+    def studio_import_pixels(req: ImportPixelsRequest):
+        b64 = req.image_b64 or ""
+        if b64.startswith("data:"):
+            b64 = b64.partition(",")[2]
         try:
-            raw = img.tobytes()
+            raw_bytes = base64.b64decode(b64)
         except Exception:
-            print(f"{TAG} Failed pixel import (tobytes)")
-            return JSONResponse({"error": "encode failed"}, status_code=500)
+            return JSONResponse({"error": "bad image data"}, status_code=400)
+        if not raw_bytes or len(raw_bytes) > 128 * 1024 * 1024:
+            return JSONResponse({"error": "bad image size"}, status_code=400)
+        try:
+            img = Image.open(io.BytesIO(raw_bytes))
+            img.load()
+        except Exception:
+            # Includes PIL's decompression-bomb guard.
+            return JSONResponse({"error": "decode failed"}, status_code=400)
 
-        return Response(
-            content=raw,
-            media_type="application/octet-stream",
-            headers={
-                "X-Width": str(img.width),
-                "X-Height": str(img.height),
-                "X-Color-Profile": profile_state,
-            },
-        )
+        img, profile_state = _pil_to_srgb_rgba(img)
+        return _raw_rgba_response(img, profile_state)
 
     # ------------------------------------------------------------------
     # Blueprint Bridge — discovery

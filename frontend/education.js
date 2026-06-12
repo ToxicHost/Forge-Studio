@@ -129,7 +129,7 @@ var Education = (function () {
         spotlight: null, reveal: [],
         advance: function (next, nextBtn, tour) {
           var poll = setInterval(function () {
-            if (window.State && !window.State.generating && window.State.outputImages && window.State.outputImages.length > 0) {
+            if (window.State && !window.State.generating && window.State.sessionEntries && window.State.sessionEntries.length > 0) {
               clearInterval(poll);
               _setFlag("has_generated_first_image");
               next();
@@ -519,7 +519,7 @@ var Education = (function () {
     var was = false;
     setInterval(function () {
       if (window.State) {
-        if (was && !window.State.generating && window.State.outputImages && window.State.outputImages.length > 0) {
+        if (was && !window.State.generating && window.State.sessionEntries && window.State.sessionEntries.length > 0) {
           _state.generationCount++;
           _save();
         }

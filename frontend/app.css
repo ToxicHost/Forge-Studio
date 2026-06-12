@@ -1766,15 +1766,18 @@ body {
 
 /* Theme selector in settings */
 .theme-selector { display: flex; gap: 6px; flex-wrap: wrap; }
-.theme-btn {
+.theme-btn,
+.layout-btn {
   padding: 6px 12px;
   background: var(--bg-input); color: var(--text-3);
   border: 1px solid var(--border); border-radius: var(--radius-sm);
   font-family: var(--font); font-size: 11px; cursor: pointer;
   transition: all 0.15s;
 }
-.theme-btn:hover { border-color: var(--border-hover); color: var(--text-2); }
-.theme-btn.active {
+.theme-btn:hover,
+.layout-btn:hover { border-color: var(--border-hover); color: var(--text-2); }
+.theme-btn.active,
+.layout-btn.active {
   border-color: var(--accent); color: var(--accent);
   background: var(--accent-dim);
 }
@@ -2267,3 +2270,445 @@ body {
 }
 .first-run-go:hover { filter: brightness(1.1); }
 .first-run-note { font-size: 10px; color: var(--text-4); margin-top: 12px; text-align: center; }
+
+
+/* ═══════════════════════════════════════════
+   LAYOUT PRESETS (WP-L1)
+   Everything below is gated behind [data-layout="deck"] or
+   [data-strip-col] — the latter is set by JS whenever the session-strip
+   column is active (deck preset, or Classic with the "Session strip in
+   Classic" setting on), so it never applies to an untouched Classic.
+   Theme tokens only — all themes and colorblind modes inherit.
+   ═══════════════════════════════════════════ */
+
+/* Inert under Classic */
+.deck-zone { display: none; }
+.session-strip { display: none; }
+
+/* ── Workspace grid ──
+   Classic is a flex row (toolstrip | canvas | divider | collapse | panel).
+   Deck switches the Studio page to a 2-row grid so the deck zone stacks
+   beneath the canvas and the session strip becomes its own column.
+   The fixed-position #hsvPopup is out of flow and unaffected. */
+[data-strip-col] #app-studio.active {
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto auto auto auto;
+  grid-template-rows: minmax(0, 1fr) auto;
+}
+[data-strip-col] #app-studio > .toolstrip          { grid-column: 1; grid-row: 1 / 3; }
+[data-strip-col] #app-studio > .canvas-area        { grid-column: 2; grid-row: 1; }
+[data-strip-col] #app-studio > .deck-zone          { grid-column: 2; grid-row: 2; }
+[data-strip-col] #app-studio > .session-strip      { grid-column: 3; grid-row: 1 / 3; }
+[data-strip-col] #app-studio > .panel-divider      { grid-column: 4; grid-row: 1 / 3; }
+[data-strip-col] #app-studio > .panel-collapse-btn { grid-column: 5; grid-row: 1 / 3; }
+[data-strip-col] #app-studio > .panel-right        { grid-column: 6; grid-row: 1 / 3; }
+
+/* ── Deck zone ── */
+[data-layout="deck"] .deck-zone:not(:empty) {
+  display: flex;
+  align-items: stretch;
+  gap: 10px;
+  padding: 10px 14px;
+  background: var(--bg-surface);
+  border-top: 1px solid var(--border-subtle);
+}
+/* Generic flex for any block dropped into the deck (Customize mode);
+   the four factory deck blocks override flex below. */
+[data-layout="deck"] .deck-zone > [data-block] { margin-bottom: 0; min-width: 0; flex: 1 1 160px; }
+[data-layout="deck"] .deck-zone > [data-block="prompt"]   { flex: 2.4; }
+[data-layout="deck"] .deck-zone > [data-block="negative"] { flex: 1.4; }
+[data-layout="deck"] .deck-zone > [data-block="lora"]     { flex: 1.2; max-height: 170px; overflow-y: auto; scrollbar-width: thin; scrollbar-color: var(--border) transparent; }
+[data-layout="deck"] .deck-zone > [data-block="generate"] {
+  flex: 0 0 230px;
+  display: flex; flex-direction: column; justify-content: center;
+}
+[data-layout="deck"] .deck-zone .prompt-text { min-height: 80px; }
+
+/* ── Session strip ── */
+[data-strip-col] .session-strip {
+  display: flex;
+  flex-direction: column;
+  width: 192px;
+  min-height: 0;
+  background: var(--bg-surface);
+  border-left: 1px solid var(--border-subtle);
+}
+[data-strip-col] .session-strip-head {
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px 10px;
+  border-bottom: 1px solid var(--border-subtle);
+  flex-shrink: 0;
+}
+[data-strip-col] .session-strip-label {
+  flex: 1;
+  font-size: 10px; font-weight: 600; letter-spacing: 0.8px;
+  text-transform: uppercase; color: var(--text-3);
+}
+[data-strip-col] .session-strip-count {
+  font-family: var(--mono); font-size: 9px; color: var(--text-4);
+}
+[data-strip-col] .session-strip-collapse,
+[data-strip-col] .session-strip-clear {
+  background: none; border: none; padding: 0 2px;
+  color: var(--text-4); cursor: pointer;
+  font-size: 13px; line-height: 1;
+}
+[data-strip-col] .session-strip-collapse:hover { color: var(--text-1); }
+[data-strip-col] .session-strip-clear { font-size: 11px; }
+[data-strip-col] .session-strip-clear:hover { color: var(--red, var(--text-1)); }
+[data-strip-col] .session-strip-scroll {
+  flex: 1; min-height: 0;
+  overflow-y: auto; overflow-x: hidden;
+  padding: 8px;
+  display: flex; flex-direction: column; gap: 6px;
+  scrollbar-width: thin; scrollbar-color: var(--border) transparent;
+}
+/* Own class (not .output-thumb) to avoid colliding with the grid's
+   delegated handlers/styles; selected reuses the accent semantics. */
+[data-strip-col] .session-thumb {
+  width: 100%; flex-shrink: 0;
+  border: 1px solid var(--border-subtle); border-radius: 4px;
+  overflow: hidden; cursor: pointer;
+  background: var(--bg-input);
+  transition: border-color 0.15s;
+}
+[data-strip-col] .session-thumb:hover { border-color: var(--accent); }
+[data-strip-col] .session-thumb.selected { border: 2px solid var(--accent); }
+[data-strip-col] .session-thumb img {
+  width: 100%; height: 100%; object-fit: cover; display: block;
+}
+
+/* Collapsed strip: ~22px rail, expand control centered in the bar. The
+   whole rail is clickable to expand (JS), hence the pointer cursor. */
+[data-strip-col] .session-strip.collapsed { width: 22px; cursor: pointer; }
+[data-strip-col] .session-strip.collapsed .session-strip-scroll,
+[data-strip-col] .session-strip.collapsed .session-strip-count,
+[data-strip-col] .session-strip.collapsed .session-strip-clear { display: none; }
+[data-strip-col] .session-strip.collapsed .session-strip-head {
+  flex: 1; flex-direction: column; justify-content: center; gap: 8px;
+  padding: 8px 2px;
+  border-bottom: none;
+}
+[data-strip-col] .session-strip.collapsed .session-strip-label {
+  flex: 0 0 auto;
+  writing-mode: vertical-rl; transform: rotate(180deg);
+}
+[data-strip-col] .session-strip.collapsed .session-strip-collapse {
+  order: -1;
+  transform: rotate(180deg);
+}
+
+/* ── Two-column params panel ──
+   CSS multi-columns, not grid: sections pack sequentially and the column
+   heights balance, so a tall section (ADetailer) never strands dead space
+   beside its shorter row-mate the way grid rows did. Full-width items use
+   column-span: all. */
+[data-layout="deck"] #page-generate.active {
+  column-count: 2;
+  column-gap: 18px;
+}
+[data-layout="deck"] #page-generate > * { break-inside: avoid; }
+[data-layout="deck"] #page-generate > .prompt-section,
+[data-layout="deck"] #page-generate > .output-section,
+[data-layout="deck"] #page-generate > #regionSection,
+[data-layout="deck"] #page-generate > #softInpaintSection,
+[data-layout="deck"] #page-generate > .param-section,
+[data-layout="deck"] #page-generate > .section-header,
+[data-layout="deck"] #page-generate > .section-body,
+[data-layout="deck"] #page-generate > [data-deck-span="2"] { column-span: all; }
+
+/* ── Hairline section treatment (params panel, deck only) ──
+   Flat sections: no fill, no radius, hairline top border, 2px left rail
+   that lights up with the accent when the section's enable check
+   (.collapse-check.checked — the class the accordion code toggles) is on. */
+[data-layout="deck"] #page-generate .collapse-section {
+  position: relative;
+  background: none;
+  border-radius: 0;
+  border-bottom: none;
+  border-top: 1px solid var(--border-subtle);
+}
+[data-layout="deck"] #page-generate .collapse-section::before {
+  content: "";
+  position: absolute; left: 0; top: 0; bottom: 0; width: 2px;
+  background: var(--border-subtle);
+  pointer-events: none;
+}
+[data-layout="deck"] #page-generate .collapse-section:has(> .collapse-header > .collapse-check.checked)::before {
+  background: var(--accent);
+}
+[data-layout="deck"] #page-generate .collapse-title {
+  font-size: 10px; font-weight: 600;
+  letter-spacing: 1px; text-transform: uppercase;
+  color: var(--text-3);
+}
+/* Right-aligned mono state text for checkable sections */
+[data-layout="deck"] #page-generate .collapse-header:has(> .collapse-check)::after {
+  content: "off";
+  order: 2;
+  margin-left: 2px;
+  font-family: var(--mono); font-size: 8.5px;
+  letter-spacing: 0.5px; text-transform: uppercase;
+  color: var(--text-4);
+}
+[data-layout="deck"] #page-generate .collapse-header:has(> .collapse-check.checked)::after {
+  content: "on";
+  color: var(--accent);
+}
+[data-layout="deck"] #page-generate .collapse-header .collapse-arrow { order: 3; }
+
+/* Extension groups get the same hairline treatment; the rail binds to the
+   existing enable-state class (.ext-disabled is toggled by ExtensionBridge). */
+[data-layout="deck"] #page-extensions .ext-group {
+  position: relative;
+  background: none;
+  border: none; border-radius: 0;
+  border-top: 1px solid var(--border-subtle);
+  margin-bottom: 0;
+  overflow: visible;
+}
+[data-layout="deck"] #page-extensions .ext-group::before {
+  content: "";
+  position: absolute; left: 0; top: 0; bottom: 0; width: 2px;
+  background: var(--border-subtle);
+  pointer-events: none;
+}
+[data-layout="deck"] #page-extensions .ext-group:not(.ext-disabled)::before {
+  background: var(--accent);
+}
+[data-layout="deck"] #page-extensions .ext-group-header {
+  background: none;
+  font-size: 10px; font-weight: 600; letter-spacing: 1px;
+  color: var(--text-3);
+}
+
+/* ── Responsive: below 1600px the strip auto-collapses and the params
+   panel returns to single column. The deck row persists at all widths. ── */
+@media (max-width: 1600px) {
+  [data-strip-col] .session-strip { width: 22px; }
+  [data-strip-col] .session-strip .session-strip-scroll,
+  [data-strip-col] .session-strip .session-strip-count,
+  [data-strip-col] .session-strip .session-strip-clear { display: none; }
+  [data-strip-col] .session-strip .session-strip-head {
+    flex: 1; flex-direction: column; justify-content: center; gap: 8px;
+    padding: 8px 2px;
+    border-bottom: none;
+  }
+  [data-strip-col] .session-strip .session-strip-label {
+    flex: 0 0 auto;
+    writing-mode: vertical-rl; transform: rotate(180deg);
+  }
+  [data-strip-col] .session-strip .session-strip-collapse {
+    order: -1;
+    transform: rotate(180deg);
+  }
+  [data-layout="deck"] #page-generate.active { column-count: 1; }
+}
+
+
+/* ═══════════════════════════════════════════
+   CUSTOMIZE MODE (WP-L3)
+   Everything below is gated behind body.customizing or
+   :root[data-layout-custom], plus display:none base rules for the new
+   chrome elements — zero effect for users who never customize.
+   ═══════════════════════════════════════════ */
+
+/* Inert bases */
+.hidden-tray { display: none; }
+.customize-divider { display: none; }
+.session-strip-hide { display: none; }
+
+/* ── Custom (non-factory) layout structure ──
+   When a custom map lifts the prompt blocks out of .prompt-section to be
+   direct zone children, give them back the section's breathing room. */
+:root[data-layout-custom] #page-generate > [data-block="prompt"],
+:root[data-layout-custom] #page-generate > [data-block="lora"],
+:root[data-layout-custom] #page-generate > [data-block="negative"],
+:root[data-layout-custom] #page-generate > [data-block="generate"] {
+  margin: 8px var(--section-pad);
+}
+/* Under deck's two-column params panel the lifted core blocks span both. */
+[data-layout="deck"] #page-generate > [data-block="prompt"],
+[data-layout="deck"] #page-generate > [data-block="lora"],
+[data-layout="deck"] #page-generate > [data-block="negative"],
+[data-layout="deck"] #page-generate > [data-block="generate"],
+[data-layout="deck"] #page-generate > [data-block="model"] { column-span: all; }
+/* Strip hidden via the layout map */
+[data-strip-col] .session-strip.strip-hidden { display: none; }
+
+/* ── Edit affordances ── */
+body.customizing [data-block] {
+  position: relative;
+  outline: 1px dashed var(--accent-mid, var(--accent));
+  outline-offset: -1px;
+  cursor: grab;
+  user-select: none;
+}
+body.customizing [data-block]::before {
+  content: attr(data-block-label);
+  position: absolute;
+  top: 0; left: 0;
+  z-index: 30;
+  font-family: var(--mono);
+  font-size: 8.5px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--accent);
+  background: var(--bg-surface);
+  border: 1px solid var(--accent-mid, var(--accent));
+  border-radius: 0 0 4px 0;
+  padding: 1px 5px;
+  pointer-events: none;
+}
+body.customizing [data-block].dragging { opacity: 0.45; }
+body.customizing [data-block] .blk-hide {
+  position: absolute;
+  top: 2px; right: 2px;
+  z-index: 31;
+  width: 16px; height: 16px;
+  display: flex; align-items: center; justify-content: center;
+  background: var(--bg-surface);
+  border: 1px solid var(--border);
+  border-radius: 4px;
+  color: var(--text-3);
+  font-size: 10px; line-height: 1;
+  cursor: pointer;
+  padding: 0;
+}
+body.customizing [data-block] .blk-hide:hover { color: var(--red, var(--text-1)); border-color: var(--red, var(--border)); }
+
+/* Zones */
+body.customizing [data-zone] {
+  background: var(--accent-dim);
+  box-shadow: inset 0 0 0 1px var(--accent);
+}
+/* Keep the (empty) deck zone visible as a drop target while customizing
+   under the deck preset. */
+:root[data-layout="deck"] body.customizing .deck-zone {
+  display: flex;
+  min-height: 64px;
+  align-items: stretch;
+  gap: 10px;
+  padding: 10px 14px;
+}
+:root[data-layout="deck"] body.customizing .deck-zone:empty::after {
+  content: "DECK — DROP BLOCKS HERE";
+  align-self: center;
+  margin: 0 auto;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 1.5px;
+  color: var(--text-4);
+}
+
+/* Session strip chrome */
+body.customizing .session-strip-hide {
+  display: inline-block;
+  background: none; border: none; padding: 0 2px;
+  color: var(--text-4); cursor: pointer;
+  font-size: 11px; line-height: 1;
+}
+body.customizing .session-strip-hide:hover { color: var(--red, var(--text-1)); }
+
+/* Hidden tray */
+body.customizing .hidden-tray,
+.hidden-tray.has-items { display: block; }
+.hidden-tray {
+  margin-top: 12px;
+  padding: 10px var(--section-pad);
+  border-top: 1px solid var(--border-subtle);
+}
+.hidden-tray-label {
+  font-size: 10px; font-weight: 600;
+  letter-spacing: 0.8px; text-transform: uppercase;
+  color: var(--text-4);
+  margin-bottom: 6px;
+}
+.hidden-tray-chips { display: flex; flex-wrap: wrap; gap: 6px; }
+.hidden-chip {
+  background: var(--bg-input);
+  border: 1px dashed var(--border);
+  border-radius: var(--radius-sm);
+  color: var(--text-3);
+  font-family: var(--font); font-size: 10px;
+  padding: 3px 8px;
+  cursor: pointer;
+  transition: all 0.12s;
+}
+.hidden-chip:hover { color: var(--accent); border-color: var(--accent); }
+
+/* Panel resize hit-strip */
+body.customizing .panel-right { position: relative; }
+body.customizing .customize-divider {
+  display: block;
+  position: absolute;
+  left: 0; top: 0; bottom: 0;
+  width: 6px;
+  cursor: col-resize;
+  z-index: 40;
+  background: var(--accent-dim);
+}
+body.customizing .customize-divider:hover { background: var(--accent); opacity: 0.6; }
+
+/* Drag ghost + drop indicator */
+.drag-ghost {
+  position: fixed;
+  z-index: 1000;
+  pointer-events: none;
+  font-family: var(--mono);
+  font-size: 9px;
+  letter-spacing: 0.5px;
+  text-transform: uppercase;
+  color: var(--accent);
+  background: var(--bg-surface);
+  border: 1px solid var(--accent);
+  border-radius: 4px;
+  padding: 3px 8px;
+  box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4);
+}
+.drop-indicator {
+  pointer-events: none;
+  background: var(--accent);
+  border-radius: 2px;
+}
+[data-zone="panel"] > .drop-indicator { height: 3px; margin: 2px var(--section-pad); }
+[data-zone="deck"] > .drop-indicator { width: 3px; align-self: stretch; flex: 0 0 3px; }
+
+/* Disabled customize toggle (generating / Live / narrow viewport) */
+.toggle-track.disabled { opacity: 0.35; }
+
+
+/* ═══════════════════════════════════════════
+   CUSTOMIZE MODE — usability fixes (WP-L3.1)
+   ═══════════════════════════════════════════ */
+
+/* Uniform block sizing in CUSTOM layouts: every section flows as a normal
+   single-column item; only the core prompt/lora/negative/generate blocks
+   and the full-width lists span both columns. Factory Deck keeps its
+   original spans (no data-layout-custom attribute). */
+:root[data-layout="deck"][data-layout-custom] #page-generate > [data-deck-span="2"],
+:root[data-layout="deck"][data-layout-custom] #page-generate > .param-section,
+:root[data-layout="deck"][data-layout-custom] #page-generate > [data-block="model"] {
+  column-span: none;
+}
+/* Layers / History / Output wrappers are list-like — always full width. */
+[data-layout="deck"] #page-generate > [data-block="layers"],
+[data-layout="deck"] #page-generate > [data-block="history"],
+[data-layout="deck"] #page-generate > [data-block="output"] { column-span: all; }
+
+/* The drop indicator must never straddle a column break. */
+[data-zone="panel"] > .drop-indicator { break-inside: avoid; }
+
+
+/* ═══════════════════════════════════════════
+   SESSION STRIP REPLACES THE PANEL GRID (WP-L3.3)
+   While the strip is on screen (data-strip-live), the panel's thumbnail
+   grid is a duplicate — hide it and keep the selected-result info +
+   action buttons (Result → Canvas / Save / Save As live only there).
+   ═══════════════════════════════════════════ */
+:root[data-strip-live] #outputGrid { display: none; }
+/* Below 1600px the strip force-collapses to a rail, so the grid must
+   come back or there'd be no usable gallery at all. */
+@media (max-width: 1600px) {
+  :root[data-strip-live] #outputGrid { display: grid; }
+}

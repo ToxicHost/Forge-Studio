@@ -40,13 +40,11 @@
       );
       if (picked) return picked;
     }
-    // Fallback: per-index, file URL first then b64. Never use
-    // `(B64 || URLs)[idx]` — both arrays are truthy so that always
-    // collapses to the b64 array regardless of contents.
+    // Fallback: per-entry, file URL first then cached b64 — mirrors
+    // _pickOutputSource's preference order.
     var idx = (State.selectedOutputIdx != null) ? State.selectedOutputIdx : 0;
-    return (State.outputImages && State.outputImages[idx])
-        || (State.outputImagesB64 && State.outputImagesB64[idx])
-        || null;
+    var entry = State.sessionEntries && State.sessionEntries[idx];
+    return entry ? (entry.url || entry.b64 || null) : null;
   }
 
   function _scratch(w, h) {
