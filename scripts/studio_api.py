@@ -50,15 +50,113 @@ TAG = "[Studio API]"
 
 # sRGB ICC profile bytes — built once at import. Passed to every PIL save
 # (PNG / JPEG / WebP) so output files are explicitly tagged as sRGB instead
-# of untagged. Professional tools (Photoshop, Affinity, GIMP) can otherwise
-# misinterpret untagged images. Roughly a few hundred bytes per file, no
-# per-call processing cost.
+# of untagged, and served at /studio/srgb-icc for the PSD exporter.
+#
+# Built deterministically as a canonical "sRGB IEC61966-2.1" ICC v2.1
+# profile rather than LCMS's runtime profile: cmsCreate_sRGBProfile()
+# stamps whatever spec version the installed lcms2 implements (4.4 on
+# recent builds) and uses v4-only tag types ('mluc' text, 'para' curves),
+# which strict/legacy ICC parsers — certain Photoshop versions and asset
+# tools — reject as a broken profile. A Pillow upgrade silently changed
+# every output's embedded profile. The v2 build uses only the universally
+# parsed v2 types (desc/text/XYZ /curv), the exact tag layout of the
+# classic HP/IEC sRGB profile, and the same fixed-point colorimetry LCMS
+# uses, so conversions against any engine's built-in sRGB are identity
+# (verified: zero max channel delta in both directions).
+
+
+def _build_srgb_v2_profile() -> bytes:
+    import struct
+
+    def s15f16(v):
+        return int(round(v * 65536.0))
+
+    def xyz_tag(x, y, z):
+        return struct.pack(">4s4x3i", b"XYZ ", s15f16(x), s15f16(y), s15f16(z))
+
+    def desc_tag(text):
+        # textDescriptionType: ASCII + empty Unicode + empty ScriptCode
+        ascii_bytes = text.encode("ascii") + b"\x00"
+        return (struct.pack(">4s4xI", b"desc", len(ascii_bytes)) + ascii_bytes
+                + struct.pack(">II", 0, 0)   # Unicode language code + count
+                + struct.pack(">H", 0)       # ScriptCode code
+                + b"\x00" * 68)              # ScriptCode count + 67-byte name
+
+    def text_tag(text):
+        return struct.pack(">4s4x", b"text") + text.encode("ascii") + b"\x00"
+
+    def curv_tag(n=1024):
+        # sRGB EOTF (IEC 61966-2-1 piecewise) as a u16 LUT — 'curv' is the
+        # only curve type v2 parsers understand ('para' is v4-only).
+        pts = []
+        for i in range(n):
+            x = i / (n - 1)
+            y = x / 12.92 if x <= 0.04045 else ((x + 0.055) / 1.055) ** 2.4
+            pts.append(min(65535, max(0, round(y * 65535.0))))
+        return struct.pack(">4s4xI%dH" % n, b"curv", n, *pts)
+
+    # D50-adapted (Bradford) sRGB primaries — the same fixed-point values
+    # LCMS's built-in sRGB carries, so the swap changes no pixel anywhere.
+    r = xyz_tag(0.436035, 0.222488, 0.013916)
+    g = xyz_tag(0.385117, 0.716904, 0.097061)
+    b = xyz_tag(0.143051, 0.060608, 0.713913)
+    wtpt = xyz_tag(0.950455, 1.0, 1.089050)  # D65 media white (HP/IEC layout)
+    desc = desc_tag("sRGB IEC61966-2.1")
+    cprt = text_tag("Public domain, no copyright")
+    trc = curv_tag()
+
+    # rTRC/gTRC/bTRC share one curve blob (same offset), like the HP profile.
+    tags = [(b"desc", desc), (b"cprt", cprt), (b"wtpt", wtpt),
+            (b"rXYZ", r), (b"gXYZ", g), (b"bXYZ", b),
+            (b"rTRC", trc), (b"gTRC", trc), (b"bTRC", trc)]
+
+    offset = 128 + 4 + 12 * len(tags)
+    placed = {}  # id(data) -> (offset, size)
+    blobs = []
+    entries = []
+    for sig, data in tags:
+        if id(data) not in placed:
+            pad = (4 - offset % 4) % 4
+            offset += pad
+            blobs.append(b"\x00" * pad + data)
+            placed[id(data)] = (offset, len(data))
+            offset += len(data)
+        o, s = placed[id(data)]
+        entries.append(struct.pack(">4sII", sig, o, s))
+
+    body = struct.pack(">I", len(tags)) + b"".join(entries) + b"".join(blobs)
+    header = struct.pack(
+        ">I4sI4s4s4s6H4s4sIIIQI3i I44x",
+        128 + len(body),       # profile size
+        b"\x00" * 4,           # preferred CMM (none)
+        0x02100000,            # ICC version 2.1.0
+        b"mntr",               # display device profile
+        b"RGB ",               # data color space
+        b"XYZ ",               # PCS
+        2026, 1, 1, 0, 0, 0,   # creation date (fixed: deterministic bytes)
+        b"acsp",               # magic
+        b"\x00" * 4,           # platform (undefined)
+        0, 0, 0, 0,            # flags, manufacturer, model, attributes
+        0,                     # rendering intent: perceptual
+        s15f16(0.9642), s15f16(1.0), s15f16(0.8249),  # PCS illuminant (D50)
+        0,                     # creator
+    )
+    return header + body
+
+
 try:
-    from PIL.ImageCms import ImageCmsProfile, createProfile
-    _SRGB_ICC = ImageCmsProfile(createProfile("sRGB")).tobytes()
+    _SRGB_ICC = _build_srgb_v2_profile()
+    # Self-check: the profile must parse; otherwise fall back to LCMS.
+    from PIL import ImageCms as _icc_check
+    _icc_check.ImageCmsProfile(io.BytesIO(_SRGB_ICC))
 except Exception as _icc_err:
-    print(f"{TAG} sRGB ICC profile unavailable, saves will be untagged: {_icc_err}")
-    _SRGB_ICC = None
+    print(f"{TAG} v2 sRGB profile build failed ({_icc_err}); falling back to LCMS profile")
+    try:
+        from PIL.ImageCms import ImageCmsProfile, createProfile
+        _SRGB_ICC = ImageCmsProfile(createProfile("sRGB")).tobytes()
+    except Exception as _icc_err2:
+        print(f"{TAG} sRGB ICC profile unavailable, saves will be untagged: {_icc_err2}")
+        _SRGB_ICC = None
 
 
 _NAT_SORT_RE = re.compile(r'(\d+)')
