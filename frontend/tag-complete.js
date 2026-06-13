@@ -390,10 +390,15 @@
     }
 
     // ── Default: tag completion
-    // Find start of current tag (after last comma or start)
+    // Find start of current tag (after last comma, line break, or start).
+    // A newline must terminate the scan just like a comma: otherwise the
+    // query swallows the line break (plus everything back to the previous
+    // comma), and since no tag name contains a "\n" the search returns
+    // nothing — autocomplete silently dies on multi-line / natural-language
+    // prompts.
     let tagStart = cursor;
-    while (tagStart > 0 && text[tagStart - 1] !== ',') tagStart--;
-    while (tagStart < cursor && text[tagStart] === ' ') tagStart++;
+    while (tagStart > 0 && text[tagStart - 1] !== ',' && text[tagStart - 1] !== '\n') tagStart--;
+    while (tagStart < cursor && /\s/.test(text[tagStart])) tagStart++;
 
     const word = text.substring(tagStart, cursor);
     if (word.length >= MIN_CHARS) {
