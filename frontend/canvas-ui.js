@@ -4087,6 +4087,150 @@ function _initCtxBarDrag() {
 }
 
 // ========================================================================
+// BRUSH PRESETS BAR DRAG
+// ========================================================================
+// Mirrors the context-bar drag so the floating brush-tip bar can be moved
+// out of the way (it defaults to bottom-centre). Persisted independently
+// under its own localStorage key; double-click the handle to snap back.
+function _initBrushPresetsDrag() {
+    const bar = document.getElementById("brushPresets");
+    const handle = document.getElementById("brushPresetsDragHandle");
+    if (!bar || !handle) return;
+
+    // Switch from the CSS default (bottom + centring transform) to explicit
+    // top/left coordinates. Both `bottom` and `transform` must be cleared or
+    // they fight the dragged position.
+    function _applyPos(x, y) {
+        bar.style.right = "auto";
+        bar.style.bottom = "auto";
+        bar.style.transform = "none";
+        bar.style.left = x + "px";
+        bar.style.top = y + "px";
+    }
+
+    // Restore saved position
+    try {
+        const saved = JSON.parse(localStorage.getItem("studioBrushPresetsPos"));
+        if (saved && typeof saved.x === "number" && typeof saved.y === "number") {
+            _applyPos(saved.x, saved.y);
+            requestAnimationFrame(() => {
+                const parentRect = bar.offsetParent?.getBoundingClientRect() || { width: window.innerWidth, height: window.innerHeight };
+                const barRect = bar.getBoundingClientRect();
+                let x = saved.x, y = saved.y;
+                const maxX = parentRect.width - barRect.width;
+                const maxY = parentRect.height - barRect.height;
+                if (x > maxX) { x = Math.max(0, maxX); bar.style.left = x + "px"; }
+                if (y > maxY) { y = Math.max(0, maxY); bar.style.top = y + "px"; }
+            });
+        }
+    } catch (e) {}
+
+    let dragStartX, dragStartY, barStartX, barStartY;
+
+    handle.addEventListener("pointerdown", e => {
+        e.preventDefault();
+        e.stopPropagation();
+        const rect = bar.getBoundingClientRect();
+        const parent = bar.offsetParent?.getBoundingClientRect() || { left: 0, top: 0 };
+        barStartX = rect.left - parent.left;
+        barStartY = rect.top - parent.top;
+        // Pin to explicit coords before the first move so the centring
+        // transform doesn't double-apply once we start setting `left`.
+        _applyPos(barStartX, barStartY);
+        dragStartX = e.clientX;
+        dragStartY = e.clientY;
+        bar.classList.add("dragging");
+        handle.setPointerCapture(e.pointerId);
+
+        const onMove = ev => {
+            const dx = ev.clientX - dragStartX;
+            const dy = ev.clientY - dragStartY;
+            const parentRect = bar.offsetParent?.getBoundingClientRect() || { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
+            const barRect = bar.getBoundingClientRect();
+
+            let nx = barStartX + dx;
+            let ny = barStartY + dy;
+            nx = Math.max(0, Math.min(nx, parentRect.width - barRect.width));
+            ny = Math.max(0, Math.min(ny, parentRect.height - barRect.height));
+
+            bar.style.left = nx + "px";
+            bar.style.top = ny + "px";
+        };
+
+        const onUp = ev => {
+            bar.classList.remove("dragging");
+            handle.releasePointerCapture(ev.pointerId);
+            handle.removeEventListener("pointermove", onMove);
+            handle.removeEventListener("pointerup", onUp);
+
+            try {
+                localStorage.setItem("studioBrushPresetsPos", JSON.stringify({
+                    x: parseFloat(bar.style.left),
+                    y: parseFloat(bar.style.top)
+                }));
+            } catch (e) {}
+        };
+
+        handle.addEventListener("pointermove", onMove);
+        handle.addEventListener("pointerup", onUp);
+    });
+
+    // Double-click handle resets to default (CSS-driven) position
+    handle.addEventListener("dblclick", e => {
+        e.preventDefault();
+        bar.style.left = "";
+        bar.style.top = "";
+        bar.style.right = "";
+        bar.style.bottom = "";
+        bar.style.transform = "";
+        try { localStorage.removeItem("studioBrushPresetsPos"); } catch (e) {}
+    });
+
+    // Keep on-screen when the viewport shrinks (e.g. leaving fullscreen)
+    function _clampBar() {
+        if (!bar.style.left || bar.style.left === "") return; // default position, CSS handles it
+        const parentRect = bar.offsetParent?.getBoundingClientRect() || { left: 0, top: 0, width: window.innerWidth, height: window.innerHeight };
+        const barRect = bar.getBoundingClientRect();
+        let x = parseFloat(bar.style.left);
+        let y = parseFloat(bar.style.top);
+        const maxX = parentRect.width - barRect.width;
+        const maxY = parentRect.height - barRect.height;
+        let clamped = false;
+        if (x > maxX) { x = Math.max(0, maxX); clamped = true; }
+        if (y > maxY) { y = Math.max(0, maxY); clamped = true; }
+        if (clamped) {
+            bar.style.left = x + "px";
+            bar.style.top = y + "px";
+            try { localStorage.setItem("studioBrushPresetsPos", JSON.stringify({ x, y })); } catch (e) {}
+        }
+    }
+    window.addEventListener("resize", _clampBar);
+}
+
+// Anchor the brush-dynamics flyout above its gear button so it follows the
+// presets bar wherever it's been dragged (the panel's CSS default assumes
+// the bar is still bottom-centre).
+function _positionDynamicsPanel() {
+    const dp = document.getElementById("dynamicsPanel");
+    const gear = document.getElementById("dynamicsToggle");
+    const area = document.getElementById("canvasArea");
+    if (!dp || !gear || !area) return;
+    const areaRect = area.getBoundingClientRect();
+    const gearRect = gear.getBoundingClientRect();
+    dp.style.bottom = "auto";
+    dp.style.transform = "translateX(-50%)";
+    let left = gearRect.left - areaRect.left + gearRect.width / 2;
+    let top = gearRect.top - areaRect.top - dp.offsetHeight - 8;
+    // Drop below the gear if there isn't room above
+    if (top < 4) top = gearRect.bottom - areaRect.top + 8;
+    // Clamp horizontally (the panel is centred on `left`)
+    const halfW = dp.offsetWidth / 2;
+    left = Math.max(halfW + 4, Math.min(left, areaRect.width - halfW - 4));
+    dp.style.left = left + "px";
+    dp.style.top = top + "px";
+}
+
+// ========================================================================
 // TOOLBAR BINDINGS
 // ========================================================================
 function bindToolbar() {
@@ -4100,6 +4244,9 @@ function bindToolbar() {
 
     // Context bar drag
     _initCtxBarDrag();
+
+    // Brush presets bar drag (movable, like the context bar)
+    _initBrushPresetsDrag();
 
     // Brush presets
     const presetNames = ["round", "flat", "scatter", "marker", "custom"];
@@ -4116,7 +4263,10 @@ function bindToolbar() {
         const dp = document.getElementById("dynamicsPanel");
         if (dp) {
             dp.style.display = dp.style.display === "none" ? "" : "none";
-            if (dp.style.display !== "none") _syncDynamicsPanel();
+            if (dp.style.display !== "none") {
+                _syncDynamicsPanel();
+                _positionDynamicsPanel();
+            }
         }
     });
 
