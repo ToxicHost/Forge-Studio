@@ -377,8 +377,16 @@ def _incremental_sync():
                         (filename, display_folder, filepath, w, h, file_date, search, media_type, ch),
                     )
                     iid = cur.lastrowid
-                    if iid == 0:
-                        db.commit()  # release lock; nothing inserted (dup)
+                    if not cur.rowcount:
+                        # Already in DB (INSERT was ignored) → not new. Use
+                        # rowcount, NOT `iid == 0`: after an ignored insert
+                        # lastrowid is stale (the rowid of the previous insert
+                        # into ANY table — e.g. a characters / image_characters
+                        # row from an earlier file), so the old guard let dup
+                        # files through and wired image_characters to a
+                        # non-existent images.id → "FOREIGN KEY constraint
+                        # failed".
+                        db.commit()  # release the write lock
                         continue
                     new_count += 1
                     # Link orphan metadata saved by content hash before scan
@@ -1952,8 +1960,12 @@ def scan_all_folders():
                         (filename, display_folder, filepath, w, h, file_date, search, media_type, ch),
                     )
                     iid = cur.lastrowid
-                    if iid == 0:
-                        db.commit()  # release lock; nothing inserted (dup)
+                    if not cur.rowcount:
+                        # Already in DB (INSERT ignored) → not new. rowcount is
+                        # the reliable signal; lastrowid is stale after an
+                        # ignored insert (see _incremental_sync) and trusting it
+                        # mis-wires image_characters → FK constraint failure.
+                        db.commit()  # release the write lock
                         continue
                     total_new += 1
 
@@ -2202,7 +2214,10 @@ def _preinsert_image_row(db, filepath, content_hash):
         (filename, folder_display, norm, w, h, file_date, search, media_type, content_hash),
     )
     image_id = cur.lastrowid
-    if not image_id:
+    if not cur.rowcount:
+        # Insert was ignored (row already exists) — look up the real id. Use
+        # rowcount, not `image_id` truthiness: lastrowid can be a stale rowid
+        # from an earlier insert, which would mis-link metadata/characters.
         row = db.execute(
             "SELECT id FROM images WHERE content_hash=? OR filepath=? OR filepath=? LIMIT 1",
             (content_hash, norm, filepath),
