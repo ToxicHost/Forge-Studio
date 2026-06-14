@@ -3514,11 +3514,15 @@ function bindUI() {
     } catch { return null; }
   }
 
-  // Save As… — open the OS native save dialog so the user chooses the name,
-  // location, AND format, exactly like any desktop app. Falls back to a
-  // browser download (with a suggested filename) where the File System Access
-  // API isn't available (Firefox/Safari) — there the browser's own "ask where
-  // to save" setting governs the location prompt.
+  // Save As… — browser-side only. Hands the image bytes to the browser so it
+  // saves to the USER's machine; the backend never receives a destination
+  // path. (Server-side "Save As to an arbitrary backend path" was removed for
+  // security — see /studio/save_image, which now rejects save_token/full_path.)
+  // Uses the File System Access API where available (Chromium: a real
+  // name/location/format picker) and falls back to a named download
+  // (Firefox/Safari, where the browser's own "ask where to save" setting
+  // governs any prompt). This saves the image only — Studio metadata/sidecars
+  // and Gallery linking come from "Save" and "Save to Gallery".
   async function _saveAsNative(idx = State.selectedOutputIdx) {
     const imgSrc = await _resolveOutputAsB64(idx);
     if (!imgSrc) { showToast("No image to save", "info"); return; }
@@ -3527,48 +3531,13 @@ function bindUI() {
     const defFmt = State.saveFormat || srcFmt || "png";
     const _saveEntry = State.sessionEntries[idx] || {};
     const stem = (_saveEntry.filename || `studio_${Date.now()}`).replace(/\.[^.]+$/, "");
-    const infotext = State.embedMetadata ? (_saveEntry.infotext || "") : "";
-
-    // 1) Server-side native "Save As…" dialog. This is the reliable path for a
-    //    local Forge install: it pops a real OS dialog regardless of browser
-    //    (the File System Access API needs Chromium + a secure context, so it
-    //    isn't available over a LAN IP or in Firefox), and the backend write
-    //    preserves embedded metadata. A 500/network error means the server has
-    //    no GUI (headless/remote) — fall through to the browser paths.
-    try {
-      const r = await fetch(API.base + "/studio/gallery/pick-save-file", {
-        method: "POST", headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ suggested: stem + "." + _extForFmt(defFmt), format: defFmt }),
-      });
-      const data = await r.json();
-      if (r.ok && !data.error) {
-        if (!data.path) return;                       // user cancelled the dialog
-        // Only do the server-side write when the dialog minted a token. If we
-        // got a path but no token (server couldn't mint), don't send a save
-        // that would land in the default folder — fall through to the browser
-        // save path instead so the file goes where intended.
-        if (data.token) {
-          const res = await API.saveImage({
-            image_b64: imgSrc,
-            format: _fmtFromName(data.path),
-            quality: State.saveQuality || 95,
-            metadata: infotext || null,
-            save_token: data.token,   // server resolves it; never a raw client path
-          });
-          if (res.ok) showToast("Saved " + res.filename, "success");
-          else showToast(res.error || "Save failed", "error");
-          return;
-        }
-      }
-      // data.error present (server dialog unavailable) or no token → fall through.
-    } catch (_) { /* headless/remote server — fall through to browser paths */ }
 
     // Reuse the source bytes (keeps embedded metadata) when no format change
     // is needed; otherwise re-encode via an offscreen canvas.
     const _bytesFor = async (fmt) =>
       (fmt === srcFmt) ? _dataUrlToBlob(imgSrc) : await _encodeOutputBlob(imgSrc, fmt);
 
-    // 2) Browser File System Access API (Chromium + secure context).
+    // 1) Browser File System Access API (Chromium + secure context).
     if (typeof window.showSaveFilePicker === "function") {
       const order = [defFmt, ...["png", "jpeg", "webp"].filter(f => f !== defFmt)];
       const types = order.map(f => ({
@@ -3592,7 +3561,7 @@ function bindUI() {
       return;
     }
 
-    // 3) Last resort — browser download with a suggested name (the browser's
+    // 2) Fallback — browser download with a suggested name (the browser's
     //    own "ask where to save" setting governs any location prompt).
     const blob = await _bytesFor(defFmt);
     if (!blob) { showToast("Could not encode image", "error"); return; }

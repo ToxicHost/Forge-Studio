@@ -662,13 +662,11 @@ _VERSION_FILE = _studio_root / "version.json"
 # sidecar files under Forge's own output tree. Clients can NOT register new
 # readable roots, and writes are confined to "safe roots" (output tree +
 # folders the user picked via the server-side dialog + operator-configured
-# STUDIO_SAVE_ROOTS). Save As uses one-shot tokens, never a raw client path.
+# STUDIO_SAVE_ROOTS). "Save As" is browser-side only — the backend never
+# writes to a client-chosen arbitrary path.
 
 # Exact resolved file paths Studio wrote this session and may serve.
 _SERVED_FILES = set()
-# One-shot Save As tokens: token -> (resolved_path, expiry_epoch).
-_SAVE_TOKENS = {}
-_SAVE_TOKEN_TTL = 300  # seconds
 # Persisted trusted *write* roots. A path becomes trusted only through an
 # explicit local-user action (server-side Browse, or typed-then-"Trust" in the
 # UI) — never just by appearing in a generation/save request. Stored separately
@@ -881,34 +879,8 @@ def _safe_write_root(path):
     return any(_is_under(rp, Path(r)) for r in _safe_write_roots())
 
 
-def _mint_save_token(path):
-    """Store a dialog-chosen Save As path behind a short-lived one-shot token."""
-    import secrets
-    rp = _resolved(path)
-    if rp is None:
-        return ""
-    now = time.time()
-    # Opportunistic prune of expired tokens.
-    for k in [k for k, (_, exp) in list(_SAVE_TOKENS.items()) if exp < now]:
-        _SAVE_TOKENS.pop(k, None)
-    tok = secrets.token_urlsafe(24)
-    _SAVE_TOKENS[tok] = (str(rp), now + _SAVE_TOKEN_TTL)
-    # The token alone authorizes this exact one-shot write — we do NOT persist
-    # the parent as a trusted root (Save As shouldn't permanently widen writes).
-    return tok
-
-
-def _consume_save_token(token):
-    """Resolve + invalidate a Save As token. Single-use; None if invalid/expired."""
-    if not token:
-        return None
-    ent = _SAVE_TOKENS.pop(token, None)
-    if not ent:
-        return None
-    path, exp = ent
-    if time.time() > exp:
-        return None
-    return path
+# Save As tokens removed: server-side "Save As" is gone (browser-side only),
+# so there is no token mint/consume path and no arbitrary backend file write.
 
 
 def _check_same_origin(request):
@@ -5067,8 +5039,8 @@ def setup_studio_routes(app: FastAPI):
         subfolder: str = ""          # optional subfolder under output dir
         dest_dir: Optional[str] = None  # optional absolute folder (configurable "Save to Gallery folder"); confined to safe write roots
         filename: Optional[str] = None  # optional custom filename (without ext)
-        save_token: Optional[str] = None  # one-shot token from /pick-save-file (preferred Save As path source)
-        full_path: Optional[str] = None # raw Save As path — only honored if inside a safe write root
+        save_token: Optional[str] = None  # DEPRECATED — server-side Save As removed; rejected if set
+        full_path: Optional[str] = None   # DEPRECATED — server-side Save As removed; rejected if set
         metadata: Optional[str] = None  # infotext to embed (PNG tEXt, JPEG/WebP EXIF UserComment)
 
     @app.post("/studio/save_image")
@@ -5089,59 +5061,18 @@ def setup_studio_routes(app: FastAPI):
             except Exception as de:
                 raise ValueError(f"Invalid image data: {de}")
 
-            # Explicit "Save As…" target. Preferred source is a one-shot token
-            # minted by /pick-save-file (the path the LOCAL user chose in the
-            # native dialog) — never a raw client path. A raw full_path is only
-            # honored if it resolves inside a safe write root, so a random/
-            # cross-site client cannot write to an arbitrary absolute path.
-            _saveas_path = _consume_save_token(req.save_token)
-            # A token that was supplied but didn't resolve (expired, already
-            # used, or unknown) must NOT silently fall through to a default-
-            # location save — that would land the file somewhere other than the
-            # user chose while still reporting success.
-            if req.save_token and not _saveas_path:
+            # Server-side "Save As" (a client-supplied token or absolute path the
+            # backend would write to) has been REMOVED. Normal "Save As" is now
+            # browser-side only, so the backend never writes to a client-chosen
+            # arbitrary path — that eliminates the arbitrary file-write primitive.
+            # The fields remain on the request model so a stale frontend gets a
+            # clear error instead of a silently misdirected save. Writes below are
+            # confined to Studio's output root / trusted Gallery folders only.
+            if req.save_token or (req.full_path or "").strip():
                 return JSONResponse(
-                    {"ok": False, "error": "Save As session expired — reopen the Save As dialog and try again."},
+                    {"ok": False, "error": "Server-side Save As has been disabled. "
+                     "Use browser Save As / Download instead."},
                     status_code=400)
-            if not _saveas_path and (req.full_path or "").strip():
-                if _safe_write_root(req.full_path):
-                    _saveas_path = str(Path(req.full_path).expanduser())
-                else:
-                    return JSONResponse(
-                        {"ok": False, "error": "Save path is outside an allowed folder. "
-                         "Use the Browse dialog, or set STUDIO_SAVE_ROOTS on the server."},
-                        status_code=403)
-            if _saveas_path:
-                target = Path(_saveas_path).expanduser()
-                try:
-                    target.parent.mkdir(parents=True, exist_ok=True)
-                except Exception:
-                    pass
-                _ext = target.suffix.lower().lstrip(".")
-                eff_fmt = "jpeg" if _ext in ("jpg", "jpeg") else ("webp" if _ext == "webp" else "png")
-                save_kwargs = {}
-                if eff_fmt == "jpeg":
-                    img = img.convert("RGB")  # drop alpha for JPEG
-                    save_kwargs = {"quality": req.quality, "optimize": True}
-                    if req.metadata:
-                        eb = _build_exif_usercomment(req.metadata)
-                        if eb:
-                            save_kwargs["exif"] = eb
-                elif eff_fmt == "webp":
-                    save_kwargs = {"quality": req.quality}
-                    if req.metadata:
-                        eb = _build_exif_usercomment(req.metadata)
-                        if eb:
-                            save_kwargs["exif"] = eb
-                elif eff_fmt == "png" and req.metadata:
-                    from PIL.PngImagePlugin import PngInfo
-                    pnginfo = PngInfo()
-                    pnginfo.add_text("parameters", req.metadata)
-                    save_kwargs["pnginfo"] = pnginfo
-                img.save(str(target), icc_profile=_SRGB_ICC, **save_kwargs)
-                _register_served_file(str(target))
-                print(f"{TAG} Saved (Save As) {eff_fmt.upper()} → {target.name}")
-                return {"ok": True, "path": str(target), "filename": target.name}
 
             # Determine output directory — same logic as generation auto-save
             try:

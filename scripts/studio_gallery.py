@@ -2255,49 +2255,19 @@ def setup_gallery_routes(app: FastAPI):
 
     @app.post("/studio/gallery/pick-save-file")
     async def gallery_pick_save_file(request: Request):
-        """Native OS 'Save As…' dialog — lets the LOCAL user choose the
-        filename, location, and format. Returns a one-shot `token` (preferred)
-        plus the chosen `path` for display. The token, not the raw path, is
-        what /studio/save_image accepts — so a client cannot direct a write to
-        an arbitrary path. 500 when the server has no GUI so the client can
-        fall back."""
+        """DISABLED. Server-side 'Save As' — a native OS dialog that returned a
+        backend path/token for the server to write to — has been removed for
+        security. Normal Save As is browser-side only, so the backend never
+        writes to a client-chosen arbitrary path. Kept as a stub so a stale
+        frontend gets a clear, non-functional response instead of a server-side
+        file write."""
         _api = _studio_api()
         if _api and not _api._check_same_origin(request):
             return JSONResponse({"error": "forbidden"}, status_code=403)
-        try:
-            data = {}
-            try:
-                data = await request.json()
-            except Exception:
-                pass
-            suggested = (data.get("suggested") or "").strip()
-            fmt = (data.get("format") or "png").lower()
-            ext_map = {"png": ".png", "jpeg": ".jpg", "jpg": ".jpg", "webp": ".webp"}
-            defext = ext_map.get(fmt, ".png")
-            import tkinter as tk
-            from tkinter import filedialog
-            root = tk.Tk()
-            root.withdraw()
-            root.wm_attributes('-topmost', 1)
-            path = filedialog.asksaveasfilename(
-                title="Save image as",
-                initialfile=suggested or ("studio" + defext),
-                defaultextension=defext,
-                filetypes=[
-                    ("PNG image", "*.png"),
-                    ("JPEG image", "*.jpg *.jpeg"),
-                    ("WebP image", "*.webp"),
-                    ("All files", "*.*"),
-                ],
-            )
-            root.destroy()
-            if not path:
-                return {"path": "", "token": ""}
-            path = path.replace("/", os.sep)
-            token = _api._mint_save_token(path) if _api else ""
-            return {"path": path, "token": token}
-        except Exception as e:
-            return JSONResponse({"error": str(e)}, status_code=500)
+        return JSONResponse(
+            {"ok": False, "path": "", "token": "",
+             "error": "Server-side Save As is disabled. Use browser Save As / Download instead."},
+            status_code=400)
 
     # ==================================================================
     # SCAN
