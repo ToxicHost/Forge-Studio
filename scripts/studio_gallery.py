@@ -93,6 +93,185 @@ _watcher_observer = None
 _watcher_running = False
 
 
+# =========================================================================
+# DB WRITE SERIALIZATION + GENERATION PRIORITY
+# =========================================================================
+# Gallery DB access is unsafe under concurrent generation: SQLite/WAL allows
+# only ONE writer at a time, so the background scan/hash/autosync workers and
+# the generation-time metadata save collide. The pieces below make all writes
+# serialize through a single process-wide lock, let background workers yield to
+# generation, and guarantee the generation response is never blocked by a busy
+# DB (the save is retried off-thread instead).
+import queue as _queue
+import sys as _sys
+
+# Process-global shared state. This module can be imported under two names
+# ('studio_gallery' and 'scripts.studio_gallery') — the same situation _get_db()
+# already guards against for the DB path. The single write lock, generation
+# priority, and retry queue MUST be shared across both instances, or a
+# generation save resolved via one instance and the background workers running
+# in another would hold DIFFERENT locks and never serialize. Stash them on a
+# synthetic module in sys.modules so every instance resolves the same objects.
+_SHARED_KEY = "_forge_studio_gallery_shared"
+_shared = _sys.modules.get(_SHARED_KEY)
+if _shared is None:
+    import types as _types
+    _shared = _types.ModuleType(_SHARED_KEY)
+    # Reentrant so one thread can nest writes across helper calls / multiple
+    # connections without self-deadlock. Reads never take it (WAL allows
+    # concurrent readers).
+    _shared.write_lock = threading.RLock()
+    _shared.gen_priority_until = 0.0
+    _shared.gen_priority_lock = threading.Lock()
+    _shared.meta_retry_q = _queue.Queue()
+    _shared.meta_retry_started = False
+    _shared.meta_retry_lock = threading.Lock()
+    _sys.modules[_SHARED_KEY] = _shared
+
+# Single process-wide WRITE lock (used by _WriteLockingConnection below).
+_db_write_lock = _shared.write_lock
+
+
+class _WriteLockingConnection(sqlite3.Connection):
+    """sqlite3 connection that serializes WRITES through _db_write_lock.
+
+    The lock is grabbed lazily on the first write statement of a transaction
+    and released on commit/rollback/close, so writers queue in an orderly way
+    instead of racing on WAL's single-writer constraint (which otherwise shows
+    up as 'database is locked' after busy_timeout). Reads never take the lock.
+    No call site needs to change — every write goes through db.execute(...).
+
+    Acquisition has a long timeout as a safety valve: if the lock were ever
+    leaked (a connection that wrote but was never closed), writers degrade to
+    unserialized after the timeout rather than deadlocking forever.
+    """
+    _WRITE_RE = re.compile(r"^\s*(?:INSERT|UPDATE|DELETE|REPLACE|CREATE|DROP|ALTER)\b", re.IGNORECASE)
+    _ACQUIRE_TIMEOUT = 60.0
+
+    def _acquire_for(self, sql):
+        if not getattr(self, "_holds_wlock", False) and isinstance(sql, str) and self._WRITE_RE.match(sql):
+            got = _db_write_lock.acquire(timeout=self._ACQUIRE_TIMEOUT)
+            self._holds_wlock = bool(got)
+            if not got:
+                print(f"{TAG} WARN: gallery write lock timeout — proceeding unserialized")
+
+    def _release(self):
+        if getattr(self, "_holds_wlock", False):
+            self._holds_wlock = False
+            try:
+                _db_write_lock.release()
+            except RuntimeError:
+                pass
+
+    def execute(self, sql, *args):
+        self._acquire_for(sql)
+        return super().execute(sql, *args)
+
+    def executemany(self, sql, *args):
+        self._acquire_for(sql)
+        return super().executemany(sql, *args)
+
+    def executescript(self, sql, *args):
+        # A script may contain writes; lock conservatively for its duration.
+        if not getattr(self, "_holds_wlock", False):
+            got = _db_write_lock.acquire(timeout=self._ACQUIRE_TIMEOUT)
+            self._holds_wlock = bool(got)
+        return super().executescript(sql, *args)
+
+    def commit(self):
+        try:
+            return super().commit()
+        finally:
+            self._release()
+
+    def rollback(self):
+        try:
+            return super().rollback()
+        finally:
+            self._release()
+
+    def close(self):
+        try:
+            return super().close()
+        finally:
+            self._release()
+
+
+# Generation priority: while a generation is writing metadata, background
+# workers pause between items so the generation write isn't starved. A decaying
+# timestamp avoids needing perfectly bracketed begin/end calls from the caller.
+_GEN_PRIORITY_WINDOW = 8.0  # seconds workers back off after a generation write
+
+
+def note_generation_activity(window=_GEN_PRIORITY_WINDOW):
+    """Mark generation as active so background DB workers yield the write lock.
+    Called by the generation metadata-save path; safe to call from anywhere."""
+    with _shared.gen_priority_lock:
+        _shared.gen_priority_until = max(_shared.gen_priority_until, time.time() + window)
+
+
+def _generation_priority_active():
+    with _shared.gen_priority_lock:
+        return time.time() < _shared.gen_priority_until
+
+
+def _worker_yield_if_busy(max_wait=5.0):
+    """Background workers call this between items: if a generation is active,
+    pause briefly (in small slices) so its metadata write gets the lock first.
+    Bounded so a steady stream of generations can't stall scans forever."""
+    waited = 0.0
+    while _generation_priority_active() and waited < max_wait:
+        time.sleep(0.1)
+        waited += 0.1
+
+
+# Off-thread retry queue for generation metadata saves that can't grab the
+# write lock quickly — guarantees the generation response is never blocked and
+# the metadata is never silently dropped on transient contention. The queue and
+# its started-flag live on the process-global _shared holder (see above).
+
+
+def _ensure_meta_retry_worker():
+    with _shared.meta_retry_lock:
+        if _shared.meta_retry_started:
+            return
+        _shared.meta_retry_started = True
+        threading.Thread(target=_meta_retry_worker, daemon=True).start()
+
+
+def _meta_retry_worker():
+    while True:
+        job = _shared.meta_retry_q.get()
+        try:
+            attempts = job.get("attempts", 0)
+            # Generous block here — we're off the request path now.
+            if not _write_metadata_row(job, block_timeout=30.0) and attempts < 10:
+                job["attempts"] = attempts + 1
+                time.sleep(min(2 ** attempts, 30))
+                _shared.meta_retry_q.put(job)
+        except Exception as e:
+            print(f"{TAG} Metadata retry worker error: {e}")
+        finally:
+            _shared.meta_retry_q.task_done()
+
+
+def _reset_stale_progress():
+    """Clear stale 'active' scan/hash flags left by a crashed/killed worker so
+    a fresh process (or a re-init) doesn't refuse to scan/hash. Called at setup
+    when no worker is alive, and used to recover a wedged flag at run time."""
+    global scan_progress
+    try:
+        if isinstance(scan_progress, dict) and scan_progress.get("active"):
+            scan_progress = {"active": False, "folders": []}
+    except Exception:
+        pass
+    try:
+        if _hash_progress.get("active") and not (_hash_thread is not None and _hash_thread.is_alive()):
+            _hash_progress["active"] = False
+    except Exception:
+        pass
+
+
 def suppress_path(filepath):
     """Temporarily suppress watcher for a path (called on rename/move/delete)."""
     with _watcher_suppress_lock:
@@ -119,14 +298,21 @@ def sse_notify(event_type, data=None):
 
 
 def _incremental_sync():
-    """Quick diff-scan: compare DB paths vs filesystem, sync differences."""
+    """Quick diff-scan: compare DB paths vs filesystem, sync differences.
+
+    Writes are committed per new file so the single write lock is released
+    between files — the slow per-file work (Image.open, search-text + content
+    hash) then runs with NO transaction open, so a concurrent generation
+    metadata save isn't blocked. Yields to active generations between files.
+    """
     if scan_progress.get("active"):
         return  # full scan in progress, don't compete for the DB
+    new_count, removed_count = 0, 0
+    db = None
     try:
         db = _get_db()
         scan_folders = db.execute("SELECT path FROM scan_folders").fetchall()
         if not scan_folders:
-            db.close()
             return
 
         existing = {}
@@ -138,7 +324,6 @@ def _incremental_sync():
             r["word"].lower()
             for r in db.execute("SELECT word FROM ignore_words").fetchall()
         }
-        new_count, removed_count = 0, 0
 
         for sf in scan_folders:
             root = Path(sf["path"])
@@ -161,6 +346,10 @@ def _incremental_sync():
                     with _watcher_suppress_lock:
                         if os.path.normpath(filepath) in _watcher_suppress:
                             continue
+                    # New file → do the slow work with no write tx held, then a
+                    # short committed write. Yield first so a live generation's
+                    # metadata save gets the lock ahead of us.
+                    _worker_yield_if_busy()
                     characters = parse_characters_from_filename(filename, ignore_words)
                     file_date = get_file_date(filepath)
                     w, h = 0, 0
@@ -189,6 +378,7 @@ def _incremental_sync():
                     )
                     iid = cur.lastrowid
                     if iid == 0:
+                        db.commit()  # release lock; nothing inserted (dup)
                         continue
                     new_count += 1
                     # Link orphan metadata saved by content hash before scan
@@ -212,6 +402,8 @@ def _incremental_sync():
                                 "(image_id,character_id,position) VALUES (?,?,?)",
                                 (iid, cr["id"], pos),
                             )
+                    # Commit this file before moving on — frees the write lock.
+                    db.commit()
 
         for fp in list(existing.keys()):
             if fp not in found_paths:
@@ -220,6 +412,8 @@ def _incremental_sync():
                         continue
                 db.execute("DELETE FROM images WHERE filepath=?", (fp,))
                 removed_count += 1
+        if removed_count:
+            db.commit()
 
         if new_count or removed_count:
             db.execute(
@@ -228,15 +422,25 @@ def _incremental_sync():
             )
             db.commit()
             sse_notify("sync", {"new": new_count, "removed": removed_count})
-        db.close()
-        # Hash any newly-added images in the background
-        if new_count:
-            _start_background_hash()
-
-        with _watcher_suppress_lock:
-            _watcher_suppress.clear()
     except Exception as e:
         print(f"{TAG} Auto-sync error: {e}")
+        if db is not None:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+    finally:
+        if db is not None:
+            try:
+                db.close()
+            except Exception:
+                pass
+
+    # Post-commit, lock released: kick background hashing + clear suppressions.
+    if new_count:
+        _start_background_hash()
+    with _watcher_suppress_lock:
+        _watcher_suppress.clear()
 
 
 def _watcher_loop():
@@ -354,7 +558,8 @@ def _get_db():
         _ext_root = _here if (_here / "frontend").is_dir() else _here.parent
         _data_dir = _ext_root / "gallery_data"
         _db_path = str(_data_dir / "gallery.db")
-    conn = sqlite3.connect(_db_path)
+    conn = sqlite3.connect(_db_path, factory=_WriteLockingConnection)
+    conn._holds_wlock = False
     conn.row_factory = sqlite3.Row
     conn.execute("PRAGMA journal_mode=WAL")
     conn.execute("PRAGMA busy_timeout=30000")
@@ -456,6 +661,9 @@ def compute_content_hash(source):
 
 # Background hash-computation progress (shared with routes)
 _hash_progress = {"active": False, "current": 0, "total": 0}
+# Handle to the running hash worker thread, so a stale 'active' flag (crashed
+# worker) can be detected and cleared instead of permanently blocking hashing.
+_hash_thread = None
 
 
 def _init_db():
@@ -1031,22 +1239,26 @@ def _start_background_hash():
     """Spawn a background thread to phash any unhashed images.
     No-op if imagehash is unavailable or hashing is already running.
     Safe to call from anywhere — guards against concurrent runs."""
+    global _hash_thread
     if not HAS_IMAGEHASH:
         return
     if _hash_progress.get("active"):
-        return
+        # Genuinely running → leave it. Otherwise the flag is stale (a crashed
+        # worker); clear it and restart so hashing isn't blocked forever.
+        if _hash_thread is not None and _hash_thread.is_alive():
+            return
+        _hash_progress["active"] = False
 
     def _do_hash():
         _hash_progress["active"] = True
+        db = None
         try:
             db = _get_db()
             pending = db.execute(
                 "SELECT COUNT(*) FROM images WHERE (phash IS NULL OR phash='') AND media_type != 'video'"
             ).fetchone()[0]
-            db.close()
             if pending:
                 print(f"{TAG} Background hashing started — {pending} image{'s' if pending != 1 else ''} queued")
-            db = _get_db()
             rows = db.execute(
                 "SELECT id,filepath FROM images "
                 "WHERE (phash IS NULL OR phash='') AND media_type != 'video'"
@@ -1055,6 +1267,10 @@ def _start_background_hash():
             _hash_progress["current"] = 0
             for i, r in enumerate(rows):
                 _hash_progress["current"] = i + 1
+                # Yield to live generations, then compute the phash with NO
+                # write tx open. The per-image commit frees the write lock
+                # before the next (slow) compute_phash.
+                _worker_yield_if_busy()
                 try:
                     ph = compute_phash(r["filepath"])
                     if ph:
@@ -1063,11 +1279,12 @@ def _start_background_hash():
                             (ph, r["id"]),
                         )
                         compute_pairs_for_image(db, r["id"], ph)
-                    if (i + 1) % 50 == 0:
-                        db.commit()
+                    db.commit()
                 except Exception:
-                    pass
-            db.commit()
+                    try:
+                        db.rollback()
+                    except Exception:
+                        pass
             # Second pass: images with hashes but no pairs yet (migration / race)
             unpaired = db.execute("""
                 SELECT i.id, i.phash FROM images i
@@ -1078,22 +1295,34 @@ def _start_background_hash():
                 )
             """).fetchall()
             for i, r in enumerate(unpaired):
-                compute_pairs_for_image(db, r["id"], r["phash"])
-                if (i + 1) % 20 == 0:
+                _worker_yield_if_busy()
+                try:
+                    compute_pairs_for_image(db, r["id"], r["phash"])
                     db.commit()
-            db.commit()
-            db.close()
+                except Exception:
+                    try:
+                        db.rollback()
+                    except Exception:
+                        pass
             sse_notify("hashes_updated", {"count": _hash_progress["total"]})
         except Exception as e:
             print(f"{TAG} Background hashing error: {e}")
-        _hash_progress["active"] = False
+        finally:
+            if db is not None:
+                try:
+                    db.close()
+                except Exception:
+                    pass
+            _hash_progress["active"] = False
 
-    threading.Thread(target=_do_hash, daemon=True).start()
+    _hash_thread = threading.Thread(target=_do_hash, daemon=True)
+    _hash_thread.start()
 
 
 def _cleanup_trash(max_age=600):
     """Move trash entries older than max_age seconds to OS Recycle Bin.
     If send2trash is unavailable, files stay in internal trash."""
+    db = None
     try:
         db = _get_db()
         cutoff = time.time() - max_age
@@ -1112,11 +1341,19 @@ def _cleanup_trash(max_age=600):
                 else:
                     continue
             db.execute("DELETE FROM trash WHERE id=?", (r["id"],))
-        if old:
-            db.commit()
-        db.close()
+            db.commit()  # commit per row → release the write lock between (slow) _send2trash calls
     except Exception:
-        pass
+        if db is not None:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+    finally:
+        if db is not None:
+            try:
+                db.close()
+            except Exception:
+                pass
 
 
 # =========================================================================
@@ -1626,194 +1863,223 @@ def _resolve_display_folder(db, display_folder):
 
 def scan_all_folders():
     global scan_progress
-    db = _get_db()
-    folders = db.execute("SELECT id, path, label FROM scan_folders").fetchall()
-    if not folders:
-        db.close()
-        return {"error": "No folders configured"}
-
-    scan_progress = {"active": True, "folders": []}
-
-    folder_counts = {}
-    for sf in folders:
-        root = Path(sf["path"])
-        if not root.exists():
-            continue
-        cnt = 0
-        for dirpath, dirnames, filenames in os.walk(root):
-            cnt += sum(1 for fn in filenames if Path(fn).suffix.lower() in MEDIA_EXTENSIONS)
-        folder_counts[sf["path"]] = cnt
-
-    total_new, total_removed = 0, 0
-    ignore_words = get_ignore_words(db)
-    existing = set(
-        r["filepath"] for r in db.execute("SELECT filepath FROM images").fetchall()
-    )
+    db = None
+    total_new = 0
     all_found = set()
+    removed = set()
+    result = None
+    try:
+        db = _get_db()
+        folders = db.execute("SELECT id, path, label FROM scan_folders").fetchall()
+        if not folders:
+            return {"error": "No folders configured"}
 
-    for fi, sf in enumerate(folders):
-        root = Path(sf["path"])
-        if not root.exists() or not root.is_dir():
-            continue
-        fname = root.name
-        ftotal = folder_counts.get(sf["path"], 0)
-        fprog = {"name": fname, "current": 0, "total": ftotal, "phase": "Scanning"}
-        scan_progress["folders"].append(fprog)
-        processed = 0
+        scan_progress = {"active": True, "folders": []}
 
-        for dirpath, dirnames, filenames in os.walk(root):
-            dirnames.sort()
-            rel_folder = os.path.relpath(dirpath, root)
-            if rel_folder == ".":
-                rel_folder = "(Root)"
-            display_folder = (
-                f"{root.name}\\{rel_folder}" if rel_folder != "(Root)" else root.name
-            )
+        folder_counts = {}
+        for sf in folders:
+            root = Path(sf["path"])
+            if not root.exists():
+                continue
+            cnt = 0
+            for dirpath, dirnames, filenames in os.walk(root):
+                cnt += sum(1 for fn in filenames if Path(fn).suffix.lower() in MEDIA_EXTENSIONS)
+            folder_counts[sf["path"]] = cnt
 
-            for filename in sorted(filenames):
-                ext = Path(filename).suffix.lower()
-                if ext not in MEDIA_EXTENSIONS:
-                    continue
-                filepath = os.path.join(dirpath, filename)
-                all_found.add(filepath)
-                processed += 1
-                fprog["current"] = processed
-                if filepath in existing:
-                    continue
+        ignore_words = get_ignore_words(db)
+        existing = set(
+            r["filepath"] for r in db.execute("SELECT filepath FROM images").fetchall()
+        )
 
-                characters = parse_characters_from_filename(filename, ignore_words)
-                file_date = get_file_date(filepath)
-                w, h = 0, 0
-                search = ""
-                ch = ""
-                is_video = ext in VIDEO_EXTENSIONS
-                if is_video:
-                    media_type = "video"
-                elif ext == ".gif":
-                    media_type = "gif"
-                else:
-                    media_type = "image"
-                if HAS_PILLOW and not is_video:
-                    try:
-                        with Image.open(filepath) as im:
-                            w, h = im.size
-                    except Exception:
-                        pass
-                    search = extract_search_text(filepath)
-                    ch = compute_content_hash(filepath)
+        for fi, sf in enumerate(folders):
+            root = Path(sf["path"])
+            if not root.exists() or not root.is_dir():
+                continue
+            fname = root.name
+            ftotal = folder_counts.get(sf["path"], 0)
+            fprog = {"name": fname, "current": 0, "total": ftotal, "phase": "Scanning"}
+            scan_progress["folders"].append(fprog)
+            processed = 0
 
-                cur = db.execute(
-                    "INSERT OR IGNORE INTO images "
-                    "(filename,folder,filepath,width,height,file_date,search_text,media_type,content_hash) "
-                    "VALUES (?,?,?,?,?,?,?,?,?)",
-                    (filename, display_folder, filepath, w, h, file_date, search, media_type, ch),
+            for dirpath, dirnames, filenames in os.walk(root):
+                dirnames.sort()
+                rel_folder = os.path.relpath(dirpath, root)
+                if rel_folder == ".":
+                    rel_folder = "(Root)"
+                display_folder = (
+                    f"{root.name}\\{rel_folder}" if rel_folder != "(Root)" else root.name
                 )
-                iid = cur.lastrowid
-                if iid == 0:
-                    continue
-                total_new += 1
 
-                # Link orphan metadata — generation may have saved metadata by hash
-                # before Gallery scanned this file. Update the image_id link.
-                if ch:
-                    db.execute(
-                        "UPDATE image_metadata SET image_id=? WHERE content_hash=? AND image_id IS NULL",
-                        (iid, ch),
+                for filename in sorted(filenames):
+                    ext = Path(filename).suffix.lower()
+                    if ext not in MEDIA_EXTENSIONS:
+                        continue
+                    filepath = os.path.join(dirpath, filename)
+                    all_found.add(filepath)
+                    processed += 1
+                    fprog["current"] = processed
+                    if filepath in existing:
+                        continue
+
+                    # New file → slow work with no write tx held, then a short
+                    # committed write. Yield to live generations first.
+                    _worker_yield_if_busy()
+                    characters = parse_characters_from_filename(filename, ignore_words)
+                    file_date = get_file_date(filepath)
+                    w, h = 0, 0
+                    search = ""
+                    ch = ""
+                    is_video = ext in VIDEO_EXTENSIONS
+                    if is_video:
+                        media_type = "video"
+                    elif ext == ".gif":
+                        media_type = "gif"
+                    else:
+                        media_type = "image"
+                    if HAS_PILLOW and not is_video:
+                        try:
+                            with Image.open(filepath) as im:
+                                w, h = im.size
+                        except Exception:
+                            pass
+                        search = extract_search_text(filepath)
+                        ch = compute_content_hash(filepath)
+
+                    cur = db.execute(
+                        "INSERT OR IGNORE INTO images "
+                        "(filename,folder,filepath,width,height,file_date,search_text,media_type,content_hash) "
+                        "VALUES (?,?,?,?,?,?,?,?,?)",
+                        (filename, display_folder, filepath, w, h, file_date, search, media_type, ch),
                     )
+                    iid = cur.lastrowid
+                    if iid == 0:
+                        db.commit()  # release lock; nothing inserted (dup)
+                        continue
+                    total_new += 1
 
-                for pos, cn in enumerate(characters):
-                    db.execute("INSERT OR IGNORE INTO characters (name) VALUES (?)", (cn,))
-                    cr = db.execute(
-                        "SELECT id FROM characters WHERE name=? COLLATE NOCASE", (cn,)
-                    ).fetchone()
-                    if cr:
-                        db.execute(
-                            "INSERT OR IGNORE INTO image_characters "
-                            "(image_id,character_id,position) VALUES (?,?,?)",
-                            (iid, cr["id"], pos),
-                        )
-        fprog["phase"] = "Done"
-
-    # Backfill metadata — only for newly added images missing search_text
-    # (Images already get search_text at insert time; this catches edge cases
-    # like interrupted scans. Uses ' ' sentinel for "attempted, nothing found"
-    # so we never re-attempt images that genuinely have no metadata.)
-    if HAS_PILLOW and total_new > 0:
-        backfill = db.execute(
-            "SELECT id,filepath FROM images WHERE "
-            "search_text = '' "
-            "AND filepath NOT LIKE '%.mp4' AND filepath NOT LIKE '%.webm' "
-            "AND filepath NOT LIKE '%.mov' AND filepath NOT LIKE '%.avi' "
-            "AND filepath NOT LIKE '%.mkv'"
-        ).fetchall()
-        if backfill:
-            bprog = {"name": "metadata", "current": 0, "total": len(backfill), "phase": "Indexing"}
-            scan_progress["folders"].append(bprog)
-            for i, r in enumerate(backfill):
-                bprog["current"] = i + 1
-                try:
-                    st = extract_search_text(r["filepath"])
-                    # Mark as attempted even if empty — sentinel ' ' prevents re-processing
-                    db.execute(
-                        "UPDATE images SET search_text=? WHERE id=?",
-                        (st if st else " ", r["id"]),
-                    )
-                except Exception:
-                    db.execute("UPDATE images SET search_text=' ' WHERE id=?", (r["id"],))
-            bprog["phase"] = "Done"
-
-    # Backfill content_hash for existing images that don't have one yet
-    if HAS_PILLOW:
-        ch_backfill = db.execute(
-            "SELECT id,filepath FROM images WHERE "
-            "(content_hash IS NULL OR content_hash = '') "
-            "AND filepath NOT LIKE '%.mp4' AND filepath NOT LIKE '%.webm' "
-            "AND filepath NOT LIKE '%.mov' AND filepath NOT LIKE '%.avi' "
-            "AND filepath NOT LIKE '%.mkv'"
-        ).fetchall()
-        if ch_backfill:
-            chprog = {"name": "content_hash", "current": 0, "total": len(ch_backfill), "phase": "Hashing"}
-            scan_progress["folders"].append(chprog)
-            for i, r in enumerate(ch_backfill):
-                chprog["current"] = i + 1
-                try:
-                    ch = compute_content_hash(r["filepath"])
+                    # Link orphan metadata — generation may have saved metadata by hash
+                    # before Gallery scanned this file. Update the image_id link.
                     if ch:
                         db.execute(
-                            "UPDATE images SET content_hash=? WHERE id=?",
-                            (ch, r["id"]),
+                            "UPDATE image_metadata SET image_id=? WHERE content_hash=? AND image_id IS NULL",
+                            (iid, ch),
                         )
-                        # Link orphan metadata saved before this image was scanned
+
+                    for pos, cn in enumerate(characters):
+                        db.execute("INSERT OR IGNORE INTO characters (name) VALUES (?)", (cn,))
+                        cr = db.execute(
+                            "SELECT id FROM characters WHERE name=? COLLATE NOCASE", (cn,)
+                        ).fetchone()
+                        if cr:
+                            db.execute(
+                                "INSERT OR IGNORE INTO image_characters "
+                                "(image_id,character_id,position) VALUES (?,?,?)",
+                                (iid, cr["id"], pos),
+                            )
+                    db.commit()  # commit this file → release the write lock
+            fprog["phase"] = "Done"
+
+        # Backfill metadata — only for newly added images missing search_text
+        # (Images already get search_text at insert time; this catches edge cases
+        # like interrupted scans. Uses ' ' sentinel for "attempted, nothing found"
+        # so we never re-attempt images that genuinely have no metadata.)
+        if HAS_PILLOW and total_new > 0:
+            backfill = db.execute(
+                "SELECT id,filepath FROM images WHERE "
+                "search_text = '' "
+                "AND filepath NOT LIKE '%.mp4' AND filepath NOT LIKE '%.webm' "
+                "AND filepath NOT LIKE '%.mov' AND filepath NOT LIKE '%.avi' "
+                "AND filepath NOT LIKE '%.mkv'"
+            ).fetchall()
+            if backfill:
+                bprog = {"name": "metadata", "current": 0, "total": len(backfill), "phase": "Indexing"}
+                scan_progress["folders"].append(bprog)
+                for i, r in enumerate(backfill):
+                    bprog["current"] = i + 1
+                    _worker_yield_if_busy()
+                    try:
+                        st = extract_search_text(r["filepath"])
+                        # Mark as attempted even if empty — sentinel ' ' prevents re-processing
                         db.execute(
-                            "UPDATE image_metadata SET image_id=? "
-                            "WHERE content_hash=? AND image_id IS NULL",
-                            (r["id"], ch),
+                            "UPDATE images SET search_text=? WHERE id=?",
+                            (st if st else " ", r["id"]),
                         )
-                except Exception:
-                    pass
-            chprog["phase"] = "Done"
+                    except Exception:
+                        db.execute("UPDATE images SET search_text=' ' WHERE id=?", (r["id"],))
+                    db.commit()  # per-row commit → lock free during next extract
+                bprog["phase"] = "Done"
 
-    # Update missing file dates
-    for r in db.execute(
-        "SELECT id,filepath FROM images WHERE file_date IS NULL OR file_date=0"
-    ).fetchall():
-        fd = get_file_date(r["filepath"])
-        if fd:
-            db.execute("UPDATE images SET file_date=? WHERE id=?", (fd, r["id"]))
+        # Backfill content_hash for existing images that don't have one yet
+        if HAS_PILLOW:
+            ch_backfill = db.execute(
+                "SELECT id,filepath FROM images WHERE "
+                "(content_hash IS NULL OR content_hash = '') "
+                "AND filepath NOT LIKE '%.mp4' AND filepath NOT LIKE '%.webm' "
+                "AND filepath NOT LIKE '%.mov' AND filepath NOT LIKE '%.avi' "
+                "AND filepath NOT LIKE '%.mkv'"
+            ).fetchall()
+            if ch_backfill:
+                chprog = {"name": "content_hash", "current": 0, "total": len(ch_backfill), "phase": "Hashing"}
+                scan_progress["folders"].append(chprog)
+                for i, r in enumerate(ch_backfill):
+                    chprog["current"] = i + 1
+                    _worker_yield_if_busy()
+                    try:
+                        ch = compute_content_hash(r["filepath"])
+                        if ch:
+                            db.execute(
+                                "UPDATE images SET content_hash=? WHERE id=?",
+                                (ch, r["id"]),
+                            )
+                            # Link orphan metadata saved before this image was scanned
+                            db.execute(
+                                "UPDATE image_metadata SET image_id=? "
+                                "WHERE content_hash=? AND image_id IS NULL",
+                                (r["id"], ch),
+                            )
+                    except Exception:
+                        pass
+                    db.commit()  # per-row commit → lock free during next hash
+                chprog["phase"] = "Done"
 
-    removed = existing - all_found
-    for fp in removed:
-        db.execute("DELETE FROM images WHERE filepath=?", (fp,))
-    db.execute(
-        "DELETE FROM characters WHERE id NOT IN "
-        "(SELECT DISTINCT character_id FROM image_characters)"
-    )
-    db.commit()
-    db.close()
-    scan_progress = {"active": False, "folders": []}
-    # Kick off background phash for any new or unhashed images
-    _start_background_hash()
-    return {"new": total_new, "removed": len(removed), "total": len(all_found)}
+        # Update missing file dates
+        for r in db.execute(
+            "SELECT id,filepath FROM images WHERE file_date IS NULL OR file_date=0"
+        ).fetchall():
+            fd = get_file_date(r["filepath"])
+            if fd:
+                db.execute("UPDATE images SET file_date=? WHERE id=?", (fd, r["id"]))
+                db.commit()
+
+        removed = existing - all_found
+        for fp in removed:
+            db.execute("DELETE FROM images WHERE filepath=?", (fp,))
+        db.execute(
+            "DELETE FROM characters WHERE id NOT IN "
+            "(SELECT DISTINCT character_id FROM image_characters)"
+        )
+        db.commit()
+        result = {"new": total_new, "removed": len(removed), "total": len(all_found)}
+    except Exception as e:
+        print(f"{TAG} Scan error: {e}")
+        if db is not None:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+        result = {"error": str(e)}
+    finally:
+        if db is not None:
+            try:
+                db.close()
+            except Exception:
+                pass
+        scan_progress = {"active": False, "folders": []}
+
+    # Kick off background phash for any new or unhashed images (success only)
+    if result is not None and "error" not in result:
+        _start_background_hash()
+    return result
 
 
 # =========================================================================
@@ -1968,6 +2234,56 @@ def _preinsert_image_row(db, filepath, content_hash):
     return image_id
 
 
+def _write_metadata_row(job, block_timeout):
+    """Write one generation-metadata row under the write lock with a bounded
+    wait. Returns True if written (or permanently un-writable, so it shouldn't
+    be requeued), False if the lock couldn't be acquired in time and the caller
+    should retry off-thread.
+
+    Holding the lock explicitly (rather than letting the connection grab it
+    lazily) lets us bound the wait and yield the generation response fast."""
+    if not _db_write_lock.acquire(timeout=block_timeout):
+        return False
+    try:
+        try:
+            db = _get_db()
+        except Exception:
+            return True  # can't open the DB at all — don't requeue forever
+        try:
+            meta = _parse_meta_fields(job["infotext"], job["settings"])
+            # Check if image already exists in Gallery (auto-sync may have caught it)
+            img_row = db.execute(
+                "SELECT id FROM images WHERE content_hash=?", (job["content_hash"],)
+            ).fetchone()
+            image_id = img_row["id"] if img_row else None
+            if image_id is None and job.get("filepath"):
+                try:
+                    image_id = _preinsert_image_row(db, job["filepath"], job["content_hash"])
+                except Exception as e:
+                    print(f"[Gallery] Pre-insert failed (hash {job['content_hash'][:12]}): {e}")
+                    # Fall through with image_id=None; the watcher links the
+                    # orphan metadata row by hash once it scans the file.
+            db.execute(_META_INSERT_SQL, _meta_row_values(
+                meta, job["content_hash"], image_id,
+                job.get("float_path", "") or "", job.get("blend_mask_path", "") or ""))
+            db.commit()
+            return True
+        except Exception as e:
+            try:
+                db.rollback()
+            except Exception:
+                pass
+            print(f"[Gallery] Metadata save error (hash {job['content_hash'][:12]}): {e}")
+            return False
+        finally:
+            try:
+                db.close()
+            except Exception:
+                pass
+    finally:
+        _db_write_lock.release()
+
+
 def save_metadata_by_hash(content_hash, infotext, settings=None, filepath=None, float_path="", blend_mask_path=""):
     """Save generation metadata keyed by content hash.
 
@@ -1992,35 +2308,23 @@ def save_metadata_by_hash(content_hash, infotext, settings=None, filepath=None, 
     """
     if not content_hash:
         return
-    try:
-        db = _get_db()
-    except Exception:
-        return
-    try:
-        meta = _parse_meta_fields(infotext, settings)
-        # Check if image already exists in Gallery (auto-sync may have caught it)
-        img_row = db.execute(
-            "SELECT id FROM images WHERE content_hash=?", (content_hash,)
-        ).fetchone()
-        image_id = img_row["id"] if img_row else None
-        if image_id is None and filepath:
-            try:
-                image_id = _preinsert_image_row(db, filepath, content_hash)
-            except Exception as e:
-                print(f"[Gallery] Pre-insert failed (hash {content_hash[:12]}): {e}")
-                # Fall through with image_id=None; the watcher will catch
-                # up later and link the orphan metadata row by hash.
-        db.execute(_META_INSERT_SQL, _meta_row_values(meta, content_hash, image_id,
-                                                      float_path or "",
-                                                      blend_mask_path or ""))
-        db.commit()
-    except Exception as e:
-        print(f"[Gallery] Metadata save error (hash {content_hash[:12]}): {e}")
-    finally:
-        try:
-            db.close()
-        except Exception:
-            pass
+    # Ask background workers (scan/hash/autosync) to back off so this write
+    # isn't starved by a long-running scan.
+    note_generation_activity()
+    job = {
+        "content_hash": content_hash,
+        "infotext": infotext,
+        "settings": settings,
+        "filepath": filepath,
+        "float_path": float_path or "",
+        "blend_mask_path": blend_mask_path or "",
+    }
+    # Bounded attempt so the generation response is never blocked indefinitely.
+    # On lock contention, hand the row to the off-thread retry worker rather
+    # than dropping it.
+    if not _write_metadata_row(job, block_timeout=5.0):
+        _ensure_meta_retry_worker()
+        _shared.meta_retry_q.put(job)
 
 
 def save_metadata_for_image(filepath, infotext, settings=None):
@@ -4181,6 +4485,9 @@ def setup_gallery_routes(app: FastAPI):
                 "hash_current": _hash_progress.get("current", 0),
                 "hash_total": _hash_progress.get("total", 0),
                 "needs_pairs": needs_pairs,
+                # True while a generation is actively writing metadata — the UI
+                # can surface a "Gallery busy" hint; background hashing yields.
+                "generation_active": _generation_priority_active(),
             }
         finally:
             db.close()
@@ -4274,6 +4581,11 @@ def setup_gallery_routes(app: FastAPI):
             db.close()
 
     print(f"{TAG} Gallery routes registered")
+
+    # Clear any stale scan/hash "active" flags from a crashed/killed worker in
+    # a previous run — no worker is alive yet, so these must start clean or a
+    # wedged flag would permanently block scanning/hashing.
+    _reset_stale_progress()
 
     # Start filesystem watcher for auto-sync
     if HAS_WATCHDOG:
