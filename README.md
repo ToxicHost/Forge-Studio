@@ -1,6 +1,11 @@
-# Forge Studio
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="frontend/brand/logo-lockup-dark.png">
+    <img src="frontend/brand/logo-lockup-light.png" alt="Forge Studio" width="520">
+  </picture>
+</p>
 
-**v4.10.0 — public beta**
+<p align="center"><strong>v4.10.0 — public beta</strong></p>
 
 An AI-first creative suite built on Forge Neo. Studio gives you a real canvas — layers, brushes, selections, transforms — sitting on top of Forge Neo's generation pipeline, plus built-in modules for **Develop** (post-processing), **Workshop** (model merging), **Gallery**, **Lexicon** (wildcards), and an in-app **Codex** of tutorials.
 
