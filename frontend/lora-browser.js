@@ -9,7 +9,7 @@
  * "+ LoRAs" button opens this modal in pick mode and Ctrl+L is rebound
  * to the same picker. Browse mode (LoraBrowser.open() — clicking a card
  * inserts <lora:…> into the focused prompt) is still exported for surfaces
- * without a stack, such as Video Lab.
+ * without a stack UI.
  *
  * Features:
  *   - Folder tree navigation with subfolder support
