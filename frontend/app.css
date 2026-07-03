@@ -402,6 +402,12 @@ body {
   font-weight: 500;
   pointer-events: none;
 }
+.brand-mark {
+  height: 18px;
+  width: 18px;
+  vertical-align: middle;
+  margin-right: 8px;
+}
 .brand em {
   font-style: normal;
   color: var(--text-3);

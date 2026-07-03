@@ -1,32 +1,49 @@
-# Forge Studio
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="frontend/brand/logo-lockup-dark.png">
+    <img src="frontend/brand/logo-lockup-light.png" alt="Forge Studio" width="520">
+  </picture>
+</p>
 
-An AI-first creative suite built on Forge Neo. Studio gives you a real canvas — layers, brushes, selections, transforms — sitting on top of Forge Neo's generation pipeline, plus built-in modules for **Develop** (post-processing), **Video Lab** (WAN video), **Workshop** (model merging), **Gallery**, **Wildcards**, and an in-app **Codex** of tutorials.
+<p align="center"><strong>v4.10.0 — public beta</strong></p>
 
-Studio is a Forge Neo extension. It rides on top of Forge Neo — it doesn't replace it — and inherits the full samplers / LoRAs / VAEs / extensions ecosystem you already have set up.
+An AI-first creative suite built on Forge Neo. Studio gives you a real canvas — layers, brushes, selections, transforms — sitting on top of Forge Neo's generation pipeline, plus built-in modules for **Develop** (post-processing), **Workshop** (model merging), **Gallery**, **Lexicon** (wildcards), and an in-app **Codex** of tutorials.
 
-> **Beta.** Expect a few rough edges. The Known Limitations section at the bottom covers what's still in progress.
+Studio is a Forge Neo extension. It rides on top of Forge Neo — it doesn't replace it — and inherits the full samplers / LoRAs / VAEs / extensions ecosystem you already have set up. It serves its own UI at `/studio`; Forge Neo's stock Gradio interface remains available alongside it.
+
+> **Public beta.** The core image suite is stable and in daily use, but expect a few rough edges. Bug reports welcome — see [Getting Help](#getting-help).
 
 ---
 
 ## Requirements
 
 - A working **Forge Neo** install. ([setup guide](https://github.com/Haoming02/sd-webui-forge-classic/tree/neo)). Studio does *not* work with classic Forge or AUTOMATIC1111.
-- **NVIDIA GPU, 8 GB VRAM recommended** (6 GB works with the Low VRAM launcher).
+- **NVIDIA GPU, 8 GB VRAM recommended** (6 GB works with the Low VRAM launcher and reduced settings).
 - Everything Forge Neo already needs — Python 3.10 / 3.11, git, the usual.
+
+### Tested against
+
+Studio targets Forge Neo as of `NEO_COMMIT_HASH` (`NEO_COMMIT_DATE`). Newer Neo commits usually work but are not guaranteed.
+<!-- TODO(Tox): replace NEO_COMMIT_HASH / NEO_COMMIT_DATE — run `git -C <neo-checkout> rev-parse HEAD` on the working dev install and record hash + date. -->
+
+### Hardware
+
+Developed on a 16 GB card (RTX 5060 Ti) and a higher-VRAM card; known-working on 6 GB with reduced settings and the Low VRAM launcher.
 
 ---
 
 ## Installation
 
-1. Unzip the archive — you'll get a folder named `forge-studio` (or similar).
-2. Drop it into your Forge Neo install under `extensions/`:
+1. Clone Studio into your Forge Neo install under `extensions/`:
    ```
-   sd-webui-forge-neo/
-     extensions/
-       forge-studio/     ← here
+   cd sd-webui-forge-neo/extensions/
+   git clone https://github.com/ToxicHost/Forge-Studio.git forge-studio
    ```
+   (Grabbing a release zip and unzipping it into `extensions/forge-studio/` works too.)
+2. **ADetailer (recommended):** Studio's ADetailer integration targets the **Studio fork of ADetailer**, version `26.2.0-studio.1`, installed as a regular extension alongside Studio. Get it from ToxicHost's GitHub. Without it, ADetailer panels are hidden and everything else works normally.
+   <!-- TODO(Tox): drop in the exact URL of the ADetailer fork repo/release. -->
 3. Launch using one of Studio's `.bat` files (see below). Don't use `webui-user.bat` — Studio's launchers set the flags it needs.
-4. First launch installs two small Python packages (`imagehash`, `imageio-ffmpeg`) for Gallery features. Let it finish.
+4. First boot installs two small Python packages (`imagehash`, `imageio-ffmpeg`) for Gallery features — let it finish. The first generation after a cold start also triggers Forge's initial model load, which can take noticeably longer than later ones; that's normal.
 
 That's it. Studio opens at **http://127.0.0.1:7860/studio**.
 
@@ -70,7 +87,7 @@ Then click the refresh button (↻) next to the Model dropdown. No restart neede
 2. Pick a model from the Model dropdown.
 3. Press **Ctrl+Enter** (or click Generate).
 
-The image appears on the canvas. From there you can paint on it, mask and inpaint parts of it, send it to Video Lab, drop it into the Gallery, or start over.
+The image appears on the canvas. From there you can paint on it, mask and inpaint parts of it, drop it into the Gallery, or start over.
 
 For anything else, the **Codex** tab is the in-app manual — searchable, with **Show Me** buttons that walk you through features interactively.
 
@@ -115,9 +132,6 @@ Save the current panel state as a named workflow, then re-apply it to any tab or
 ### Develop module
 A **Lightroom-style global post-processing pass** that's non-destructive and per-document. White balance, exposure, highlights, shadows, whites/blacks, contrast, vibrance, saturation, clarity & texture (mid-tone weighted USM), sharpening, vignette, grain, plus a color-calibration matrix for highlights/midtones/shadows. Runs after layers, before export.
 
-### Video Lab
-**WAN 2.1 / 2.2** video generation with dual-expert model support, **TeaCache** (CVPR 2025), **NAG** (Normalized Attention Guidance for proper negative prompts), **CFGZeroStar**, **Sigma Shift**, and **SageAttention 2**. Canvas content becomes the I2V reference frame automatically — paint a starting image, hit generate, get video. *Currently WAN-only; Hunyuan/LTX support not yet implemented.*
-
 ### Workshop
 Full model merger with a serious set of methods:
 
@@ -133,11 +147,11 @@ Full model merger with a serious set of methods:
 ### Gallery
 Image library powered by TrackImage (by Moritz). Metadata search, character-tag parsing, bulk operations (move, copy, cut, strip metadata, delete), perceptual-hash duplicate detection, video thumbnails, drag-from-Gallery → canvas, "send-to-canvas" with raw or resolved prompts.
 
-### Wildcards
+### Lexicon (Wildcards)
 A full file-tree editor for Dynamic Prompts wildcard files. Syntax highlighting (comments, nested refs), folders, rename / duplicate, drag-to-move, live preview with resolution, zip import/export.
 
 ### Codex
-67 in-app documentation entries covering every tool, parameter, and workflow. Searchable. Most have a **Show Me** button that walks you through the feature interactively.
+63 in-app documentation entries covering every tool, parameter, and workflow. Searchable. Most have a **Show Me** button that walks you through the feature interactively.
 
 ### Quality-of-life
 - **Themes** — Studio, Liam, Oliver, ToxicHost, Neutral, Neon
@@ -162,7 +176,7 @@ Forge Neo's stock interface is the standard Gradio txt2img / img2img tabbed layo
 - **Image-first inpainting** — paint a mask directly on the canvas, no "send to img2img then upload a mask" round-trip.
 - **PSD export with layers preserved.** Hand off to Photoshop or Krita without flattening.
 - **Develop module** — Lightroom-style post-processing built in, non-destructive.
-- **Built-in modules** — Workshop, Video Lab, Gallery, Wildcards, Codex all live in the same app.
+- **Built-in modules** — Workshop, Gallery, Lexicon, Codex all live in the same app.
 - **Themes, i18n, tag autocomplete, in-app docs** — Gradio's UI has none of these out of the box.
 - **Separate URL** at `/studio` — Studio runs alongside the Gradio UI on the same Forge Neo install. Switch back any time.
 
@@ -171,11 +185,10 @@ Forge Neo's stock interface is the standard Gradio txt2img / img2img tabbed layo
 Invoke is a great canvas-first AI app, but it's its own engine. Studio is built on Forge Neo, which has tradeoffs worth knowing:
 
 - **Forge Neo's full ecosystem.** All your existing samplers, schedulers, LoRAs, embeddings, VAEs, extensions, ControlNet preprocessors, and ADetailer models work in Studio — no separate model libraries, no separate extension store.
-- **Wider architecture support.** SD1.5, SDXL, Pony, Illustrious, NoobAI, Flux, Cosmos, Anima, WAN — whatever Forge Neo supports, Studio supports.
+- **Wider architecture support.** SD1.5, SDXL, Pony, Illustrious, NoobAI, Flux, Cosmos, Anima — whatever Forge Neo supports, Studio supports.
 - **Workshop** — Invoke doesn't merge models. Studio has a full block-weight + SVD-based merger with LoRA/VAE baking.
-- **Video Lab** — WAN video generation runs in the same app; no separate ComfyUI workflow.
 - **Develop module** — Lightroom-style global post; Invoke's color tools are simpler.
-- **Wildcards editor** — full Dynamic Prompts file management with live preview.
+- **Lexicon** — full Dynamic Prompts wildcard file management with live preview.
 - **Codex** — interactive in-app tutorials with "Show Me" walkthroughs.
 - **Local-first workflows.** Pure local preset files — no required accounts, no cloud sync, no canvas history syncing over a network.
 
@@ -186,23 +199,28 @@ What Invoke does better (so you have the honest picture):
 
 ---
 
-## Known Limitations
+## Roadmap
 
-- **Video Lab is in active beta.** Working and producing results, but still being refined. Report anything that breaks.
-- **Blackwell (RTX 50-series) + FP8 video models may produce corrupted output in Video Lab.** Use GGUF-quantized video models as a workaround. Root cause is under investigation — the same models work in other frontends, so it's something specific to Studio's generation path.
+- **Comic Lab** — a panel-layout / comic-composition module is being explored for a future release.
 
 ---
 
 ## Getting Help
 
-- **Codex** tab in-app — 67 searchable entries, interactive Show Me tutorials, the first place to look.
-- Bug reports, questions, things that don't work — DM ToxicHost directly.
+- **Codex** tab in-app — 63 searchable entries, interactive Show Me tutorials, the first place to look.
+- Bug reports, questions, things that don't work — [open an issue](https://github.com/ToxicHost/Forge-Studio/issues) or DM ToxicHost directly.
+
+---
+
+## License
+
+**AGPL-3.0** — see [LICENSE](LICENSE).
 
 ---
 
 ## Credits
 
-- **Forge Studio** by ToxicHost & Moritz.
+- **Forge Studio** by ToxicHost & Moritz (co-development, testing).
 - **Gallery** powered by TrackImage by Moritz.
 - **VRAM Unload** and **Civitai metadata lookup** suggested by SnekySnek.
 - **Remember Last Session**, **LoRA Stack**, **Resizable Side Panel**, and **UI density polish** suggested by Railer.

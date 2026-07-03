@@ -685,8 +685,9 @@ def _ensure_model_loaded():
     full load via forge_model_reload() which sets up the complete Forge
     pipeline including forge_objects.unet, .clip, .vae.
 
-    Also detects model mismatch (e.g. WAN model still loaded after returning
-    from Video Lab) by comparing forge_hash against forge_loading_parameters.
+    Also detects a stale/mismatched model (e.g. a video-family checkpoint
+    loaded outside Studio) by comparing forge_hash against
+    forge_loading_parameters and forcing a reload.
     """
     try:
         model = shared.sd_model
@@ -695,8 +696,9 @@ def _ensure_model_loaded():
         elif not hasattr(model, 'forge_objects') or model.forge_objects is None:
             print("[Studio] FakeInitialModel detected — triggering full load")
         else:
-            # Model is loaded — but is it the RIGHT model?
-            # Video Lab deactivate sets forge_hash="" so we detect the mismatch.
+            # Model is loaded — but is it the RIGHT model? A forge_hash that
+            # doesn't match forge_loading_parameters means the weights in
+            # memory aren't the checkpoint Studio expects to generate with.
             try:
                 current_hash = str(sd_models.model_data.forge_loading_parameters)
                 if sd_models.model_data.forge_hash != current_hash:
