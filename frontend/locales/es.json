@@ -286,6 +286,8 @@
   "lora.openFolder": "Abrir carpeta",
   "lora.openFolder.tooltip": "Abrir carpeta de LoRAs en el explorador de archivos",
   "lora.hint": "Clic para insertar · Clic derecho para opciones",
+  "lora.adInsert": "LoRA",
+  "lora.adInsert.tooltip": "Insertar un LoRA en este prompt de ADetailer",
   "lora.empty.none": "No se encontraron LoRAs en el directorio models/Lora",
   "lora.empty.noMatch": "Ningún LoRA coincide con tu búsqueda",
   "lora.allFolder": "Todos los LoRAs",

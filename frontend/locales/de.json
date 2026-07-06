@@ -286,6 +286,8 @@
   "lora.openFolder": "Ordner öffnen",
   "lora.openFolder.tooltip": "LoRA-Ordner im Dateimanager öffnen",
   "lora.hint": "Klicken zum Einfügen · Rechtsklick für Optionen",
+  "lora.adInsert": "LoRA",
+  "lora.adInsert.tooltip": "LoRA in diesen ADetailer-Prompt einfügen",
   "lora.empty.none": "Keine LoRAs im Verzeichnis models/Lora gefunden",
   "lora.empty.noMatch": "Keine LoRAs entsprechen deiner Suche",
   "lora.allFolder": "Alle LoRAs",

@@ -44,6 +44,10 @@
   // instead of inserting <lora:…> into a textarea. Used by the LoRA Stack
   // "+ Add" button so picks go straight into the structured stack.
   let pickCallback = null;
+  // When set, inserts target this element instead of the last-focused main
+  // prompt. Set by openFor() — e.g. the per-slot ADetailer LoRA buttons —
+  // and cleared when the modal closes or another open mode takes over.
+  let targetOverride = null;
 
   // ── Shared: last-focused prompt tracking ───────────────
   function _trackPromptFocus() {
@@ -57,7 +61,7 @@
   }
 
   function getTargetTextarea() {
-    return window._studioLastPrompt || document.getElementById("paramPrompt");
+    return targetOverride || window._studioLastPrompt || document.getElementById("paramPrompt");
   }
 
   // ── CSS Injection ──────────────────────────────────────
@@ -1073,8 +1077,7 @@
 
 
   // ── Open / Close ───────────────────────────────────────
-  async function openModal() {
-    pickCallback = null;
+  async function _show() {
     await fetchLoras();
     buildModal();
     modal.style.display = "flex";
@@ -1083,6 +1086,12 @@
     const search = modal.querySelector(".lora-search");
     search.value = searchQuery;
     setTimeout(() => search.focus(), 50);
+  }
+
+  async function openModal() {
+    pickCallback = null;
+    targetOverride = null;
+    await _show();
   }
 
   // Open in "pick mode": clicking a card invokes `cb(lora)` and keeps the
@@ -1090,20 +1099,25 @@
   // button still dismiss normally.
   async function openPick(cb) {
     pickCallback = typeof cb === "function" ? cb : null;
-    await fetchLoras();
-    buildModal();
-    modal.style.display = "flex";
-    renderFolderTree();
-    renderGrid();
-    const search = modal.querySelector(".lora-search");
-    search.value = searchQuery;
-    setTimeout(() => search.focus(), 50);
+    targetOverride = null;
+    await _show();
+  }
+
+  // Open in browse mode targeting a specific input/textarea: clicking a
+  // card inserts <lora:…> there instead of the main prompt. Used by the
+  // per-slot ADetailer LoRA buttons so LoRAs can be pinned to one slot's
+  // prompt. Stays open for multiple inserts like normal browse mode.
+  async function openFor(el) {
+    pickCallback = null;
+    targetOverride = el || null;
+    await _show();
   }
 
   function closeModal() {
     if (modal) modal.style.display = "none";
     pickCallback = null;
     const target = getTargetTextarea();
+    targetOverride = null;
     if (target) target.focus();
   }
 
@@ -1118,6 +1132,16 @@
   function init() {
     injectStyles();
     _trackPromptFocus();
+
+    // Any button carrying data-lora-target="<input id>" opens the browser
+    // targeting that input — the ADetailer slot prompts use this so LoRAs
+    // can be indicated specifically for a detailer pass.
+    document.addEventListener("click", e => {
+      const btn = e.target.closest("[data-lora-target]");
+      if (!btn) return;
+      const el = document.getElementById(btn.dataset.loraTarget);
+      if (el) openFor(el);
+    });
 
     // Ctrl+L: open the LoRA Stack picker. Card-click adds to the stack
     // via LoraStack.add — same modal as browse mode, different callback.
@@ -1145,5 +1169,5 @@
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
   else init();
 
-  window.LoraBrowser = { open: openModal, openPick: openPick, close: closeModal, refresh: refreshLoras };
+  window.LoraBrowser = { open: openModal, openPick: openPick, openFor: openFor, close: closeModal, refresh: refreshLoras };
 })();

@@ -661,7 +661,12 @@
                   <div class="param-cell"><label>Mask Blur</label><input class="param-val" id="paramAD1Blur" value="4"></div>
                 </div>
                 <div class="param-grid cols-1" style="margin-top:4px;">
-                  <div class="param-cell"><label>Prompt (blank = main)</label><input class="param-val" id="paramAD1Prompt" value="" style="text-align:left;font-family:var(--font);"></div>
+                  <div class="param-cell"><label>Prompt (blank = main)</label>
+                    <div style="display:flex;gap:4px;">
+                      <input class="param-val" id="paramAD1Prompt" value="" style="text-align:left;font-family:var(--font);flex:1;min-width:0;">
+                      <button type="button" class="prompt-browser-btn" data-lora-target="paramAD1Prompt" data-i18n="lora.adInsert" data-i18n-title="lora.adInsert.tooltip" title="Insert a LoRA into this ADetailer prompt">LoRA</button>
+                    </div>
+                  </div>
                 </div>
               </div>
               <!-- Slot 2 -->
@@ -679,7 +684,12 @@
                   <div class="param-cell"><label>Mask Blur</label><input class="param-val" id="paramAD2Blur" value="4"></div>
                 </div>
                 <div class="param-grid cols-1" style="margin-top:4px;">
-                  <div class="param-cell"><label>Prompt (blank = main)</label><input class="param-val" id="paramAD2Prompt" value="" style="text-align:left;font-family:var(--font);"></div>
+                  <div class="param-cell"><label>Prompt (blank = main)</label>
+                    <div style="display:flex;gap:4px;">
+                      <input class="param-val" id="paramAD2Prompt" value="" style="text-align:left;font-family:var(--font);flex:1;min-width:0;">
+                      <button type="button" class="prompt-browser-btn" data-lora-target="paramAD2Prompt" data-i18n="lora.adInsert" data-i18n-title="lora.adInsert.tooltip" title="Insert a LoRA into this ADetailer prompt">LoRA</button>
+                    </div>
+                  </div>
                 </div>
               </div>
               <!-- Slot 3 -->
@@ -697,7 +707,12 @@
                   <div class="param-cell"><label>Mask Blur</label><input class="param-val" id="paramAD3Blur" value="4"></div>
                 </div>
                 <div class="param-grid cols-1" style="margin-top:4px;">
-                  <div class="param-cell"><label>Prompt (blank = main)</label><input class="param-val" id="paramAD3Prompt" value="" style="text-align:left;font-family:var(--font);"></div>
+                  <div class="param-cell"><label>Prompt (blank = main)</label>
+                    <div style="display:flex;gap:4px;">
+                      <input class="param-val" id="paramAD3Prompt" value="" style="text-align:left;font-family:var(--font);flex:1;min-width:0;">
+                      <button type="button" class="prompt-browser-btn" data-lora-target="paramAD3Prompt" data-i18n="lora.adInsert" data-i18n-title="lora.adInsert.tooltip" title="Insert a LoRA into this ADetailer prompt">LoRA</button>
+                    </div>
+                  </div>
                 </div>
               </div>
             </div>
