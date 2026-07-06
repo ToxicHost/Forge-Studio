@@ -1343,7 +1343,7 @@ async function downloadImage(imgId) {
     } catch (e) { toast("Download failed: " + e.message); }
 }
 async function _sendImageOnlyToCanvas(imgId, floatPath, maskPath) { try { const resp = await fetch(API_BASE + "/full/" + imgId); const blob = await resp.blob(); const dataUrl = await new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = reject; reader.readAsDataURL(blob); }); if (typeof displayOnCanvas === "function") { if (window.State) { window.State.baseGenW = 0; window.State.baseGenH = 0; } displayOnCanvas(dataUrl, { newLayer: true, layerName: "Gallery", undoLabel: "Gallery send", floatPath: floatPath || "", maskPath: maskPath || "" }); setTimeout(() => { if (window.StudioModules) window.StudioModules.activateStudio(); }, 100); return true; } } catch (e) { toast("Failed: " + e.message); } return false; }
-async function _sendParamsOnlyToCanvas(imgId, promptOverride) { try { const meta = await api("/image/" + imgId + "/metadata"); const raw = meta.raw_parameters || meta.raw_infotext; if (raw && typeof _applyInfotextToUI === "function") { _applyInfotextToUI(raw); const seedEl = document.getElementById("paramSeed"); if (seedEl) seedEl.value = "-1"; const pref = promptOverride || localStorage.getItem("gal_send_prompt_version") || "resolved"; if (pref === "raw" && meta.prompt) { const el = document.getElementById("paramPrompt"); if (el) el.value = meta.prompt; } else if (pref === "resolved") { const resolved = _parseResolvedPrompt(raw); if (resolved) { const el = document.getElementById("paramPrompt"); if (el) el.value = resolved; } } return meta; } } catch (_) {} return null; }
+async function _sendParamsOnlyToCanvas(imgId, promptOverride) { try { const meta = await api("/image/" + imgId + "/metadata"); const raw = meta.raw_parameters || meta.raw_infotext; if (raw && typeof _applyInfotextToUI === "function") { _applyInfotextToUI(raw); const seedEl = document.getElementById("paramSeed"); if (seedEl) seedEl.value = "-1"; const pref = promptOverride || localStorage.getItem("gal_send_prompt_version") || "resolved"; if (pref === "raw") { const rawPrompt = _parseRawTemplate(meta, raw); if (rawPrompt) { const el = document.getElementById("paramPrompt"); if (el) el.value = rawPrompt; } } else if (pref === "resolved") { const resolved = _parseResolvedPrompt(raw); if (resolved) { const el = document.getElementById("paramPrompt"); if (el) el.value = resolved; } } return meta; } } catch (_) {} return null; }
 // Combined: apply params first (UI ready), then place image. Missing metadata
 // is a silent no-op — image placement proceeds either way.
 async function sendToCanvas(imgId, promptOverride) {
@@ -2412,6 +2412,20 @@ function _parseResolvedPrompt(raw_infotext) {
     for (let i = 0; i < lines.length; i++) { if (lines[i].startsWith("Negative prompt:") || /^Steps:\s*\d/.test(lines[i])) { end = i; break; } }
     return lines.slice(0, end).join("\n").trim() || null;
 }
+// The raw (pre-wildcard) prompt for "Send to Canvas — raw". Wildcard
+// generations carry it as a "Template:" trailer in the infotext; prefer
+// that (backend `template` key, then a frontend parse of the infotext)
+// over the stored prompt. Legacy DB rows may still hold a prompt with
+// the trailer folded in ("…\nTemplate: …") — strip it rather than
+// sending both prompt versions.
+function _parseRawTemplate(meta, raw_infotext) {
+    if (meta && meta.template) return meta.template;
+    try { if (typeof PngMetadata !== "undefined" && PngMetadata.parseInfotext) { const pp = PngMetadata.parseInfotext(raw_infotext); if (pp && pp.template) return pp.template; } } catch (_) {}
+    let p = (meta && meta.prompt) ? String(meta.prompt) : "";
+    const tm = p.match(/\nTemplate:\s*([\s\S]*)$/);
+    if (tm) p = tm[1].replace(/\nStudio dynamic prompts:[^\n]*$/, "").trim();
+    return p || null;
+}
 // Build a metadata object in the same shape /image/{id}/metadata returns,
 // using only the in-memory A1111 infotext. Used for ephemeral (unsaved)
 // images where there's no DB row to fetch from. PngMetadata.parseInfotext
@@ -2443,6 +2457,11 @@ function _metaFromInfotext(infotext) {
     for (const [src, dst] of Object.entries(map)) {
         if (pp[src] !== undefined && pp[src] !== "") m[dst] = pp[src];
     }
+    // Wildcard generations: the "Template:" trailer is the raw prompt.
+    // Stored rows keep the raw prompt in `prompt` (settings win in
+    // _parse_meta_fields), so mirror that here — the panel then offers
+    // its "Show resolved" toggle exactly like for saved images.
+    if (pp.template) { m.template = pp.template; m.prompt = pp.template; }
     return m;
 }
 async function loadMetadata(img) {

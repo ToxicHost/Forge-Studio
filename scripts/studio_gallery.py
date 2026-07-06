@@ -615,8 +615,11 @@ def extract_search_text(filepath):
         meta = extract_metadata(filepath)
         parts = []
         for k, v in meta.items():
+            # template duplicates prompt (see parse_sd_parameters); negative
+            # templates are excluded for the same reason negative_prompt is.
             if k in ("negative_prompt", "error", "raw_parameters",
-                      "comfyui_prompt", "comfyui_workflow", "file_size"):
+                      "comfyui_prompt", "comfyui_workflow", "file_size",
+                      "template", "negative_template"):
                 continue
             if v is not None and str(v).strip():
                 parts.append(str(v).strip())
@@ -1679,7 +1682,11 @@ def extract_metadata(filepath):
                                     val = val[len(pfx):]
                             val = val.strip('\x00').strip()
                             if val and "raw_parameters" not in metadata:
-                                metadata["raw_parameters"] = val[:3000]
+                                # Generous cap: infotexts with LoRA hashes +
+                                # wildcard templates easily exceed 3000 chars,
+                                # and cutting them here truncated the prompt
+                                # that Send to Canvas re-applies.
+                                metadata["raw_parameters"] = val[:20000]
                                 metadata.update(parse_sd_parameters(val))
                         continue
                     if isinstance(val, bytes):
@@ -1714,7 +1721,9 @@ def extract_metadata(filepath):
                                             val = val[len(pfx):]
                                     val = val.strip('\x00').strip()
                                     if val and "raw_parameters" not in metadata:
-                                        metadata["raw_parameters"] = val[:3000]
+                                        # Same generous cap as the top-level
+                                        # UserComment path above.
+                                        metadata["raw_parameters"] = val[:20000]
                                         metadata.update(parse_sd_parameters(val))
                                 continue
                             if isinstance(val, bytes):
@@ -1748,29 +1757,62 @@ def parse_sd_parameters(text):
         return result
     lines = text.strip().split('\n')
     prompt_lines, negative_lines, settings_line = [], [], ""
-    in_negative = False
+    # Studio appends trailer lines after the settings line for wildcard
+    # generations: "Template: <raw prompt>" (the un-resolved wildcard
+    # source, possibly multi-line) and "Studio dynamic prompts: <mode>".
+    # These must NOT be folded into the prompt — that's how Send to
+    # Canvas ended up pasting resolved + raw prompts concatenated.
+    template_lines, neg_template_lines = [], []
+    section = "prompt"  # prompt | negative | settings | template | neg_template | meta
     for line in lines:
         if line.startswith("Negative prompt:"):
-            in_negative = True
+            section = "negative"
             negative_lines.append(line[len("Negative prompt:"):].strip())
+        elif line.startswith("Template:"):
+            section = "template"
+            template_lines.append(line[len("Template:"):].strip())
+        elif line.startswith("Negative Template:"):
+            section = "neg_template"
+            neg_template_lines.append(line[len("Negative Template:"):].strip())
+        elif line.startswith("Studio dynamic prompts:"):
+            section = "meta"
+        elif section in ("template", "neg_template"):
+            # Multi-line templates: keep continuation lines with their section
+            (template_lines if section == "template" else neg_template_lines).append(line)
         elif re.match(r'^(Steps|Sampler|CFG scale|Seed|Size|Model|Model hash|Clip skip)', line):
             settings_line = line
-            in_negative = False
-        elif in_negative:
+            section = "settings"
+        elif section == "negative":
             negative_lines.append(line)
-        else:
+        elif section == "prompt":
             m = re.search(r'(Steps:\s*\d+.*)', line)
             if m:
                 settings_line = m.group(1)
                 pre = line[:m.start()].strip()
                 if pre:
-                    (negative_lines if in_negative else prompt_lines).append(pre)
+                    prompt_lines.append(pre)
             else:
                 prompt_lines.append(line)
-    if prompt_lines:
-        result["prompt"] = '\n'.join(prompt_lines).strip()[:2000]
+        # section == "settings"/"meta": stray unknown lines after the params
+        # line are extension noise — never prompt content. Drop them.
+    template = '\n'.join(template_lines).strip()
+    resolved = '\n'.join(prompt_lines).strip()
+    if template:
+        # The raw wildcard template is the canonical "prompt" — it matches
+        # what generation-time saves store (settings prompt) and what the
+        # Gallery's "raw prompt" actions expect. The resolved prompt stays
+        # available separately (and via raw_infotext's first line).
+        result["prompt"] = template[:6000]
+        result["template"] = template[:6000]
+        if resolved:
+            result["resolved_prompt"] = resolved[:6000]
+    elif resolved:
+        result["prompt"] = resolved[:6000]
+    neg_template = '\n'.join(neg_template_lines).strip()
+    if neg_template:
+        result["negative_template"] = neg_template[:3000]
     if negative_lines:
-        result["negative_prompt"] = '\n'.join(negative_lines).strip()[:1000]
+        result["negative_prompt"] = '\n'.join(negative_lines).strip()[:3000]
     if settings_line:
         for key, pat in {
             "steps": r'Steps:\s*(\d+)',

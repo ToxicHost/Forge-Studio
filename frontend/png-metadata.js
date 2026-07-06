@@ -322,14 +322,33 @@ window.PngMetadata = (() => {
             }
         }
 
-        if (paramsLineIdx < 0) {
-            // No structured params found — entire text is prompt
-            result.prompt = text.trim();
-            return result;
+        // Studio appends trailer lines after the params line for wildcard
+        // generations: "Template: <raw prompt>" (possibly multi-line) and
+        // "Studio dynamic prompts: <mode>". Pull them out so they pollute
+        // neither the prompt (truncated infotexts) nor the params parsing.
+        const trailerRe = /^(Template|Negative Template|Studio dynamic prompts):/;
+        let trailerIdx = -1;
+        for (let i = Math.max(paramsLineIdx + 1, 1); i < lines.length; i++) {
+            if (trailerRe.test(lines[i])) { trailerIdx = i; break; }
         }
+        if (trailerIdx >= 0) {
+            let section = null;
+            const tpl = [], negTpl = [];
+            for (let i = trailerIdx; i < lines.length; i++) {
+                const line = lines[i];
+                if (line.startsWith("Template:")) { section = tpl; tpl.push(line.slice("Template:".length).trim()); }
+                else if (line.startsWith("Negative Template:")) { section = negTpl; negTpl.push(line.slice("Negative Template:".length).trim()); }
+                else if (line.startsWith("Studio dynamic prompts:")) section = null;
+                else if (section) section.push(line);
+            }
+            if (tpl.length) result.template = tpl.join("\n").trim();
+            if (negTpl.length) result.negativeTemplate = negTpl.join("\n").trim();
+        }
+        const contentEnd = trailerIdx >= 0 ? trailerIdx : lines.length;
 
-        // Everything before the params line
-        const preParams = lines.slice(0, paramsLineIdx).join("\n");
+        // Everything before the params line (or the trailer/end when the
+        // params line is missing — e.g. an infotext truncated by EXIF caps)
+        const preParams = lines.slice(0, paramsLineIdx >= 0 ? paramsLineIdx : contentEnd).join("\n");
 
         // Split prompt and negative prompt
         const negMatch = preParams.match(/^([\s\S]*?)\nNegative prompt:\s*([\s\S]*)$/);
@@ -340,8 +359,10 @@ window.PngMetadata = (() => {
             result.prompt = preParams.trim();
         }
 
+        if (paramsLineIdx < 0) return result;
+
         // Parse the key: value pairs from the params line
-        const paramsLine = lines.slice(paramsLineIdx).join(", ");
+        const paramsLine = lines.slice(paramsLineIdx, contentEnd).join(", ");
         // Match "Key: value" where value ends at the next ", Key:" or end of string
         // Keys are capitalized words possibly with spaces
         const paramRegex = /([A-Z][\w\s]*?):\s*((?:(?![A-Z][\w\s]*?:\s).)*)/g;
