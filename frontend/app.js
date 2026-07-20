@@ -3133,6 +3133,83 @@ function _syncEnableGates() {
   });
 }
 
+// ── Collapsed-block value badges ────────────────────────────────────
+// A compact monospace summary of a block's key values, shown on its
+// header only while the block is collapsed (a hidden-but-active value
+// stays visible this way). One formatter per block id; the model block
+// has no collapse header (always visible), so it carries no badge.
+
+const BADGE_FORMATTERS = {
+  sampling() {
+    const s = document.getElementById("paramSampler")?.value || "";
+    const steps = document.getElementById("paramSteps")?.value || "";
+    const cfg = document.getElementById("paramCFG")?.value || "";
+    return `${s} · ${steps} · CFG ${cfg}`;
+  },
+  frame() {
+    const w = document.getElementById("paramWidth")?.value || "?";
+    const h = document.getElementById("paramHeight")?.value || "?";
+    return `${w}×${h}`;
+  },
+  seedbatch() {
+    const seed = (document.getElementById("paramSeed")?.value || "-1").trim();
+    const total = (parseInt(document.getElementById("paramBatch")?.value, 10) || 1)
+        * (parseInt(document.getElementById("paramBatchSize")?.value, 10) || 1);
+    const seedPart = seed === "-1" ? "random" : seed;
+    return total > 1 ? `${seedPart} · ×${total}` : seedPart;
+  },
+  hires() {
+    if (!document.getElementById("checkHires")?.classList.contains("checked")) return "off";
+    const scale = document.getElementById("paramHrScale")?.value || "?";
+    return `${scale}× ${document.getElementById("paramHrUpscaler")?.value || ""}`;
+  },
+  adetailer() {
+    if (!document.getElementById("checkAD")?.classList.contains("checked")) return "off";
+    const n = [1, 2, 3].filter(i =>
+      document.getElementById(`checkAD${i}`)?.classList.contains("checked")).length;
+    return n ? `${n} slot${n === 1 ? "" : "s"}` : "off";
+  },
+  upscale() {
+    const scale = document.getElementById("paramUpscaleScale")?.value || "?";
+    return `${scale}× ${document.getElementById("paramUpscaleModel")?.value || ""}`;
+  },
+  controlnet() {
+    if (!document.getElementById("checkCN")?.classList.contains("checked")) return "off";
+    const n = [1, 2].filter(i =>
+      document.getElementById(`checkCN${i}`)?.classList.contains("checked")).length;
+    return n ? `${n} unit${n === 1 ? "" : "s"}` : "off";
+  },
+};
+
+function _refreshPanelBadges() {
+  document.querySelectorAll("#page-generate .collapse-section[data-block]").forEach(sec => {
+    const fmt = BADGE_FORMATTERS[sec.dataset.block];
+    if (!fmt) return;
+    const header = sec.querySelector(".collapse-header");
+    const body = sec.querySelector(".collapse-body");
+    if (!header || !body) return;
+    let badge = header.querySelector(".collapse-badge");
+    if (!badge) {
+      badge = document.createElement("span");
+      badge.className = "collapse-badge";
+      const title = header.querySelector(".collapse-title");
+      if (title) title.after(badge);
+      else header.appendChild(badge);
+    }
+    let text = "";
+    if (!body.classList.contains("open")) {
+      try { text = fmt() || ""; } catch (_) { /* badge is best-effort */ }
+    }
+    badge.textContent = text;
+  });
+}
+
+let _badgeTimer = null;
+function _schedulePanelBadgeRefresh() {
+  clearTimeout(_badgeTimer);
+  _badgeTimer = setTimeout(_refreshPanelBadges, 80);
+}
+
 function bindUI() {
   // App tabs
   document.getElementById("appTabs")?.addEventListener("click", e => {
@@ -3280,6 +3357,27 @@ function bindUI() {
   });
   _syncAdvancedUI();
   _syncEnableGates();
+
+  // Collapsed-block value badges: refresh on collapse toggles and
+  // header enable-check clicks (this listener runs after the accordion
+  // handler on the same element), on the badge-relevant inputs, and on
+  // the slot/unit enable checks. Badges never intercept clicks.
+  document.querySelectorAll("#page-generate .collapse-section[data-block] .collapse-header")
+    .forEach(h => h.addEventListener("click", _schedulePanelBadgeRefresh));
+  [
+    "paramSampler", "paramSteps", "paramCFG", "paramWidth", "paramHeight",
+    "paramSeed", "paramBatch", "paramBatchSize", "paramHrScale",
+    "paramHrUpscaler", "paramUpscaleScale", "paramUpscaleModel",
+  ].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener("input", _schedulePanelBadgeRefresh);
+    el.addEventListener("change", _schedulePanelBadgeRefresh);
+  });
+  ["checkAD1", "checkAD2", "checkAD3", "checkCN1", "checkCN2"].forEach(id => {
+    document.getElementById(id)?.addEventListener("click", _schedulePanelBadgeRefresh);
+  });
+  _refreshPanelBadges();
 
   // UX-012: Clear mask button
   document.getElementById("clearMaskBtn")?.addEventListener("click", () => {
@@ -5162,8 +5260,10 @@ function bindUI() {
     if (window.StudioCore) window.StudioCore.state.showGrid = gridOn;
     _syncPressureState();
     // Restored .checked classes drive the enable-gated panel regions
-    // (AD slots 2/3, CN unit 2, upscale refine controls).
+    // (AD slots 2/3, CN unit 2, upscale refine controls), and restored
+    // values/collapse states feed the header badges.
     _syncEnableGates();
+    _schedulePanelBadgeRefresh();
     State.saveOutputs = document.getElementById("toggleSaveOutputs")?.classList.contains("on") ?? true;
     State.highPrecision = document.getElementById("toggleHighPrecision")?.classList.contains("on") ?? false;
     State.livePreview = document.getElementById("toggleLivePreview")?.classList.contains("on") ?? true;
