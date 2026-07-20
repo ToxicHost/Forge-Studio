@@ -915,6 +915,42 @@ body {
   max-height: 120px; overflow-y: auto;
 }
 
+/* Trigger words: optional second line inside a row — a per-row toggle
+   plus a truncating chip with the LoRA's activation text */
+.lora-stack-row { flex-wrap: wrap; }
+.lora-stack-trigger-line {
+  flex-basis: 100%; min-width: 0;
+  display: flex; align-items: center; gap: 5px;
+  padding-left: 20px;
+}
+.lora-stack-trigger-toggle {
+  background: var(--bg-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-4);
+  font-family: var(--font);
+  font-size: 9px; font-weight: 700; line-height: 1;
+  padding: 2px 5px;
+  cursor: pointer; flex-shrink: 0;
+  transition: all 0.12s;
+}
+.lora-stack-trigger-toggle:hover { color: var(--text-1); border-color: var(--accent); }
+.lora-stack-trigger-toggle.active {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+.lora-stack-trigger-chip {
+  flex: 1; min-width: 0; max-width: 100%;
+  font-family: var(--mono); font-size: 10px;
+  color: var(--text-3);
+  background: var(--bg-surface);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: 1px 6px;
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+
 /* Token counter bar */
 .prompt-token-bar {
   display: flex; align-items: center; justify-content: flex-end;

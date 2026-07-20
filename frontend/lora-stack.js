@@ -5,7 +5,10 @@
  * Moves LoRAs out of raw prompt text into a structured UI. Rows are
  * compiled into <lora:name:weight> tags and appended to the positive
  * prompt at generation time (see app.js _compilePromptWithLoras at the
- * generate-button handler).
+ * generate-button handler). Rows can also inject the LoRA's trigger
+ * words (sidecar activation_text, fetched from /studio/loras): enabled
+ * rows with triggers on get their activation text appended after the
+ * tags at compile time — see refreshTriggers / compilePrompt.
  *
  * State is mirrored to a hidden <input id="paramLoraStack"> as a
  * JSON-serialized array. That hidden input is registered in
@@ -30,6 +33,12 @@ var rowsEl = null;
 var hidden = null;
 var previewEl = null;
 var _suppressInput = false;
+
+// LoRA short-name (lowercased) -> trimmed activation_text from the
+// /studio/loras sidecar data. Filled async by refreshTriggers; compile
+// stays synchronous and simply skips triggers until the map is loaded.
+var triggerMap = Object.create(null);
+var triggerLoadPromise = null;
 
 function _t(key, fallback, params) {
   return (window.I18N && window.I18N.t) ? window.I18N.t(key, fallback, params) : fallback;
@@ -67,6 +76,9 @@ function reload() {
             name: String(r.name),
             weight: Number.isFinite(w) ? w : 1.0,
             enabled: r.enabled !== false,
+            // Missing on rows saved before trigger support — default to
+            // true so old workflows adopt trigger injection.
+            triggers: r.triggers !== false,
           };
         });
     } else {
@@ -86,7 +98,44 @@ function _normalizeLoraName(lora) {
   return "";
 }
 
+function _triggerKey(value) {
+  return _normalizeLoraName(value).toLowerCase();
+}
+
+// Load activation_text for every LoRA from /studio/loras. Non-fatal on
+// failure — compile then appends tags only. force=true refetches even if
+// already loaded (the browser's refresh passes it); otherwise concurrent
+// callers share the in-flight promise.
+function refreshTriggers(force) {
+  if (triggerLoadPromise && !force) return triggerLoadPromise;
+  triggerLoadPromise = fetch("/studio/loras")
+    .then(function (resp) {
+      if (!resp.ok) throw new Error("HTTP " + resp.status);
+      return resp.json();
+    })
+    .then(function (list) {
+      var map = Object.create(null);
+      if (Array.isArray(list)) {
+        for (var i = 0; i < list.length; i++) {
+          var l = list[i];
+          if (!l || typeof l.name !== "string") continue;
+          var text = typeof l.activation_text === "string" ? l.activation_text.trim() : "";
+          if (text) map[_triggerKey(l.name)] = text;
+        }
+      }
+      triggerMap = map;
+      // Re-render so rows built before the fetch finished pick up their
+      // trigger chips (and the preview reflects the trigger words).
+      render();
+    })
+    .catch(function (e) {
+      console.warn(TAG, "Failed to load trigger words:", e);
+    });
+  return triggerLoadPromise;
+}
+
 function add(loraOrName, weight) {
+  if (!triggerLoadPromise) refreshTriggers();
   var name = _normalizeLoraName(loraOrName);
   if (!name) return;
   var w = 1.0;
@@ -115,7 +164,7 @@ function add(loraOrName, weight) {
     }
   }
 
-  state.push({ name: name, weight: w, enabled: true });
+  state.push({ name: name, weight: w, enabled: true, triggers: true });
   _commit();
 }
 
@@ -145,6 +194,12 @@ function remove(idx) {
 function setEnabled(idx, enabled) {
   if (!state[idx]) return;
   state[idx].enabled = !!enabled;
+  _commit();
+}
+
+function setTriggers(idx, on) {
+  if (!state[idx]) return;
+  state[idx].triggers = !!on;
   _commit();
 }
 
@@ -178,13 +233,37 @@ function compileTags() {
     .join(", ");
 }
 
+function _appendSegment(base, segment) {
+  if (!base) return segment;
+  var sep = /[,;]$/.test(base) ? " " : ", ";
+  return base + sep + segment;
+}
+
 function compilePrompt(prompt) {
+  var raw = prompt == null ? "" : String(prompt);
+  var out = raw.trim();
+  var appended = false;
   var tags = compileTags();
-  if (!tags) return prompt == null ? "" : String(prompt);
-  var trimmed = (prompt == null ? "" : String(prompt)).trim();
-  if (!trimmed) return tags;
-  var sep = /[,;]$/.test(trimmed) ? " " : ", ";
-  return trimmed + sep + tags;
+  if (tags) {
+    out = _appendSegment(out, tags);
+    appended = true;
+  }
+  // Trigger words: for each enabled row that hasn't opted out, append the
+  // LoRA's activation text unless the evolving output already contains it
+  // (case-insensitive) — checking the evolving output also keeps two
+  // stacked LoRAs sharing the same activation text from adding it twice.
+  for (var i = 0; i < state.length; i++) {
+    var r = state[i];
+    if (!r.enabled || !r.name || r.triggers === false) continue;
+    var text = triggerMap[_triggerKey(r.name)];
+    if (!text) continue;
+    text = String(text).trim();
+    if (!text) continue;
+    if (out.toLowerCase().indexOf(text.toLowerCase()) !== -1) continue;
+    out = _appendSegment(out, text);
+    appended = true;
+  }
+  return appended ? out : raw;
 }
 
 // Detect <lora:name:weight> tags in arbitrary text. Returns parsed rows
@@ -198,6 +277,7 @@ function _extract(text) {
       name: String(name).trim(),
       weight: w == null ? 1.0 : parseFloat(w),
       enabled: true,
+      triggers: true,
     });
     return "";
   });
@@ -241,7 +321,11 @@ function _renderPreview() {
   if (!previewEl) return;
   var textEl = previewEl.querySelector(".lora-stack-preview-text");
   if (!textEl) return;
-  textEl.textContent = compileTags() || _t("loraStack.preview.empty", "(no enabled LoRAs)");
+  // Mirror what generation will actually send: current positive prompt
+  // plus tags plus trigger words.
+  var ta = document.getElementById("paramPrompt");
+  var compiled = compilePrompt(ta ? ta.value : "");
+  textEl.textContent = compiled || _t("loraStack.preview.empty", "(no enabled LoRAs)");
 }
 
 function render() {
@@ -314,6 +398,36 @@ function _buildRow(idx, row) {
   rm.textContent = "×";
   rm.addEventListener("click", function () { remove(idx); });
   r.appendChild(rm);
+
+  // Trigger words: second line inside the row, only when the sidecar
+  // provided activation text for this LoRA (map is filled async by
+  // refreshTriggers, which re-renders on completion).
+  var trig = triggerMap[_triggerKey(row.name)];
+  if (trig) {
+    var tline = document.createElement("div");
+    tline.className = "lora-stack-trigger-line";
+    tline.draggable = false;
+
+    var tbtn = document.createElement("button");
+    tbtn.type = "button";
+    tbtn.className = "lora-stack-trigger-toggle" + (row.triggers !== false ? " active" : "");
+    tbtn.draggable = false;
+    tbtn.textContent = "T";
+    tbtn.title = _t("loraStack.triggers.tooltip", "Include trigger words in prompt");
+    tbtn.setAttribute("aria-pressed", row.triggers !== false ? "true" : "false");
+    tbtn.addEventListener("click", function () {
+      setTriggers(idx, !(state[idx] && state[idx].triggers !== false));
+    });
+    tline.appendChild(tbtn);
+
+    var chip = document.createElement("span");
+    chip.className = "lora-stack-trigger-chip";
+    chip.title = trig;
+    chip.textContent = trig;
+    tline.appendChild(chip);
+
+    r.appendChild(tline);
+  }
 
   // Native HTML5 drag-and-drop for reordering
   r.addEventListener("dragstart", function (e) {
@@ -395,6 +509,7 @@ function init() {
   });
 
   reload();
+  refreshTriggers();
   console.log(TAG, "Initialized");
 }
 
@@ -405,7 +520,8 @@ window.LoraStack = {
   compilePrompt: compilePrompt,
   compileTags: compileTags,
   importFromPrompt: importFromPrompt,
-  getState: function () { return state.map(function (r) { return { name: r.name, weight: r.weight, enabled: r.enabled }; }); },
+  refreshTriggers: refreshTriggers,
+  getState: function () { return state.map(function (r) { return { name: r.name, weight: r.weight, enabled: r.enabled, triggers: r.triggers !== false }; }); },
 };
 
 if (document.readyState === "loading") {

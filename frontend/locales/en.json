@@ -1254,6 +1254,7 @@
   "workflows.toast.deleted": "Workflow deleted",
   "workflows.toast.deleteFailed": "Workflow delete failed",
   "workflows.toast.applied": "Workflow applied",
-  "workflows.toast.appliedPartial": "Workflow applied with {count} unavailable settings"
+  "workflows.toast.appliedPartial": "Workflow applied with {count} unavailable settings",
 
+  "loraStack.triggers.tooltip": "Include trigger words in prompt"
 }
