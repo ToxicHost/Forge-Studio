@@ -3111,6 +3111,47 @@ function _setAdvancedOpen(blockId, open) {
   window.Prefs?.set("panel_ui", ui);
 }
 
+// Read-modify-write one inner map of panel_ui (blocks_open /
+// sections_open). Always posts the whole panel_ui key — inner objects
+// are never sent as separate preference keys.
+function _setPanelUiFlag(mapKey, id, value) {
+  const ui = _readPanelUi();
+  const map = (ui[mapKey] && typeof ui[mapKey] === "object"
+      && !Array.isArray(ui[mapKey])) ? ui[mapKey] : {};
+  map[id] = !!value;
+  ui[mapKey] = map;
+  window.Prefs?.set("panel_ui", ui);
+}
+
+// Re-apply remembered collapse states at boot (keys absent → the markup
+// default stands). Runs after Prefs.load() and after layout apply.
+// NOTE: when Phase 2 task presets land, preset application is expected
+// to overwrite blocks_open wholesale.
+function _applyStoredCollapseState() {
+  const ui = _readPanelUi();
+  const blocks = (ui.blocks_open && typeof ui.blocks_open === "object"
+      && !Array.isArray(ui.blocks_open)) ? ui.blocks_open : {};
+  for (const [blockId, open] of Object.entries(blocks)) {
+    const sec = document.querySelector(
+      `#page-generate .collapse-section[data-block="${blockId}"]`);
+    const body = sec?.querySelector(".collapse-body");
+    if (!body) continue;
+    body.classList.toggle("open", !!open);
+    body.style.maxHeight = open ? "none" : "";
+    sec.querySelector(".collapse-arrow")?.classList.toggle("open", !!open);
+  }
+  const sections = (ui.sections_open && typeof ui.sections_open === "object"
+      && !Array.isArray(ui.sections_open)) ? ui.sections_open : {};
+  for (const [id, open] of Object.entries(sections)) {
+    const body = document.getElementById(id);
+    if (!body) continue;
+    body.classList.toggle("collapsed", !open);
+    document.querySelector(`.section-header[data-collapse="${id}"]`)
+      ?.classList.toggle("collapsed", !open);
+  }
+  _schedulePanelBadgeRefresh();
+}
+
 // Reflect remembered expander state onto each block that has an
 // Advanced tier: .adv-open on the section shows its .param-advanced
 // members; every toggle caret in the block follows the shared state.
@@ -3325,6 +3366,12 @@ function bindUI() {
       const arrow = header.querySelector(".collapse-arrow");
       _toggleCollapseBody(body);
       if (arrow) arrow.classList.toggle("open");
+      // Persist per-block collapse state (the .collapse-check early
+      // return above keeps enable toggles out of this path).
+      const blockId = header.closest("[data-block]")?.dataset.block;
+      if (blockId && body) {
+        _setPanelUiFlag("blocks_open", blockId, body.classList.contains("open"));
+      }
     });
   });
 
@@ -3338,6 +3385,10 @@ function bindUI() {
       const arrow = header.querySelector(".section-arrow");
       if (body) body.classList.toggle("collapsed");
       if (arrow) header.classList.toggle("collapsed");
+      // Persist section collapse state (Layers, History, …).
+      if (body) {
+        _setPanelUiFlag("sections_open", targetId, !body.classList.contains("collapsed"));
+      }
     });
   });
 
@@ -7839,6 +7890,10 @@ async function init() {
   // Initialize layout preset switcher (WP-L1) — must run after bindUI so
   // the accordion handlers and output-gallery bindings already exist.
   LayoutSwitcher.init();
+
+  // Remembered block/section collapse states apply after the layout so
+  // they win over both markup defaults and defaults-restored state.
+  _applyStoredCollapseState();
 
   // Update check is manual — use the "Check for Updates" button in Settings.
 
