@@ -34,7 +34,7 @@ os.environ.setdefault("OPENCV_IO_ENABLE_OPENEXR", "1")
 
 from datetime import date, datetime
 from pathlib import Path
-from threading import Thread
+from threading import Thread, RLock
 from typing import Optional, List
 
 from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
@@ -343,6 +343,43 @@ def _atomic_write_json(path: Path, data) -> None:
     tmp = path.with_name(path.name + ".tmp")
     tmp.write_text(json.dumps(data, indent=2), encoding="utf-8")
     tmp.replace(path)
+
+
+# ---------------------------------------------------------------------------
+# User preferences — server-backed application settings
+# ---------------------------------------------------------------------------
+# Stored in <_studio_root>/user_prefs.json so preferences survive browser
+# site-storage clears. Deliberately separate from user_defaults.json (client
+# workflow defaults) and trusted_save_roots.json (security state): a folder
+# string stored here is an inert preference and never becomes a trusted
+# save root by virtue of being persisted.
+#
+# _PREFS_LOCK covers the complete read/merge/write transaction of every
+# endpoint — atomic replace alone would not prevent lost updates when two
+# tabs post different keys concurrently.
+
+_PREFS_FILE = _studio_root / "user_prefs.json"
+_PREFS_LOCK = RLock()
+_PREFS_MAX_BYTES = 256 * 1024
+_PREFS_ALLOWED_KEYS = {
+    "component_memory", "shortcuts", "layout_preset", "session_limit",
+    "gallery_folder", "save_dir", "vram_weights", "auto_unload",
+    "remember_session", "gal_send_prompt_version", "panel_ui",
+}
+
+
+def _read_user_prefs_unlocked():
+    """Read user_prefs.json. Call only while _PREFS_LOCK is held."""
+    if not _PREFS_FILE.is_file():
+        return {}
+    try:
+        data = json.loads(_PREFS_FILE.read_text(encoding="utf-8"))
+        if not isinstance(data, dict):
+            raise ValueError("preferences root is not an object")
+        return data
+    except Exception:
+        log.exception("Corrupt user_prefs.json; returning empty preferences")
+        return {}
 
 
 # ---------------------------------------------------------------------------
@@ -2997,6 +3034,63 @@ def setup_studio_routes(app: FastAPI):
         except Exception:
             log.exception("Layout delete failed")
             return JSONResponse({"error": "delete failed"}, status_code=500)
+        return {"ok": True}
+
+    # ------------------------------------------------------------------
+    # User preferences (server-backed, survive browser-storage clears)
+    # ------------------------------------------------------------------
+
+    @app.get("/studio/prefs")
+    async def get_prefs():
+        with _PREFS_LOCK:
+            return _read_user_prefs_unlocked()
+
+    @app.post("/studio/prefs")
+    async def save_prefs(request: Request):
+        # Raw-Request parsing on purpose: a Pydantic/dict parameter would
+        # turn malformed JSON into HTTP 422; the contract is 400.
+        if not _check_same_origin(request):
+            return JSONResponse({"error": "forbidden"}, status_code=403)
+        body = await request.body()
+        if len(body) > _PREFS_MAX_BYTES:
+            return JSONResponse({"error": "preferences too large"}, status_code=413)
+        try:
+            posted = json.loads(body)
+        except Exception:
+            return JSONResponse({"error": "malformed JSON"}, status_code=400)
+        if not isinstance(posted, dict):
+            return JSONResponse({"error": "preferences must be an object"}, status_code=400)
+        unknown = set(posted) - _PREFS_ALLOWED_KEYS
+        if unknown:
+            return JSONResponse(
+                {"error": f"unknown preference keys: {', '.join(sorted(unknown))}"},
+                status_code=400)
+        with _PREFS_LOCK:
+            prefs = _read_user_prefs_unlocked()
+            # Shallow merge by top-level key: a posted key replaces that key
+            # entirely (the frontend owns complete objects like
+            # component_memory and shortcuts); unposted keys remain.
+            prefs.update(posted)
+            try:
+                _atomic_write_json(_PREFS_FILE, prefs)
+            except Exception:
+                log.exception("Preferences write failed")
+                return JSONResponse({"error": "write failed"}, status_code=500)
+            return prefs
+
+    @app.delete("/studio/prefs")
+    async def delete_prefs(request: Request):
+        # Emergency reset (?reset): removes all preferences. Defaults,
+        # layouts, and trusted roots live in separate files and are kept.
+        if not _check_same_origin(request):
+            return JSONResponse({"error": "forbidden"}, status_code=403)
+        with _PREFS_LOCK:
+            try:
+                if _PREFS_FILE.is_file():
+                    _PREFS_FILE.unlink()
+            except Exception:
+                log.exception("Preferences delete failed")
+                return JSONResponse({"error": "delete failed"}, status_code=500)
         return {"ok": True}
 
     # ------------------------------------------------------------------

@@ -425,6 +425,8 @@
     if (btn) btn.classList.add("spinning");
     loaded = false;
     await fetchLoras(true);
+    // Keep the stack's trigger-word map in sync with the refreshed list
+    window.LoraStack?.refreshTriggers?.(true);
     if (modal) { renderFolderTree(); renderGrid(); }
     if (btn) setTimeout(() => btn.classList.remove("spinning"), 300);
   }

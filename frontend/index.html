@@ -4,18 +4,18 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Forge Studio</title>
-<link rel="icon" type="image/svg+xml" href="/studio/static/brand/favicon.svg?v=4.10.0">
-<link rel="icon" type="image/png" sizes="32x32" href="/studio/static/brand/favicon-32.png?v=4.10.0">
+<link rel="icon" type="image/svg+xml" href="/studio/static/brand/favicon.svg?v=4.13.2">
+<link rel="icon" type="image/png" sizes="32x32" href="/studio/static/brand/favicon-32.png?v=4.13.2">
 <link rel="apple-touch-icon" href="/studio/static/brand/apple-touch-icon.png">
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <!-- Keep the ?v= in sync with `const v` in the loader script at the bottom
      of this file — stylesheets had no cache-buster, so deploys kept serving
      stale CSS even after the versioned JS refreshed. -->
-<link rel="stylesheet" href="/studio/static/app.css?v=4.10.0">
-<link rel="stylesheet" href="/studio/static/searchable-select.css?v=4.10.0">
-<link rel="stylesheet" href="/studio/static/education.css?v=4.10.0">
-<link rel="stylesheet" href="/studio/static/studio-tour.css?v=4.10.0">
-<link rel="stylesheet" href="/studio/static/studio-docs.css?v=4.10.0">
+<link rel="stylesheet" href="/studio/static/app.css?v=4.13.2">
+<link rel="stylesheet" href="/studio/static/searchable-select.css?v=4.13.2">
+<link rel="stylesheet" href="/studio/static/education.css?v=4.13.2">
+<link rel="stylesheet" href="/studio/static/studio-tour.css?v=4.13.2">
+<link rel="stylesheet" href="/studio/static/studio-docs.css?v=4.13.2">
 </head>
 <body>
 
@@ -24,7 +24,7 @@
      ═══════════════════════════════════════════ -->
 
 <div class="titlebar">
-  <div class="brand"><img class="brand-mark" src="/studio/static/brand/forge-studio-mark.svg?v=4.10.0" alt=""><em>FORGE</em>&ensp;<span class="brand-studio">STUDIO</span></div>
+  <div class="brand"><img class="brand-mark" src="/studio/static/brand/forge-studio-mark.svg?v=4.13.2" alt=""><em>FORGE</em>&ensp;<span class="brand-studio">STUDIO</span></div>
   <div class="tab-bar" id="appTabs">
     <button class="active" data-app="studio">Canvas</button>
   </div>
@@ -42,28 +42,28 @@
 
     <!-- Toolstrip (left) -->
     <div class="toolstrip" id="toolstrip">
-      <button class="tool-btn active" data-i18n-title="tools.brush" title="Brush (B)" data-tool="brush"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/></svg></button>
-      <button class="tool-btn" data-i18n-title="tools.eraser" title="Eraser (E)" data-tool="eraser"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M20 20H7L3 16l9-9 8 8-4 4z"/><path d="M6.5 13.5l5-5"/></svg></button>
-      <button class="tool-btn" data-i18n-title="tools.eyedropper" title="Eyedropper (I)" data-tool="eyedropper"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 21v-3l9-9 3 3-9 9H3z"/><circle cx="19" cy="5" r="3"/></svg></button>
+      <button class="tool-btn active" data-tool="brush" data-tool-tip="brush"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/></svg></button>
+      <button class="tool-btn" data-tool="eraser" data-tool-tip="eraser"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M20 20H7L3 16l9-9 8 8-4 4z"/><path d="M6.5 13.5l5-5"/></svg></button>
+      <button class="tool-btn" data-tool="eyedropper" data-tool-tip="eyedropper"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 21v-3l9-9 3 3-9 9H3z"/><circle cx="19" cy="5" r="3"/></svg></button>
       <div class="tool-sep"></div>
-      <button class="tool-btn" data-i18n-title="tools.fill" title="Fill (G — press again for Gradient)" data-tool="fill"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 7 6 2"/><path d="M18.992 12H2.041"/><path d="M21.145 18.38A3.34 3.34 0 0 1 20 16.5a3.3 3.3 0 0 1-1.145 1.88c-.575.46-.855 1.02-.855 1.595A2 2 0 0 0 20 22a2 2 0 0 0 2-2.025c0-.58-.285-1.13-.855-1.595"/><path d="m8.5 4.5 2.148-2.148a1.205 1.205 0 0 1 1.704 0l7.296 7.296a1.205 1.205 0 0 1 0 1.704l-7.592 7.592a3.615 3.615 0 0 1-5.112 0l-3.888-3.888a3.615 3.615 0 0 1 0-5.112L5.67 7.33"/></svg></button>
-      <button class="tool-btn" data-i18n-title="tools.gradient" title="Gradient (G — press again for Fill)" data-tool="gradient"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="21" x2="21" y2="3" opacity="0.4"/></svg></button>
-      <button class="tool-btn" data-i18n-title="tools.shape" title="Shape (U)" data-tool="shape"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg></button>
-      <button class="tool-btn" data-i18n-title="tools.text" title="Text (T)" data-tool="text"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M4 7V4h16v3"/><path d="M12 4v16"/><path d="M8 20h8"/></svg></button>
+      <button class="tool-btn" data-tool="fill" data-tool-tip="fill"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 7 6 2"/><path d="M18.992 12H2.041"/><path d="M21.145 18.38A3.34 3.34 0 0 1 20 16.5a3.3 3.3 0 0 1-1.145 1.88c-.575.46-.855 1.02-.855 1.595A2 2 0 0 0 20 22a2 2 0 0 0 2-2.025c0-.58-.285-1.13-.855-1.595"/><path d="m8.5 4.5 2.148-2.148a1.205 1.205 0 0 1 1.704 0l7.296 7.296a1.205 1.205 0 0 1 0 1.704l-7.592 7.592a3.615 3.615 0 0 1-5.112 0l-3.888-3.888a3.615 3.615 0 0 1 0-5.112L5.67 7.33"/></svg></button>
+      <button class="tool-btn" data-tool="gradient" data-tool-tip="gradient"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="21" x2="21" y2="3" opacity="0.4"/></svg></button>
+      <button class="tool-btn" data-tool="shape" data-tool-tip="shape"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg></button>
+      <button class="tool-btn" data-tool="text" data-tool-tip="text"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M4 7V4h16v3"/><path d="M12 4v16"/><path d="M8 20h8"/></svg></button>
       <div class="tool-sep"></div>
-      <button class="tool-btn" data-i18n-title="tools.smudge" title="Smudge (S)" data-tool="smudge"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M7 21c-2 0-3-1-3-3s3-6 6-9c3-3 6-5 8-5s3 1 3 3-3 6-6 9-6 5-8 5z"/></svg></button>
-      <button class="tool-btn" data-i18n-title="tools.blur" title="Blur (R)" data-tool="blur"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="9" opacity="0.4"/><circle cx="12" cy="12" r="5" opacity="0.7"/><circle cx="12" cy="12" r="2"/></svg></button>
-      <button class="tool-btn" data-i18n-title="tools.dodgeBurn" title="Dodge/Burn (J)" data-tool="dodge"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="9"/><path d="M12 3v18"/></svg></button>
-      <button class="tool-btn" data-i18n-title="tools.cloneStamp" title="Clone Stamp (K)" data-tool="clone"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="10" cy="12" r="7"/><circle cx="16" cy="12" r="7" stroke-dasharray="3 2"/></svg></button>
-      <button class="tool-btn" data-i18n-title="tools.liquify" title="Liquify (Y)" data-tool="liquify"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 3c-2 4-6 5-6 9a6 6 0 0012 0c0-4-4-5-6-9z"/></svg></button>
-      <button class="tool-btn" data-i18n-title="tools.pixelate" title="Pixelate (P)" data-tool="pixelate"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="8" height="8"/><rect x="13" y="3" width="8" height="8"/><rect x="3" y="13" width="8" height="8"/><rect x="13" y="13" width="8" height="8"/></svg></button>
+      <button class="tool-btn" data-tool="smudge" data-tool-tip="smudge"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M7 21c-2 0-3-1-3-3s3-6 6-9c3-3 6-5 8-5s3 1 3 3-3 6-6 9-6 5-8 5z"/></svg></button>
+      <button class="tool-btn" data-tool="blur" data-tool-tip="blur"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="9" opacity="0.4"/><circle cx="12" cy="12" r="5" opacity="0.7"/><circle cx="12" cy="12" r="2"/></svg></button>
+      <button class="tool-btn" data-tool="dodge" data-tool-tip="dodge"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="9"/><path d="M12 3v18"/></svg></button>
+      <button class="tool-btn" data-tool="clone" data-tool-tip="clone"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="10" cy="12" r="7"/><circle cx="16" cy="12" r="7" stroke-dasharray="3 2"/></svg></button>
+      <button class="tool-btn" data-tool="liquify" data-tool-tip="liquify"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 3c-2 4-6 5-6 9a6 6 0 0012 0c0-4-4-5-6-9z"/></svg></button>
+      <button class="tool-btn" data-tool="pixelate" data-tool-tip="pixelate"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="8" height="8"/><rect x="13" y="3" width="8" height="8"/><rect x="3" y="13" width="8" height="8"/><rect x="13" y="13" width="8" height="8"/></svg></button>
       <div class="tool-sep"></div>
-      <button class="tool-btn" data-i18n-title="tools.select" title="Select (M)" data-tool="select"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-dasharray="4 3"><rect x="3" y="3" width="18" height="18" rx="1"/></svg></button>
-      <button class="tool-btn" data-i18n-title="tools.ellipse" title="Ellipse Select (O)" data-tool="ellipse"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-dasharray="4 3"><ellipse cx="12" cy="12" rx="9" ry="7"/></svg></button>
-      <button class="tool-btn" data-i18n-title="tools.lasso" title="Lasso (L)" data-tool="lasso"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 12c0-5 4-9 9-9s9 4 9 9-2 6-5 7"/><circle cx="16" cy="20" r="2.5"/></svg></button>
-      <button class="tool-btn" data-i18n-title="tools.wand" title="Magic Wand (W)" data-tool="wand"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 21L15 9"/><path d="M15 3l1 3 3 1-3 1-1 3-1-3-3-1 3-1z"/></svg></button>
-      <button class="tool-btn" data-i18n-title="tools.crop" title="Crop (C)" data-tool="crop"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M6 2v4"/><path d="M6 6h12v12"/><path d="M18 22v-4"/><path d="M18 18H6V6"/></svg></button>
-      <button class="tool-btn" data-i18n-title="tools.transform" title="Transform (V)" data-tool="transform"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="5" y="5" width="14" height="14"/><circle cx="5" cy="5" r="2" fill="currentColor"/><circle cx="19" cy="5" r="2" fill="currentColor"/><circle cx="5" cy="19" r="2" fill="currentColor"/><circle cx="19" cy="19" r="2" fill="currentColor"/></svg></button>
+      <button class="tool-btn" data-tool="select" data-tool-tip="select"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-dasharray="4 3"><rect x="3" y="3" width="18" height="18" rx="1"/></svg></button>
+      <button class="tool-btn" data-tool="ellipse" data-tool-tip="ellipse"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-dasharray="4 3"><ellipse cx="12" cy="12" rx="9" ry="7"/></svg></button>
+      <button class="tool-btn" data-tool="lasso" data-tool-tip="lasso"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 12c0-5 4-9 9-9s9 4 9 9-2 6-5 7"/><circle cx="16" cy="20" r="2.5"/></svg></button>
+      <button class="tool-btn" data-tool="wand" data-tool-tip="wand"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 21L15 9"/><path d="M15 3l1 3 3 1-3 1-1 3-1-3-3-1 3-1z"/></svg></button>
+      <button class="tool-btn" data-tool="crop" data-tool-tip="crop"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M6 2v4"/><path d="M6 6h12v12"/><path d="M18 22v-4"/><path d="M18 18H6V6"/></svg></button>
+      <button class="tool-btn" data-tool="transform" data-tool-tip="transform"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="5" y="5" width="14" height="14"/><circle cx="5" cy="5" r="2" fill="currentColor"/><circle cx="19" cy="5" r="2" fill="currentColor"/><circle cx="5" cy="19" r="2" fill="currentColor"/><circle cx="19" cy="19" r="2" fill="currentColor"/></svg></button>
       <div class="tool-spacer"></div>
       <div class="color-swatch" id="colorSwatch">
         <div class="color-fg" id="colorFg" style="background:#000000;"></div>
@@ -77,7 +77,7 @@
         <div>
           <canvas id="hsvWheel" width="160" height="160" style="cursor:crosshair;border-radius:4px;"></canvas>
           <div style="display:flex;gap:6px;margin-top:8px;align-items:center;">
-            <div id="fgBgSwap" style="position:relative;width:32px;height:32px;cursor:pointer;" title="Swap FG/BG (X)">
+            <div id="fgBgSwap" style="position:relative;width:32px;height:32px;cursor:pointer;" data-tool-tip="colorsSwap">
               <div id="bgSwatchInner" style="position:absolute;right:0;bottom:0;width:20px;height:20px;border:2px solid #555;border-radius:3px;background:#ffffff;"></div>
               <div id="fgSwatchInner" style="position:absolute;left:0;top:0;width:20px;height:20px;border:2px solid #999;border-radius:3px;background:#000000;"></div>
             </div>
@@ -115,7 +115,7 @@
         </span>
         <!-- Mask mode toggle (Q) — shown when brush is active -->
         <span class="ctx-item" data-ctx="mask-toggle" style="margin-left:4px;border-left:1px solid var(--border);padding-left:6px;">
-          <button class="ctx-mode-btn" id="maskModeBtn" data-i18n-title="ctxBar.maskToggle.tooltip" title="Toggle mask painting (Q)">Mask</button>
+          <button class="ctx-mode-btn" id="maskModeBtn" data-tool-tip="mask">Mask</button>
         </span>
         <!-- Pen pressure toggle + Size/Opacity sub-options -->
         <span class="ctx-item" data-ctx="pressure-opts" style="display:flex;gap:2px;margin-left:4px;border-left:1px solid var(--border);padding-left:6px;">
@@ -200,9 +200,9 @@
         </span>
         <!-- Lasso sub-options (shown when any lasso tool active) -->
         <span class="ctx-item" data-ctx="lasso-opts" style="display:flex;gap:2px;align-items:center;border-left:1px solid var(--border);padding-left:6px;">
-          <button class="ctx-mode-btn active" data-lassotype="lasso" data-i18n="lassoTool.free" data-i18n-title="lassoTool.free.tooltip" title="Freehand lasso (L)">Free</button>
-          <button class="ctx-mode-btn" data-lassotype="polylasso" data-i18n="lassoTool.poly" data-i18n-title="lassoTool.poly.tooltip" title="Polygonal lasso (L)">Poly</button>
-          <button class="ctx-mode-btn" data-lassotype="maglasso" data-i18n="lassoTool.mag" data-i18n-title="lassoTool.mag.tooltip" title="Magnetic lasso (L)">Mag</button>
+          <button class="ctx-mode-btn active" data-lassotype="lasso" data-i18n="lassoTool.free" data-tool-tip="lassoFree">Free</button>
+          <button class="ctx-mode-btn" data-lassotype="polylasso" data-i18n="lassoTool.poly" data-tool-tip="lassoPoly">Poly</button>
+          <button class="ctx-mode-btn" data-lassotype="maglasso" data-i18n="lassoTool.mag" data-tool-tip="lassoMag">Mag</button>
         </span>
       </div>
 
@@ -330,6 +330,13 @@
 
         <!-- ===== GENERATE TAB ===== -->
         <div class="panel-page active" id="page-generate" data-zone="panel">
+
+          <!-- Parameter search — sticky within the panel scroll container -->
+          <div class="param-search-wrap" id="paramSearchWrap">
+            <input class="param-search-input" id="paramSearchInput" type="text" placeholder="Search parameters" data-i18n-placeholder="panel.search.placeholder" spellcheck="false">
+            <span class="param-search-count" id="paramSearchCount"></span>
+            <button class="param-search-clear" id="paramSearchClear" data-i18n-title="panel.search.clear" title="Clear search">&#x2715;</button>
+          </div>
 
           <!-- Prompt -->
           <div class="prompt-section">
@@ -511,23 +518,23 @@
             </div>
             <div class="collapse-body open" id="panelSampling">
             <div class="param-grid cols-2">
-              <div class="param-cell">
+              <div class="param-cell" data-help="help.sampling.sampler">
                 <label>Sampler</label>
                 <select class="param-select" id="paramSampler">
                   <option>DPM++ 2M SDE</option>
                 </select>
               </div>
-              <div class="param-cell">
+              <div class="param-cell" data-help="help.sampling.scheduler">
                 <label>Scheduler</label>
                 <select class="param-select" id="paramScheduler">
                   <option>Karras</option>
                 </select>
               </div>
             </div>
-            <div class="param-grid cols-3" style="margin-top:5px;">
-              <div class="param-cell"><label>Steps</label><input class="param-val" id="paramSteps" value="30"></div>
-              <div class="param-cell"><label>CFG</label><input class="param-val" id="paramCFG" value="5.0"></div>
-              <div class="param-cell"><label>Denoise</label><input class="param-val" id="paramDenoise" value="0.81"></div>
+            <div class="param-grid cols-3 field-group">
+              <div class="param-cell" data-help="help.sampling.steps"><label>Steps</label><input class="param-val" id="paramSteps" value="30"></div>
+              <div class="param-cell" data-help="help.sampling.cfg"><label>CFG</label><input class="param-val" id="paramCFG" value="5.0"></div>
+              <div class="param-cell" data-help="help.sampling.denoise"><label>Denoise</label><input class="param-val" id="paramDenoise" value="0.81"></div>
             </div>
             </div>
           </div>
@@ -539,7 +546,7 @@
               <svg class="collapse-arrow open" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg>
             </div>
             <div class="collapse-body open" id="panelCanvas">
-            <div class="size-row-wrap">
+            <div class="size-row-wrap field-group">
               <div class="param-grid cols-2" style="flex:1;min-width:0;">
                 <div class="param-cell"><label>Width</label><input class="param-val" id="paramWidth" value="768"></div>
                 <div class="param-cell"><label>Height</label><input class="param-val" id="paramHeight" value="768"></div>
@@ -580,11 +587,11 @@
               <svg class="collapse-arrow open" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg>
             </div>
             <div class="collapse-body open" id="panelSeedBatch">
-            <div class="seed-row">
+            <div class="seed-row field-group">
               <div class="param-cell"><label>Seed</label><input class="param-val" id="paramSeed" value="-1" style="text-align:left;font-family:var(--mono);"></div>
               <button class="seed-btn" id="seedRandom" title="Random">&#x1f3b2;</button>
               <button class="seed-btn" id="seedRecycle" title="Recycle last">&#x1f501;</button>
-              <label class="extra-seed-toggle" title="Show variation seed options" style="margin:0;">
+              <label class="extra-seed-toggle" data-help="help.seed.extra" style="margin:0;">
                 <input type="checkbox" id="checkExtra"> Extra
               </label>
             </div>
@@ -608,7 +615,7 @@
                 <div class="param-cell"><label>Resize seed from height</label><input class="param-val" id="paramResizeSeedH" value="0"></div>
               </div>
             </div>
-            <div class="param-grid cols-2" style="margin-top:5px;">
+            <div class="param-grid cols-2 field-group">
               <div class="param-cell"><label>Batch</label><input class="param-val" id="paramBatch" value="1"></div>
               <div class="param-cell"><label>Batch Size</label><input class="param-val" id="paramBatchSize" value="1"></div>
             </div>
@@ -624,16 +631,17 @@
             </div>
             <div class="collapse-body" id="panelHires">
               <div class="param-grid cols-2" style="margin-top:4px;">
-                <div class="param-cell"><label>Upscaler</label><select class="param-select" id="paramHrUpscaler"><option>Latent</option><option>R-ESRGAN 4x+</option></select></div>
-                <div class="param-cell"><label>Scale</label><input class="param-val" id="paramHrScale" value="2.0"></div>
+                <div class="param-cell" data-help="help.hires.upscaler"><label>Upscaler</label><select class="param-select" id="paramHrUpscaler"><option>Latent</option><option>R-ESRGAN 4x+</option></select></div>
+                <div class="param-cell" data-help="help.hires.scale"><label>Scale</label><input class="param-val" id="paramHrScale" value="2.0"></div>
               </div>
-              <div class="param-grid cols-2" style="margin-top:5px;">
-                <div class="param-cell"><label>Steps</label><input class="param-val" id="paramHrSteps" value="0"></div>
-                <div class="param-cell"><label>Denoise</label><input class="param-val" id="paramHrDenoise" value="0.30"></div>
+              <div class="param-grid cols-2 field-group">
+                <div class="param-cell" data-help="help.hires.steps"><label>Steps</label><input class="param-val" id="paramHrSteps" value="0"></div>
+                <div class="param-cell" data-help="help.hires.denoise"><label>Denoise</label><input class="param-val" id="paramHrDenoise" value="0.30"></div>
               </div>
-              <div class="param-grid cols-2" style="margin-top:5px;">
-                <div class="param-cell"><label>CFG</label><input class="param-val" id="paramHrCFG" value="0"></div>
-                <div class="param-cell"><label>Checkpoint</label><select class="param-select" id="paramHrCheckpoint"><option>Same</option></select></div>
+              <div class="param-adv-toggle"><svg class="adv-caret" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg><span data-i18n="panel.advanced">Advanced</span></div>
+              <div class="param-grid cols-2 field-group secondary param-advanced">
+                <div class="param-cell" data-help="help.hires.cfg"><label>CFG</label><input class="param-val" id="paramHrCFG" value="0"></div>
+                <div class="param-cell" data-help="help.hires.checkpoint"><label>Checkpoint</label><select class="param-select" id="paramHrCheckpoint"><option>Same</option></select></div>
               </div>
             </div>
           </div>
@@ -653,15 +661,16 @@
                   <span style="font-size:10px;color:var(--text-3);font-weight:500;">Slot 1 — Face</span>
                 </div>
                 <div class="param-grid cols-2">
-                  <div class="param-cell"><label>Model</label><select class="param-select" id="paramAD1Model"><option>face_yolov8n.pt</option></select></div>
-                  <div class="param-cell"><label>Confidence</label><input class="param-val" id="paramAD1Conf" value="0.3"></div>
+                  <div class="param-cell" data-help="help.adetailer.model"><label>Model</label><select class="param-select" id="paramAD1Model"><option>face_yolov8n.pt</option></select></div>
+                  <div class="param-cell" data-help="help.adetailer.confidence"><label>Confidence</label><input class="param-val" id="paramAD1Conf" value="0.3"></div>
                 </div>
-                <div class="param-grid cols-2" style="margin-top:4px;">
-                  <div class="param-cell"><label>Denoise</label><input class="param-val" id="paramAD1Denoise" value="0.4"></div>
-                  <div class="param-cell"><label>Mask Blur</label><input class="param-val" id="paramAD1Blur" value="4"></div>
+                <div class="param-adv-toggle"><svg class="adv-caret" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg><span data-i18n="panel.advanced">Advanced</span></div>
+                <div class="param-grid cols-2 field-group secondary param-advanced">
+                  <div class="param-cell" data-help="help.adetailer.denoise"><label>Denoise</label><input class="param-val" id="paramAD1Denoise" value="0.4"></div>
+                  <div class="param-cell" data-help="help.adetailer.maskBlur"><label>Mask Blur</label><input class="param-val" id="paramAD1Blur" value="4"></div>
                 </div>
-                <div class="param-grid cols-1" style="margin-top:4px;">
-                  <div class="param-cell"><label>Prompt (blank = main)</label><input class="param-val" id="paramAD1Prompt" value="" style="text-align:left;font-family:var(--font);"></div>
+                <div class="param-grid cols-1 secondary param-advanced" style="margin-top:4px;">
+                  <div class="param-cell" data-help="help.adetailer.prompt"><label>Prompt (blank = main)</label><input class="param-val" id="paramAD1Prompt" value="" style="text-align:left;font-family:var(--font);"></div>
                 </div>
               </div>
               <!-- Slot 2 -->
@@ -670,16 +679,19 @@
                   <div class="collapse-check ad-slot-check" id="checkAD2"></div>
                   <span style="font-size:10px;color:var(--text-3);font-weight:500;">Slot 2</span>
                 </div>
+                <div class="enable-gated" data-gate="checkAD2" style="display:none;">
                 <div class="param-grid cols-2">
-                  <div class="param-cell"><label>Model</label><select class="param-select" id="paramAD2Model"><option>None</option></select></div>
-                  <div class="param-cell"><label>Confidence</label><input class="param-val" id="paramAD2Conf" value="0.3"></div>
+                  <div class="param-cell" data-help="help.adetailer.model"><label>Model</label><select class="param-select" id="paramAD2Model"><option>None</option></select></div>
+                  <div class="param-cell" data-help="help.adetailer.confidence"><label>Confidence</label><input class="param-val" id="paramAD2Conf" value="0.3"></div>
                 </div>
-                <div class="param-grid cols-2" style="margin-top:4px;">
-                  <div class="param-cell"><label>Denoise</label><input class="param-val" id="paramAD2Denoise" value="0.4"></div>
-                  <div class="param-cell"><label>Mask Blur</label><input class="param-val" id="paramAD2Blur" value="4"></div>
+                <div class="param-adv-toggle"><svg class="adv-caret" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg><span data-i18n="panel.advanced">Advanced</span></div>
+                <div class="param-grid cols-2 field-group secondary param-advanced">
+                  <div class="param-cell" data-help="help.adetailer.denoise"><label>Denoise</label><input class="param-val" id="paramAD2Denoise" value="0.4"></div>
+                  <div class="param-cell" data-help="help.adetailer.maskBlur"><label>Mask Blur</label><input class="param-val" id="paramAD2Blur" value="4"></div>
                 </div>
-                <div class="param-grid cols-1" style="margin-top:4px;">
-                  <div class="param-cell"><label>Prompt (blank = main)</label><input class="param-val" id="paramAD2Prompt" value="" style="text-align:left;font-family:var(--font);"></div>
+                <div class="param-grid cols-1 secondary param-advanced" style="margin-top:4px;">
+                  <div class="param-cell" data-help="help.adetailer.prompt"><label>Prompt (blank = main)</label><input class="param-val" id="paramAD2Prompt" value="" style="text-align:left;font-family:var(--font);"></div>
+                </div>
                 </div>
               </div>
               <!-- Slot 3 -->
@@ -688,16 +700,19 @@
                   <div class="collapse-check ad-slot-check" id="checkAD3"></div>
                   <span style="font-size:10px;color:var(--text-3);font-weight:500;">Slot 3</span>
                 </div>
+                <div class="enable-gated" data-gate="checkAD3" style="display:none;">
                 <div class="param-grid cols-2">
-                  <div class="param-cell"><label>Model</label><select class="param-select" id="paramAD3Model"><option>None</option></select></div>
-                  <div class="param-cell"><label>Confidence</label><input class="param-val" id="paramAD3Conf" value="0.3"></div>
+                  <div class="param-cell" data-help="help.adetailer.model"><label>Model</label><select class="param-select" id="paramAD3Model"><option>None</option></select></div>
+                  <div class="param-cell" data-help="help.adetailer.confidence"><label>Confidence</label><input class="param-val" id="paramAD3Conf" value="0.3"></div>
                 </div>
-                <div class="param-grid cols-2" style="margin-top:4px;">
-                  <div class="param-cell"><label>Denoise</label><input class="param-val" id="paramAD3Denoise" value="0.4"></div>
-                  <div class="param-cell"><label>Mask Blur</label><input class="param-val" id="paramAD3Blur" value="4"></div>
+                <div class="param-adv-toggle"><svg class="adv-caret" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg><span data-i18n="panel.advanced">Advanced</span></div>
+                <div class="param-grid cols-2 field-group secondary param-advanced">
+                  <div class="param-cell" data-help="help.adetailer.denoise"><label>Denoise</label><input class="param-val" id="paramAD3Denoise" value="0.4"></div>
+                  <div class="param-cell" data-help="help.adetailer.maskBlur"><label>Mask Blur</label><input class="param-val" id="paramAD3Blur" value="4"></div>
                 </div>
-                <div class="param-grid cols-1" style="margin-top:4px;">
-                  <div class="param-cell"><label>Prompt (blank = main)</label><input class="param-val" id="paramAD3Prompt" value="" style="text-align:left;font-family:var(--font);"></div>
+                <div class="param-grid cols-1 secondary param-advanced" style="margin-top:4px;">
+                  <div class="param-cell" data-help="help.adetailer.prompt"><label>Prompt (blank = main)</label><input class="param-val" id="paramAD3Prompt" value="" style="text-align:left;font-family:var(--font);"></div>
+                </div>
                 </div>
               </div>
             </div>
@@ -711,23 +726,22 @@
             </div>
             <div class="collapse-body" id="panelUpscale">
               <div class="param-grid cols-2" style="margin-top:4px;">
-                <div class="param-cell"><label>Upscaler</label><select class="param-select" id="paramUpscaleModel"><option>R-ESRGAN 4x+</option></select></div>
-                <div class="param-cell"><label>Scale</label><input class="param-val" id="paramUpscaleScale" value="2.0"></div>
+                <div class="param-cell" data-help="help.upscale.upscaler"><label>Upscaler</label><select class="param-select" id="paramUpscaleModel"><option>R-ESRGAN 4x+</option></select></div>
+                <div class="param-cell" data-help="help.upscale.scale"><label>Scale</label><input class="param-val" id="paramUpscaleScale" value="2.0"></div>
               </div>
-              <div style="margin-top:6px;display:flex;align-items:center;gap:6px;">
+              <div style="margin-top:6px;display:flex;align-items:center;gap:6px;" data-help="help.upscale.refine">
                 <div class="collapse-check" id="checkUpscaleRefine"></div>
                 <span style="font-size:10px;color:var(--text-3);">Refine after upscale (img2img pass)</span>
               </div>
-              <div style="margin-top:4px;display:flex;align-items:center;gap:6px;" id="upscaleADRow">
+              <div style="margin-top:4px;display:none;align-items:center;gap:6px;" id="upscaleADRow" class="enable-gated" data-gate="checkUpscaleRefine" data-gate-display="flex" data-help="help.upscale.runAD">
                 <div class="collapse-check" id="checkUpscaleAD"></div>
                 <span style="font-size:10px;color:var(--text-3);">Run ADetailer</span>
               </div>
-              <div class="param-grid cols-2" style="margin-top:4px;" id="upscaleRefineParams">
-                <div class="param-cell"><label>Steps</label><input class="param-val" id="paramUpscaleSteps" value="20"></div>
-                <div class="param-cell"><label>Denoise</label><input class="param-val" id="paramUpscaleDenoise" value="0.3"></div>
+              <div class="param-grid cols-2 field-group enable-gated" id="upscaleRefineParams" data-gate="checkUpscaleRefine" style="display:none;">
+                <div class="param-cell" data-help="help.upscale.steps"><label>Steps</label><input class="param-val" id="paramUpscaleSteps" value="20"></div>
+                <div class="param-cell" data-help="help.upscale.denoise"><label>Denoise</label><input class="param-val" id="paramUpscaleDenoise" value="0.3"></div>
               </div>
               <button class="gen-btn" id="upscaleBtn" style="margin-top:8px;background:var(--bg-raised);border:1px solid var(--border);color:var(--text-2);font-size:11px;height:30px;" data-i18n="actions.upscaleCanvas">UPSCALE CANVAS</button>
-              <div class="param-hint" style="margin-top:4px;font-size:9px;color:var(--text-4);" data-i18n="panels.upscale.hint">Single-call pipeline. Refine and ADetailer are independent: tick either, both, or neither. Steps/Denoise apply to the refine pass.</div>
             </div>
           </div>
 
@@ -745,31 +759,32 @@
                   <span style="font-size:10px;color:var(--text-3);font-weight:500;">Unit 1</span>
                 </div>
                 <div class="param-grid cols-2">
-                  <div class="param-cell"><label>Preprocessor</label><select class="param-select" id="paramCN1Module"><option>None</option></select></div>
-                  <div class="param-cell"><label>Model</label><select class="param-select" id="paramCN1Model"><option>None</option></select></div>
+                  <div class="param-cell" data-help="help.controlnet.preprocessor"><label>Preprocessor</label><select class="param-select" id="paramCN1Module"><option>None</option></select></div>
+                  <div class="param-cell" data-help="help.controlnet.model"><label>Model</label><select class="param-select" id="paramCN1Model"><option>None</option></select></div>
                 </div>
                 <div class="param-grid cols-2" style="margin-top:4px;">
-                  <div class="param-cell"><label>Source</label>
+                  <div class="param-cell secondary param-advanced" data-help="help.controlnet.source"><label>Source</label>
                     <select class="param-select" id="paramCN1Source">
                       <option value="Canvas">Canvas</option>
                       <option value="Active Layer">Active Layer</option>
                       <option value="Upload">Upload</option>
                     </select>
                   </div>
-                  <div class="param-cell"><label>Weight</label><input class="param-val" id="paramCN1Weight" value="1.0"></div>
+                  <div class="param-cell" data-help="help.controlnet.weight"><label>Weight</label><input class="param-val" id="paramCN1Weight" value="1.0"></div>
                 </div>
-                <div class="cn-upload-row" id="cnUpload1" style="display:none;margin-top:4px;">
+                <div class="param-adv-toggle"><svg class="adv-caret" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg><span data-i18n="panel.advanced">Advanced</span></div>
+                <div class="cn-upload-row param-advanced" id="cnUpload1" style="display:none;margin-top:4px;">
                   <button class="cn-upload-btn" id="cnUploadBtn1">Choose Image...</button>
                   <input type="file" id="cnUploadInput1" accept="image/*" style="display:none;">
                   <img class="cn-upload-thumb" id="cnUploadThumb1" style="display:none;">
                   <button class="cn-upload-clear" id="cnUploadClear1" style="display:none;" title="Remove">&#x2715;</button>
                 </div>
-                <div class="param-grid cols-2" style="margin-top:4px;">
-                  <div class="param-cell"><label>Start</label><input class="param-val" id="paramCN1Start" value="0.0"></div>
-                  <div class="param-cell"><label>End</label><input class="param-val" id="paramCN1End" value="1.0"></div>
+                <div class="param-grid cols-2 field-group secondary param-advanced">
+                  <div class="param-cell" data-help="help.controlnet.start"><label>Start</label><input class="param-val" id="paramCN1Start" value="0.0"></div>
+                  <div class="param-cell" data-help="help.controlnet.end"><label>End</label><input class="param-val" id="paramCN1End" value="1.0"></div>
                 </div>
-                <div class="param-grid cols-1" style="margin-top:4px;">
-                  <div class="param-cell"><label>Control mode</label>
+                <div class="param-grid cols-1 secondary param-advanced" style="margin-top:4px;">
+                  <div class="param-cell" data-help="help.controlnet.mode"><label>Control mode</label>
                     <select class="param-select" id="paramCN1Mode">
                       <option>Balanced</option>
                       <option>My prompt is more important</option>
@@ -784,38 +799,41 @@
                   <div class="collapse-check cn-unit-check" id="checkCN2"></div>
                   <span style="font-size:10px;color:var(--text-3);font-weight:500;">Unit 2</span>
                 </div>
+                <div class="enable-gated" data-gate="checkCN2" style="display:none;">
                 <div class="param-grid cols-2">
-                  <div class="param-cell"><label>Preprocessor</label><select class="param-select" id="paramCN2Module"><option>None</option></select></div>
-                  <div class="param-cell"><label>Model</label><select class="param-select" id="paramCN2Model"><option>None</option></select></div>
+                  <div class="param-cell" data-help="help.controlnet.preprocessor"><label>Preprocessor</label><select class="param-select" id="paramCN2Module"><option>None</option></select></div>
+                  <div class="param-cell" data-help="help.controlnet.model"><label>Model</label><select class="param-select" id="paramCN2Model"><option>None</option></select></div>
                 </div>
                 <div class="param-grid cols-2" style="margin-top:4px;">
-                  <div class="param-cell"><label>Source</label>
+                  <div class="param-cell secondary param-advanced" data-help="help.controlnet.source"><label>Source</label>
                     <select class="param-select" id="paramCN2Source">
                       <option value="Canvas">Canvas</option>
                       <option value="Active Layer">Active Layer</option>
                       <option value="Upload">Upload</option>
                     </select>
                   </div>
-                  <div class="param-cell"><label>Weight</label><input class="param-val" id="paramCN2Weight" value="1.0"></div>
+                  <div class="param-cell" data-help="help.controlnet.weight"><label>Weight</label><input class="param-val" id="paramCN2Weight" value="1.0"></div>
                 </div>
-                <div class="cn-upload-row" id="cnUpload2" style="display:none;margin-top:4px;">
+                <div class="param-adv-toggle"><svg class="adv-caret" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg><span data-i18n="panel.advanced">Advanced</span></div>
+                <div class="cn-upload-row param-advanced" id="cnUpload2" style="display:none;margin-top:4px;">
                   <button class="cn-upload-btn" id="cnUploadBtn2">Choose Image...</button>
                   <input type="file" id="cnUploadInput2" accept="image/*" style="display:none;">
                   <img class="cn-upload-thumb" id="cnUploadThumb2" style="display:none;">
                   <button class="cn-upload-clear" id="cnUploadClear2" style="display:none;" title="Remove">&#x2715;</button>
                 </div>
-                <div class="param-grid cols-2" style="margin-top:4px;">
-                  <div class="param-cell"><label>Start</label><input class="param-val" id="paramCN2Start" value="0.0"></div>
-                  <div class="param-cell"><label>End</label><input class="param-val" id="paramCN2End" value="1.0"></div>
+                <div class="param-grid cols-2 field-group secondary param-advanced">
+                  <div class="param-cell" data-help="help.controlnet.start"><label>Start</label><input class="param-val" id="paramCN2Start" value="0.0"></div>
+                  <div class="param-cell" data-help="help.controlnet.end"><label>End</label><input class="param-val" id="paramCN2End" value="1.0"></div>
                 </div>
-                <div class="param-grid cols-1" style="margin-top:4px;">
-                  <div class="param-cell"><label>Control mode</label>
+                <div class="param-grid cols-1 secondary param-advanced" style="margin-top:4px;">
+                  <div class="param-cell" data-help="help.controlnet.mode"><label>Control mode</label>
                     <select class="param-select" id="paramCN2Mode">
                       <option>Balanced</option>
                       <option>My prompt is more important</option>
                       <option>ControlNet is more important</option>
                     </select>
                   </div>
+                </div>
                 </div>
               </div>
             </div>
@@ -894,9 +912,16 @@
               <div class="setting-row" title="Uses the GPU/WebGL display backend for sharper color-managed canvas preview. Falls back to standard Canvas 2D if unavailable. Does not change exported pixels."><span class="setting-label">GPU canvas preview</span><div class="toggle-track" id="toggleCanvasColorPreview"><div class="toggle-knob"></div></div></div>
               <!-- Pen pressure is now on the brush context bar -->
             </div>
+            <div class="setting-group" id="keyboardShortcutsSettings">
+              <div class="setting-group-title" data-i18n="settings.shortcuts.title">Keyboard Shortcuts</div>
+              <p class="shortcut-settings-note" data-i18n="settings.shortcuts.description">Change a shortcut by pressing the key you want. Bind by character for your current layout, or by physical position for layout-independent muscle memory.</p>
+              <div id="shortcutSettingsRows"></div>
+              <button class="defaults-btn defaults-btn-reset" id="shortcutResetAll" data-i18n="settings.shortcuts.resetAll">Reset all to defaults</button>
+            </div>
             <div class="setting-group">
               <div class="setting-group-title" data-i18n="settings.generation.title">Generation</div>
               <div class="setting-row"><span class="setting-label" data-i18n="settings.generation.saveOutputs">Save outputs</span><div class="toggle-track on" id="toggleSaveOutputs"><div class="toggle-knob"></div></div></div>
+              <div class="setting-row" data-i18n-title="settings.archShowAll.tooltip" title="Show parameters even when the loaded model's architecture doesn't use them."><span class="setting-label" data-i18n="settings.archShowAll">Always show all parameters</span><div class="toggle-track" id="toggleArchShowAll"><div class="toggle-knob"></div></div></div>
               <div class="setting-row" data-i18n-title="settings.generation.sessionLimit.tooltip" title="How many recent results the session keeps (8–200). Entries that fall off are gone from the session; unsaved scratch previews are deleted with them. Saved files on disk are never touched.">
                 <span class="setting-label" data-i18n="settings.generation.sessionLimit">Session history size</span>
                 <input type="number" class="param-val" id="settingSessionLimit" min="8" max="200" step="1" value="50" style="width:64px;">
@@ -1134,6 +1159,13 @@
                 <button class="layout-btn" data-layout-preset="deck" data-i18n="settings.layout.deck">Deck</button>
               </div>
               <div class="setting-row" style="margin-top:8px;">
+                <span class="setting-label" data-i18n="settings.density.title">Density</span>
+              </div>
+              <div class="theme-selector" id="densitySelector">
+                <button class="layout-btn active" data-density="comfortable" data-i18n="settings.density.comfortable">Comfortable</button>
+                <button class="layout-btn" data-density="compact" data-i18n="settings.density.compact">Compact</button>
+              </div>
+              <div class="setting-row" style="margin-top:8px;">
                 <span class="setting-label" data-i18n="settings.layout.customize">Customize layout</span>
                 <div class="toggle-track" id="toggleCustomize"><div class="toggle-knob"></div></div>
               </div>
@@ -1275,7 +1307,8 @@
 // Auto cache-bust: load scripts in order with timestamp
 (async () => {
   const scripts = [
-    "ag-psd.js", "png-metadata.js", "i18n.js", "searchable-select.js", "canvas-core.js",
+    "ag-psd.js", "png-metadata.js", "i18n.js", "prefs.js", "shortcuts.js",
+    "searchable-select.js", "canvas-core.js",
     "canvas-ui.js", "workflow-state.js", "app.js", "workflows.js",
     "module-system.js", "studio-tour.js", "studio-docs.js", "tag-complete.js",
     "lora-browser.js", "lora-stack.js", "wildcard-browser.js"
@@ -1283,7 +1316,7 @@
   // Optional modules — loaded if available, silently skipped if not.
   // debug.js exposes window.StudioDebug.* — dev-tools-only, no UI.
   const optionalScripts = ["develop.js", "workshop.js", "lexicon.js", "education.js", "codex.js", "studio-showme.js", "gallery.js", "module-tours.js", "debug.js", "canvas-webgl-preview.js"];
-  const v = "4.10.0";
+  const v = "4.13.2";
   window.__STUDIO_V = v;
   for (const s of scripts) {
     await new Promise((resolve, reject) => {

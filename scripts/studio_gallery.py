@@ -615,8 +615,11 @@ def extract_search_text(filepath):
         meta = extract_metadata(filepath)
         parts = []
         for k, v in meta.items():
-            if k in ("negative_prompt", "error", "raw_parameters",
-                      "comfyui_prompt", "comfyui_workflow", "file_size"):
+            if k in (
+                "negative_prompt", "negative_template", "error",
+                "raw_parameters", "comfyui_prompt", "comfyui_workflow",
+                "file_size", "studio_dynamic_prompts",
+            ):
                 continue
             if v is not None and str(v).strip():
                 parts.append(str(v).strip())
@@ -1748,29 +1751,55 @@ def parse_sd_parameters(text):
         return result
     lines = text.strip().split('\n')
     prompt_lines, negative_lines, settings_line = [], [], ""
-    in_negative = False
+    template_lines, neg_template_lines = [], []
+
+    # Continuation-line bucket. Studio and dynamic-prompt extensions can
+    # append metadata after the settings line. Once settings/meta begins,
+    # unknown trailer lines must never fall back into the positive prompt.
+    mode = "prompt"
+    buckets = {
+        "prompt": prompt_lines,
+        "negative": negative_lines,
+        "template": template_lines,
+        "neg_template": neg_template_lines,
+    }
+
     for line in lines:
         if line.startswith("Negative prompt:"):
-            in_negative = True
+            mode = "negative"
             negative_lines.append(line[len("Negative prompt:"):].strip())
+        elif line.startswith("Negative Template:"):
+            mode = "neg_template"
+            neg_template_lines.append(line[len("Negative Template:"):].strip())
+        elif line.startswith("Template:"):
+            mode = "template"
+            template_lines.append(line[len("Template:"):].strip())
+        elif line.startswith("Studio dynamic prompts:"):
+            mode = "meta"
+            result["studio_dynamic_prompts"] = line[len("Studio dynamic prompts:"):].strip()
         elif re.match(r'^(Steps|Sampler|CFG scale|Seed|Size|Model|Model hash|Clip skip)', line):
             settings_line = line
-            in_negative = False
-        elif in_negative:
-            negative_lines.append(line)
+            mode = "meta"
         else:
             m = re.search(r'(Steps:\s*\d+.*)', line)
             if m:
                 settings_line = m.group(1)
                 pre = line[:m.start()].strip()
-                if pre:
-                    (negative_lines if in_negative else prompt_lines).append(pre)
-            else:
-                prompt_lines.append(line)
+                if pre and mode in buckets:
+                    buckets[mode].append(pre)
+                mode = "meta"
+            elif mode in buckets:
+                buckets[mode].append(line)
+            # mode == "meta": unknown extension trailer; intentionally drop.
+
     if prompt_lines:
         result["prompt"] = '\n'.join(prompt_lines).strip()[:2000]
     if negative_lines:
         result["negative_prompt"] = '\n'.join(negative_lines).strip()[:1000]
+    if template_lines:
+        result["template"] = '\n'.join(template_lines).strip()[:2000]
+    if neg_template_lines:
+        result["negative_template"] = '\n'.join(neg_template_lines).strip()[:1000]
     if settings_line:
         for key, pat in {
             "steps": r'Steps:\s*(\d+)',

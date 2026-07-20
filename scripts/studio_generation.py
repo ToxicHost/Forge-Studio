@@ -2893,9 +2893,15 @@ def run_generation(
                     # Post-process mask composite (img2img inpaint only — clips
                     # leakage outside the mask; img2img post-hires already fell
                     # back, so the float stays aligned to the final pixels).
+                    # Tracks composite success: pixels outside the mask come
+                    # from the canvas, which may already carry a watermark —
+                    # stamping again would double it. If the clip throws, no
+                    # composite happened and watermarking must still run.
+                    _mask_composite_applied = False
                     if has_mask and mask_img and canvas_img and not is_txt2img:
                         try:
                             result = _clip_to_mask(result, canvas_img, mask_img, ip)
+                            _mask_composite_applied = True
                             if high_precision:
                                 from PIL import ImageFilter
                                 _soft = mask_img.convert("L").resize(result.size, Image.LANCZOS)
@@ -2909,7 +2915,10 @@ def run_generation(
                             print(f"[Studio] Post-process mask composite error: {_ce}")
 
                     # Watermark — last pixel-level post-process at final res.
-                    if watermark and watermark.get("enable"):
+                    # Skipped after a successful mask composite: unmasked
+                    # regions are canvas pixels that may already be
+                    # watermarked from a previous generation.
+                    if watermark and watermark.get("enable") and not _mask_composite_applied:
                         result, wm_changed = apply_watermark(result, watermark)
                         if wm_changed:
                             hp_post_processed = True
@@ -3258,12 +3267,18 @@ def run_generation(
                 # ── Post-process mask composite ─────────────────────────
                 # Clips any changes from non-AD postprocess callbacks that
                 # leaked outside the inpaint mask.
+                # Tracks composite success: pixels outside the mask come from
+                # the canvas, which may already carry a watermark — stamping
+                # again would double it. If the clip throws, no composite
+                # happened and watermarking must still run.
+                _mask_composite_applied = False
                 if has_mask and mask_img and canvas_img and not is_txt2img:
                     try:
                         # Clip is dilated-binary (see _clip_to_mask) — avoids
                         # the M² double-composite that washes out high
                         # mask_blur values.
                         result = _clip_to_mask(result, canvas_img, mask_img, ip)
+                        _mask_composite_applied = True
                         # HP V2: brush mask is white where VAE was inpainted
                         # (we want float there). Invert so blend_mask is
                         # white *outside* the brush — that's where the
@@ -3304,7 +3319,10 @@ def run_generation(
                 # flags hp_post_processed when pixels actually changed, so a
                 # disabled/empty/invalid/opacity-0 watermark stays a true
                 # no-op and keeps the High Precision float sidecar.
-                if watermark and watermark.get("enable"):
+                # Skipped after a successful mask composite: unmasked regions
+                # are canvas pixels that may already be watermarked from a
+                # previous generation.
+                if watermark and watermark.get("enable") and not _mask_composite_applied:
                     result, wm_changed = apply_watermark(result, watermark)
                     if wm_changed:
                         hp_post_processed = True

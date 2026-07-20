@@ -364,7 +364,7 @@ let _liveEntrySeq = 0;
 
 // User-configurable session history cap (Settings → "Session history size").
 function _sessionLimit() {
-  const raw = parseInt(localStorage.getItem("studio-session-limit") || "", 10);
+  const raw = parseInt(window.Prefs?.get("session_limit", 50), 10);
   const v = isNaN(raw) ? 50 : raw;
   return Math.max(8, Math.min(200, v));
 }
@@ -1237,53 +1237,108 @@ const UpdateBanner = {
 // TEXT ENCODER MEMORY HELPERS
 // ═══════════════════════════════════════════
 //
-// Studio remembers the user's last external Text Encoder pick per
-// model title AND per architecture. Architecture-level memory lets us
-// restore an Anima/Cosmos TE when the user returns to an Anima/Cosmos
+// Studio remembers the user's last external Text Encoder AND VAE pick
+// per model title, plus per architecture. Architecture-level memory lets
+// us restore an Anima/Cosmos TE when the user returns to an Anima/Cosmos
 // model after a detour through SDXL/Flux/etc., without ever carrying
 // a Cosmos TE into an arch that didn't ask for it.
 //
-// Persisted shape:
+// Persisted shape (server preference "component_memory", v2):
 //   {
-//     by_model: { "<title>": "<te_filename>" },
-//     by_arch:  { "<arch>":  "<te_filename>" }
+//     version: 2,
+//     by_model: { "<title>": { te: "<file>", vae: "<file>" | null } },
+//     by_arch:  { "<arch>":  { te: "<file>", vae: "<file>" } }
 //   }
 //
-// Older builds wrote a flat `{ title: te }` object; _normalizeTeMemory
-// migrates that on read.
+// A model entry whose own `vae` is null records an explicit
+// Automatic/None pick for that model: VAE fallback stops there, while
+// the architecture memory other models rely on stays intact.
+//
+// Older builds wrote a flat `{ title: te }` object or a TE-only
+// `{ by_model: { title: te }, by_arch: { arch: te } }`;
+// _normalizeComponentMemory migrates both on read. The "unknown"
+// architecture never reads or writes by_arch — two unrelated undetected
+// models must not share components through it.
 
-function _readTeMemory() {
+function _isUsableArch(arch) {
+  return !!arch && arch !== "unknown";
+}
+
+function _normalizeComponentMemory(raw) {
+  const out = { version: 2, by_model: {}, by_arch: {} };
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return out;
+
+  const normEntry = (entry, allowNullVae) => {
+    if (typeof entry === "string") return entry ? { te: entry } : null;
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+    const e = {};
+    if (typeof entry.te === "string" && entry.te) e.te = entry.te;
+    if (typeof entry.vae === "string" && entry.vae) {
+      e.vae = entry.vae;
+    } else if (allowNullVae && entry.vae === null && "vae" in entry) {
+      e.vae = null;
+    }
+    return Object.keys(e).length ? e : null;
+  };
+
+  let byModel = raw.by_model;
+  let byArch = raw.by_arch;
+  if (!byModel && !byArch) {
+    // Legacy flat shape: title -> te filename
+    byModel = raw;
+    byArch = {};
+  }
+  if (byModel && typeof byModel === "object" && !Array.isArray(byModel)) {
+    for (const title of Object.keys(byModel)) {
+      const e = normEntry(byModel[title], true);
+      if (e) out.by_model[title] = e;
+    }
+  }
+  if (byArch && typeof byArch === "object" && !Array.isArray(byArch)) {
+    for (const arch of Object.keys(byArch)) {
+      if (!_isUsableArch(arch)) continue;
+      const e = normEntry(byArch[arch], false);
+      if (e) out.by_arch[arch] = e;
+    }
+  }
+  return out;
+}
+
+function _ensureMemoryEntry(map, key) {
+  if (!map[key] || typeof map[key] !== "object") map[key] = {};
+  return map[key];
+}
+
+function _readComponentMemory() {
   try {
-    return _normalizeTeMemory(JSON.parse(localStorage.getItem("studio_te_memory") || "{}"));
+    return _normalizeComponentMemory(window.Prefs?.get("component_memory", {}));
   } catch (_) {
-    return { by_model: {}, by_arch: {} };
+    return { version: 2, by_model: {}, by_arch: {} };
   }
 }
 
+function _writeComponentMemory(mem) {
+  window.Prefs?.set("component_memory", mem || { version: 2, by_model: {}, by_arch: {} });
+}
+
+// Compatibility wrappers — TE-era call sites keep their names but read
+// and write the shared v2 component store.
+function _readTeMemory() {
+  return _readComponentMemory();
+}
+
 function _writeTeMemory(mem) {
-  try {
-    localStorage.setItem("studio_te_memory", JSON.stringify(mem || { by_model: {}, by_arch: {} }));
-  } catch (_) {}
+  _writeComponentMemory(mem);
 }
 
 function _optionExists(select, value) {
   return !!(select && value && [...select.options].some(o => o.value === value));
 }
 
-function _teArchKey(arch) {
-  return arch || "unknown";
-}
-
-function _normalizeTeMemory(raw) {
-  if (!raw || typeof raw !== "object") return { by_model: {}, by_arch: {} };
-  if (raw.by_model || raw.by_arch) {
-    return {
-      by_model: raw.by_model || {},
-      by_arch: raw.by_arch || {},
-    };
-  }
-  // Legacy flat shape: title -> te filename
-  return { by_model: raw, by_arch: {} };
+// Refresh an already-wrapped searchable select's trigger label after a
+// programmatic .value set (no-op for native selects).
+function _syncSelectUI(sel) {
+  try { sel?._studioSSelHandle?.refresh?.(); } catch (_) {}
 }
 
 async function checkModelTE(title) {
@@ -1299,10 +1354,28 @@ async function checkModelTE(title) {
 
 function rememberExternalTE(modelTitle, arch, teName) {
   if (!modelTitle || !teName || teName === "None") return;
-  const mem = _readTeMemory();
-  mem.by_model[modelTitle] = teName;
-  if (arch) mem.by_arch[_teArchKey(arch)] = teName;
-  _writeTeMemory(mem);
+  const mem = _readComponentMemory();
+  _ensureMemoryEntry(mem.by_model, modelTitle).te = teName;
+  if (_isUsableArch(arch)) _ensureMemoryEntry(mem.by_arch, arch).te = teName;
+  _writeComponentMemory(mem);
+}
+
+// Remember the user's VAE pick for a model. A concrete name also updates
+// architecture memory; null records the explicit Automatic/None opt-out
+// for this model only (architecture memory stays untouched so other
+// models of the same arch keep their fallback).
+function rememberVAE(modelTitle, arch, vaeNameOrNull) {
+  if (!modelTitle) return;
+  const mem = _readComponentMemory();
+  if (vaeNameOrNull === null) {
+    _ensureMemoryEntry(mem.by_model, modelTitle).vae = null;
+  } else if (vaeNameOrNull && vaeNameOrNull !== "Automatic" && vaeNameOrNull !== "None") {
+    _ensureMemoryEntry(mem.by_model, modelTitle).vae = vaeNameOrNull;
+    if (_isUsableArch(arch)) _ensureMemoryEntry(mem.by_arch, arch).vae = vaeNameOrNull;
+  } else {
+    return;
+  }
+  _writeComponentMemory(mem);
 }
 
 // Restore the TE dropdown for the given model with architecture-aware
@@ -1363,20 +1436,26 @@ async function restoreTextEncoderForModel(modelTitle, reason = "model-change", o
     return check;
   }
 
-  const mem = _readTeMemory();
+  const mem = _readComponentMemory();
   const previousArch = opts.previousArch || null;
-  const sameArch = !previousArch || previousArch === arch;
+  // Carry the current/preferred TE only on a CONFIRMED same-architecture
+  // transition. An unknown architecture on either side is not proof of a
+  // match — two undetected models must not share components.
+  const sameArch = _isUsableArch(previousArch) && _isUsableArch(arch)
+      && previousArch === arch;
 
   const candidates = [];
   // Exact model memory is always safest.
-  candidates.push(mem.by_model?.[modelTitle]);
+  candidates.push(mem.by_model?.[modelTitle]?.te);
   // Same architecture can reuse the currently selected/preferred TE.
   if (sameArch) {
     candidates.push(opts.preferredTE);
     if (teSelect.value !== "None") candidates.push(teSelect.value);
   }
-  // Architecture-level memory is allowed for the target arch.
-  candidates.push(mem.by_arch?.[_teArchKey(arch)]);
+  // Architecture-level memory is allowed for a usable target arch only.
+  if (_isUsableArch(arch)) {
+    candidates.push(mem.by_arch?.[arch]?.te);
+  }
 
   const restored = candidates.find(v => v && v !== "None" && _optionExists(teSelect, v));
 
@@ -1385,11 +1464,125 @@ async function restoreTextEncoderForModel(modelTitle, reason = "model-change", o
   } else {
     teSelect.value = "None";
     if ((State._textEncoderList || []).length > 0) {
-      showToast("This model needs a text encoder — select one above", "info");
+      showToast(
+        _i18n("toast.te.needed", "This model needs a text encoder — select one above"),
+        "info",
+      );
     }
   }
 
   return check;
+}
+
+// Restore the VAE dropdown for the given model with the same
+// architecture-aware rules as restoreTextEncoderForModel. The VAE row is
+// visible for every architecture; "Automatic" is the neutral state.
+//
+// reason:
+//   "model-change" / "post-generation" — normal restore from memory
+//   "workflow-apply" / "session-restore" / "generation-preflight" /
+//   "vae-change" — an explicit value is already in the dropdown; keep it
+//                  and only fall back to Automatic if it no longer exists
+//
+// opts.previousArch — arch of the previously loaded model.
+// opts.preferredVAE — caller-captured value from before an options rebuild.
+// opts.check        — existing /check_model_te payload (avoids a refetch).
+//
+// Returns true when a decision was made that later fallbacks (e.g.
+// /studio/current_vae) must not overwrite — memory hit, explicit
+// Automatic sentinel, or missing-file degrade; false when there was no
+// memory to apply. Never guesses a VAE.
+async function restoreVAEForModel(modelTitle, reason = "model-change", opts = {}) {
+  const vaeSelect = document.getElementById("paramVAE");
+  if (!modelTitle || !vaeSelect) return false;
+
+  const check = opts.check || await checkModelTE(modelTitle);
+  const arch = check.arch || "unknown";
+
+  // Explicit user/workflow/session/preflight-driven values win over
+  // memory — only degrade a selection whose file no longer exists.
+  if (reason === "workflow-apply" || reason === "session-restore"
+      || reason === "generation-preflight" || reason === "vae-change") {
+    if (!_optionExists(vaeSelect, vaeSelect.value)) {
+      if ((reason === "session-restore" || reason === "generation-preflight")
+          && vaeSelect.value && vaeSelect.value !== "Automatic" && vaeSelect.value !== "None") {
+        showToast(
+          _i18n("toast.vae.savedMissing", "Saved VAE not found; using current/default VAE"),
+          "info",
+        );
+      }
+      vaeSelect.value = "Automatic";
+      _syncSelectUI(vaeSelect);
+    }
+    return true;
+  }
+
+  const mem = _readComponentMemory();
+  const entry = mem.by_model?.[modelTitle];
+
+  // 1. Exact model memory (including the explicit Automatic opt-out).
+  if (entry && Object.prototype.hasOwnProperty.call(entry, "vae")) {
+    if (entry.vae === null) {
+      // User explicitly chose Automatic/None for this model — stop all
+      // fallback here; architecture memory stays for other models.
+      vaeSelect.value = "Automatic";
+      _syncSelectUI(vaeSelect);
+      return true;
+    }
+    if (_optionExists(vaeSelect, entry.vae)) {
+      vaeSelect.value = entry.vae;
+      _syncSelectUI(vaeSelect);
+      return true;
+    }
+    // Remembered file was deleted — degrade to the explicit opt-out so
+    // the phantom name can't resurface on the next restore.
+    showToast(
+      _i18n("toast.vae.savedMissing", "Saved VAE not found; using current/default VAE"),
+      "info",
+    );
+    vaeSelect.value = "Automatic";
+    _syncSelectUI(vaeSelect);
+    const memW = _readComponentMemory();
+    _ensureMemoryEntry(memW.by_model, modelTitle).vae = null;
+    _writeComponentMemory(memW);
+    return true;
+  }
+
+  // 2. Confirmed same-architecture carry. An unknown architecture on
+  //    either side is not proof of a match.
+  const previousArch = opts.previousArch || null;
+  const sameArch = _isUsableArch(previousArch) && _isUsableArch(arch)
+      && previousArch === arch;
+  if (sameArch) {
+    const carry = [opts.preferredVAE, vaeSelect.value].find(
+      v => v && v !== "Automatic" && v !== "None" && _optionExists(vaeSelect, v));
+    if (carry) {
+      vaeSelect.value = carry;
+      _syncSelectUI(vaeSelect);
+      return true;
+    }
+  }
+
+  // 3. Architecture memory (usable target arch only).
+  if (_isUsableArch(arch)) {
+    const archVae = mem.by_arch?.[arch]?.vae;
+    if (archVae && _optionExists(vaeSelect, archVae)) {
+      vaeSelect.value = archVae;
+      _syncSelectUI(vaeSelect);
+      return true;
+    }
+  }
+
+  // 4. No candidate — never guess a VAE.
+  vaeSelect.value = "Automatic";
+  _syncSelectUI(vaeSelect);
+  if (check.needs_vae) {
+    showToast(
+      _i18n("toast.vae.needed", "This model needs a VAE — select one above"),
+      "info",
+    );
+  }
+  return false;
 }
 
 
@@ -1603,41 +1796,58 @@ async function populateDropdowns() {
 
     // VAE dropdown (async, non-blocking).
     //
-    // Restore priority: a session/defaults-stashed value (pendingValue) or
-    // the value already selected wins over /studio/current_vae. current_vae
-    // reflects what Forge has loaded *right now*, which at boot is the
-    // default — letting it speak first would silently stomp the user's
-    // saved VAE before the post-restore sync can re-apply it.
-    fetch(API.base + "/studio/vaes").then(r => r.json()).then(vaes => {
+    // Restore priority: a session/defaults-stashed value (pendingValue)
+    // wins, then per-model/arch component memory for the selected model,
+    // then /studio/current_vae. current_vae reflects what Forge has loaded
+    // *right now*, which at boot is the default — letting it speak first
+    // would silently stomp the user's saved VAE before the post-restore
+    // sync can re-apply it, and it must never overwrite a successful
+    // per-model memory restore.
+    const vaeBeforePopulate = document.getElementById("paramVAE")?.value || "";
+    if (modelBeforePopulate && vaeBeforePopulate
+        && vaeBeforePopulate !== "Automatic" && vaeBeforePopulate !== "None") {
+      // Fire-and-forget stash mirroring the TE snapshot above, so refresh
+      // cycles never lose the current concrete pick.
+      checkModelTE(modelBeforePopulate).then(c => {
+        rememberVAE(modelBeforePopulate, c.arch, vaeBeforePopulate);
+      });
+    }
+    fetch(API.base + "/studio/vaes").then(r => r.json()).then(async vaes => {
       const vaeSelect = document.getElementById("paramVAE");
       if (!vaeSelect) return;
       const pendingVAE = vaeSelect.dataset.pendingValue || "";
-      const prev = pendingVAE || vaeSelect.value;
       vaeSelect.innerHTML = vaes.map(v =>
         `<option value="${v.name}">${v.name}</option>`
       ).join("");
+      delete vaeSelect.dataset.pendingValue;
 
-      // Priority 1/2: honor the saved (pending) value, or a meaningful
-      // existing selection, if it still exists. "Automatic" is the
-      // placeholder for "no explicit VAE" — when it's merely the current
-      // dropdown state (not an explicitly saved choice) we let current_vae
-      // speak so a fresh boot still reflects Forge's actual loaded VAE.
-      if (prev && _optionExists(vaeSelect, prev) && (pendingVAE || prev !== "Automatic")) {
-        vaeSelect.value = prev;
-        delete vaeSelect.dataset.pendingValue;
+      // Priority 1: honor an explicit session/defaults-stashed value —
+      // memory must not clobber it ("session-restore" semantics).
+      if (pendingVAE) {
+        if (_optionExists(vaeSelect, pendingVAE)) {
+          vaeSelect.value = pendingVAE;
+        } else {
+          // A saved VAE that no longer exists shouldn't block generation.
+          showToast(
+            _i18n("toast.vae.savedMissing", "Saved VAE not found; using current/default VAE"),
+            "info",
+          );
+          vaeSelect.value = "Automatic";
+        }
         _syncSearchable(vaeSelect);
         return;
       }
 
-      // A saved VAE that no longer exists shouldn't block generation —
-      // warn and fall through to current/default.
-      if (pendingVAE) {
-        showToast(
-          _i18n("toast.vae.savedMissing", "Saved VAE not found; using current/default VAE"),
-          "info",
-        );
+      // Priority 2: per-model/arch component memory for the selected model.
+      const currentModel = document.getElementById("paramModel")?.value || modelBeforePopulate;
+      if (currentModel) {
+        const decided = await restoreVAEForModel(currentModel, "model-change", {
+          previousArch: previousArchForRestore,
+          preferredVAE: vaeBeforePopulate,
+        });
+        _syncSearchable(vaeSelect);
+        if (decided) return;
       }
-      delete vaeSelect.dataset.pendingValue;
 
       // Priority 3: fall back to whatever Forge actually has loaded.
       fetch(API.base + "/studio/current_vae").then(r => r.json()).then(current => {
@@ -1680,6 +1890,7 @@ async function populateDropdowns() {
           previousArch: previousArchForRestore,
         });
         State._currentModelArch = check.arch || "unknown";
+        _applyArchRules(State._currentModelArch);
         delete teSelect.dataset.pendingValue;
         _syncSearchable(teSelect);
       } else if (teSelect) {
@@ -2876,6 +3087,259 @@ function formatTimeAgo(date) {
 // UI INTERACTIONS
 // ═══════════════════════════════════════════
 
+// ── Panel disclosure helpers (Advanced tier + enable-gated bodies) ──
+// Expander state persists per block under the server preference
+// panel_ui = { advanced_open: { "<blockId>": true } }. Enable-gated
+// bodies simply follow their checkbox's .checked class.
+
+function _readPanelUi() {
+  const v = window.Prefs?.get("panel_ui");
+  return (v && typeof v === "object" && !Array.isArray(v)) ? v : {};
+}
+
+function _advancedOpen(blockId) {
+  const adv = _readPanelUi().advanced_open;
+  return !!(adv && typeof adv === "object" && adv[blockId]);
+}
+
+function _setAdvancedOpen(blockId, open) {
+  const ui = _readPanelUi();
+  const adv = (ui.advanced_open && typeof ui.advanced_open === "object"
+      && !Array.isArray(ui.advanced_open)) ? ui.advanced_open : {};
+  if (open) adv[blockId] = true;
+  else delete adv[blockId];
+  ui.advanced_open = adv;
+  window.Prefs?.set("panel_ui", ui);
+}
+
+// Read-modify-write one inner map of panel_ui (blocks_open /
+// sections_open). Always posts the whole panel_ui key — inner objects
+// are never sent as separate preference keys.
+function _setPanelUiFlag(mapKey, id, value) {
+  const ui = _readPanelUi();
+  const map = (ui[mapKey] && typeof ui[mapKey] === "object"
+      && !Array.isArray(ui[mapKey])) ? ui[mapKey] : {};
+  map[id] = !!value;
+  ui[mapKey] = map;
+  window.Prefs?.set("panel_ui", ui);
+}
+
+// Re-apply remembered collapse states at boot (keys absent → the markup
+// default stands). Runs after Prefs.load() and after layout apply.
+// NOTE: when Phase 2 task presets land, preset application is expected
+// to overwrite blocks_open wholesale.
+function _applyStoredCollapseState() {
+  const ui = _readPanelUi();
+  const blocks = (ui.blocks_open && typeof ui.blocks_open === "object"
+      && !Array.isArray(ui.blocks_open)) ? ui.blocks_open : {};
+  for (const [blockId, open] of Object.entries(blocks)) {
+    const sec = document.querySelector(
+      `#page-generate .collapse-section[data-block="${blockId}"]`);
+    const body = sec?.querySelector(".collapse-body");
+    if (!body) continue;
+    body.classList.toggle("open", !!open);
+    body.style.maxHeight = open ? "none" : "";
+    sec.querySelector(".collapse-arrow")?.classList.toggle("open", !!open);
+  }
+  const sections = (ui.sections_open && typeof ui.sections_open === "object"
+      && !Array.isArray(ui.sections_open)) ? ui.sections_open : {};
+  for (const [id, open] of Object.entries(sections)) {
+    const body = document.getElementById(id);
+    if (!body) continue;
+    body.classList.toggle("collapsed", !open);
+    document.querySelector(`.section-header[data-collapse="${id}"]`)
+      ?.classList.toggle("collapsed", !open);
+  }
+  _schedulePanelBadgeRefresh();
+}
+
+// Reflect remembered expander state onto each block that has an
+// Advanced tier: .adv-open on the section shows its .param-advanced
+// members; every toggle caret in the block follows the shared state.
+function _syncAdvancedUI() {
+  document.querySelectorAll("#page-generate .collapse-section[data-block]").forEach(sec => {
+    if (!sec.querySelector(".param-adv-toggle")) return;
+    const open = _advancedOpen(sec.dataset.block);
+    sec.classList.toggle("adv-open", open);
+    sec.querySelectorAll(".param-adv-toggle").forEach(t => t.classList.toggle("open", open));
+  });
+}
+
+// Show each [data-gate] region only while its enable checkbox is
+// checked. Hidden regions keep their values live — generation and
+// defaults read inputs by ID regardless of visibility.
+function _syncEnableGates() {
+  document.querySelectorAll("#page-generate [data-gate]").forEach(el => {
+    const on = document.getElementById(el.dataset.gate)?.classList.contains("checked");
+    el.style.display = on ? (el.dataset.gateDisplay || "") : "none";
+  });
+}
+
+// ── Model-adaptive control visibility ───────────────────────────────
+// Hides controls that do not apply to the loaded checkpoint's
+// architecture (detect_architecture values: sd15, sdxl, sd3, flux1,
+// flux2, cosmos, unknown). Hiding is CSS-only on the .param-cell
+// wrapper: hidden inputs keep their values and keep riding requests,
+// exactly like a collapsed-Advanced value. `unknown` fails open, and
+// the "Always show all parameters" setting (panel_ui.arch_show_all)
+// makes the whole mechanism inert. The map is the extension point —
+// `relabel` is reserved and intentionally unused this pass.
+const ARCH_UI_RULES = {
+  flux1:  { hide: ["paramClipSkip"], relabel: {} },
+  flux2:  { hide: ["paramClipSkip"], relabel: {} },
+  cosmos: { hide: ["paramClipSkip"], relabel: {} },
+};
+
+function _archShowAll() {
+  return _readPanelUi().arch_show_all === true;
+}
+
+function _applyArchRules(arch) {
+  document.querySelectorAll("#page-generate .arch-hidden")
+    .forEach(el => el.classList.remove("arch-hidden"));
+  if (_archShowAll()) return;
+  const rules = ARCH_UI_RULES[arch];
+  if (!rules) return;
+  (rules.hide || []).forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return; // fail open when the control doesn't exist
+    (el.closest(".param-cell") || el).classList.add("arch-hidden");
+  });
+}
+
+// ── Toolbar tool tips (name + live shortcut binding) ────────────────
+// data-tool-tip key → the button's name source and registry action id.
+// Names reuse the existing tools.* locale values with any trailing
+// "(X)" key hint stripped, so every locale keeps working; bindings are
+// queried from the shortcut registry at show time — never cached — so
+// a rebind shows on the very next hover. Fill/Gradient and the three
+// lasso types keep their own names while sharing one action.
+const TOOL_TIPS = {
+  brush:      { name: "tools.brush",      action: "canvas.tool.brush" },
+  eraser:     { name: "tools.eraser",     action: "canvas.tool.eraser" },
+  eyedropper: { name: "tools.eyedropper", action: "canvas.tool.eyedropper" },
+  fill:       { name: "tools.fill",       action: "canvas.tool.fillGradient" },
+  gradient:   { name: "tools.gradient",   action: "canvas.tool.fillGradient" },
+  shape:      { name: "tools.shape",      action: "canvas.tool.shape" },
+  text:       { name: "tools.text",       action: "canvas.tool.text" },
+  smudge:     { name: "tools.smudge",     action: "canvas.tool.smudge" },
+  blur:       { name: "tools.blur",       action: "canvas.tool.blur" },
+  dodge:      { name: "tools.dodgeBurn",  action: "canvas.tool.dodge" },
+  clone:      { name: "tools.cloneStamp", action: "canvas.tool.clone" },
+  liquify:    { name: "tools.liquify",    action: "canvas.tool.liquify" },
+  pixelate:   { name: "tools.pixelate",   action: "canvas.tool.pixelate" },
+  select:     { name: "tools.select",     action: "canvas.tool.marquee" },
+  ellipse:    { name: "tools.ellipse",    action: "canvas.tool.ellipse" },
+  lasso:      { name: "tools.lasso",      action: "canvas.tool.lasso" },
+  lassoFree:  { name: "lassoTool.free.tooltip", action: "canvas.tool.lasso" },
+  lassoPoly:  { name: "lassoTool.poly.tooltip", action: "canvas.tool.lasso" },
+  lassoMag:   { name: "lassoTool.mag.tooltip",  action: "canvas.tool.lasso" },
+  wand:       { name: "tools.wand",       action: "canvas.tool.wand" },
+  crop:       { name: "tools.crop",       action: "canvas.tool.crop" },
+  transform:  { name: "tools.transform",  action: "canvas.tool.transform" },
+  mask:       { name: "ctxBar.maskToggle.tooltip", action: "canvas.mask.toggle" },
+  colorsSwap: { name: null,               action: "canvas.colors.swap" },
+};
+
+// Localized tool name only (used for aria-label and as the tip base).
+function _toolTipName(tipKey) {
+  const spec = TOOL_TIPS[tipKey];
+  if (!spec) return "";
+  const def = spec.action ? window.Shortcuts?.getAction?.(spec.action) : null;
+  const defName = def ? _i18n(def.i18nKey || "", def.label) : "";
+  const raw = spec.name ? _i18n(spec.name, defName || tipKey) : (defName || tipKey);
+  return String(raw).replace(/\s*\([^()]*\)\s*$/, "").trim() || defName || tipKey;
+}
+
+// Full tip content: "Name · Binding" with the binding(s) resolved from
+// the registry at call time; unbound actions show the name alone.
+function _toolTipLabel(tipKey) {
+  const spec = TOOL_TIPS[tipKey];
+  if (!spec) return "";
+  const name = _toolTipName(tipKey);
+  const S = window.Shortcuts;
+  const bindings = (spec.action && S?.getBindings) ? S.getBindings(spec.action) : [];
+  const keys = bindings.map(b => S.formatBinding(b)).filter(Boolean).join(" / ");
+  return keys ? `${name} · ${keys}` : name;
+}
+
+// ── Collapsed-block value badges ────────────────────────────────────
+// A compact monospace summary of a block's key values, shown on its
+// header only while the block is collapsed (a hidden-but-active value
+// stays visible this way). One formatter per block id; the model block
+// has no collapse header (always visible), so it carries no badge.
+
+const BADGE_FORMATTERS = {
+  sampling() {
+    const s = document.getElementById("paramSampler")?.value || "";
+    const steps = document.getElementById("paramSteps")?.value || "";
+    const cfg = document.getElementById("paramCFG")?.value || "";
+    return `${s} · ${steps} · CFG ${cfg}`;
+  },
+  frame() {
+    const w = document.getElementById("paramWidth")?.value || "?";
+    const h = document.getElementById("paramHeight")?.value || "?";
+    return `${w}×${h}`;
+  },
+  seedbatch() {
+    const seed = (document.getElementById("paramSeed")?.value || "-1").trim();
+    const total = (parseInt(document.getElementById("paramBatch")?.value, 10) || 1)
+        * (parseInt(document.getElementById("paramBatchSize")?.value, 10) || 1);
+    const seedPart = seed === "-1" ? "random" : seed;
+    return total > 1 ? `${seedPart} · ×${total}` : seedPart;
+  },
+  hires() {
+    if (!document.getElementById("checkHires")?.classList.contains("checked")) return "off";
+    const scale = document.getElementById("paramHrScale")?.value || "?";
+    return `${scale}× ${document.getElementById("paramHrUpscaler")?.value || ""}`;
+  },
+  adetailer() {
+    if (!document.getElementById("checkAD")?.classList.contains("checked")) return "off";
+    const n = [1, 2, 3].filter(i =>
+      document.getElementById(`checkAD${i}`)?.classList.contains("checked")).length;
+    return n ? `${n} slot${n === 1 ? "" : "s"}` : "off";
+  },
+  upscale() {
+    const scale = document.getElementById("paramUpscaleScale")?.value || "?";
+    return `${scale}× ${document.getElementById("paramUpscaleModel")?.value || ""}`;
+  },
+  controlnet() {
+    if (!document.getElementById("checkCN")?.classList.contains("checked")) return "off";
+    const n = [1, 2].filter(i =>
+      document.getElementById(`checkCN${i}`)?.classList.contains("checked")).length;
+    return n ? `${n} unit${n === 1 ? "" : "s"}` : "off";
+  },
+};
+
+function _refreshPanelBadges() {
+  document.querySelectorAll("#page-generate .collapse-section[data-block]").forEach(sec => {
+    const fmt = BADGE_FORMATTERS[sec.dataset.block];
+    if (!fmt) return;
+    const header = sec.querySelector(".collapse-header");
+    const body = sec.querySelector(".collapse-body");
+    if (!header || !body) return;
+    let badge = header.querySelector(".collapse-badge");
+    if (!badge) {
+      badge = document.createElement("span");
+      badge.className = "collapse-badge";
+      const title = header.querySelector(".collapse-title");
+      if (title) title.after(badge);
+      else header.appendChild(badge);
+    }
+    let text = "";
+    if (!body.classList.contains("open")) {
+      try { text = fmt() || ""; } catch (_) { /* badge is best-effort */ }
+    }
+    badge.textContent = text;
+  });
+}
+
+let _badgeTimer = null;
+function _schedulePanelBadgeRefresh() {
+  clearTimeout(_badgeTimer);
+  _badgeTimer = setTimeout(_refreshPanelBadges, 80);
+}
+
 function bindUI() {
   // App tabs
   document.getElementById("appTabs")?.addEventListener("click", e => {
@@ -2991,6 +3455,12 @@ function bindUI() {
       const arrow = header.querySelector(".collapse-arrow");
       _toggleCollapseBody(body);
       if (arrow) arrow.classList.toggle("open");
+      // Persist per-block collapse state (the .collapse-check early
+      // return above keeps enable toggles out of this path).
+      const blockId = header.closest("[data-block]")?.dataset.block;
+      if (blockId && body) {
+        _setPanelUiFlag("blocks_open", blockId, body.classList.contains("open"));
+      }
     });
   });
 
@@ -3004,8 +3474,258 @@ function bindUI() {
       const arrow = header.querySelector(".section-arrow");
       if (body) body.classList.toggle("collapsed");
       if (arrow) header.classList.toggle("collapsed");
+      // Persist section collapse state (Layers, History, …).
+      if (body) {
+        _setPanelUiFlag("sections_open", targetId, !body.classList.contains("collapsed"));
+      }
     });
   });
+
+  // ===== Panel disclosure: Advanced expanders + enable-gated bodies =====
+  // Both mechanisms are CSS visibility only — inputs keep their IDs and
+  // positions, and hidden non-default values still apply to generation,
+  // defaults save, workflows, and session restore exactly as before.
+  // Expander state is remembered per block in the server preference
+  // panel_ui = { advanced_open: { "<blockId>": true } }.
+  document.querySelectorAll("#page-generate .param-adv-toggle").forEach(t => {
+    t.addEventListener("click", () => {
+      const sec = t.closest(".collapse-section[data-block]");
+      if (!sec) return;
+      _setAdvancedOpen(sec.dataset.block, !_advancedOpen(sec.dataset.block));
+      _syncAdvancedUI();
+    });
+  });
+  _syncAdvancedUI();
+  _syncEnableGates();
+
+  // Collapsed-block value badges: refresh on collapse toggles and
+  // header enable-check clicks (this listener runs after the accordion
+  // handler on the same element), on the badge-relevant inputs, and on
+  // the slot/unit enable checks. Badges never intercept clicks.
+  document.querySelectorAll("#page-generate .collapse-section[data-block] .collapse-header")
+    .forEach(h => h.addEventListener("click", _schedulePanelBadgeRefresh));
+  [
+    "paramSampler", "paramSteps", "paramCFG", "paramWidth", "paramHeight",
+    "paramSeed", "paramBatch", "paramBatchSize", "paramHrScale",
+    "paramHrUpscaler", "paramUpscaleScale", "paramUpscaleModel",
+  ].forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return;
+    el.addEventListener("input", _schedulePanelBadgeRefresh);
+    el.addEventListener("change", _schedulePanelBadgeRefresh);
+  });
+  ["checkAD1", "checkAD2", "checkAD3", "checkCN1", "checkCN2"].forEach(id => {
+    document.getElementById(id)?.addEventListener("click", _schedulePanelBadgeRefresh);
+  });
+  _refreshPanelBadges();
+
+  // ===== UI density (Comfortable / Compact) =====
+  // Compact swaps control tokens via body[data-density]; persisted as
+  // panel_ui.density and applied at boot (Prefs is loaded before bindUI).
+  const _applyDensity = (d) => {
+    const compact = d === "compact";
+    if (compact) document.body.dataset.density = "compact";
+    else delete document.body.dataset.density;
+    document.querySelectorAll("#densitySelector .layout-btn").forEach(b => {
+      b.classList.toggle("active", (b.dataset.density === "compact") === compact);
+    });
+  };
+  _applyDensity(_readPanelUi().density);
+  document.getElementById("densitySelector")?.addEventListener("click", e => {
+    const btn = e.target.closest(".layout-btn");
+    if (!btn) return;
+    const d = btn.dataset.density === "compact" ? "compact" : "comfortable";
+    const ui = _readPanelUi();
+    ui.density = d;
+    window.Prefs?.set("panel_ui", ui);
+    _applyDensity(d);
+  });
+
+  // ===== Parameter search =====
+  // Reveal is a pure class overlay (search-reveal / search-match /
+  // search-dim): real collapse, Advanced, and gate state is never
+  // toggled and panel_ui is never written, so clearing the search
+  // restores the exact pre-search arrangement by removing the overlay.
+  {
+    const searchInput = document.getElementById("paramSearchInput");
+    const searchCount = document.getElementById("paramSearchCount");
+    let searchTimer = null;
+
+    const _clearSearchOverlay = () => {
+      document.querySelectorAll(
+        "#page-generate .search-reveal, #page-generate .search-match, #page-generate .search-dim"
+      ).forEach(el => el.classList.remove("search-reveal", "search-match", "search-dim"));
+    };
+
+    const _runSearch = () => {
+      const q = (searchInput?.value || "").trim().toLowerCase();
+      _clearSearchOverlay();
+      if (q.length < 2) {
+        if (searchCount) searchCount.textContent = "";
+        return;
+      }
+      let total = 0;
+      document.querySelectorAll("#page-generate .collapse-section[data-block]").forEach(sec => {
+        let matches = 0;
+        const title = sec.querySelector(".collapse-header .collapse-title");
+        const titleHit = !!(title && title.textContent.toLowerCase().includes(q));
+        sec.querySelectorAll(".param-cell > label").forEach(label => {
+          const cell = label.parentElement;
+          // Arch-hidden cells stay hidden: inapplicable is not the same
+          // as tucked away.
+          if (cell.classList.contains("arch-hidden")) return;
+          if (!label.textContent.toLowerCase().includes(q)) return;
+          matches++;
+          label.classList.add("search-match");
+          // Reveal through the Advanced tier and enable gates.
+          for (let n = cell; n && n !== sec; n = n.parentElement) {
+            if (n.classList.contains("param-advanced") || n.dataset.gate) {
+              n.classList.add("search-reveal");
+            }
+          }
+        });
+        if (matches || titleHit) {
+          total += matches || 1;
+          sec.classList.add("search-reveal");
+        } else {
+          sec.classList.add("search-dim");
+        }
+      });
+      if (searchCount) {
+        searchCount.textContent = total > 0
+          ? _i18n("panel.search.count", "{n} matches", { n: total })
+          : _i18n("panel.search.noMatches", "No matches");
+      }
+    };
+
+    const _clearSearch = () => {
+      if (searchInput) searchInput.value = "";
+      clearTimeout(searchTimer);
+      _clearSearchOverlay();
+      if (searchCount) searchCount.textContent = "";
+    };
+
+    searchInput?.addEventListener("input", () => {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(_runSearch, 120);
+    });
+    searchInput?.addEventListener("keydown", e => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        _clearSearch();
+        searchInput.blur();
+      }
+    });
+    document.getElementById("paramSearchClear")?.addEventListener("click", _clearSearch);
+    window.Shortcuts?.registerHandler("panel.search-focus", () => {
+      if (!searchInput || !searchInput.offsetParent) return false;
+      searchInput.focus();
+      searchInput.select();
+      return true;
+    });
+  }
+
+  // ===== Per-parameter help + tool tips =====
+  // One reusable tooltip serves two element kinds: [data-help] cells
+  // (content from the help.* i18n namespace) and [data-tool-tip]
+  // buttons (localized tool name plus the live shortcut binding,
+  // composed at show time so rebinds appear on the next hover). Shows
+  // on hover (~400ms delay) and keyboard focus; parameter cells also
+  // toggle on label click/tap. The tip never intercepts pointer events
+  // and the target carries aria-describedby while visible.
+  {
+    const tip = document.createElement("div");
+    tip.id = "paramHelpTip";
+    tip.className = "param-help-tip";
+    tip.setAttribute("role", "tooltip");
+    tip.hidden = true;
+    document.body.appendChild(tip);
+
+    const TIP_SELECTOR = "[data-help], [data-tool-tip]";
+    let helpTimer = null;
+    let helpCell = null;
+
+    const _tipTextFor = (cell) => {
+      if (cell.dataset.toolTip) return _toolTipLabel(cell.dataset.toolTip);
+      const key = cell.dataset.help || "";
+      const text = key ? _i18n(key, "") : "";
+      return (text && text !== key) ? text : "";
+    };
+
+    const _helpTarget = (cell) =>
+      cell.querySelector("input, select, textarea") || cell;
+
+    const _hideHelp = () => {
+      clearTimeout(helpTimer);
+      helpTimer = null;
+      if (helpCell) _helpTarget(helpCell)?.removeAttribute("aria-describedby");
+      helpCell = null;
+      tip.hidden = true;
+    };
+
+    const _showHelp = (cell) => {
+      const text = _tipTextFor(cell);
+      if (!text) return;
+      helpCell = cell;
+      tip.textContent = text;
+      tip.hidden = false;
+      const anchor = cell.querySelector("label, span") || cell;
+      const r = anchor.getBoundingClientRect();
+      // measure, then clamp to the viewport (flip above when needed)
+      tip.style.left = "0px";
+      tip.style.top = "0px";
+      const tw = tip.offsetWidth;
+      const th = tip.offsetHeight;
+      const x = Math.min(Math.max(8, r.left), window.innerWidth - tw - 8);
+      let y = r.bottom + 6;
+      if (y + th > window.innerHeight - 8) y = r.top - th - 6;
+      tip.style.left = x + "px";
+      tip.style.top = Math.max(8, y) + "px";
+      _helpTarget(cell)?.setAttribute("aria-describedby", "paramHelpTip");
+    };
+
+    document.addEventListener("mouseover", e => {
+      const cell = e.target.closest?.(TIP_SELECTOR);
+      if (!cell || cell === helpCell) return;
+      clearTimeout(helpTimer);
+      helpTimer = setTimeout(() => _showHelp(cell), 400);
+    });
+    document.addEventListener("mouseout", e => {
+      const cell = e.target.closest?.(TIP_SELECTOR);
+      if (!cell) return;
+      if (e.relatedTarget && cell.contains(e.relatedTarget)) return;
+      _hideHelp();
+    });
+    document.addEventListener("focusin", e => {
+      const cell = e.target.closest?.(TIP_SELECTOR);
+      if (cell) { clearTimeout(helpTimer); _showHelp(cell); }
+    });
+    document.addEventListener("focusout", e => {
+      if (e.target.closest?.(TIP_SELECTOR)) _hideHelp();
+    });
+    document.addEventListener("click", e => {
+      // Touch/click fallback for parameter help only, and only from the
+      // label — clicks on inputs never fight with editing, and tool
+      // buttons activate their tool rather than toggling the tip.
+      const label = e.target.closest?.("[data-help] > label, [data-help] > span");
+      if (!label) return;
+      const cell = label.closest("[data-help]");
+      if (helpCell === cell && !tip.hidden) _hideHelp();
+      else { clearTimeout(helpTimer); _showHelp(cell); }
+    });
+
+    // Icon-only tool buttons lost their native titles — give them
+    // localized accessible names (binding is announced via the tip's
+    // aria-describedby on focus, not baked into the name).
+    const _applyToolTipAriaLabels = () => {
+      document.querySelectorAll("[data-tool-tip]").forEach(el => {
+        const name = _toolTipName(el.dataset.toolTip);
+        if (name) el.setAttribute("aria-label", name);
+      });
+    };
+    _applyToolTipAriaLabels();
+    document.addEventListener("i18n:change", _applyToolTipAriaLabels);
+  }
 
   // UX-012: Clear mask button
   document.getElementById("clearMaskBtn")?.addEventListener("click", () => {
@@ -3797,21 +4517,31 @@ function bindUI() {
     }
 
     const teSelect = document.getElementById("paramTextEncoder");
-    const vaeVal = document.getElementById("paramVAE")?.value;
 
-    // Resolve TE through the shared architecture-aware helper. It
-    // handles row visibility, memory restore, and the no-external-TE
+    // Resolve TE and VAE through the shared architecture-aware helpers.
+    // They handle row visibility, memory restore, and the no-external-TE
     // bundled case (forces value to "None" so additional_modules
-    // doesn't leak the prior arch's TE into load_model).
+    // doesn't leak the prior arch's TE into load_model). Both previous
+    // values are captured BEFORE either restore runs; the final dropdown
+    // values are read AFTER both restores so the backend receives exactly
+    // what the UI shows — not the previous model's VAE.
     const previousArch = State._currentModelArch || null;
     const teBeforeRestore = teSelect?.value || "None";
+    const vaeBeforeRestore = document.getElementById("paramVAE")?.value || "Automatic";
     const check = await restoreTextEncoderForModel(title, reason, {
       preferredTE: teBeforeRestore,
       previousArch,
     });
+    await restoreVAEForModel(title, reason, {
+      preferredVAE: vaeBeforeRestore,
+      previousArch,
+      check,
+    });
     State._currentModelArch = check.arch || "unknown";
+    _applyArchRules(State._currentModelArch);
 
     const textEncoder = teSelect?.value || "None";
+    const vaeVal = document.getElementById("paramVAE")?.value;
 
     // Persist per-model TE memory when the user explicitly picked one.
     if (reason === "te-change" && textEncoder !== "None") {
@@ -3907,6 +4637,17 @@ function bindUI() {
       const data = await r.json();
       if (r.ok && data.ok) {
         showToast("VAE: " + data.loaded, "success");
+        // Persist per-model VAE memory only after the backend confirmed
+        // the load. Automatic/None record the explicit opt-out sentinel;
+        // a queued switch lands here when its change event re-dispatches
+        // after generation, so queued picks are remembered on dispatch.
+        const title = document.getElementById("paramModel")?.value || "";
+        const arch = State._currentModelArch || null;
+        if (name === "Automatic" || name === "None") {
+          rememberVAE(title, arch, null);
+        } else {
+          rememberVAE(title, arch, name);
+        }
       } else {
         console.error("[Studio] VAE load failed:", data);
         showToast(_i18n("toast.vae.loadFailed", "VAE load failed: " + (data.error || r.status), { error: data.error || r.status }), "error");
@@ -3932,19 +4673,41 @@ function bindUI() {
     t.addEventListener("click", () => t.classList.toggle("on"));
   });
 
+  // Always-show-all-parameters escape hatch for the arch rules. This
+  // listener registers after the generic toggle above so it reads the
+  // post-flip state. Boot sync runs here too (arch resolves async on
+  // model checks; unknown fails open until then).
+  {
+    const archToggle = document.getElementById("toggleArchShowAll");
+    if (_archShowAll()) archToggle?.classList.add("on");
+    archToggle?.addEventListener("click", () => {
+      const on = archToggle.classList.contains("on");
+      const ui = _readPanelUi();
+      ui.arch_show_all = on;
+      window.Prefs?.set("panel_ui", ui);
+      _applyArchRules(State._currentModelArch || "unknown");
+    });
+    _applyArchRules(State._currentModelArch || "unknown");
+  }
+
   // ===== REFRESH BUTTONS =====
   document.getElementById("refreshModelsBtn")?.addEventListener("click", async () => {
     showToast(I18N.t("toast.refreshingModels", "Refreshing models..."), "info");
-    // Stash the current model+TE into TE memory before the rebuild so
-    // populateDropdowns can restore it (populateDropdowns also stashes,
-    // but doing it here too ensures the model selection survives even
-    // if populateDropdowns runs in parallel with the TE list fetch).
+    // Stash the current model's TE+VAE into component memory before the
+    // rebuild so populateDropdowns can restore them (populateDropdowns
+    // also stashes, but doing it here too ensures the selection survives
+    // even if populateDropdowns runs in parallel with the list fetches).
     const _curModel = document.getElementById("paramModel")?.value || "";
     const _curTE = document.getElementById("paramTextEncoder")?.value || "None";
-    if (_curModel && _curTE !== "None") {
+    const _curVAE = document.getElementById("paramVAE")?.value || "Automatic";
+    if (_curModel && (_curTE !== "None"
+        || (_curVAE !== "Automatic" && _curVAE !== "None"))) {
       try {
         const c = await checkModelTE(_curModel);
-        rememberExternalTE(_curModel, c.arch, _curTE);
+        if (_curTE !== "None") rememberExternalTE(_curModel, c.arch, _curTE);
+        if (_curVAE !== "Automatic" && _curVAE !== "None") {
+          rememberVAE(_curModel, c.arch, _curVAE);
+        }
       } catch (_) { /* ignore */ }
     }
     try {
@@ -3959,14 +4722,34 @@ function bindUI() {
   document.getElementById("refreshVAEBtn")?.addEventListener("click", async () => {
     showToast(I18N.t("toast.refreshingVaes", "Refreshing VAEs..."), "info");
     try {
-      const vaes = await fetch(API.base + "/studio/vaes").then(r => r.json());
       const vaeSelect = document.getElementById("paramVAE");
+      const current = vaeSelect?.value || "Automatic";
+      const currentModel = document.getElementById("paramModel")?.value || "";
+      // Stash the concrete current pick so the restore below (and future
+      // populates) can recover it from component memory.
+      if (currentModel && current !== "Automatic" && current !== "None") {
+        try {
+          const c = await checkModelTE(currentModel);
+          rememberVAE(currentModel, c.arch, current);
+        } catch (_) { /* ignore */ }
+      }
+      const vaes = await fetch(API.base + "/studio/vaes").then(r => r.json());
       if (vaeSelect) {
-        const current = vaeSelect.value;
         vaeSelect.innerHTML = vaes.map(v =>
           `<option value="${v.name}">${v.name}</option>`
         ).join("");
-        vaeSelect.value = current;
+        // Funnel restore through the arch-aware helper so a deleted VAE
+        // falls back to Automatic (with toast) instead of staying selected
+        // as a phantom now-invalid option.
+        if (currentModel) {
+          await restoreVAEForModel(currentModel, "model-change", {
+            preferredVAE: current,
+            previousArch: State._currentModelArch || null,
+          });
+        } else if (_optionExists(vaeSelect, current)) {
+          vaeSelect.value = current;
+        }
+        _syncSelectUI(vaeSelect);
       }
       showToast(`VAEs refreshed (${vaes.length} found)`, "success");
     } catch (e) {
@@ -3997,6 +4780,7 @@ function bindUI() {
           previousArch: State._currentModelArch || null,
         });
         State._currentModelArch = check.arch || "unknown";
+        _applyArchRules(State._currentModelArch);
       } else if (teSelect && _optionExists(teSelect, current)) {
         teSelect.value = current;
       }
@@ -4079,7 +4863,7 @@ function bindUI() {
       limitInput.addEventListener("change", () => {
         const v = Math.max(8, Math.min(200, parseInt(limitInput.value, 10) || 50));
         limitInput.value = v;
-        localStorage.setItem("studio-session-limit", String(v));
+        window.Prefs?.set("session_limit", v);
         _applySessionLimit();
         renderOutputGallery();
       });
@@ -4273,12 +5057,13 @@ function bindUI() {
 
   // ===== Save to Gallery folder =====
   // Folder paths are machine config, not per-image workflow params, so they
-  // persist immediately to localStorage (no need to click "Save Defaults").
-  // _restoreFolderSettings() re-applies them on boot, after defaults load.
+  // persist immediately to server-backed preferences (no need to click
+  // "Save Defaults"). init() re-applies them on boot, after defaults load.
+  // Persisting a folder never trusts it — trust is a separate action.
   const _galFolderInput = document.getElementById("settingGalleryFolder");
   const _syncGalFolder = () => {
     State.galleryFolder = (_galFolderInput?.value || "").trim();
-    try { localStorage.setItem("studio-gallery-folder", State.galleryFolder); } catch (_) {}
+    window.Prefs?.set("gallery_folder", State.galleryFolder);
   };
   _galFolderInput?.addEventListener("input", _syncGalFolder);
   _galFolderInput?.addEventListener("change", _syncGalFolder);
@@ -4322,7 +5107,7 @@ function bindUI() {
   const _saveDirInput = document.getElementById("settingSaveDir");
   const _syncSaveDir = () => {
     State.saveDir = (_saveDirInput?.value || "").trim();
-    try { localStorage.setItem("studio-save-dir", State.saveDir); } catch (_) {}
+    window.Prefs?.set("save_dir", State.saveDir);
   };
   _saveDirInput?.addEventListener("input", _syncSaveDir);
   _saveDirInput?.addEventListener("change", _syncSaveDir);
@@ -4488,9 +5273,10 @@ function bindUI() {
     }).then(res => res.json());
   };
   if (_vramSlider) {
-    // New storage key — old "studio-vram-reserve" values meant the opposite
-    // semantic, so ignore them and start at Auto until the user adjusts.
-    const saved = localStorage.getItem("studio-vram-weights");
+    // Numeric preference — the retired "studio-vram-reserve" key meant the
+    // opposite semantic, so only "vram_weights" values are honored.
+    const _savedWeights = window.Prefs?.get("vram_weights");
+    const saved = Number.isFinite(_savedWeights) ? String(_savedWeights) : "";
     if (saved) {
       _vramSlider.value = saved;
       if (_vramSliderVal) _vramSliderVal.textContent = _vramLabel(saved);
@@ -4500,7 +5286,7 @@ function bindUI() {
     });
     _vramSlider.addEventListener("change", async () => {
       const gb = parseFloat(_vramSlider.value);
-      localStorage.setItem("studio-vram-weights", String(gb));
+      if (Number.isFinite(gb)) window.Prefs?.set("vram_weights", gb);
       if (gb === 0) {
         try {
           await _vramSendWeights(0);
@@ -4541,18 +5327,15 @@ function bindUI() {
   const _autoUnloadSlider = document.getElementById("autoUnloadMinutes");
   const _autoUnloadVal = document.getElementById("autoUnloadMinutesVal");
 
-  // Restore auto-unload settings from localStorage
-  const _savedAutoUnload = localStorage.getItem("studio-auto-unload");
-  if (_savedAutoUnload) {
-    try {
-      const au = JSON.parse(_savedAutoUnload);
-      if (au.enabled) _autoUnloadToggle?.classList.add("on");
-      if (_autoUnloadSlider && au.minutes) _autoUnloadSlider.value = au.minutes;
-      if (_autoUnloadVal && au.minutes) _autoUnloadVal.textContent = au.minutes + " min";
-      if (au.enabled && _autoUnloadRow) _autoUnloadRow.style.display = "";
-      // Sync to server
-      API.autoUnload({ enabled: !!au.enabled, minutes: au.minutes || 10 }).catch(() => {});
-    } catch (_) {}
+  // Restore auto-unload settings from preferences ({ enabled, minutes })
+  const au = window.Prefs?.get("auto_unload");
+  if (au && typeof au === "object") {
+    if (au.enabled) _autoUnloadToggle?.classList.add("on");
+    if (_autoUnloadSlider && au.minutes) _autoUnloadSlider.value = au.minutes;
+    if (_autoUnloadVal && au.minutes) _autoUnloadVal.textContent = au.minutes + " min";
+    if (au.enabled && _autoUnloadRow) _autoUnloadRow.style.display = "";
+    // Sync to server
+    API.autoUnload({ enabled: !!au.enabled, minutes: au.minutes || 10 }).catch(() => {});
   }
 
   _autoUnloadToggle?.addEventListener("click", () => {
@@ -4560,7 +5343,7 @@ function bindUI() {
     if (_autoUnloadRow) _autoUnloadRow.style.display = on ? "" : "none";
     const minutes = parseInt(_autoUnloadSlider?.value) || 10;
     API.autoUnload({ enabled: on, minutes }).catch(() => {});
-    localStorage.setItem("studio-auto-unload", JSON.stringify({ enabled: on, minutes }));
+    window.Prefs?.set("auto_unload", { enabled: on, minutes });
   });
 
   _autoUnloadSlider?.addEventListener("input", () => {
@@ -4571,20 +5354,20 @@ function bindUI() {
     const minutes = parseInt(_autoUnloadSlider.value) || 10;
     const on = _autoUnloadToggle?.classList.contains("on") ?? false;
     API.autoUnload({ enabled: on, minutes }).catch(() => {});
-    localStorage.setItem("studio-auto-unload", JSON.stringify({ enabled: on, minutes }));
+    window.Prefs?.set("auto_unload", { enabled: on, minutes });
   });
 
   // ===== UX-014: REMEMBER LAST SESSION =====
 
-  // Restore toggle state from localStorage (this toggle is self-referential —
+  // Restore toggle state from preferences (this toggle is self-referential —
   // it must persist independently of the session data it controls)
   const _rememberToggle = document.getElementById("toggleRememberSession");
-  if (localStorage.getItem("studio-remember-session") === "true") {
+  if (window.Prefs?.get("remember_session", false) === true) {
     _rememberToggle?.classList.add("on");
   }
   _rememberToggle?.addEventListener("click", () => {
     const on = _rememberToggle?.classList.contains("on") ?? false;
-    localStorage.setItem("studio-remember-session", on ? "true" : "false");
+    window.Prefs?.set("remember_session", on);
     if (!on) {
       // User turned it off — clear saved session data
       localStorage.removeItem("studio-session-data");
@@ -4843,6 +5626,11 @@ function bindUI() {
     const gridOn = document.getElementById("toggleGrid")?.classList.contains("on") ?? true;
     if (window.StudioCore) window.StudioCore.state.showGrid = gridOn;
     _syncPressureState();
+    // Restored .checked classes drive the enable-gated panel regions
+    // (AD slots 2/3, CN unit 2, upscale refine controls), and restored
+    // values/collapse states feed the header badges.
+    _syncEnableGates();
+    _schedulePanelBadgeRefresh();
     State.saveOutputs = document.getElementById("toggleSaveOutputs")?.classList.contains("on") ?? true;
     State.highPrecision = document.getElementById("toggleHighPrecision")?.classList.contains("on") ?? false;
     State.livePreview = document.getElementById("toggleLivePreview")?.classList.contains("on") ?? true;
@@ -5092,19 +5880,22 @@ function bindUI() {
     return hadDefaults || hadSession;
   };
 
-  // AD slot checkboxes
+  // AD slot checkboxes — slots 2/3 bodies are enable-gated on them
   document.querySelectorAll(".ad-slot-check").forEach(check => {
     check.addEventListener("click", (e) => {
       e.stopPropagation();
       check.classList.toggle("checked");
+      _syncEnableGates();
     });
   });
 
-  // Upscale refine checkbox — gates the img2img refine pass
+  // Upscale refine checkbox — gates the img2img refine pass and
+  // reveals the refine-only controls (Steps/Denoise, Run ADetailer)
   document.getElementById("checkUpscaleRefine")?.addEventListener("click", (e) => {
     e.stopPropagation();
     e.currentTarget.classList.toggle("checked");
     _syncUpscaleADState();
+    _syncEnableGates();
   });
 
   // Upscale AD checkbox — gates AD during the refine pass
@@ -5115,26 +5906,56 @@ function bindUI() {
 
   _syncUpscaleADState();
 
-  // CN unit checkboxes
+  // CN unit checkboxes — unit 2's body is enable-gated on its check
   document.querySelectorAll(".cn-unit-check").forEach(check => {
     check.addEventListener("click", (e) => {
       e.stopPropagation();
       check.classList.toggle("checked");
+      _syncEnableGates();
     });
   });
 
   // Context bar — now handled by ctx-scrub system in canvas-ui.js
 
-  // Keyboard shortcuts
+  // Keyboard shortcuts — Generate and Save Canvas are remappable actions
+  // dispatched by the shortcuts.js registry (registered below). Escape
+  // interrupt stays fixed here; it is reserved and never remappable.
   document.addEventListener("keydown", e => {
-    // Ctrl+Enter or Shift+Enter = Generate
-    if ((e.ctrlKey || e.shiftKey) && e.key === "Enter") { e.preventDefault(); doGenerate(); }
     // Escape = Interrupt
     if (e.key === "Escape" && State.generating) { API.interrupt(); }
     // Ctrl+Z / Ctrl+Shift+Z handled by canvas-ui.js — not duplicated here
-    // Ctrl+S = Export/Save canvas
-    if (e.ctrlKey && e.key === "s") { e.preventDefault(); document.getElementById("layerSave")?.click(); }
   });
+
+  // Remappable app actions. Handlers return true when they consumed the
+  // event (the registry then calls preventDefault) and false for a no-op.
+  window.Shortcuts?.registerHandler("app.generate", () => {
+    doGenerate();
+    return true;
+  });
+  window.Shortcuts?.registerHandler("app.saveCanvas", () => {
+    document.getElementById("layerSave")?.click();
+    return true;
+  });
+  window.Shortcuts?.registerHandler("app.sendNewestToCanvas", () => {
+    const img = _pickOutputSource(0);
+    if (!img) return false;
+    const entry = State.sessionEntries[0] || {};
+    displayOnCanvas(img, {
+      newLayer: true,
+      layerName: "Output",
+      undoLabel: "Send to canvas",
+      floatPath: entry.floatPath || "",
+      maskPath: entry.maskPath || "",
+      floatStats: entry.floatStats || null,
+    });
+    showToast(_i18n("toast.newestToCanvas", "Newest output → canvas"), "success");
+    return true;
+  });
+
+  // Keyboard Shortcuts settings UI (group markup lives in index.html;
+  // rows are rendered by the registry so custom bindings show live state).
+  window.Shortcuts?.renderSettings?.();
+  document.addEventListener("i18n:change", () => window.Shortcuts?.renderSettings?.());
 
   // Update dimensions + resize canvas engine when width/height change
   ["paramWidth", "paramHeight"].forEach(id => {
@@ -6570,10 +7391,10 @@ const LayoutSwitcher = {
     SessionStrip.initCollapse();
     SessionStrip.initClassicToggle();
     Customizer.init();
-    const saved = localStorage.getItem("studio-layout-preset") || "classic";
+    const saved = window.Prefs?.get("layout_preset", "classic") || "classic";
     this.apply(saved, /*boot*/ true);
-    // localStorage wiped but a named layout was active: restore it from
-    // the server file (best-effort, async).
+    // Local layout cache wiped but a named layout was active: restore it
+    // from the server file (best-effort, async).
     if (!LayoutManager.working && LayoutManager.activeName) {
       LayoutManager.loadByName(LayoutManager.activeName, { silent: true });
     }
@@ -6604,7 +7425,7 @@ const LayoutSwitcher = {
     if (base === "deck") document.documentElement.setAttribute("data-layout", "deck");
     else document.documentElement.removeAttribute("data-layout");
     this.current = base;
-    localStorage.setItem("studio-layout-preset", base);
+    window.Prefs?.set("layout_preset", base);
     this._updateButtons(base);
     SessionStrip.syncStripCol();
   },
@@ -7319,6 +8140,13 @@ function _initParamScrub() {
 async function init() {
   console.log("[Studio] Standalone UI initializing...");
 
+  // Preferences must be available before bindUI() — many handlers
+  // initialize their controls from persisted values. ?reset has to run
+  // first so a reset boot can't load the state it just deleted.
+  await _handleEmergencyResetIfRequested();
+  try { await window.Prefs?.load(); } catch (_) {}
+  window.Shortcuts?.reloadFromPrefs?.();
+
   bindUI();
   _initParamScrub();
 
@@ -7349,21 +8177,23 @@ async function init() {
     StatusBar.setDimensions(w, h);
   }
 
-  // Folder paths persist immediately via localStorage (machine config, not
-  // per-image workflow). Re-apply after defaults load so the most recent
-  // user choice wins regardless of whether "Save Defaults" was clicked.
+  // Folder paths persist immediately via server-backed preferences
+  // (machine config, not per-image workflow). Re-apply after defaults load
+  // so the most recent user choice wins regardless of whether "Save
+  // Defaults" was clicked. These are inert strings — trusting a folder
+  // remains a separate explicit action.
   try {
-    const _sd = localStorage.getItem("studio-save-dir");
+    const _sd = window.Prefs?.get("save_dir");
     if (_sd != null) {
       const el = document.getElementById("settingSaveDir");
       if (el) el.value = _sd;
-      State.saveDir = _sd.trim();
+      State.saveDir = String(_sd).trim();
     }
-    const _gf = localStorage.getItem("studio-gallery-folder");
+    const _gf = window.Prefs?.get("gallery_folder");
     if (_gf != null) {
       const el = document.getElementById("settingGalleryFolder");
       if (el) el.value = _gf;
-      State.galleryFolder = _gf.trim();
+      State.galleryFolder = String(_gf).trim();
     }
   } catch (_) {}
 
@@ -7376,6 +8206,10 @@ async function init() {
   // Initialize layout preset switcher (WP-L1) — must run after bindUI so
   // the accordion handlers and output-gallery bindings already exist.
   LayoutSwitcher.init();
+
+  // Remembered block/section collapse states apply after the layout so
+  // they win over both markup defaults and defaults-restored state.
+  _applyStoredCollapseState();
 
   // Update check is manual — use the "Check for Updates" button in Settings.
 
@@ -7867,11 +8701,21 @@ function _showFirstRunModal() {
 // ═══════════════════════════════════════════
 // EMERGENCY RESET — ?reset in URL nukes corrupted state
 // ═══════════════════════════════════════════
+// Runs at the top of init(), before Prefs.load(), so the server-side
+// preference file is wiped before the first GET could cache stale state.
+// Defaults, layout files, and trusted roots live elsewhere and are kept.
 
-if (new URLSearchParams(window.location.search).has("reset")) {
+async function _handleEmergencyResetIfRequested() {
+  if (!new URLSearchParams(window.location.search).has("reset")) return;
   const keys = Object.keys(localStorage).filter(k => k.startsWith("studio"));
   keys.forEach(k => localStorage.removeItem(k));
-  console.warn(`[Studio] Emergency reset: cleared ${keys.length} localStorage keys`);
+  try {
+    await fetch("/studio/prefs", { method: "DELETE" });
+  } catch (err) {
+    console.warn("[Studio] Emergency reset: server preference delete failed", err);
+  }
+  try { window.Prefs?._clearLoadedStateForReset?.(); } catch (_) {}
+  console.warn(`[Studio] Emergency reset: cleared ${keys.length} localStorage keys and server prefs`);
   // Strip ?reset from URL so it doesn't fire on every reload
   const url = new URL(window.location);
   url.searchParams.delete("reset");
