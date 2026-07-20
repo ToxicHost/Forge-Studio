@@ -1057,7 +1057,7 @@ body {
    PARAM GRID
    ═══════════════════════════════════════════ */
 
-.param-section { padding: 8px 12px; border-bottom: 1px solid var(--border); }
+.param-section { padding: 8px 12px; border-bottom: 1px solid var(--border-subtle); }
 
 .param-grid { display: grid; gap: 5px; }
 
@@ -1285,10 +1285,28 @@ body {
 
 
 /* ═══════════════════════════════════════════
+   FIELD GROUPS (common region)
+   ═══════════════════════════════════════════ */
+
+/* One raised surface binds conceptually paired fields (frame W/H+swap,
+   sampling Steps/CFG/Denoise, seed row, batch pair, …). Elevation does
+   the grouping — the border stays subtle — and the class is applied
+   ONLY to the enumerated pairs; everywhere else, spacing groups the
+   fields. Internal gaps stay tight; the group carries the looser
+   external margin itself. */
+.field-group {
+  background: var(--bg-raised);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  padding: var(--control-gap);
+  margin-top: 8px;
+}
+
+/* ═══════════════════════════════════════════
    COLLAPSIBLE SECTIONS
    ═══════════════════════════════════════════ */
 
-.collapse-section { border-bottom: 1px solid var(--border); }
+.collapse-section { border-bottom: 1px solid var(--border-subtle); }
 
 .collapse-header {
   display: flex; align-items: center;

@@ -524,7 +524,7 @@
                 </select>
               </div>
             </div>
-            <div class="param-grid cols-3" style="margin-top:5px;">
+            <div class="param-grid cols-3 field-group">
               <div class="param-cell"><label>Steps</label><input class="param-val" id="paramSteps" value="30"></div>
               <div class="param-cell"><label>CFG</label><input class="param-val" id="paramCFG" value="5.0"></div>
               <div class="param-cell"><label>Denoise</label><input class="param-val" id="paramDenoise" value="0.81"></div>
@@ -539,7 +539,7 @@
               <svg class="collapse-arrow open" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg>
             </div>
             <div class="collapse-body open" id="panelCanvas">
-            <div class="size-row-wrap">
+            <div class="size-row-wrap field-group">
               <div class="param-grid cols-2" style="flex:1;min-width:0;">
                 <div class="param-cell"><label>Width</label><input class="param-val" id="paramWidth" value="768"></div>
                 <div class="param-cell"><label>Height</label><input class="param-val" id="paramHeight" value="768"></div>
@@ -580,7 +580,7 @@
               <svg class="collapse-arrow open" width="10" height="10" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg>
             </div>
             <div class="collapse-body open" id="panelSeedBatch">
-            <div class="seed-row">
+            <div class="seed-row field-group">
               <div class="param-cell"><label>Seed</label><input class="param-val" id="paramSeed" value="-1" style="text-align:left;font-family:var(--mono);"></div>
               <button class="seed-btn" id="seedRandom" title="Random">&#x1f3b2;</button>
               <button class="seed-btn" id="seedRecycle" title="Recycle last">&#x1f501;</button>
@@ -608,7 +608,7 @@
                 <div class="param-cell"><label>Resize seed from height</label><input class="param-val" id="paramResizeSeedH" value="0"></div>
               </div>
             </div>
-            <div class="param-grid cols-2" style="margin-top:5px;">
+            <div class="param-grid cols-2 field-group">
               <div class="param-cell"><label>Batch</label><input class="param-val" id="paramBatch" value="1"></div>
               <div class="param-cell"><label>Batch Size</label><input class="param-val" id="paramBatchSize" value="1"></div>
             </div>
@@ -627,11 +627,11 @@
                 <div class="param-cell"><label>Upscaler</label><select class="param-select" id="paramHrUpscaler"><option>Latent</option><option>R-ESRGAN 4x+</option></select></div>
                 <div class="param-cell"><label>Scale</label><input class="param-val" id="paramHrScale" value="2.0"></div>
               </div>
-              <div class="param-grid cols-2" style="margin-top:5px;">
+              <div class="param-grid cols-2 field-group">
                 <div class="param-cell"><label>Steps</label><input class="param-val" id="paramHrSteps" value="0"></div>
                 <div class="param-cell"><label>Denoise</label><input class="param-val" id="paramHrDenoise" value="0.30"></div>
               </div>
-              <div class="param-grid cols-2" style="margin-top:5px;">
+              <div class="param-grid cols-2 field-group secondary">
                 <div class="param-cell"><label>CFG</label><input class="param-val" id="paramHrCFG" value="0"></div>
                 <div class="param-cell"><label>Checkpoint</label><select class="param-select" id="paramHrCheckpoint"><option>Same</option></select></div>
               </div>
@@ -656,7 +656,7 @@
                   <div class="param-cell"><label>Model</label><select class="param-select" id="paramAD1Model"><option>face_yolov8n.pt</option></select></div>
                   <div class="param-cell"><label>Confidence</label><input class="param-val" id="paramAD1Conf" value="0.3"></div>
                 </div>
-                <div class="param-grid cols-2" style="margin-top:4px;">
+                <div class="param-grid cols-2 field-group">
                   <div class="param-cell"><label>Denoise</label><input class="param-val" id="paramAD1Denoise" value="0.4"></div>
                   <div class="param-cell"><label>Mask Blur</label><input class="param-val" id="paramAD1Blur" value="4"></div>
                 </div>
@@ -674,7 +674,7 @@
                   <div class="param-cell"><label>Model</label><select class="param-select" id="paramAD2Model"><option>None</option></select></div>
                   <div class="param-cell"><label>Confidence</label><input class="param-val" id="paramAD2Conf" value="0.3"></div>
                 </div>
-                <div class="param-grid cols-2" style="margin-top:4px;">
+                <div class="param-grid cols-2 field-group">
                   <div class="param-cell"><label>Denoise</label><input class="param-val" id="paramAD2Denoise" value="0.4"></div>
                   <div class="param-cell"><label>Mask Blur</label><input class="param-val" id="paramAD2Blur" value="4"></div>
                 </div>
@@ -692,7 +692,7 @@
                   <div class="param-cell"><label>Model</label><select class="param-select" id="paramAD3Model"><option>None</option></select></div>
                   <div class="param-cell"><label>Confidence</label><input class="param-val" id="paramAD3Conf" value="0.3"></div>
                 </div>
-                <div class="param-grid cols-2" style="margin-top:4px;">
+                <div class="param-grid cols-2 field-group">
                   <div class="param-cell"><label>Denoise</label><input class="param-val" id="paramAD3Denoise" value="0.4"></div>
                   <div class="param-cell"><label>Mask Blur</label><input class="param-val" id="paramAD3Blur" value="4"></div>
                 </div>
@@ -722,7 +722,7 @@
                 <div class="collapse-check" id="checkUpscaleAD"></div>
                 <span style="font-size:10px;color:var(--text-3);">Run ADetailer</span>
               </div>
-              <div class="param-grid cols-2" style="margin-top:4px;" id="upscaleRefineParams">
+              <div class="param-grid cols-2 field-group" id="upscaleRefineParams">
                 <div class="param-cell"><label>Steps</label><input class="param-val" id="paramUpscaleSteps" value="20"></div>
                 <div class="param-cell"><label>Denoise</label><input class="param-val" id="paramUpscaleDenoise" value="0.3"></div>
               </div>
@@ -764,7 +764,7 @@
                   <img class="cn-upload-thumb" id="cnUploadThumb1" style="display:none;">
                   <button class="cn-upload-clear" id="cnUploadClear1" style="display:none;" title="Remove">&#x2715;</button>
                 </div>
-                <div class="param-grid cols-2" style="margin-top:4px;">
+                <div class="param-grid cols-2 field-group">
                   <div class="param-cell"><label>Start</label><input class="param-val" id="paramCN1Start" value="0.0"></div>
                   <div class="param-cell"><label>End</label><input class="param-val" id="paramCN1End" value="1.0"></div>
                 </div>
@@ -804,7 +804,7 @@
                   <img class="cn-upload-thumb" id="cnUploadThumb2" style="display:none;">
                   <button class="cn-upload-clear" id="cnUploadClear2" style="display:none;" title="Remove">&#x2715;</button>
                 </div>
-                <div class="param-grid cols-2" style="margin-top:4px;">
+                <div class="param-grid cols-2 field-group">
                   <div class="param-cell"><label>Start</label><input class="param-val" id="paramCN2Start" value="0.0"></div>
                   <div class="param-cell"><label>End</label><input class="param-val" id="paramCN2End" value="1.0"></div>
                 </div>
