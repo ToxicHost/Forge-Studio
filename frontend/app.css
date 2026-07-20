@@ -1302,6 +1302,23 @@ body {
   margin-top: 8px;
 }
 
+/* Advanced expander — one remembered state per block (prefs key
+   panel_ui.advanced_open); the .param-advanced tier hides until its
+   block gains .adv-open. The !important beats inline display toggles
+   on tier members (e.g. the CN upload row) so a closed tier always
+   wins; disclosure is CSS visibility only — inputs never move. */
+.param-adv-toggle {
+  display: flex; align-items: center; gap: 5px;
+  margin-top: 8px; padding: 2px 0;
+  font-size: var(--ui-font-meta); color: var(--text-3);
+  text-transform: uppercase; letter-spacing: 0.5px;
+  cursor: pointer; user-select: none;
+}
+.param-adv-toggle:hover { color: var(--text-2); }
+.param-adv-toggle .adv-caret { transition: transform 0.15s; }
+.param-adv-toggle.open .adv-caret { transform: rotate(180deg); }
+.collapse-section:not(.adv-open) .param-advanced { display: none !important; }
+
 /* ═══════════════════════════════════════════
    COLLAPSIBLE SECTIONS
    ═══════════════════════════════════════════ */

@@ -3086,6 +3086,53 @@ function formatTimeAgo(date) {
 // UI INTERACTIONS
 // ═══════════════════════════════════════════
 
+// ── Panel disclosure helpers (Advanced tier + enable-gated bodies) ──
+// Expander state persists per block under the server preference
+// panel_ui = { advanced_open: { "<blockId>": true } }. Enable-gated
+// bodies simply follow their checkbox's .checked class.
+
+function _readPanelUi() {
+  const v = window.Prefs?.get("panel_ui");
+  return (v && typeof v === "object" && !Array.isArray(v)) ? v : {};
+}
+
+function _advancedOpen(blockId) {
+  const adv = _readPanelUi().advanced_open;
+  return !!(adv && typeof adv === "object" && adv[blockId]);
+}
+
+function _setAdvancedOpen(blockId, open) {
+  const ui = _readPanelUi();
+  const adv = (ui.advanced_open && typeof ui.advanced_open === "object"
+      && !Array.isArray(ui.advanced_open)) ? ui.advanced_open : {};
+  if (open) adv[blockId] = true;
+  else delete adv[blockId];
+  ui.advanced_open = adv;
+  window.Prefs?.set("panel_ui", ui);
+}
+
+// Reflect remembered expander state onto each block that has an
+// Advanced tier: .adv-open on the section shows its .param-advanced
+// members; every toggle caret in the block follows the shared state.
+function _syncAdvancedUI() {
+  document.querySelectorAll("#page-generate .collapse-section[data-block]").forEach(sec => {
+    if (!sec.querySelector(".param-adv-toggle")) return;
+    const open = _advancedOpen(sec.dataset.block);
+    sec.classList.toggle("adv-open", open);
+    sec.querySelectorAll(".param-adv-toggle").forEach(t => t.classList.toggle("open", open));
+  });
+}
+
+// Show each [data-gate] region only while its enable checkbox is
+// checked. Hidden regions keep their values live — generation and
+// defaults read inputs by ID regardless of visibility.
+function _syncEnableGates() {
+  document.querySelectorAll("#page-generate [data-gate]").forEach(el => {
+    const on = document.getElementById(el.dataset.gate)?.classList.contains("checked");
+    el.style.display = on ? (el.dataset.gateDisplay || "") : "none";
+  });
+}
+
 function bindUI() {
   // App tabs
   document.getElementById("appTabs")?.addEventListener("click", e => {
@@ -3216,6 +3263,23 @@ function bindUI() {
       if (arrow) header.classList.toggle("collapsed");
     });
   });
+
+  // ===== Panel disclosure: Advanced expanders + enable-gated bodies =====
+  // Both mechanisms are CSS visibility only — inputs keep their IDs and
+  // positions, and hidden non-default values still apply to generation,
+  // defaults save, workflows, and session restore exactly as before.
+  // Expander state is remembered per block in the server preference
+  // panel_ui = { advanced_open: { "<blockId>": true } }.
+  document.querySelectorAll("#page-generate .param-adv-toggle").forEach(t => {
+    t.addEventListener("click", () => {
+      const sec = t.closest(".collapse-section[data-block]");
+      if (!sec) return;
+      _setAdvancedOpen(sec.dataset.block, !_advancedOpen(sec.dataset.block));
+      _syncAdvancedUI();
+    });
+  });
+  _syncAdvancedUI();
+  _syncEnableGates();
 
   // UX-012: Clear mask button
   document.getElementById("clearMaskBtn")?.addEventListener("click", () => {
@@ -5097,6 +5161,9 @@ function bindUI() {
     const gridOn = document.getElementById("toggleGrid")?.classList.contains("on") ?? true;
     if (window.StudioCore) window.StudioCore.state.showGrid = gridOn;
     _syncPressureState();
+    // Restored .checked classes drive the enable-gated panel regions
+    // (AD slots 2/3, CN unit 2, upscale refine controls).
+    _syncEnableGates();
     State.saveOutputs = document.getElementById("toggleSaveOutputs")?.classList.contains("on") ?? true;
     State.highPrecision = document.getElementById("toggleHighPrecision")?.classList.contains("on") ?? false;
     State.livePreview = document.getElementById("toggleLivePreview")?.classList.contains("on") ?? true;
@@ -5346,19 +5413,22 @@ function bindUI() {
     return hadDefaults || hadSession;
   };
 
-  // AD slot checkboxes
+  // AD slot checkboxes — slots 2/3 bodies are enable-gated on them
   document.querySelectorAll(".ad-slot-check").forEach(check => {
     check.addEventListener("click", (e) => {
       e.stopPropagation();
       check.classList.toggle("checked");
+      _syncEnableGates();
     });
   });
 
-  // Upscale refine checkbox — gates the img2img refine pass
+  // Upscale refine checkbox — gates the img2img refine pass and
+  // reveals the refine-only controls (Steps/Denoise, Run ADetailer)
   document.getElementById("checkUpscaleRefine")?.addEventListener("click", (e) => {
     e.stopPropagation();
     e.currentTarget.classList.toggle("checked");
     _syncUpscaleADState();
+    _syncEnableGates();
   });
 
   // Upscale AD checkbox — gates AD during the refine pass
@@ -5369,11 +5439,12 @@ function bindUI() {
 
   _syncUpscaleADState();
 
-  // CN unit checkboxes
+  // CN unit checkboxes — unit 2's body is enable-gated on its check
   document.querySelectorAll(".cn-unit-check").forEach(check => {
     check.addEventListener("click", (e) => {
       e.stopPropagation();
       check.classList.toggle("checked");
+      _syncEnableGates();
     });
   });
 

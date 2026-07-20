@@ -322,7 +322,7 @@
   "tooltip.bigOutputWarning": "Output will exceed 2000px on one or both sides. This may cause significant VRAM usage and slow generation on most hardware.",
   "tooltip.histogramAutoStretch": "Stretch input black/white to histogram 0.1% / 99.9% percentile",
 
-  "panels.upscale.hint": "Single-call pipeline. Refine and ADetailer are independent: tick either, both, or neither. Steps/Denoise apply to the refine pass.",
+  "panels.upscale.hint": "Single-call pipeline. Tick Refine to run an img2img pass after upscaling; ADetailer and Steps/Denoise apply to that refine pass.",
 
   "lora.search.placeholder": "Search LoRAs...",
   "lora.sort.name": "Name",
@@ -1312,6 +1312,7 @@
   "shortcuts.action.canvas_brushHardness_increase": "Brush hardness: increase",
   "shortcuts.action.canvas_zoom_fit": "Fit canvas to view",
 
+  "panel.advanced": "Advanced",
   "toast.newestToCanvas": "Newest output → canvas",
   "toast.te.needed": "This model needs a text encoder — select one above",
   "toast.vae.needed": "This model needs a VAE — select one above"
