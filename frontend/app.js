@@ -5379,16 +5379,45 @@ function bindUI() {
 
   // Context bar — now handled by ctx-scrub system in canvas-ui.js
 
-  // Keyboard shortcuts
+  // Keyboard shortcuts — Generate and Save Canvas are remappable actions
+  // dispatched by the shortcuts.js registry (registered below). Escape
+  // interrupt stays fixed here; it is reserved and never remappable.
   document.addEventListener("keydown", e => {
-    // Ctrl+Enter or Shift+Enter = Generate
-    if ((e.ctrlKey || e.shiftKey) && e.key === "Enter") { e.preventDefault(); doGenerate(); }
     // Escape = Interrupt
     if (e.key === "Escape" && State.generating) { API.interrupt(); }
     // Ctrl+Z / Ctrl+Shift+Z handled by canvas-ui.js — not duplicated here
-    // Ctrl+S = Export/Save canvas
-    if (e.ctrlKey && e.key === "s") { e.preventDefault(); document.getElementById("layerSave")?.click(); }
   });
+
+  // Remappable app actions. Handlers return true when they consumed the
+  // event (the registry then calls preventDefault) and false for a no-op.
+  window.Shortcuts?.registerHandler("app.generate", () => {
+    doGenerate();
+    return true;
+  });
+  window.Shortcuts?.registerHandler("app.saveCanvas", () => {
+    document.getElementById("layerSave")?.click();
+    return true;
+  });
+  window.Shortcuts?.registerHandler("app.sendNewestToCanvas", () => {
+    const img = _pickOutputSource(0);
+    if (!img) return false;
+    const entry = State.sessionEntries[0] || {};
+    displayOnCanvas(img, {
+      newLayer: true,
+      layerName: "Output",
+      undoLabel: "Send to canvas",
+      floatPath: entry.floatPath || "",
+      maskPath: entry.maskPath || "",
+      floatStats: entry.floatStats || null,
+    });
+    showToast(_i18n("toast.newestToCanvas", "Newest output → canvas"), "success");
+    return true;
+  });
+
+  // Keyboard Shortcuts settings UI (group markup lives in index.html;
+  // rows are rendered by the registry so custom bindings show live state).
+  window.Shortcuts?.renderSettings?.();
+  document.addEventListener("i18n:change", () => window.Shortcuts?.renderSettings?.());
 
   // Update dimensions + resize canvas engine when width/height change
   ["paramWidth", "paramHeight"].forEach(id => {

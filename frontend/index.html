@@ -4,18 +4,18 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Forge Studio</title>
-<link rel="icon" type="image/svg+xml" href="/studio/static/brand/favicon.svg?v=4.10.0">
-<link rel="icon" type="image/png" sizes="32x32" href="/studio/static/brand/favicon-32.png?v=4.10.0">
+<link rel="icon" type="image/svg+xml" href="/studio/static/brand/favicon.svg?v=4.11.0">
+<link rel="icon" type="image/png" sizes="32x32" href="/studio/static/brand/favicon-32.png?v=4.11.0">
 <link rel="apple-touch-icon" href="/studio/static/brand/apple-touch-icon.png">
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <!-- Keep the ?v= in sync with `const v` in the loader script at the bottom
      of this file — stylesheets had no cache-buster, so deploys kept serving
      stale CSS even after the versioned JS refreshed. -->
-<link rel="stylesheet" href="/studio/static/app.css?v=4.10.0">
-<link rel="stylesheet" href="/studio/static/searchable-select.css?v=4.10.0">
-<link rel="stylesheet" href="/studio/static/education.css?v=4.10.0">
-<link rel="stylesheet" href="/studio/static/studio-tour.css?v=4.10.0">
-<link rel="stylesheet" href="/studio/static/studio-docs.css?v=4.10.0">
+<link rel="stylesheet" href="/studio/static/app.css?v=4.11.0">
+<link rel="stylesheet" href="/studio/static/searchable-select.css?v=4.11.0">
+<link rel="stylesheet" href="/studio/static/education.css?v=4.11.0">
+<link rel="stylesheet" href="/studio/static/studio-tour.css?v=4.11.0">
+<link rel="stylesheet" href="/studio/static/studio-docs.css?v=4.11.0">
 </head>
 <body>
 
@@ -24,7 +24,7 @@
      ═══════════════════════════════════════════ -->
 
 <div class="titlebar">
-  <div class="brand"><img class="brand-mark" src="/studio/static/brand/forge-studio-mark.svg?v=4.10.0" alt=""><em>FORGE</em>&ensp;<span class="brand-studio">STUDIO</span></div>
+  <div class="brand"><img class="brand-mark" src="/studio/static/brand/forge-studio-mark.svg?v=4.11.0" alt=""><em>FORGE</em>&ensp;<span class="brand-studio">STUDIO</span></div>
   <div class="tab-bar" id="appTabs">
     <button class="active" data-app="studio">Canvas</button>
   </div>
@@ -894,6 +894,12 @@
               <div class="setting-row" title="Uses the GPU/WebGL display backend for sharper color-managed canvas preview. Falls back to standard Canvas 2D if unavailable. Does not change exported pixels."><span class="setting-label">GPU canvas preview</span><div class="toggle-track" id="toggleCanvasColorPreview"><div class="toggle-knob"></div></div></div>
               <!-- Pen pressure is now on the brush context bar -->
             </div>
+            <div class="setting-group" id="keyboardShortcutsSettings">
+              <div class="setting-group-title" data-i18n="settings.shortcuts.title">Keyboard Shortcuts</div>
+              <p class="shortcut-settings-note" data-i18n="settings.shortcuts.description">Change a shortcut by pressing the key you want. Bind by character for your current layout, or by physical position for layout-independent muscle memory.</p>
+              <div id="shortcutSettingsRows"></div>
+              <button class="defaults-btn defaults-btn-reset" id="shortcutResetAll" data-i18n="settings.shortcuts.resetAll">Reset all to defaults</button>
+            </div>
             <div class="setting-group">
               <div class="setting-group-title" data-i18n="settings.generation.title">Generation</div>
               <div class="setting-row"><span class="setting-label" data-i18n="settings.generation.saveOutputs">Save outputs</span><div class="toggle-track on" id="toggleSaveOutputs"><div class="toggle-knob"></div></div></div>
@@ -1275,7 +1281,7 @@
 // Auto cache-bust: load scripts in order with timestamp
 (async () => {
   const scripts = [
-    "ag-psd.js", "png-metadata.js", "i18n.js", "prefs.js",
+    "ag-psd.js", "png-metadata.js", "i18n.js", "prefs.js", "shortcuts.js",
     "searchable-select.js", "canvas-core.js",
     "canvas-ui.js", "workflow-state.js", "app.js", "workflows.js",
     "module-system.js", "studio-tour.js", "studio-docs.js", "tag-complete.js",
@@ -1284,7 +1290,7 @@
   // Optional modules — loaded if available, silently skipped if not.
   // debug.js exposes window.StudioDebug.* — dev-tools-only, no UI.
   const optionalScripts = ["develop.js", "workshop.js", "lexicon.js", "education.js", "codex.js", "studio-showme.js", "gallery.js", "module-tours.js", "debug.js", "canvas-webgl-preview.js"];
-  const v = "4.10.0";
+  const v = "4.11.0";
   window.__STUDIO_V = v;
   for (const s of scripts) {
     await new Promise((resolve, reject) => {

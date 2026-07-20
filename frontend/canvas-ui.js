@@ -3609,6 +3609,65 @@ async function _ctxSaveCanvas(fmt) {
 
 // ── Keyboard Shortcuts ──────────────────────────────────
 
+// Transform-mode toggles take precedence over these tool actions while a
+// transform is active (see the guard in bindKeys) — V flips vertically,
+// W toggles warp, K skew, P perspective, exactly as before the registry.
+const _TRANSFORM_PRIORITY_ACTIONS = new Set([
+    "canvas.tool.transform", "canvas.tool.wand",
+    "canvas.tool.clone", "canvas.tool.pixelate",
+]);
+
+// Execute a registry-matched canvas action. Bodies are the former
+// hardcoded tool-switch cases, keyed by action ID instead of e.key so
+// custom bindings work on any keyboard layout (see shortcuts.js).
+// Returns true when the action was handled.
+function _dispatchCanvasShortcut(actionId, e) {
+    switch (actionId) {
+        case "canvas.tool.brush": setTool("brush"); return true;
+        case "canvas.tool.eraser": setTool("eraser"); return true;
+        case "canvas.tool.eyedropper": setTool("eyedropper"); return true;
+        case "canvas.tool.fillGradient": setTool(S.tool === "fill" ? "gradient" : "fill"); return true;
+        case "canvas.tool.smudge": setTool("smudge"); return true;
+        case "canvas.tool.blur": setTool("blur"); return true;
+        case "canvas.tool.marquee": setTool("select"); return true;
+        case "canvas.tool.lasso": {
+            // The real event's shiftKey keeps existing Shift+L behavior.
+            const lassoOrder = ["lasso", "polylasso", "maglasso"];
+            const cur = lassoOrder.indexOf(S.tool);
+            setTool(e.shiftKey ? lassoOrder[(cur + 1) % 3] : (cur >= 0 ? lassoOrder[(cur + 1) % 3] : "lasso"));
+            return true;
+        }
+        case "canvas.tool.ellipse": setTool("ellipse"); return true;
+        case "canvas.tool.wand": setTool("wand"); return true;
+        case "canvas.tool.transform": setTool("transform"); return true;
+        case "canvas.mask.toggle": toggleMaskMode(); return true;
+        case "canvas.tool.crop": setTool("crop"); return true;
+        case "canvas.tool.text": setTool("text"); return true;
+        case "canvas.tool.shape": setTool("shape"); return true;
+        case "canvas.colors.reset": {
+            // Reset fg/bg to black/white (industry standard)
+            S.color = "#000000"; S.bgColor = "#ffffff";
+            _updateHSVFromColor(S.color); _applyHSV();
+            _drawHueWheel(); _drawSVSquare();
+            return true;
+        }
+        case "canvas.tool.clone": setTool("clone"); return true;
+        case "canvas.tool.pixelate": setTool("pixelate"); return true;
+        case "canvas.tool.dodge": setTool("dodge"); return true;
+        case "canvas.tool.liquify": setTool("liquify"); return true;
+        case "canvas.colors.swap": {
+            const tmp = S.color; S.color = S.bgColor; S.bgColor = tmp;
+            updateColorUI(); return true;
+        }
+        case "canvas.brushSize.decrease": S.brushSize = Math.max(1, S.brushSize - 1); _syncCtxBar(); return true;
+        case "canvas.brushSize.increase": S.brushSize = Math.min(100, S.brushSize + 1); _syncCtxBar(); return true;
+        case "canvas.brushHardness.decrease": S.brushHardness = Math.max(0, (S.brushHardness ?? 1) - 0.1); _syncCtxBar(); return true;
+        case "canvas.brushHardness.increase": S.brushHardness = Math.min(1, (S.brushHardness ?? 1) + 0.1); _syncCtxBar(); return true;
+        case "canvas.zoom.fit": C.zoomFit(); updateStatus(); _redraw(); return true;
+    }
+    return false;
+}
+
 function bindKeys() {
     document.addEventListener("keydown", e => {
         if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName)) return;
@@ -3619,6 +3678,22 @@ function bindKeys() {
             _spaceDown = true;
             if (S.canvas) S.canvas.style.cursor = "grab";
             return;
+        }
+
+        // Registry-resolved canvas shortcuts (customizable). Matched
+        // BEFORE the Ctrl-combo block so bindings to AltGr-produced
+        // characters (reported as Ctrl+Alt on many layouts) can still
+        // fire; the built-in defaults all prohibit Ctrl/Meta, so the
+        // stateful Ctrl combos below are unaffected. While a transform
+        // is active, the actions whose default keys double as transform
+        // toggles (V/W/K/P) skip the registry so the transform block
+        // keeps its current precedence.
+        const _sc = window.Shortcuts ? window.Shortcuts.match(e, { scope: "canvas" }) : null;
+        if (_sc && !(S.transform.active && _TRANSFORM_PRIORITY_ACTIONS.has(_sc.actionId))) {
+            if (_dispatchCanvasShortcut(_sc.actionId, e)) {
+                e.preventDefault();
+                return;
+            }
         }
 
         // Ctrl combos
@@ -3786,49 +3861,8 @@ function bindKeys() {
             if (S.selection.active) { e.preventDefault(); C.selectionClear(); stopMarchingAnts(); _redraw(); return; }
         }
 
-        // Tool shortcuts
-        switch (e.key.toLowerCase()) {
-            case "b": setTool("brush"); break;
-            case "e": setTool("eraser"); break;
-            case "i": setTool("eyedropper"); break;
-            case "g": setTool(S.tool === "fill" ? "gradient" : "fill"); break;
-            case "s": setTool("smudge"); break;
-            case "r": setTool("blur"); break;
-            case "m": setTool("select"); break;
-            case "l": {
-                const lassoOrder = ["lasso", "polylasso", "maglasso"];
-                const cur = lassoOrder.indexOf(S.tool);
-                setTool(e.shiftKey ? lassoOrder[(cur + 1) % 3] : (cur >= 0 ? lassoOrder[(cur + 1) % 3] : "lasso"));
-                break;
-            }
-            case "o": setTool("ellipse"); break;
-            case "w": setTool("wand"); break;
-            case "v": setTool("transform"); break;
-            case "q": toggleMaskMode(); break;
-            case "c": setTool("crop"); break;
-            case "t": setTool("text"); break;
-            case "u": setTool("shape"); break;
-            case "d": {
-                // Reset fg/bg to black/white (industry standard)
-                S.color = "#000000"; S.bgColor = "#ffffff";
-                _updateHSVFromColor(S.color); _applyHSV();
-                _drawHueWheel(); _drawSVSquare();
-                break;
-            }
-            case "k": setTool("clone"); break;
-            case "p": setTool("pixelate"); break;
-            case "j": setTool("dodge"); break;
-            case "y": setTool("liquify"); break;
-            case "x": {
-                const tmp = S.color; S.color = S.bgColor; S.bgColor = tmp;
-                updateColorUI(); break;
-            }
-            case "[": S.brushSize = Math.max(1, S.brushSize - 1); _syncCtxBar(); break;
-            case "]": S.brushSize = Math.min(100, S.brushSize + 1); _syncCtxBar(); break;
-            case "{": S.brushHardness = Math.max(0, (S.brushHardness ?? 1) - 0.1); _syncCtxBar(); break;
-            case "}": S.brushHardness = Math.min(1, (S.brushHardness ?? 1) + 0.1); _syncCtxBar(); break;
-            case "f": case "0": C.zoomFit(); updateStatus(); _redraw(); break;
-        }
+        // Tool shortcuts are registry actions now — resolved above via
+        // Shortcuts.match() so they stay remappable per keyboard layout.
     });
 
     document.addEventListener("keyup", e => {
