@@ -1237,53 +1237,108 @@ const UpdateBanner = {
 // TEXT ENCODER MEMORY HELPERS
 // ═══════════════════════════════════════════
 //
-// Studio remembers the user's last external Text Encoder pick per
-// model title AND per architecture. Architecture-level memory lets us
-// restore an Anima/Cosmos TE when the user returns to an Anima/Cosmos
+// Studio remembers the user's last external Text Encoder AND VAE pick
+// per model title, plus per architecture. Architecture-level memory lets
+// us restore an Anima/Cosmos TE when the user returns to an Anima/Cosmos
 // model after a detour through SDXL/Flux/etc., without ever carrying
 // a Cosmos TE into an arch that didn't ask for it.
 //
-// Persisted shape:
+// Persisted shape (server preference "component_memory", v2):
 //   {
-//     by_model: { "<title>": "<te_filename>" },
-//     by_arch:  { "<arch>":  "<te_filename>" }
+//     version: 2,
+//     by_model: { "<title>": { te: "<file>", vae: "<file>" | null } },
+//     by_arch:  { "<arch>":  { te: "<file>", vae: "<file>" } }
 //   }
 //
-// Older builds wrote a flat `{ title: te }` object; _normalizeTeMemory
-// migrates that on read.
+// A model entry whose own `vae` is null records an explicit
+// Automatic/None pick for that model: VAE fallback stops there, while
+// the architecture memory other models rely on stays intact.
+//
+// Older builds wrote a flat `{ title: te }` object or a TE-only
+// `{ by_model: { title: te }, by_arch: { arch: te } }`;
+// _normalizeComponentMemory migrates both on read. The "unknown"
+// architecture never reads or writes by_arch — two unrelated undetected
+// models must not share components through it.
 
-function _readTeMemory() {
+function _isUsableArch(arch) {
+  return !!arch && arch !== "unknown";
+}
+
+function _normalizeComponentMemory(raw) {
+  const out = { version: 2, by_model: {}, by_arch: {} };
+  if (!raw || typeof raw !== "object" || Array.isArray(raw)) return out;
+
+  const normEntry = (entry, allowNullVae) => {
+    if (typeof entry === "string") return entry ? { te: entry } : null;
+    if (!entry || typeof entry !== "object" || Array.isArray(entry)) return null;
+    const e = {};
+    if (typeof entry.te === "string" && entry.te) e.te = entry.te;
+    if (typeof entry.vae === "string" && entry.vae) {
+      e.vae = entry.vae;
+    } else if (allowNullVae && entry.vae === null && "vae" in entry) {
+      e.vae = null;
+    }
+    return Object.keys(e).length ? e : null;
+  };
+
+  let byModel = raw.by_model;
+  let byArch = raw.by_arch;
+  if (!byModel && !byArch) {
+    // Legacy flat shape: title -> te filename
+    byModel = raw;
+    byArch = {};
+  }
+  if (byModel && typeof byModel === "object" && !Array.isArray(byModel)) {
+    for (const title of Object.keys(byModel)) {
+      const e = normEntry(byModel[title], true);
+      if (e) out.by_model[title] = e;
+    }
+  }
+  if (byArch && typeof byArch === "object" && !Array.isArray(byArch)) {
+    for (const arch of Object.keys(byArch)) {
+      if (!_isUsableArch(arch)) continue;
+      const e = normEntry(byArch[arch], false);
+      if (e) out.by_arch[arch] = e;
+    }
+  }
+  return out;
+}
+
+function _ensureMemoryEntry(map, key) {
+  if (!map[key] || typeof map[key] !== "object") map[key] = {};
+  return map[key];
+}
+
+function _readComponentMemory() {
   try {
-    return _normalizeTeMemory(JSON.parse(localStorage.getItem("studio_te_memory") || "{}"));
+    return _normalizeComponentMemory(window.Prefs?.get("component_memory", {}));
   } catch (_) {
-    return { by_model: {}, by_arch: {} };
+    return { version: 2, by_model: {}, by_arch: {} };
   }
 }
 
+function _writeComponentMemory(mem) {
+  window.Prefs?.set("component_memory", mem || { version: 2, by_model: {}, by_arch: {} });
+}
+
+// Compatibility wrappers — TE-era call sites keep their names but read
+// and write the shared v2 component store.
+function _readTeMemory() {
+  return _readComponentMemory();
+}
+
 function _writeTeMemory(mem) {
-  try {
-    localStorage.setItem("studio_te_memory", JSON.stringify(mem || { by_model: {}, by_arch: {} }));
-  } catch (_) {}
+  _writeComponentMemory(mem);
 }
 
 function _optionExists(select, value) {
   return !!(select && value && [...select.options].some(o => o.value === value));
 }
 
-function _teArchKey(arch) {
-  return arch || "unknown";
-}
-
-function _normalizeTeMemory(raw) {
-  if (!raw || typeof raw !== "object") return { by_model: {}, by_arch: {} };
-  if (raw.by_model || raw.by_arch) {
-    return {
-      by_model: raw.by_model || {},
-      by_arch: raw.by_arch || {},
-    };
-  }
-  // Legacy flat shape: title -> te filename
-  return { by_model: raw, by_arch: {} };
+// Refresh an already-wrapped searchable select's trigger label after a
+// programmatic .value set (no-op for native selects).
+function _syncSelectUI(sel) {
+  try { sel?._studioSSelHandle?.refresh?.(); } catch (_) {}
 }
 
 async function checkModelTE(title) {
@@ -1299,10 +1354,28 @@ async function checkModelTE(title) {
 
 function rememberExternalTE(modelTitle, arch, teName) {
   if (!modelTitle || !teName || teName === "None") return;
-  const mem = _readTeMemory();
-  mem.by_model[modelTitle] = teName;
-  if (arch) mem.by_arch[_teArchKey(arch)] = teName;
-  _writeTeMemory(mem);
+  const mem = _readComponentMemory();
+  _ensureMemoryEntry(mem.by_model, modelTitle).te = teName;
+  if (_isUsableArch(arch)) _ensureMemoryEntry(mem.by_arch, arch).te = teName;
+  _writeComponentMemory(mem);
+}
+
+// Remember the user's VAE pick for a model. A concrete name also updates
+// architecture memory; null records the explicit Automatic/None opt-out
+// for this model only (architecture memory stays untouched so other
+// models of the same arch keep their fallback).
+function rememberVAE(modelTitle, arch, vaeNameOrNull) {
+  if (!modelTitle) return;
+  const mem = _readComponentMemory();
+  if (vaeNameOrNull === null) {
+    _ensureMemoryEntry(mem.by_model, modelTitle).vae = null;
+  } else if (vaeNameOrNull && vaeNameOrNull !== "Automatic" && vaeNameOrNull !== "None") {
+    _ensureMemoryEntry(mem.by_model, modelTitle).vae = vaeNameOrNull;
+    if (_isUsableArch(arch)) _ensureMemoryEntry(mem.by_arch, arch).vae = vaeNameOrNull;
+  } else {
+    return;
+  }
+  _writeComponentMemory(mem);
 }
 
 // Restore the TE dropdown for the given model with architecture-aware
@@ -1363,20 +1436,26 @@ async function restoreTextEncoderForModel(modelTitle, reason = "model-change", o
     return check;
   }
 
-  const mem = _readTeMemory();
+  const mem = _readComponentMemory();
   const previousArch = opts.previousArch || null;
-  const sameArch = !previousArch || previousArch === arch;
+  // Carry the current/preferred TE only on a CONFIRMED same-architecture
+  // transition. An unknown architecture on either side is not proof of a
+  // match — two undetected models must not share components.
+  const sameArch = _isUsableArch(previousArch) && _isUsableArch(arch)
+      && previousArch === arch;
 
   const candidates = [];
   // Exact model memory is always safest.
-  candidates.push(mem.by_model?.[modelTitle]);
+  candidates.push(mem.by_model?.[modelTitle]?.te);
   // Same architecture can reuse the currently selected/preferred TE.
   if (sameArch) {
     candidates.push(opts.preferredTE);
     if (teSelect.value !== "None") candidates.push(teSelect.value);
   }
-  // Architecture-level memory is allowed for the target arch.
-  candidates.push(mem.by_arch?.[_teArchKey(arch)]);
+  // Architecture-level memory is allowed for a usable target arch only.
+  if (_isUsableArch(arch)) {
+    candidates.push(mem.by_arch?.[arch]?.te);
+  }
 
   const restored = candidates.find(v => v && v !== "None" && _optionExists(teSelect, v));
 
@@ -1385,11 +1464,125 @@ async function restoreTextEncoderForModel(modelTitle, reason = "model-change", o
   } else {
     teSelect.value = "None";
     if ((State._textEncoderList || []).length > 0) {
-      showToast("This model needs a text encoder — select one above", "info");
+      showToast(
+        _i18n("toast.te.needed", "This model needs a text encoder — select one above"),
+        "info",
+      );
     }
   }
 
   return check;
+}
+
+// Restore the VAE dropdown for the given model with the same
+// architecture-aware rules as restoreTextEncoderForModel. The VAE row is
+// visible for every architecture; "Automatic" is the neutral state.
+//
+// reason:
+//   "model-change" / "post-generation" — normal restore from memory
+//   "workflow-apply" / "session-restore" / "generation-preflight" /
+//   "vae-change" — an explicit value is already in the dropdown; keep it
+//                  and only fall back to Automatic if it no longer exists
+//
+// opts.previousArch — arch of the previously loaded model.
+// opts.preferredVAE — caller-captured value from before an options rebuild.
+// opts.check        — existing /check_model_te payload (avoids a refetch).
+//
+// Returns true when a decision was made that later fallbacks (e.g.
+// /studio/current_vae) must not overwrite — memory hit, explicit
+// Automatic sentinel, or missing-file degrade; false when there was no
+// memory to apply. Never guesses a VAE.
+async function restoreVAEForModel(modelTitle, reason = "model-change", opts = {}) {
+  const vaeSelect = document.getElementById("paramVAE");
+  if (!modelTitle || !vaeSelect) return false;
+
+  const check = opts.check || await checkModelTE(modelTitle);
+  const arch = check.arch || "unknown";
+
+  // Explicit user/workflow/session/preflight-driven values win over
+  // memory — only degrade a selection whose file no longer exists.
+  if (reason === "workflow-apply" || reason === "session-restore"
+      || reason === "generation-preflight" || reason === "vae-change") {
+    if (!_optionExists(vaeSelect, vaeSelect.value)) {
+      if ((reason === "session-restore" || reason === "generation-preflight")
+          && vaeSelect.value && vaeSelect.value !== "Automatic" && vaeSelect.value !== "None") {
+        showToast(
+          _i18n("toast.vae.savedMissing", "Saved VAE not found; using current/default VAE"),
+          "info",
+        );
+      }
+      vaeSelect.value = "Automatic";
+      _syncSelectUI(vaeSelect);
+    }
+    return true;
+  }
+
+  const mem = _readComponentMemory();
+  const entry = mem.by_model?.[modelTitle];
+
+  // 1. Exact model memory (including the explicit Automatic opt-out).
+  if (entry && Object.prototype.hasOwnProperty.call(entry, "vae")) {
+    if (entry.vae === null) {
+      // User explicitly chose Automatic/None for this model — stop all
+      // fallback here; architecture memory stays for other models.
+      vaeSelect.value = "Automatic";
+      _syncSelectUI(vaeSelect);
+      return true;
+    }
+    if (_optionExists(vaeSelect, entry.vae)) {
+      vaeSelect.value = entry.vae;
+      _syncSelectUI(vaeSelect);
+      return true;
+    }
+    // Remembered file was deleted — degrade to the explicit opt-out so
+    // the phantom name can't resurface on the next restore.
+    showToast(
+      _i18n("toast.vae.savedMissing", "Saved VAE not found; using current/default VAE"),
+      "info",
+    );
+    vaeSelect.value = "Automatic";
+    _syncSelectUI(vaeSelect);
+    const memW = _readComponentMemory();
+    _ensureMemoryEntry(memW.by_model, modelTitle).vae = null;
+    _writeComponentMemory(memW);
+    return true;
+  }
+
+  // 2. Confirmed same-architecture carry. An unknown architecture on
+  //    either side is not proof of a match.
+  const previousArch = opts.previousArch || null;
+  const sameArch = _isUsableArch(previousArch) && _isUsableArch(arch)
+      && previousArch === arch;
+  if (sameArch) {
+    const carry = [opts.preferredVAE, vaeSelect.value].find(
+      v => v && v !== "Automatic" && v !== "None" && _optionExists(vaeSelect, v));
+    if (carry) {
+      vaeSelect.value = carry;
+      _syncSelectUI(vaeSelect);
+      return true;
+    }
+  }
+
+  // 3. Architecture memory (usable target arch only).
+  if (_isUsableArch(arch)) {
+    const archVae = mem.by_arch?.[arch]?.vae;
+    if (archVae && _optionExists(vaeSelect, archVae)) {
+      vaeSelect.value = archVae;
+      _syncSelectUI(vaeSelect);
+      return true;
+    }
+  }
+
+  // 4. No candidate — never guess a VAE.
+  vaeSelect.value = "Automatic";
+  _syncSelectUI(vaeSelect);
+  if (check.needs_vae) {
+    showToast(
+      _i18n("toast.vae.needed", "This model needs a VAE — select one above"),
+      "info",
+    );
+  }
+  return false;
 }
 
 
@@ -1603,41 +1796,58 @@ async function populateDropdowns() {
 
     // VAE dropdown (async, non-blocking).
     //
-    // Restore priority: a session/defaults-stashed value (pendingValue) or
-    // the value already selected wins over /studio/current_vae. current_vae
-    // reflects what Forge has loaded *right now*, which at boot is the
-    // default — letting it speak first would silently stomp the user's
-    // saved VAE before the post-restore sync can re-apply it.
-    fetch(API.base + "/studio/vaes").then(r => r.json()).then(vaes => {
+    // Restore priority: a session/defaults-stashed value (pendingValue)
+    // wins, then per-model/arch component memory for the selected model,
+    // then /studio/current_vae. current_vae reflects what Forge has loaded
+    // *right now*, which at boot is the default — letting it speak first
+    // would silently stomp the user's saved VAE before the post-restore
+    // sync can re-apply it, and it must never overwrite a successful
+    // per-model memory restore.
+    const vaeBeforePopulate = document.getElementById("paramVAE")?.value || "";
+    if (modelBeforePopulate && vaeBeforePopulate
+        && vaeBeforePopulate !== "Automatic" && vaeBeforePopulate !== "None") {
+      // Fire-and-forget stash mirroring the TE snapshot above, so refresh
+      // cycles never lose the current concrete pick.
+      checkModelTE(modelBeforePopulate).then(c => {
+        rememberVAE(modelBeforePopulate, c.arch, vaeBeforePopulate);
+      });
+    }
+    fetch(API.base + "/studio/vaes").then(r => r.json()).then(async vaes => {
       const vaeSelect = document.getElementById("paramVAE");
       if (!vaeSelect) return;
       const pendingVAE = vaeSelect.dataset.pendingValue || "";
-      const prev = pendingVAE || vaeSelect.value;
       vaeSelect.innerHTML = vaes.map(v =>
         `<option value="${v.name}">${v.name}</option>`
       ).join("");
+      delete vaeSelect.dataset.pendingValue;
 
-      // Priority 1/2: honor the saved (pending) value, or a meaningful
-      // existing selection, if it still exists. "Automatic" is the
-      // placeholder for "no explicit VAE" — when it's merely the current
-      // dropdown state (not an explicitly saved choice) we let current_vae
-      // speak so a fresh boot still reflects Forge's actual loaded VAE.
-      if (prev && _optionExists(vaeSelect, prev) && (pendingVAE || prev !== "Automatic")) {
-        vaeSelect.value = prev;
-        delete vaeSelect.dataset.pendingValue;
+      // Priority 1: honor an explicit session/defaults-stashed value —
+      // memory must not clobber it ("session-restore" semantics).
+      if (pendingVAE) {
+        if (_optionExists(vaeSelect, pendingVAE)) {
+          vaeSelect.value = pendingVAE;
+        } else {
+          // A saved VAE that no longer exists shouldn't block generation.
+          showToast(
+            _i18n("toast.vae.savedMissing", "Saved VAE not found; using current/default VAE"),
+            "info",
+          );
+          vaeSelect.value = "Automatic";
+        }
         _syncSearchable(vaeSelect);
         return;
       }
 
-      // A saved VAE that no longer exists shouldn't block generation —
-      // warn and fall through to current/default.
-      if (pendingVAE) {
-        showToast(
-          _i18n("toast.vae.savedMissing", "Saved VAE not found; using current/default VAE"),
-          "info",
-        );
+      // Priority 2: per-model/arch component memory for the selected model.
+      const currentModel = document.getElementById("paramModel")?.value || modelBeforePopulate;
+      if (currentModel) {
+        const decided = await restoreVAEForModel(currentModel, "model-change", {
+          previousArch: previousArchForRestore,
+          preferredVAE: vaeBeforePopulate,
+        });
+        _syncSearchable(vaeSelect);
+        if (decided) return;
       }
-      delete vaeSelect.dataset.pendingValue;
 
       // Priority 3: fall back to whatever Forge actually has loaded.
       fetch(API.base + "/studio/current_vae").then(r => r.json()).then(current => {
@@ -3797,21 +4007,30 @@ function bindUI() {
     }
 
     const teSelect = document.getElementById("paramTextEncoder");
-    const vaeVal = document.getElementById("paramVAE")?.value;
 
-    // Resolve TE through the shared architecture-aware helper. It
-    // handles row visibility, memory restore, and the no-external-TE
+    // Resolve TE and VAE through the shared architecture-aware helpers.
+    // They handle row visibility, memory restore, and the no-external-TE
     // bundled case (forces value to "None" so additional_modules
-    // doesn't leak the prior arch's TE into load_model).
+    // doesn't leak the prior arch's TE into load_model). Both previous
+    // values are captured BEFORE either restore runs; the final dropdown
+    // values are read AFTER both restores so the backend receives exactly
+    // what the UI shows — not the previous model's VAE.
     const previousArch = State._currentModelArch || null;
     const teBeforeRestore = teSelect?.value || "None";
+    const vaeBeforeRestore = document.getElementById("paramVAE")?.value || "Automatic";
     const check = await restoreTextEncoderForModel(title, reason, {
       preferredTE: teBeforeRestore,
       previousArch,
     });
+    await restoreVAEForModel(title, reason, {
+      preferredVAE: vaeBeforeRestore,
+      previousArch,
+      check,
+    });
     State._currentModelArch = check.arch || "unknown";
 
     const textEncoder = teSelect?.value || "None";
+    const vaeVal = document.getElementById("paramVAE")?.value;
 
     // Persist per-model TE memory when the user explicitly picked one.
     if (reason === "te-change" && textEncoder !== "None") {
@@ -3907,6 +4126,17 @@ function bindUI() {
       const data = await r.json();
       if (r.ok && data.ok) {
         showToast("VAE: " + data.loaded, "success");
+        // Persist per-model VAE memory only after the backend confirmed
+        // the load. Automatic/None record the explicit opt-out sentinel;
+        // a queued switch lands here when its change event re-dispatches
+        // after generation, so queued picks are remembered on dispatch.
+        const title = document.getElementById("paramModel")?.value || "";
+        const arch = State._currentModelArch || null;
+        if (name === "Automatic" || name === "None") {
+          rememberVAE(title, arch, null);
+        } else {
+          rememberVAE(title, arch, name);
+        }
       } else {
         console.error("[Studio] VAE load failed:", data);
         showToast(_i18n("toast.vae.loadFailed", "VAE load failed: " + (data.error || r.status), { error: data.error || r.status }), "error");
@@ -3935,16 +4165,21 @@ function bindUI() {
   // ===== REFRESH BUTTONS =====
   document.getElementById("refreshModelsBtn")?.addEventListener("click", async () => {
     showToast(I18N.t("toast.refreshingModels", "Refreshing models..."), "info");
-    // Stash the current model+TE into TE memory before the rebuild so
-    // populateDropdowns can restore it (populateDropdowns also stashes,
-    // but doing it here too ensures the model selection survives even
-    // if populateDropdowns runs in parallel with the TE list fetch).
+    // Stash the current model's TE+VAE into component memory before the
+    // rebuild so populateDropdowns can restore them (populateDropdowns
+    // also stashes, but doing it here too ensures the selection survives
+    // even if populateDropdowns runs in parallel with the list fetches).
     const _curModel = document.getElementById("paramModel")?.value || "";
     const _curTE = document.getElementById("paramTextEncoder")?.value || "None";
-    if (_curModel && _curTE !== "None") {
+    const _curVAE = document.getElementById("paramVAE")?.value || "Automatic";
+    if (_curModel && (_curTE !== "None"
+        || (_curVAE !== "Automatic" && _curVAE !== "None"))) {
       try {
         const c = await checkModelTE(_curModel);
-        rememberExternalTE(_curModel, c.arch, _curTE);
+        if (_curTE !== "None") rememberExternalTE(_curModel, c.arch, _curTE);
+        if (_curVAE !== "Automatic" && _curVAE !== "None") {
+          rememberVAE(_curModel, c.arch, _curVAE);
+        }
       } catch (_) { /* ignore */ }
     }
     try {
@@ -3959,14 +4194,34 @@ function bindUI() {
   document.getElementById("refreshVAEBtn")?.addEventListener("click", async () => {
     showToast(I18N.t("toast.refreshingVaes", "Refreshing VAEs..."), "info");
     try {
-      const vaes = await fetch(API.base + "/studio/vaes").then(r => r.json());
       const vaeSelect = document.getElementById("paramVAE");
+      const current = vaeSelect?.value || "Automatic";
+      const currentModel = document.getElementById("paramModel")?.value || "";
+      // Stash the concrete current pick so the restore below (and future
+      // populates) can recover it from component memory.
+      if (currentModel && current !== "Automatic" && current !== "None") {
+        try {
+          const c = await checkModelTE(currentModel);
+          rememberVAE(currentModel, c.arch, current);
+        } catch (_) { /* ignore */ }
+      }
+      const vaes = await fetch(API.base + "/studio/vaes").then(r => r.json());
       if (vaeSelect) {
-        const current = vaeSelect.value;
         vaeSelect.innerHTML = vaes.map(v =>
           `<option value="${v.name}">${v.name}</option>`
         ).join("");
-        vaeSelect.value = current;
+        // Funnel restore through the arch-aware helper so a deleted VAE
+        // falls back to Automatic (with toast) instead of staying selected
+        // as a phantom now-invalid option.
+        if (currentModel) {
+          await restoreVAEForModel(currentModel, "model-change", {
+            preferredVAE: current,
+            previousArch: State._currentModelArch || null,
+          });
+        } else if (_optionExists(vaeSelect, current)) {
+          vaeSelect.value = current;
+        }
+        _syncSelectUI(vaeSelect);
       }
       showToast(`VAEs refreshed (${vaes.length} found)`, "success");
     } catch (e) {
