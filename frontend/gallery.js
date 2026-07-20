@@ -2434,6 +2434,7 @@ function _metaFromInfotext(infotext) {
         cfgScale: "cfg_scale",
         seed: "seed",
         size: "size",
+        template: "template",
         clipSkip: "clip_skip",
         denoisingStrength: "denoising",
         hiresUpscaler: "hires_upscaler",
@@ -2478,7 +2479,11 @@ async function loadMetadata(img) {
                 const copyLbl = _t("gallery.metadata.copy", "Copy");
                 const showLbl = _t("gallery.metadata.showResolved", "Show resolved");
                 const showRawLbl = _t("gallery.metadata.showRaw", "Show raw");
-                h += '<div class="gal-meta-row"><div class="gal-meta-label">' + l + '</div>'
+                // When a raw template exists, say explicitly that the main
+                // prompt row is the resolved text.
+                const promptLbl = (k === "prompt" && hasRaw)
+                    ? _t("gallery.metadata.promptResolved", "Prompt (resolved)") : l;
+                h += '<div class="gal-meta-row"><div class="gal-meta-label">' + promptLbl + '</div>'
                   + '<div class="gal-meta-value-wrap">'
                   + '<div class="gal-meta-value prompt">' + esc(String(m[k])) + '</div>'
                   + '<div class="gal-meta-actions">'

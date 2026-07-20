@@ -4,18 +4,18 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Forge Studio</title>
-<link rel="icon" type="image/svg+xml" href="/studio/static/brand/favicon.svg?v=4.13.0">
-<link rel="icon" type="image/png" sizes="32x32" href="/studio/static/brand/favicon-32.png?v=4.13.0">
+<link rel="icon" type="image/svg+xml" href="/studio/static/brand/favicon.svg?v=4.13.1">
+<link rel="icon" type="image/png" sizes="32x32" href="/studio/static/brand/favicon-32.png?v=4.13.1">
 <link rel="apple-touch-icon" href="/studio/static/brand/apple-touch-icon.png">
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <!-- Keep the ?v= in sync with `const v` in the loader script at the bottom
      of this file — stylesheets had no cache-buster, so deploys kept serving
      stale CSS even after the versioned JS refreshed. -->
-<link rel="stylesheet" href="/studio/static/app.css?v=4.13.0">
-<link rel="stylesheet" href="/studio/static/searchable-select.css?v=4.13.0">
-<link rel="stylesheet" href="/studio/static/education.css?v=4.13.0">
-<link rel="stylesheet" href="/studio/static/studio-tour.css?v=4.13.0">
-<link rel="stylesheet" href="/studio/static/studio-docs.css?v=4.13.0">
+<link rel="stylesheet" href="/studio/static/app.css?v=4.13.1">
+<link rel="stylesheet" href="/studio/static/searchable-select.css?v=4.13.1">
+<link rel="stylesheet" href="/studio/static/education.css?v=4.13.1">
+<link rel="stylesheet" href="/studio/static/studio-tour.css?v=4.13.1">
+<link rel="stylesheet" href="/studio/static/studio-docs.css?v=4.13.1">
 </head>
 <body>
 
@@ -24,7 +24,7 @@
      ═══════════════════════════════════════════ -->
 
 <div class="titlebar">
-  <div class="brand"><img class="brand-mark" src="/studio/static/brand/forge-studio-mark.svg?v=4.13.0" alt=""><em>FORGE</em>&ensp;<span class="brand-studio">STUDIO</span></div>
+  <div class="brand"><img class="brand-mark" src="/studio/static/brand/forge-studio-mark.svg?v=4.13.1" alt=""><em>FORGE</em>&ensp;<span class="brand-studio">STUDIO</span></div>
   <div class="tab-bar" id="appTabs">
     <button class="active" data-app="studio">Canvas</button>
   </div>
@@ -1316,7 +1316,7 @@
   // Optional modules — loaded if available, silently skipped if not.
   // debug.js exposes window.StudioDebug.* — dev-tools-only, no UI.
   const optionalScripts = ["develop.js", "workshop.js", "lexicon.js", "education.js", "codex.js", "studio-showme.js", "gallery.js", "module-tours.js", "debug.js", "canvas-webgl-preview.js"];
-  const v = "4.13.0";
+  const v = "4.13.1";
   window.__STUDIO_V = v;
   for (const s of scripts) {
     await new Promise((resolve, reject) => {

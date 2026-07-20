@@ -766,6 +766,7 @@
   "gallery.metadata.fileSize": "File Size",
   "gallery.metadata.resolved": "Resolved",
   "gallery.metadata.raw": "Raw",
+  "gallery.metadata.promptResolved": "Prompt (resolved)",
   "gallery.metadata.showRaw": "Show raw",
   "gallery.metadata.hideRaw": "Hide raw",
   "gallery.metadata.notFound": "No metadata found.",
