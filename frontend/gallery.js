@@ -1343,7 +1343,7 @@ async function downloadImage(imgId) {
     } catch (e) { toast("Download failed: " + e.message); }
 }
 async function _sendImageOnlyToCanvas(imgId, floatPath, maskPath) { try { const resp = await fetch(API_BASE + "/full/" + imgId); const blob = await resp.blob(); const dataUrl = await new Promise((resolve, reject) => { const reader = new FileReader(); reader.onload = () => resolve(reader.result); reader.onerror = reject; reader.readAsDataURL(blob); }); if (typeof displayOnCanvas === "function") { if (window.State) { window.State.baseGenW = 0; window.State.baseGenH = 0; } displayOnCanvas(dataUrl, { newLayer: true, layerName: "Gallery", undoLabel: "Gallery send", floatPath: floatPath || "", maskPath: maskPath || "" }); setTimeout(() => { if (window.StudioModules) window.StudioModules.activateStudio(); }, 100); return true; } } catch (e) { toast("Failed: " + e.message); } return false; }
-async function _sendParamsOnlyToCanvas(imgId, promptOverride) { try { const meta = await api("/image/" + imgId + "/metadata"); const raw = meta.raw_parameters || meta.raw_infotext; if (raw && typeof _applyInfotextToUI === "function") { _applyInfotextToUI(raw); const seedEl = document.getElementById("paramSeed"); if (seedEl) seedEl.value = "-1"; const pref = promptOverride || window.Prefs?.get("gal_send_prompt_version", "resolved") || "resolved"; if (pref === "raw" && meta.prompt) { const el = document.getElementById("paramPrompt"); if (el) el.value = meta.prompt; } else if (pref === "resolved") { const resolved = _parseResolvedPrompt(raw); if (resolved) { const el = document.getElementById("paramPrompt"); if (el) el.value = resolved; } } return meta; } } catch (_) {} return null; }
+async function _sendParamsOnlyToCanvas(imgId, promptOverride) { try { const meta = await api("/image/" + imgId + "/metadata"); const raw = meta.raw_parameters || meta.raw_infotext; if (raw && typeof _applyInfotextToUI === "function") { _applyInfotextToUI(raw); const seedEl = document.getElementById("paramSeed"); if (seedEl) seedEl.value = "-1"; const pref = promptOverride || window.Prefs?.get("gal_send_prompt_version", "resolved") || "resolved"; if (pref === "raw" && (meta.template || meta.prompt)) { const el = document.getElementById("paramPrompt"); if (el) el.value = meta.template || meta.prompt; } else if (pref === "resolved") { const resolved = _parseResolvedPrompt(raw); if (resolved) { const el = document.getElementById("paramPrompt"); if (el) el.value = resolved; } } return meta; } } catch (_) {} return null; }
 // Combined: apply params first (UI ready), then place image. Missing metadata
 // is a silent no-op — image placement proceeds either way.
 async function sendToCanvas(imgId, promptOverride) {
@@ -2470,15 +2470,21 @@ async function loadMetadata(img) {
             const l = (k === "denoising") ? denoiseLabel : l0;
             const isPrompt = k === "prompt" || k === "negative_prompt";
             if (isPrompt) {
+                // Prompt is the RESOLVED text (what the model saw); the raw
+                // wildcard/template version lives in m.template since the
+                // parser split them. Offer whichever alternate differs.
                 const hasResolved = k === "prompt" && resolvedPrompt && resolvedPrompt.trim() !== String(m[k]).trim();
+                const hasRaw = k === "prompt" && m.template && String(m.template).trim() !== String(m[k]).trim();
                 const copyLbl = _t("gallery.metadata.copy", "Copy");
                 const showLbl = _t("gallery.metadata.showResolved", "Show resolved");
+                const showRawLbl = _t("gallery.metadata.showRaw", "Show raw");
                 h += '<div class="gal-meta-row"><div class="gal-meta-label">' + l + '</div>'
                   + '<div class="gal-meta-value-wrap">'
                   + '<div class="gal-meta-value prompt">' + esc(String(m[k])) + '</div>'
                   + '<div class="gal-meta-actions">'
                   + '<button class="gal-meta-btn" data-meta-act="copy">' + copyLbl + '</button>'
                   + (hasResolved ? '<button class="gal-meta-btn" data-meta-act="toggle-resolved">' + showLbl + '</button>' : '')
+                  + (hasRaw ? '<button class="gal-meta-btn" data-meta-act="toggle-raw">' + showRawLbl + '</button>' : '')
                   + '</div></div></div>';
                 if (hasResolved) {
                     h += '<div class="gal-meta-row gal-meta-resolved" hidden><div class="gal-meta-label">' + _t("gallery.metadata.resolved", "Resolved") + '</div>'
@@ -2488,11 +2494,19 @@ async function loadMetadata(img) {
                       + '<button class="gal-meta-btn" data-meta-act="copy">' + copyLbl + '</button>'
                       + '</div></div></div>';
                 }
+                if (hasRaw) {
+                    h += '<div class="gal-meta-row gal-meta-raw" hidden><div class="gal-meta-label">' + _t("gallery.metadata.raw", "Raw") + '</div>'
+                      + '<div class="gal-meta-value-wrap">'
+                      + '<div class="gal-meta-value prompt">' + esc(String(m.template)) + '</div>'
+                      + '<div class="gal-meta-actions">'
+                      + '<button class="gal-meta-btn" data-meta-act="copy">' + copyLbl + '</button>'
+                      + '</div></div></div>';
+                }
             } else {
                 h += '<div class="gal-meta-row"><div class="gal-meta-label">' + l + '</div><div class="gal-meta-value">' + esc(String(m[k])) + '</div></div>';
             }
         }
-        const skip = new Set(["file_size","error","raw_parameters","raw_infotext","comfyui_prompt","comfyui_workflow","pixel_x","pixel_y","orientation","x_resolution","y_resolution","resolution_unit","date_digitized","date_original","date_time","color_space","sensing_method","spectral_sensitivity","gain_control","file_source","serial_number","digital_zoom","max_aperture","exposure_bias","exposure_mode","exposure_program","metering_mode","scene_type","contrast","saturation","sharpness","white_balance","subject_distance","shutter_speed","aperture","lens_info","ExifOffset","tag_34665","_source","created_at"].concat(ord.map(o => o[0])));
+        const skip = new Set(["file_size","template","error","raw_parameters","raw_infotext","comfyui_prompt","comfyui_workflow","pixel_x","pixel_y","orientation","x_resolution","y_resolution","resolution_unit","date_digitized","date_original","date_time","color_space","sensing_method","spectral_sensitivity","gain_control","file_source","serial_number","digital_zoom","max_aperture","exposure_bias","exposure_mode","exposure_program","metering_mode","scene_type","contrast","saturation","sharpness","white_balance","subject_distance","shutter_speed","aperture","lens_info","ExifOffset","tag_34665","_source","created_at"].concat(ord.map(o => o[0])));
         Object.keys(m).forEach(k => { if (!skip.has(k) && m[k] != null && m[k] !== "") { has = true; h += '<div class="gal-meta-row"><div class="gal-meta-label">' + esc(prettyLabel(k)) + '</div><div class="gal-meta-value">' + esc(String(m[k]).substring(0, 500)) + '</div></div>'; } });
         if (!has) h += '<div class="gal-meta-empty">' + _t("gallery.metadata.notFound", "No metadata found.") + '</div>'; p.innerHTML = h;
         if (!p._metaWired) { p.addEventListener("click", _onMetaPanelClick); p._metaWired = true; }
@@ -2521,6 +2535,18 @@ function _onMetaPanelClick(e) {
         } else {
             row.setAttribute("hidden", "");
             btn.textContent = _t("gallery.metadata.showResolved", "Show resolved");
+        }
+    } else if (act === "toggle-raw") {
+        const panel = btn.closest("#gal-meta-panel");
+        const row = panel?.querySelector(".gal-meta-raw");
+        if (!row) return;
+        const hidden = row.hasAttribute("hidden");
+        if (hidden) {
+            row.removeAttribute("hidden");
+            btn.textContent = _t("gallery.metadata.hideRaw", "Hide raw");
+        } else {
+            row.setAttribute("hidden", "");
+            btn.textContent = _t("gallery.metadata.showRaw", "Show raw");
         }
     }
 }
