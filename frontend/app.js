@@ -3207,6 +3207,62 @@ function _applyArchRules(arch) {
   });
 }
 
+// ── Toolbar tool tips (name + live shortcut binding) ────────────────
+// data-tool-tip key → the button's name source and registry action id.
+// Names reuse the existing tools.* locale values with any trailing
+// "(X)" key hint stripped, so every locale keeps working; bindings are
+// queried from the shortcut registry at show time — never cached — so
+// a rebind shows on the very next hover. Fill/Gradient and the three
+// lasso types keep their own names while sharing one action.
+const TOOL_TIPS = {
+  brush:      { name: "tools.brush",      action: "canvas.tool.brush" },
+  eraser:     { name: "tools.eraser",     action: "canvas.tool.eraser" },
+  eyedropper: { name: "tools.eyedropper", action: "canvas.tool.eyedropper" },
+  fill:       { name: "tools.fill",       action: "canvas.tool.fillGradient" },
+  gradient:   { name: "tools.gradient",   action: "canvas.tool.fillGradient" },
+  shape:      { name: "tools.shape",      action: "canvas.tool.shape" },
+  text:       { name: "tools.text",       action: "canvas.tool.text" },
+  smudge:     { name: "tools.smudge",     action: "canvas.tool.smudge" },
+  blur:       { name: "tools.blur",       action: "canvas.tool.blur" },
+  dodge:      { name: "tools.dodgeBurn",  action: "canvas.tool.dodge" },
+  clone:      { name: "tools.cloneStamp", action: "canvas.tool.clone" },
+  liquify:    { name: "tools.liquify",    action: "canvas.tool.liquify" },
+  pixelate:   { name: "tools.pixelate",   action: "canvas.tool.pixelate" },
+  select:     { name: "tools.select",     action: "canvas.tool.marquee" },
+  ellipse:    { name: "tools.ellipse",    action: "canvas.tool.ellipse" },
+  lasso:      { name: "tools.lasso",      action: "canvas.tool.lasso" },
+  lassoFree:  { name: "lassoTool.free.tooltip", action: "canvas.tool.lasso" },
+  lassoPoly:  { name: "lassoTool.poly.tooltip", action: "canvas.tool.lasso" },
+  lassoMag:   { name: "lassoTool.mag.tooltip",  action: "canvas.tool.lasso" },
+  wand:       { name: "tools.wand",       action: "canvas.tool.wand" },
+  crop:       { name: "tools.crop",       action: "canvas.tool.crop" },
+  transform:  { name: "tools.transform",  action: "canvas.tool.transform" },
+  mask:       { name: "ctxBar.maskToggle.tooltip", action: "canvas.mask.toggle" },
+  colorsSwap: { name: null,               action: "canvas.colors.swap" },
+};
+
+// Localized tool name only (used for aria-label and as the tip base).
+function _toolTipName(tipKey) {
+  const spec = TOOL_TIPS[tipKey];
+  if (!spec) return "";
+  const def = spec.action ? window.Shortcuts?.getAction?.(spec.action) : null;
+  const defName = def ? _i18n(def.i18nKey || "", def.label) : "";
+  const raw = spec.name ? _i18n(spec.name, defName || tipKey) : (defName || tipKey);
+  return String(raw).replace(/\s*\([^()]*\)\s*$/, "").trim() || defName || tipKey;
+}
+
+// Full tip content: "Name · Binding" with the binding(s) resolved from
+// the registry at call time; unbound actions show the name alone.
+function _toolTipLabel(tipKey) {
+  const spec = TOOL_TIPS[tipKey];
+  if (!spec) return "";
+  const name = _toolTipName(tipKey);
+  const S = window.Shortcuts;
+  const bindings = (spec.action && S?.getBindings) ? S.getBindings(spec.action) : [];
+  const keys = bindings.map(b => S.formatBinding(b)).filter(Boolean).join(" / ");
+  return keys ? `${name} · ${keys}` : name;
+}
+
 // ── Collapsed-block value badges ────────────────────────────────────
 // A compact monospace summary of a block's key values, shown on its
 // header only while the block is collapsed (a hidden-but-active value
@@ -3569,12 +3625,14 @@ function bindUI() {
     });
   }
 
-  // ===== Per-parameter help =====
-  // One reusable tooltip for every [data-help] cell: hover (~400ms
-  // delay), keyboard focus, or a click/tap on the label toggles it.
-  // Content resolves through i18n under help.*; missing keys simply
-  // show nothing. The tip never intercepts pointer events, and the
-  // cell's input carries aria-describedby while the tip is visible.
+  // ===== Per-parameter help + tool tips =====
+  // One reusable tooltip serves two element kinds: [data-help] cells
+  // (content from the help.* i18n namespace) and [data-tool-tip]
+  // buttons (localized tool name plus the live shortcut binding,
+  // composed at show time so rebinds appear on the next hover). Shows
+  // on hover (~400ms delay) and keyboard focus; parameter cells also
+  // toggle on label click/tap. The tip never intercepts pointer events
+  // and the target carries aria-describedby while visible.
   {
     const tip = document.createElement("div");
     tip.id = "paramHelpTip";
@@ -3583,11 +3641,19 @@ function bindUI() {
     tip.hidden = true;
     document.body.appendChild(tip);
 
+    const TIP_SELECTOR = "[data-help], [data-tool-tip]";
     let helpTimer = null;
     let helpCell = null;
 
+    const _tipTextFor = (cell) => {
+      if (cell.dataset.toolTip) return _toolTipLabel(cell.dataset.toolTip);
+      const key = cell.dataset.help || "";
+      const text = key ? _i18n(key, "") : "";
+      return (text && text !== key) ? text : "";
+    };
+
     const _helpTarget = (cell) =>
-      cell.querySelector("input, select, textarea") || null;
+      cell.querySelector("input, select, textarea") || cell;
 
     const _hideHelp = () => {
       clearTimeout(helpTimer);
@@ -3598,8 +3664,7 @@ function bindUI() {
     };
 
     const _showHelp = (cell) => {
-      const key = cell.dataset.help || "";
-      const text = key ? _i18n(key, "") : "";
+      const text = _tipTextFor(cell);
       if (!text) return;
       helpCell = cell;
       tip.textContent = text;
@@ -3619,36 +3684,47 @@ function bindUI() {
       _helpTarget(cell)?.setAttribute("aria-describedby", "paramHelpTip");
     };
 
-    const page = document.getElementById("page-generate");
-    page?.addEventListener("mouseover", e => {
-      const cell = e.target.closest("[data-help]");
+    document.addEventListener("mouseover", e => {
+      const cell = e.target.closest?.(TIP_SELECTOR);
       if (!cell || cell === helpCell) return;
       clearTimeout(helpTimer);
       helpTimer = setTimeout(() => _showHelp(cell), 400);
     });
-    page?.addEventListener("mouseout", e => {
-      const cell = e.target.closest("[data-help]");
+    document.addEventListener("mouseout", e => {
+      const cell = e.target.closest?.(TIP_SELECTOR);
       if (!cell) return;
       if (e.relatedTarget && cell.contains(e.relatedTarget)) return;
       _hideHelp();
     });
-    page?.addEventListener("focusin", e => {
-      const cell = e.target.closest("[data-help]");
+    document.addEventListener("focusin", e => {
+      const cell = e.target.closest?.(TIP_SELECTOR);
       if (cell) { clearTimeout(helpTimer); _showHelp(cell); }
     });
-    page?.addEventListener("focusout", e => {
-      if (e.target.closest("[data-help]")) _hideHelp();
+    document.addEventListener("focusout", e => {
+      if (e.target.closest?.(TIP_SELECTOR)) _hideHelp();
     });
-    page?.addEventListener("click", e => {
-      // Touch/click fallback from the label only — clicks on the input
-      // itself never fight with editing, and wrapping labels (e.g. the
-      // seed Extra toggle) keep their native behavior.
-      const label = e.target.closest("[data-help] > label, [data-help] > span");
+    document.addEventListener("click", e => {
+      // Touch/click fallback for parameter help only, and only from the
+      // label — clicks on inputs never fight with editing, and tool
+      // buttons activate their tool rather than toggling the tip.
+      const label = e.target.closest?.("[data-help] > label, [data-help] > span");
       if (!label) return;
       const cell = label.closest("[data-help]");
       if (helpCell === cell && !tip.hidden) _hideHelp();
       else { clearTimeout(helpTimer); _showHelp(cell); }
     });
+
+    // Icon-only tool buttons lost their native titles — give them
+    // localized accessible names (binding is announced via the tip's
+    // aria-describedby on focus, not baked into the name).
+    const _applyToolTipAriaLabels = () => {
+      document.querySelectorAll("[data-tool-tip]").forEach(el => {
+        const name = _toolTipName(el.dataset.toolTip);
+        if (name) el.setAttribute("aria-label", name);
+      });
+    };
+    _applyToolTipAriaLabels();
+    document.addEventListener("i18n:change", _applyToolTipAriaLabels);
   }
 
   // UX-012: Clear mask button

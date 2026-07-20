@@ -4,18 +4,18 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Forge Studio</title>
-<link rel="icon" type="image/svg+xml" href="/studio/static/brand/favicon.svg?v=4.13.1">
-<link rel="icon" type="image/png" sizes="32x32" href="/studio/static/brand/favicon-32.png?v=4.13.1">
+<link rel="icon" type="image/svg+xml" href="/studio/static/brand/favicon.svg?v=4.13.2">
+<link rel="icon" type="image/png" sizes="32x32" href="/studio/static/brand/favicon-32.png?v=4.13.2">
 <link rel="apple-touch-icon" href="/studio/static/brand/apple-touch-icon.png">
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <!-- Keep the ?v= in sync with `const v` in the loader script at the bottom
      of this file — stylesheets had no cache-buster, so deploys kept serving
      stale CSS even after the versioned JS refreshed. -->
-<link rel="stylesheet" href="/studio/static/app.css?v=4.13.1">
-<link rel="stylesheet" href="/studio/static/searchable-select.css?v=4.13.1">
-<link rel="stylesheet" href="/studio/static/education.css?v=4.13.1">
-<link rel="stylesheet" href="/studio/static/studio-tour.css?v=4.13.1">
-<link rel="stylesheet" href="/studio/static/studio-docs.css?v=4.13.1">
+<link rel="stylesheet" href="/studio/static/app.css?v=4.13.2">
+<link rel="stylesheet" href="/studio/static/searchable-select.css?v=4.13.2">
+<link rel="stylesheet" href="/studio/static/education.css?v=4.13.2">
+<link rel="stylesheet" href="/studio/static/studio-tour.css?v=4.13.2">
+<link rel="stylesheet" href="/studio/static/studio-docs.css?v=4.13.2">
 </head>
 <body>
 
@@ -24,7 +24,7 @@
      ═══════════════════════════════════════════ -->
 
 <div class="titlebar">
-  <div class="brand"><img class="brand-mark" src="/studio/static/brand/forge-studio-mark.svg?v=4.13.1" alt=""><em>FORGE</em>&ensp;<span class="brand-studio">STUDIO</span></div>
+  <div class="brand"><img class="brand-mark" src="/studio/static/brand/forge-studio-mark.svg?v=4.13.2" alt=""><em>FORGE</em>&ensp;<span class="brand-studio">STUDIO</span></div>
   <div class="tab-bar" id="appTabs">
     <button class="active" data-app="studio">Canvas</button>
   </div>
@@ -42,28 +42,28 @@
 
     <!-- Toolstrip (left) -->
     <div class="toolstrip" id="toolstrip">
-      <button class="tool-btn active" data-i18n-title="tools.brush" title="Brush (B)" data-tool="brush"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/></svg></button>
-      <button class="tool-btn" data-i18n-title="tools.eraser" title="Eraser (E)" data-tool="eraser"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M20 20H7L3 16l9-9 8 8-4 4z"/><path d="M6.5 13.5l5-5"/></svg></button>
-      <button class="tool-btn" data-i18n-title="tools.eyedropper" title="Eyedropper (I)" data-tool="eyedropper"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 21v-3l9-9 3 3-9 9H3z"/><circle cx="19" cy="5" r="3"/></svg></button>
+      <button class="tool-btn active" data-tool="brush" data-tool-tip="brush"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 19l7-7 3 3-7 7-3-3z"/><path d="M18 13l-1.5-7.5L2 2l3.5 14.5L13 18l5-5z"/></svg></button>
+      <button class="tool-btn" data-tool="eraser" data-tool-tip="eraser"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M20 20H7L3 16l9-9 8 8-4 4z"/><path d="M6.5 13.5l5-5"/></svg></button>
+      <button class="tool-btn" data-tool="eyedropper" data-tool-tip="eyedropper"><svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 21v-3l9-9 3 3-9 9H3z"/><circle cx="19" cy="5" r="3"/></svg></button>
       <div class="tool-sep"></div>
-      <button class="tool-btn" data-i18n-title="tools.fill" title="Fill (G — press again for Gradient)" data-tool="fill"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 7 6 2"/><path d="M18.992 12H2.041"/><path d="M21.145 18.38A3.34 3.34 0 0 1 20 16.5a3.3 3.3 0 0 1-1.145 1.88c-.575.46-.855 1.02-.855 1.595A2 2 0 0 0 20 22a2 2 0 0 0 2-2.025c0-.58-.285-1.13-.855-1.595"/><path d="m8.5 4.5 2.148-2.148a1.205 1.205 0 0 1 1.704 0l7.296 7.296a1.205 1.205 0 0 1 0 1.704l-7.592 7.592a3.615 3.615 0 0 1-5.112 0l-3.888-3.888a3.615 3.615 0 0 1 0-5.112L5.67 7.33"/></svg></button>
-      <button class="tool-btn" data-i18n-title="tools.gradient" title="Gradient (G — press again for Fill)" data-tool="gradient"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="21" x2="21" y2="3" opacity="0.4"/></svg></button>
-      <button class="tool-btn" data-i18n-title="tools.shape" title="Shape (U)" data-tool="shape"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg></button>
-      <button class="tool-btn" data-i18n-title="tools.text" title="Text (T)" data-tool="text"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M4 7V4h16v3"/><path d="M12 4v16"/><path d="M8 20h8"/></svg></button>
+      <button class="tool-btn" data-tool="fill" data-tool-tip="fill"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M11 7 6 2"/><path d="M18.992 12H2.041"/><path d="M21.145 18.38A3.34 3.34 0 0 1 20 16.5a3.3 3.3 0 0 1-1.145 1.88c-.575.46-.855 1.02-.855 1.595A2 2 0 0 0 20 22a2 2 0 0 0 2-2.025c0-.58-.285-1.13-.855-1.595"/><path d="m8.5 4.5 2.148-2.148a1.205 1.205 0 0 1 1.704 0l7.296 7.296a1.205 1.205 0 0 1 0 1.704l-7.592 7.592a3.615 3.615 0 0 1-5.112 0l-3.888-3.888a3.615 3.615 0 0 1 0-5.112L5.67 7.33"/></svg></button>
+      <button class="tool-btn" data-tool="gradient" data-tool-tip="gradient"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="21" x2="21" y2="3" opacity="0.4"/></svg></button>
+      <button class="tool-btn" data-tool="shape" data-tool-tip="shape"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="3" y="3" width="18" height="18" rx="2"/></svg></button>
+      <button class="tool-btn" data-tool="text" data-tool-tip="text"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M4 7V4h16v3"/><path d="M12 4v16"/><path d="M8 20h8"/></svg></button>
       <div class="tool-sep"></div>
-      <button class="tool-btn" data-i18n-title="tools.smudge" title="Smudge (S)" data-tool="smudge"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M7 21c-2 0-3-1-3-3s3-6 6-9c3-3 6-5 8-5s3 1 3 3-3 6-6 9-6 5-8 5z"/></svg></button>
-      <button class="tool-btn" data-i18n-title="tools.blur" title="Blur (R)" data-tool="blur"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="9" opacity="0.4"/><circle cx="12" cy="12" r="5" opacity="0.7"/><circle cx="12" cy="12" r="2"/></svg></button>
-      <button class="tool-btn" data-i18n-title="tools.dodgeBurn" title="Dodge/Burn (J)" data-tool="dodge"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="9"/><path d="M12 3v18"/></svg></button>
-      <button class="tool-btn" data-i18n-title="tools.cloneStamp" title="Clone Stamp (K)" data-tool="clone"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="10" cy="12" r="7"/><circle cx="16" cy="12" r="7" stroke-dasharray="3 2"/></svg></button>
-      <button class="tool-btn" data-i18n-title="tools.liquify" title="Liquify (Y)" data-tool="liquify"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 3c-2 4-6 5-6 9a6 6 0 0012 0c0-4-4-5-6-9z"/></svg></button>
-      <button class="tool-btn" data-i18n-title="tools.pixelate" title="Pixelate (P)" data-tool="pixelate"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="8" height="8"/><rect x="13" y="3" width="8" height="8"/><rect x="3" y="13" width="8" height="8"/><rect x="13" y="13" width="8" height="8"/></svg></button>
+      <button class="tool-btn" data-tool="smudge" data-tool-tip="smudge"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M7 21c-2 0-3-1-3-3s3-6 6-9c3-3 6-5 8-5s3 1 3 3-3 6-6 9-6 5-8 5z"/></svg></button>
+      <button class="tool-btn" data-tool="blur" data-tool-tip="blur"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="9" opacity="0.4"/><circle cx="12" cy="12" r="5" opacity="0.7"/><circle cx="12" cy="12" r="2"/></svg></button>
+      <button class="tool-btn" data-tool="dodge" data-tool-tip="dodge"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="12" cy="12" r="9"/><path d="M12 3v18"/></svg></button>
+      <button class="tool-btn" data-tool="clone" data-tool-tip="clone"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><circle cx="10" cy="12" r="7"/><circle cx="16" cy="12" r="7" stroke-dasharray="3 2"/></svg></button>
+      <button class="tool-btn" data-tool="liquify" data-tool-tip="liquify"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M12 3c-2 4-6 5-6 9a6 6 0 0012 0c0-4-4-5-6-9z"/></svg></button>
+      <button class="tool-btn" data-tool="pixelate" data-tool-tip="pixelate"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="8" height="8"/><rect x="13" y="3" width="8" height="8"/><rect x="3" y="13" width="8" height="8"/><rect x="13" y="13" width="8" height="8"/></svg></button>
       <div class="tool-sep"></div>
-      <button class="tool-btn" data-i18n-title="tools.select" title="Select (M)" data-tool="select"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-dasharray="4 3"><rect x="3" y="3" width="18" height="18" rx="1"/></svg></button>
-      <button class="tool-btn" data-i18n-title="tools.ellipse" title="Ellipse Select (O)" data-tool="ellipse"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-dasharray="4 3"><ellipse cx="12" cy="12" rx="9" ry="7"/></svg></button>
-      <button class="tool-btn" data-i18n-title="tools.lasso" title="Lasso (L)" data-tool="lasso"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 12c0-5 4-9 9-9s9 4 9 9-2 6-5 7"/><circle cx="16" cy="20" r="2.5"/></svg></button>
-      <button class="tool-btn" data-i18n-title="tools.wand" title="Magic Wand (W)" data-tool="wand"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 21L15 9"/><path d="M15 3l1 3 3 1-3 1-1 3-1-3-3-1 3-1z"/></svg></button>
-      <button class="tool-btn" data-i18n-title="tools.crop" title="Crop (C)" data-tool="crop"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M6 2v4"/><path d="M6 6h12v12"/><path d="M18 22v-4"/><path d="M18 18H6V6"/></svg></button>
-      <button class="tool-btn" data-i18n-title="tools.transform" title="Transform (V)" data-tool="transform"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="5" y="5" width="14" height="14"/><circle cx="5" cy="5" r="2" fill="currentColor"/><circle cx="19" cy="5" r="2" fill="currentColor"/><circle cx="5" cy="19" r="2" fill="currentColor"/><circle cx="19" cy="19" r="2" fill="currentColor"/></svg></button>
+      <button class="tool-btn" data-tool="select" data-tool-tip="select"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-dasharray="4 3"><rect x="3" y="3" width="18" height="18" rx="1"/></svg></button>
+      <button class="tool-btn" data-tool="ellipse" data-tool-tip="ellipse"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2" stroke-dasharray="4 3"><ellipse cx="12" cy="12" rx="9" ry="7"/></svg></button>
+      <button class="tool-btn" data-tool="lasso" data-tool-tip="lasso"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 12c0-5 4-9 9-9s9 4 9 9-2 6-5 7"/><circle cx="16" cy="20" r="2.5"/></svg></button>
+      <button class="tool-btn" data-tool="wand" data-tool-tip="wand"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M3 21L15 9"/><path d="M15 3l1 3 3 1-3 1-1 3-1-3-3-1 3-1z"/></svg></button>
+      <button class="tool-btn" data-tool="crop" data-tool-tip="crop"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M6 2v4"/><path d="M6 6h12v12"/><path d="M18 22v-4"/><path d="M18 18H6V6"/></svg></button>
+      <button class="tool-btn" data-tool="transform" data-tool-tip="transform"><svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><rect x="5" y="5" width="14" height="14"/><circle cx="5" cy="5" r="2" fill="currentColor"/><circle cx="19" cy="5" r="2" fill="currentColor"/><circle cx="5" cy="19" r="2" fill="currentColor"/><circle cx="19" cy="19" r="2" fill="currentColor"/></svg></button>
       <div class="tool-spacer"></div>
       <div class="color-swatch" id="colorSwatch">
         <div class="color-fg" id="colorFg" style="background:#000000;"></div>
@@ -77,7 +77,7 @@
         <div>
           <canvas id="hsvWheel" width="160" height="160" style="cursor:crosshair;border-radius:4px;"></canvas>
           <div style="display:flex;gap:6px;margin-top:8px;align-items:center;">
-            <div id="fgBgSwap" style="position:relative;width:32px;height:32px;cursor:pointer;" title="Swap FG/BG (X)">
+            <div id="fgBgSwap" style="position:relative;width:32px;height:32px;cursor:pointer;" data-tool-tip="colorsSwap">
               <div id="bgSwatchInner" style="position:absolute;right:0;bottom:0;width:20px;height:20px;border:2px solid #555;border-radius:3px;background:#ffffff;"></div>
               <div id="fgSwatchInner" style="position:absolute;left:0;top:0;width:20px;height:20px;border:2px solid #999;border-radius:3px;background:#000000;"></div>
             </div>
@@ -115,7 +115,7 @@
         </span>
         <!-- Mask mode toggle (Q) — shown when brush is active -->
         <span class="ctx-item" data-ctx="mask-toggle" style="margin-left:4px;border-left:1px solid var(--border);padding-left:6px;">
-          <button class="ctx-mode-btn" id="maskModeBtn" data-i18n-title="ctxBar.maskToggle.tooltip" title="Toggle mask painting (Q)">Mask</button>
+          <button class="ctx-mode-btn" id="maskModeBtn" data-tool-tip="mask">Mask</button>
         </span>
         <!-- Pen pressure toggle + Size/Opacity sub-options -->
         <span class="ctx-item" data-ctx="pressure-opts" style="display:flex;gap:2px;margin-left:4px;border-left:1px solid var(--border);padding-left:6px;">
@@ -200,9 +200,9 @@
         </span>
         <!-- Lasso sub-options (shown when any lasso tool active) -->
         <span class="ctx-item" data-ctx="lasso-opts" style="display:flex;gap:2px;align-items:center;border-left:1px solid var(--border);padding-left:6px;">
-          <button class="ctx-mode-btn active" data-lassotype="lasso" data-i18n="lassoTool.free" data-i18n-title="lassoTool.free.tooltip" title="Freehand lasso (L)">Free</button>
-          <button class="ctx-mode-btn" data-lassotype="polylasso" data-i18n="lassoTool.poly" data-i18n-title="lassoTool.poly.tooltip" title="Polygonal lasso (L)">Poly</button>
-          <button class="ctx-mode-btn" data-lassotype="maglasso" data-i18n="lassoTool.mag" data-i18n-title="lassoTool.mag.tooltip" title="Magnetic lasso (L)">Mag</button>
+          <button class="ctx-mode-btn active" data-lassotype="lasso" data-i18n="lassoTool.free" data-tool-tip="lassoFree">Free</button>
+          <button class="ctx-mode-btn" data-lassotype="polylasso" data-i18n="lassoTool.poly" data-tool-tip="lassoPoly">Poly</button>
+          <button class="ctx-mode-btn" data-lassotype="maglasso" data-i18n="lassoTool.mag" data-tool-tip="lassoMag">Mag</button>
         </span>
       </div>
 
@@ -1316,7 +1316,7 @@
   // Optional modules — loaded if available, silently skipped if not.
   // debug.js exposes window.StudioDebug.* — dev-tools-only, no UI.
   const optionalScripts = ["develop.js", "workshop.js", "lexicon.js", "education.js", "codex.js", "studio-showme.js", "gallery.js", "module-tours.js", "debug.js", "canvas-webgl-preview.js"];
-  const v = "4.13.1";
+  const v = "4.13.2";
   window.__STUDIO_V = v;
   for (const s of scripts) {
     await new Promise((resolve, reject) => {
