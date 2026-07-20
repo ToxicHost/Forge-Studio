@@ -3536,6 +3536,88 @@ function bindUI() {
     });
   }
 
+  // ===== Per-parameter help =====
+  // One reusable tooltip for every [data-help] cell: hover (~400ms
+  // delay), keyboard focus, or a click/tap on the label toggles it.
+  // Content resolves through i18n under help.*; missing keys simply
+  // show nothing. The tip never intercepts pointer events, and the
+  // cell's input carries aria-describedby while the tip is visible.
+  {
+    const tip = document.createElement("div");
+    tip.id = "paramHelpTip";
+    tip.className = "param-help-tip";
+    tip.setAttribute("role", "tooltip");
+    tip.hidden = true;
+    document.body.appendChild(tip);
+
+    let helpTimer = null;
+    let helpCell = null;
+
+    const _helpTarget = (cell) =>
+      cell.querySelector("input, select, textarea") || null;
+
+    const _hideHelp = () => {
+      clearTimeout(helpTimer);
+      helpTimer = null;
+      if (helpCell) _helpTarget(helpCell)?.removeAttribute("aria-describedby");
+      helpCell = null;
+      tip.hidden = true;
+    };
+
+    const _showHelp = (cell) => {
+      const key = cell.dataset.help || "";
+      const text = key ? _i18n(key, "") : "";
+      if (!text) return;
+      helpCell = cell;
+      tip.textContent = text;
+      tip.hidden = false;
+      const anchor = cell.querySelector("label, span") || cell;
+      const r = anchor.getBoundingClientRect();
+      // measure, then clamp to the viewport (flip above when needed)
+      tip.style.left = "0px";
+      tip.style.top = "0px";
+      const tw = tip.offsetWidth;
+      const th = tip.offsetHeight;
+      const x = Math.min(Math.max(8, r.left), window.innerWidth - tw - 8);
+      let y = r.bottom + 6;
+      if (y + th > window.innerHeight - 8) y = r.top - th - 6;
+      tip.style.left = x + "px";
+      tip.style.top = Math.max(8, y) + "px";
+      _helpTarget(cell)?.setAttribute("aria-describedby", "paramHelpTip");
+    };
+
+    const page = document.getElementById("page-generate");
+    page?.addEventListener("mouseover", e => {
+      const cell = e.target.closest("[data-help]");
+      if (!cell || cell === helpCell) return;
+      clearTimeout(helpTimer);
+      helpTimer = setTimeout(() => _showHelp(cell), 400);
+    });
+    page?.addEventListener("mouseout", e => {
+      const cell = e.target.closest("[data-help]");
+      if (!cell) return;
+      if (e.relatedTarget && cell.contains(e.relatedTarget)) return;
+      _hideHelp();
+    });
+    page?.addEventListener("focusin", e => {
+      const cell = e.target.closest("[data-help]");
+      if (cell) { clearTimeout(helpTimer); _showHelp(cell); }
+    });
+    page?.addEventListener("focusout", e => {
+      if (e.target.closest("[data-help]")) _hideHelp();
+    });
+    page?.addEventListener("click", e => {
+      // Touch/click fallback from the label only — clicks on the input
+      // itself never fight with editing, and wrapping labels (e.g. the
+      // seed Extra toggle) keep their native behavior.
+      const label = e.target.closest("[data-help] > label, [data-help] > span");
+      if (!label) return;
+      const cell = label.closest("[data-help]");
+      if (helpCell === cell && !tip.hidden) _hideHelp();
+      else { clearTimeout(helpTimer); _showHelp(cell); }
+    });
+  }
+
   // UX-012: Clear mask button
   document.getElementById("clearMaskBtn")?.addEventListener("click", () => {
     if (!window.StudioCore) return;

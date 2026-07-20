@@ -518,13 +518,13 @@
             </div>
             <div class="collapse-body open" id="panelSampling">
             <div class="param-grid cols-2">
-              <div class="param-cell">
+              <div class="param-cell" data-help="help.sampling.sampler">
                 <label>Sampler</label>
                 <select class="param-select" id="paramSampler">
                   <option>DPM++ 2M SDE</option>
                 </select>
               </div>
-              <div class="param-cell">
+              <div class="param-cell" data-help="help.sampling.scheduler">
                 <label>Scheduler</label>
                 <select class="param-select" id="paramScheduler">
                   <option>Karras</option>
@@ -532,9 +532,9 @@
               </div>
             </div>
             <div class="param-grid cols-3 field-group">
-              <div class="param-cell"><label>Steps</label><input class="param-val" id="paramSteps" value="30"></div>
-              <div class="param-cell"><label>CFG</label><input class="param-val" id="paramCFG" value="5.0"></div>
-              <div class="param-cell"><label>Denoise</label><input class="param-val" id="paramDenoise" value="0.81"></div>
+              <div class="param-cell" data-help="help.sampling.steps"><label>Steps</label><input class="param-val" id="paramSteps" value="30"></div>
+              <div class="param-cell" data-help="help.sampling.cfg"><label>CFG</label><input class="param-val" id="paramCFG" value="5.0"></div>
+              <div class="param-cell" data-help="help.sampling.denoise"><label>Denoise</label><input class="param-val" id="paramDenoise" value="0.81"></div>
             </div>
             </div>
           </div>
@@ -591,7 +591,7 @@
               <div class="param-cell"><label>Seed</label><input class="param-val" id="paramSeed" value="-1" style="text-align:left;font-family:var(--mono);"></div>
               <button class="seed-btn" id="seedRandom" title="Random">&#x1f3b2;</button>
               <button class="seed-btn" id="seedRecycle" title="Recycle last">&#x1f501;</button>
-              <label class="extra-seed-toggle" title="Show variation seed options" style="margin:0;">
+              <label class="extra-seed-toggle" data-help="help.seed.extra" style="margin:0;">
                 <input type="checkbox" id="checkExtra"> Extra
               </label>
             </div>
@@ -631,17 +631,17 @@
             </div>
             <div class="collapse-body" id="panelHires">
               <div class="param-grid cols-2" style="margin-top:4px;">
-                <div class="param-cell"><label>Upscaler</label><select class="param-select" id="paramHrUpscaler"><option>Latent</option><option>R-ESRGAN 4x+</option></select></div>
-                <div class="param-cell"><label>Scale</label><input class="param-val" id="paramHrScale" value="2.0"></div>
+                <div class="param-cell" data-help="help.hires.upscaler"><label>Upscaler</label><select class="param-select" id="paramHrUpscaler"><option>Latent</option><option>R-ESRGAN 4x+</option></select></div>
+                <div class="param-cell" data-help="help.hires.scale"><label>Scale</label><input class="param-val" id="paramHrScale" value="2.0"></div>
               </div>
               <div class="param-grid cols-2 field-group">
-                <div class="param-cell"><label>Steps</label><input class="param-val" id="paramHrSteps" value="0"></div>
-                <div class="param-cell"><label>Denoise</label><input class="param-val" id="paramHrDenoise" value="0.30"></div>
+                <div class="param-cell" data-help="help.hires.steps"><label>Steps</label><input class="param-val" id="paramHrSteps" value="0"></div>
+                <div class="param-cell" data-help="help.hires.denoise"><label>Denoise</label><input class="param-val" id="paramHrDenoise" value="0.30"></div>
               </div>
               <div class="param-adv-toggle"><svg class="adv-caret" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg><span data-i18n="panel.advanced">Advanced</span></div>
               <div class="param-grid cols-2 field-group secondary param-advanced">
-                <div class="param-cell"><label>CFG</label><input class="param-val" id="paramHrCFG" value="0"></div>
-                <div class="param-cell"><label>Checkpoint</label><select class="param-select" id="paramHrCheckpoint"><option>Same</option></select></div>
+                <div class="param-cell" data-help="help.hires.cfg"><label>CFG</label><input class="param-val" id="paramHrCFG" value="0"></div>
+                <div class="param-cell" data-help="help.hires.checkpoint"><label>Checkpoint</label><select class="param-select" id="paramHrCheckpoint"><option>Same</option></select></div>
               </div>
             </div>
           </div>
@@ -661,16 +661,16 @@
                   <span style="font-size:10px;color:var(--text-3);font-weight:500;">Slot 1 — Face</span>
                 </div>
                 <div class="param-grid cols-2">
-                  <div class="param-cell"><label>Model</label><select class="param-select" id="paramAD1Model"><option>face_yolov8n.pt</option></select></div>
-                  <div class="param-cell"><label>Confidence</label><input class="param-val" id="paramAD1Conf" value="0.3"></div>
+                  <div class="param-cell" data-help="help.adetailer.model"><label>Model</label><select class="param-select" id="paramAD1Model"><option>face_yolov8n.pt</option></select></div>
+                  <div class="param-cell" data-help="help.adetailer.confidence"><label>Confidence</label><input class="param-val" id="paramAD1Conf" value="0.3"></div>
                 </div>
                 <div class="param-adv-toggle"><svg class="adv-caret" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg><span data-i18n="panel.advanced">Advanced</span></div>
                 <div class="param-grid cols-2 field-group secondary param-advanced">
-                  <div class="param-cell"><label>Denoise</label><input class="param-val" id="paramAD1Denoise" value="0.4"></div>
-                  <div class="param-cell"><label>Mask Blur</label><input class="param-val" id="paramAD1Blur" value="4"></div>
+                  <div class="param-cell" data-help="help.adetailer.denoise"><label>Denoise</label><input class="param-val" id="paramAD1Denoise" value="0.4"></div>
+                  <div class="param-cell" data-help="help.adetailer.maskBlur"><label>Mask Blur</label><input class="param-val" id="paramAD1Blur" value="4"></div>
                 </div>
                 <div class="param-grid cols-1 secondary param-advanced" style="margin-top:4px;">
-                  <div class="param-cell"><label>Prompt (blank = main)</label><input class="param-val" id="paramAD1Prompt" value="" style="text-align:left;font-family:var(--font);"></div>
+                  <div class="param-cell" data-help="help.adetailer.prompt"><label>Prompt (blank = main)</label><input class="param-val" id="paramAD1Prompt" value="" style="text-align:left;font-family:var(--font);"></div>
                 </div>
               </div>
               <!-- Slot 2 -->
@@ -681,16 +681,16 @@
                 </div>
                 <div class="enable-gated" data-gate="checkAD2" style="display:none;">
                 <div class="param-grid cols-2">
-                  <div class="param-cell"><label>Model</label><select class="param-select" id="paramAD2Model"><option>None</option></select></div>
-                  <div class="param-cell"><label>Confidence</label><input class="param-val" id="paramAD2Conf" value="0.3"></div>
+                  <div class="param-cell" data-help="help.adetailer.model"><label>Model</label><select class="param-select" id="paramAD2Model"><option>None</option></select></div>
+                  <div class="param-cell" data-help="help.adetailer.confidence"><label>Confidence</label><input class="param-val" id="paramAD2Conf" value="0.3"></div>
                 </div>
                 <div class="param-adv-toggle"><svg class="adv-caret" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg><span data-i18n="panel.advanced">Advanced</span></div>
                 <div class="param-grid cols-2 field-group secondary param-advanced">
-                  <div class="param-cell"><label>Denoise</label><input class="param-val" id="paramAD2Denoise" value="0.4"></div>
-                  <div class="param-cell"><label>Mask Blur</label><input class="param-val" id="paramAD2Blur" value="4"></div>
+                  <div class="param-cell" data-help="help.adetailer.denoise"><label>Denoise</label><input class="param-val" id="paramAD2Denoise" value="0.4"></div>
+                  <div class="param-cell" data-help="help.adetailer.maskBlur"><label>Mask Blur</label><input class="param-val" id="paramAD2Blur" value="4"></div>
                 </div>
                 <div class="param-grid cols-1 secondary param-advanced" style="margin-top:4px;">
-                  <div class="param-cell"><label>Prompt (blank = main)</label><input class="param-val" id="paramAD2Prompt" value="" style="text-align:left;font-family:var(--font);"></div>
+                  <div class="param-cell" data-help="help.adetailer.prompt"><label>Prompt (blank = main)</label><input class="param-val" id="paramAD2Prompt" value="" style="text-align:left;font-family:var(--font);"></div>
                 </div>
                 </div>
               </div>
@@ -702,16 +702,16 @@
                 </div>
                 <div class="enable-gated" data-gate="checkAD3" style="display:none;">
                 <div class="param-grid cols-2">
-                  <div class="param-cell"><label>Model</label><select class="param-select" id="paramAD3Model"><option>None</option></select></div>
-                  <div class="param-cell"><label>Confidence</label><input class="param-val" id="paramAD3Conf" value="0.3"></div>
+                  <div class="param-cell" data-help="help.adetailer.model"><label>Model</label><select class="param-select" id="paramAD3Model"><option>None</option></select></div>
+                  <div class="param-cell" data-help="help.adetailer.confidence"><label>Confidence</label><input class="param-val" id="paramAD3Conf" value="0.3"></div>
                 </div>
                 <div class="param-adv-toggle"><svg class="adv-caret" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg><span data-i18n="panel.advanced">Advanced</span></div>
                 <div class="param-grid cols-2 field-group secondary param-advanced">
-                  <div class="param-cell"><label>Denoise</label><input class="param-val" id="paramAD3Denoise" value="0.4"></div>
-                  <div class="param-cell"><label>Mask Blur</label><input class="param-val" id="paramAD3Blur" value="4"></div>
+                  <div class="param-cell" data-help="help.adetailer.denoise"><label>Denoise</label><input class="param-val" id="paramAD3Denoise" value="0.4"></div>
+                  <div class="param-cell" data-help="help.adetailer.maskBlur"><label>Mask Blur</label><input class="param-val" id="paramAD3Blur" value="4"></div>
                 </div>
                 <div class="param-grid cols-1 secondary param-advanced" style="margin-top:4px;">
-                  <div class="param-cell"><label>Prompt (blank = main)</label><input class="param-val" id="paramAD3Prompt" value="" style="text-align:left;font-family:var(--font);"></div>
+                  <div class="param-cell" data-help="help.adetailer.prompt"><label>Prompt (blank = main)</label><input class="param-val" id="paramAD3Prompt" value="" style="text-align:left;font-family:var(--font);"></div>
                 </div>
                 </div>
               </div>
@@ -726,23 +726,22 @@
             </div>
             <div class="collapse-body" id="panelUpscale">
               <div class="param-grid cols-2" style="margin-top:4px;">
-                <div class="param-cell"><label>Upscaler</label><select class="param-select" id="paramUpscaleModel"><option>R-ESRGAN 4x+</option></select></div>
-                <div class="param-cell"><label>Scale</label><input class="param-val" id="paramUpscaleScale" value="2.0"></div>
+                <div class="param-cell" data-help="help.upscale.upscaler"><label>Upscaler</label><select class="param-select" id="paramUpscaleModel"><option>R-ESRGAN 4x+</option></select></div>
+                <div class="param-cell" data-help="help.upscale.scale"><label>Scale</label><input class="param-val" id="paramUpscaleScale" value="2.0"></div>
               </div>
-              <div style="margin-top:6px;display:flex;align-items:center;gap:6px;">
+              <div style="margin-top:6px;display:flex;align-items:center;gap:6px;" data-help="help.upscale.refine">
                 <div class="collapse-check" id="checkUpscaleRefine"></div>
                 <span style="font-size:10px;color:var(--text-3);">Refine after upscale (img2img pass)</span>
               </div>
-              <div style="margin-top:4px;display:none;align-items:center;gap:6px;" id="upscaleADRow" class="enable-gated" data-gate="checkUpscaleRefine" data-gate-display="flex">
+              <div style="margin-top:4px;display:none;align-items:center;gap:6px;" id="upscaleADRow" class="enable-gated" data-gate="checkUpscaleRefine" data-gate-display="flex" data-help="help.upscale.runAD">
                 <div class="collapse-check" id="checkUpscaleAD"></div>
                 <span style="font-size:10px;color:var(--text-3);">Run ADetailer</span>
               </div>
               <div class="param-grid cols-2 field-group enable-gated" id="upscaleRefineParams" data-gate="checkUpscaleRefine" style="display:none;">
-                <div class="param-cell"><label>Steps</label><input class="param-val" id="paramUpscaleSteps" value="20"></div>
-                <div class="param-cell"><label>Denoise</label><input class="param-val" id="paramUpscaleDenoise" value="0.3"></div>
+                <div class="param-cell" data-help="help.upscale.steps"><label>Steps</label><input class="param-val" id="paramUpscaleSteps" value="20"></div>
+                <div class="param-cell" data-help="help.upscale.denoise"><label>Denoise</label><input class="param-val" id="paramUpscaleDenoise" value="0.3"></div>
               </div>
               <button class="gen-btn" id="upscaleBtn" style="margin-top:8px;background:var(--bg-raised);border:1px solid var(--border);color:var(--text-2);font-size:11px;height:30px;" data-i18n="actions.upscaleCanvas">UPSCALE CANVAS</button>
-              <div class="param-hint" style="margin-top:4px;font-size:9px;color:var(--text-4);" data-i18n="panels.upscale.hint">Single-call pipeline. Tick Refine to run an img2img pass after upscaling; ADetailer and Steps/Denoise apply to that refine pass.</div>
             </div>
           </div>
 
@@ -760,18 +759,18 @@
                   <span style="font-size:10px;color:var(--text-3);font-weight:500;">Unit 1</span>
                 </div>
                 <div class="param-grid cols-2">
-                  <div class="param-cell"><label>Preprocessor</label><select class="param-select" id="paramCN1Module"><option>None</option></select></div>
-                  <div class="param-cell"><label>Model</label><select class="param-select" id="paramCN1Model"><option>None</option></select></div>
+                  <div class="param-cell" data-help="help.controlnet.preprocessor"><label>Preprocessor</label><select class="param-select" id="paramCN1Module"><option>None</option></select></div>
+                  <div class="param-cell" data-help="help.controlnet.model"><label>Model</label><select class="param-select" id="paramCN1Model"><option>None</option></select></div>
                 </div>
                 <div class="param-grid cols-2" style="margin-top:4px;">
-                  <div class="param-cell secondary param-advanced"><label>Source</label>
+                  <div class="param-cell secondary param-advanced" data-help="help.controlnet.source"><label>Source</label>
                     <select class="param-select" id="paramCN1Source">
                       <option value="Canvas">Canvas</option>
                       <option value="Active Layer">Active Layer</option>
                       <option value="Upload">Upload</option>
                     </select>
                   </div>
-                  <div class="param-cell"><label>Weight</label><input class="param-val" id="paramCN1Weight" value="1.0"></div>
+                  <div class="param-cell" data-help="help.controlnet.weight"><label>Weight</label><input class="param-val" id="paramCN1Weight" value="1.0"></div>
                 </div>
                 <div class="param-adv-toggle"><svg class="adv-caret" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg><span data-i18n="panel.advanced">Advanced</span></div>
                 <div class="cn-upload-row param-advanced" id="cnUpload1" style="display:none;margin-top:4px;">
@@ -781,11 +780,11 @@
                   <button class="cn-upload-clear" id="cnUploadClear1" style="display:none;" title="Remove">&#x2715;</button>
                 </div>
                 <div class="param-grid cols-2 field-group secondary param-advanced">
-                  <div class="param-cell"><label>Start</label><input class="param-val" id="paramCN1Start" value="0.0"></div>
-                  <div class="param-cell"><label>End</label><input class="param-val" id="paramCN1End" value="1.0"></div>
+                  <div class="param-cell" data-help="help.controlnet.start"><label>Start</label><input class="param-val" id="paramCN1Start" value="0.0"></div>
+                  <div class="param-cell" data-help="help.controlnet.end"><label>End</label><input class="param-val" id="paramCN1End" value="1.0"></div>
                 </div>
                 <div class="param-grid cols-1 secondary param-advanced" style="margin-top:4px;">
-                  <div class="param-cell"><label>Control mode</label>
+                  <div class="param-cell" data-help="help.controlnet.mode"><label>Control mode</label>
                     <select class="param-select" id="paramCN1Mode">
                       <option>Balanced</option>
                       <option>My prompt is more important</option>
@@ -802,18 +801,18 @@
                 </div>
                 <div class="enable-gated" data-gate="checkCN2" style="display:none;">
                 <div class="param-grid cols-2">
-                  <div class="param-cell"><label>Preprocessor</label><select class="param-select" id="paramCN2Module"><option>None</option></select></div>
-                  <div class="param-cell"><label>Model</label><select class="param-select" id="paramCN2Model"><option>None</option></select></div>
+                  <div class="param-cell" data-help="help.controlnet.preprocessor"><label>Preprocessor</label><select class="param-select" id="paramCN2Module"><option>None</option></select></div>
+                  <div class="param-cell" data-help="help.controlnet.model"><label>Model</label><select class="param-select" id="paramCN2Model"><option>None</option></select></div>
                 </div>
                 <div class="param-grid cols-2" style="margin-top:4px;">
-                  <div class="param-cell secondary param-advanced"><label>Source</label>
+                  <div class="param-cell secondary param-advanced" data-help="help.controlnet.source"><label>Source</label>
                     <select class="param-select" id="paramCN2Source">
                       <option value="Canvas">Canvas</option>
                       <option value="Active Layer">Active Layer</option>
                       <option value="Upload">Upload</option>
                     </select>
                   </div>
-                  <div class="param-cell"><label>Weight</label><input class="param-val" id="paramCN2Weight" value="1.0"></div>
+                  <div class="param-cell" data-help="help.controlnet.weight"><label>Weight</label><input class="param-val" id="paramCN2Weight" value="1.0"></div>
                 </div>
                 <div class="param-adv-toggle"><svg class="adv-caret" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg><span data-i18n="panel.advanced">Advanced</span></div>
                 <div class="cn-upload-row param-advanced" id="cnUpload2" style="display:none;margin-top:4px;">
@@ -823,11 +822,11 @@
                   <button class="cn-upload-clear" id="cnUploadClear2" style="display:none;" title="Remove">&#x2715;</button>
                 </div>
                 <div class="param-grid cols-2 field-group secondary param-advanced">
-                  <div class="param-cell"><label>Start</label><input class="param-val" id="paramCN2Start" value="0.0"></div>
-                  <div class="param-cell"><label>End</label><input class="param-val" id="paramCN2End" value="1.0"></div>
+                  <div class="param-cell" data-help="help.controlnet.start"><label>Start</label><input class="param-val" id="paramCN2Start" value="0.0"></div>
+                  <div class="param-cell" data-help="help.controlnet.end"><label>End</label><input class="param-val" id="paramCN2End" value="1.0"></div>
                 </div>
                 <div class="param-grid cols-1 secondary param-advanced" style="margin-top:4px;">
-                  <div class="param-cell"><label>Control mode</label>
+                  <div class="param-cell" data-help="help.controlnet.mode"><label>Control mode</label>
                     <select class="param-select" id="paramCN2Mode">
                       <option>Balanced</option>
                       <option>My prompt is more important</option>

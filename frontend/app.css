@@ -1388,6 +1388,33 @@ body {
 .param-cell > label.search-match { color: var(--accent-bright); }
 
 /* ═══════════════════════════════════════════
+   PER-PARAMETER HELP
+   ═══════════════════════════════════════════ */
+
+/* Subtle affordance on labels that carry help. */
+[data-help] > label,
+[data-help] > span,
+label[data-help] {
+  text-decoration: underline dotted;
+  text-decoration-color: var(--text-4);
+  text-underline-offset: 2px;
+  cursor: help;
+}
+
+.param-help-tip {
+  position: fixed; z-index: 10000;
+  max-width: 260px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 6px 9px;
+  font-size: var(--ui-font-small); line-height: 1.45;
+  color: var(--text-2);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+}
+
+/* ═══════════════════════════════════════════
    COLLAPSIBLE SECTIONS
    ═══════════════════════════════════════════ */
 
