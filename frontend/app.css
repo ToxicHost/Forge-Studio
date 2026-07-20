@@ -290,6 +290,22 @@
 }
 
 /* ═══════════════════════════════════════════
+   DENSITY — compact tightens control tokens only
+   ═══════════════════════════════════════════ */
+
+/* Comfortable is the unattributed default (current values). Compact
+   reduces the control/spacing tokens ~12–18%; canvas rendering is
+   unaffected. Whole-UI scope on purpose — no per-component rules. */
+body[data-density="compact"] {
+  --control-h: 26px;
+  --control-h-sm: 24px;
+  --control-gap: 5px;
+  --section-pad: 10px;
+  --ui-font-small: 10px;
+  --ui-font-meta: 9px;
+}
+
+/* ═══════════════════════════════════════════
    COLORBLIND MODES — stack on top of any theme
    ═══════════════════════════════════════════ */
 

@@ -3430,6 +3430,28 @@ function bindUI() {
   });
   _refreshPanelBadges();
 
+  // ===== UI density (Comfortable / Compact) =====
+  // Compact swaps control tokens via body[data-density]; persisted as
+  // panel_ui.density and applied at boot (Prefs is loaded before bindUI).
+  const _applyDensity = (d) => {
+    const compact = d === "compact";
+    if (compact) document.body.dataset.density = "compact";
+    else delete document.body.dataset.density;
+    document.querySelectorAll("#densitySelector .layout-btn").forEach(b => {
+      b.classList.toggle("active", (b.dataset.density === "compact") === compact);
+    });
+  };
+  _applyDensity(_readPanelUi().density);
+  document.getElementById("densitySelector")?.addEventListener("click", e => {
+    const btn = e.target.closest(".layout-btn");
+    if (!btn) return;
+    const d = btn.dataset.density === "compact" ? "compact" : "comfortable";
+    const ui = _readPanelUi();
+    ui.density = d;
+    window.Prefs?.set("panel_ui", ui);
+    _applyDensity(d);
+  });
+
   // UX-012: Clear mask button
   document.getElementById("clearMaskBtn")?.addEventListener("click", () => {
     if (!window.StudioCore) return;

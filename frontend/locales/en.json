@@ -1316,6 +1316,9 @@
   "shortcuts.action.canvas_zoom_fit": "Fit canvas to view",
 
   "panel.advanced": "Advanced",
+  "settings.density.title": "Density",
+  "settings.density.comfortable": "Comfortable",
+  "settings.density.compact": "Compact",
   "toast.newestToCanvas": "Newest output → canvas",
   "toast.te.needed": "This model needs a text encoder — select one above",
   "toast.vae.needed": "This model needs a VAE — select one above"
