@@ -1316,6 +1316,11 @@
   "shortcuts.action.canvas_zoom_fit": "Fit canvas to view",
 
   "panel.advanced": "Advanced",
+  "panel.search.placeholder": "Search parameters",
+  "panel.search.clear": "Clear search",
+  "panel.search.count": "{n} matches",
+  "panel.search.noMatches": "No matches",
+  "shortcuts.action.panel_searchFocus": "Focus parameter search",
   "settings.density.title": "Density",
   "settings.density.comfortable": "Comfortable",
   "settings.density.compact": "Compact",

@@ -374,6 +374,18 @@
                 { type: "key", value: "n", ctrl: false, shift: false, alt: false, meta: false },
             ],
         },
+        {
+            id: "panel.search-focus", label: "Focus parameter search",
+            i18nKey: "shortcuts.action.panel_searchFocus",
+            category: "General", categoryI18nKey: "shortcuts.category.general",
+            scope: "app", allowInTyping: false,
+            defaultBindings: [
+                // All modifiers tri-state null on purpose: '/' is Shift+7
+                // on QWERTZ, so a shift:false binding would be unreachable
+                // on German layouts (same lesson as the '#' brush default).
+                { type: "key", value: "/", ctrl: null, shift: null, alt: null, meta: null },
+            ],
+        },
 
         // Canvas tools (lookup-only; dispatched by canvas-ui.js) ------------
         { id: "canvas.tool.brush", label: "Brush tool", i18nKey: "shortcuts.action.canvas_tool_brush", category: "Canvas tools", categoryI18nKey: "shortcuts.category.canvasTools", scope: "canvas", defaultBindings: [_tool("b")] },

@@ -1336,6 +1336,58 @@ body {
 .collapse-section:not(.adv-open) .param-advanced { display: none !important; }
 
 /* ═══════════════════════════════════════════
+   PARAMETER SEARCH
+   ═══════════════════════════════════════════ */
+
+.param-search-wrap {
+  position: sticky; top: 0; z-index: 20;
+  display: flex; align-items: center; gap: 6px;
+  padding: 8px var(--section-pad);
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-subtle);
+}
+.param-search-input {
+  flex: 1; min-width: 0;
+  background: var(--bg-input);
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm);
+  color: var(--text-1);
+  font-family: var(--font); font-size: var(--ui-font-small);
+  padding: 5px 8px; min-height: var(--control-h-sm);
+  outline: none; box-sizing: border-box;
+}
+.param-search-input:focus { border-color: var(--accent); }
+.param-search-count {
+  font-size: var(--ui-font-meta); color: var(--text-3); white-space: nowrap;
+}
+.param-search-clear {
+  background: none; border: none; cursor: pointer;
+  color: var(--text-4); font-size: 13px; line-height: 1; padding: 0 2px;
+  transition: color 0.12s;
+}
+.param-search-clear:hover { color: var(--text-1); }
+
+/* Search overlay — reveals matches through all three hiding layers
+   (block collapse, Advanced tier, enable gates) via classes only; real
+   state classes and panel_ui are never touched, so removing the
+   overlay restores the exact pre-search arrangement. Defined after the
+   collapse/advanced rules so these win. */
+.collapse-section.search-dim { opacity: 0.45; }
+.collapse-section.search-dim .collapse-body {
+  max-height: 0 !important;
+  padding-top: 0 !important; padding-bottom: 0 !important;
+}
+.collapse-section.search-reveal > .collapse-body {
+  max-height: none !important;
+  padding: 0 var(--section-pad) 12px;
+}
+.collapse-section:not(.adv-open) .param-grid.param-advanced.search-reveal { display: grid !important; }
+.collapse-section:not(.adv-open) .param-cell.param-advanced.search-reveal { display: block !important; }
+[data-gate].search-reveal { display: block !important; }
+.param-grid[data-gate].search-reveal { display: grid !important; }
+.param-cell > label.search-match { color: var(--accent-bright); }
+
+/* ═══════════════════════════════════════════
    COLLAPSIBLE SECTIONS
    ═══════════════════════════════════════════ */
 

@@ -3452,6 +3452,90 @@ function bindUI() {
     _applyDensity(d);
   });
 
+  // ===== Parameter search =====
+  // Reveal is a pure class overlay (search-reveal / search-match /
+  // search-dim): real collapse, Advanced, and gate state is never
+  // toggled and panel_ui is never written, so clearing the search
+  // restores the exact pre-search arrangement by removing the overlay.
+  {
+    const searchInput = document.getElementById("paramSearchInput");
+    const searchCount = document.getElementById("paramSearchCount");
+    let searchTimer = null;
+
+    const _clearSearchOverlay = () => {
+      document.querySelectorAll(
+        "#page-generate .search-reveal, #page-generate .search-match, #page-generate .search-dim"
+      ).forEach(el => el.classList.remove("search-reveal", "search-match", "search-dim"));
+    };
+
+    const _runSearch = () => {
+      const q = (searchInput?.value || "").trim().toLowerCase();
+      _clearSearchOverlay();
+      if (q.length < 2) {
+        if (searchCount) searchCount.textContent = "";
+        return;
+      }
+      let total = 0;
+      document.querySelectorAll("#page-generate .collapse-section[data-block]").forEach(sec => {
+        let matches = 0;
+        const title = sec.querySelector(".collapse-header .collapse-title");
+        const titleHit = !!(title && title.textContent.toLowerCase().includes(q));
+        sec.querySelectorAll(".param-cell > label").forEach(label => {
+          const cell = label.parentElement;
+          // Arch-hidden cells stay hidden: inapplicable is not the same
+          // as tucked away.
+          if (cell.classList.contains("arch-hidden")) return;
+          if (!label.textContent.toLowerCase().includes(q)) return;
+          matches++;
+          label.classList.add("search-match");
+          // Reveal through the Advanced tier and enable gates.
+          for (let n = cell; n && n !== sec; n = n.parentElement) {
+            if (n.classList.contains("param-advanced") || n.dataset.gate) {
+              n.classList.add("search-reveal");
+            }
+          }
+        });
+        if (matches || titleHit) {
+          total += matches || 1;
+          sec.classList.add("search-reveal");
+        } else {
+          sec.classList.add("search-dim");
+        }
+      });
+      if (searchCount) {
+        searchCount.textContent = total > 0
+          ? _i18n("panel.search.count", "{n} matches", { n: total })
+          : _i18n("panel.search.noMatches", "No matches");
+      }
+    };
+
+    const _clearSearch = () => {
+      if (searchInput) searchInput.value = "";
+      clearTimeout(searchTimer);
+      _clearSearchOverlay();
+      if (searchCount) searchCount.textContent = "";
+    };
+
+    searchInput?.addEventListener("input", () => {
+      clearTimeout(searchTimer);
+      searchTimer = setTimeout(_runSearch, 120);
+    });
+    searchInput?.addEventListener("keydown", e => {
+      if (e.key === "Escape") {
+        e.stopPropagation();
+        _clearSearch();
+        searchInput.blur();
+      }
+    });
+    document.getElementById("paramSearchClear")?.addEventListener("click", _clearSearch);
+    window.Shortcuts?.registerHandler("panel.search-focus", () => {
+      if (!searchInput || !searchInput.offsetParent) return false;
+      searchInput.focus();
+      searchInput.select();
+      return true;
+    });
+  }
+
   // UX-012: Clear mask button
   document.getElementById("clearMaskBtn")?.addEventListener("click", () => {
     if (!window.StudioCore) return;

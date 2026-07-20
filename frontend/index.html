@@ -331,6 +331,13 @@
         <!-- ===== GENERATE TAB ===== -->
         <div class="panel-page active" id="page-generate" data-zone="panel">
 
+          <!-- Parameter search — sticky within the panel scroll container -->
+          <div class="param-search-wrap" id="paramSearchWrap">
+            <input class="param-search-input" id="paramSearchInput" type="text" placeholder="Search parameters" data-i18n-placeholder="panel.search.placeholder" spellcheck="false">
+            <span class="param-search-count" id="paramSearchCount"></span>
+            <button class="param-search-clear" id="paramSearchClear" data-i18n-title="panel.search.clear" title="Clear search">&#x2715;</button>
+          </div>
+
           <!-- Prompt -->
           <div class="prompt-section">
             <div class="prompt-box" data-block="prompt">
