@@ -1078,9 +1078,24 @@ body {
 .param-grid.cols-2 { grid-template-columns: 1fr 1fr; }
 .param-grid.cols-3 { grid-template-columns: 1fr 1fr 1fr; }
 
+/* Level 2 of the three-level label hierarchy (primary field labels). */
 .param-cell label {
-  display: block; font-size: 10px; color: var(--text-3);
+  display: block; font-size: var(--ui-font-small); color: var(--text-2);
   margin-bottom: 3px; text-transform: uppercase; letter-spacing: 0.5px;
+}
+
+/* Level 3 (secondary/advanced fields) — apply .secondary on a
+   .param-cell or on the whole .param-grid. Exactly three levels exist;
+   do not add a fourth. */
+.param-cell.secondary label,
+.param-grid.secondary .param-cell label {
+  font-size: var(--ui-font-meta); color: var(--text-3);
+}
+.param-cell.secondary .param-val,
+.param-grid.secondary .param-cell .param-val,
+.param-cell.secondary .param-select,
+.param-grid.secondary .param-cell .param-select {
+  min-height: var(--control-h-sm); font-size: var(--ui-font-small);
 }
 
 .param-val {
@@ -1276,7 +1291,10 @@ body {
 .collapse-section { border-bottom: 1px solid var(--border); }
 
 .collapse-header {
-  display: flex; align-items: center; padding: 10px var(--section-pad);
+  display: flex; align-items: center;
+  /* Asymmetric spacing: ≥2× more space above the title than below it,
+     so headers visually bind downward to their own fields (proximity). */
+  padding: 14px var(--section-pad) 7px;
   gap: 8px; cursor: pointer; transition: background 0.1s;
 }
 .collapse-header:hover { background: var(--bg-raised); }
@@ -1296,7 +1314,8 @@ body {
 
 #upscaleADRow.disabled { opacity: 0.4; pointer-events: none; }
 
-.collapse-title { flex: 1; font-size: 13px; color: var(--text-2); }
+/* Level 1 of the three-level label hierarchy (block headers). */
+.collapse-title { flex: 1; font-size: 14px; font-weight: 600; color: var(--text-2); }
 
 .collapse-arrow { transition: transform 0.2s; color: var(--text-4); }
 .collapse-arrow.open { transform: rotate(180deg); }
@@ -1331,7 +1350,7 @@ body {
   background: var(--bg-raised);
 }
 .section-label {
-  font-size: 11px; color: var(--text-3); font-weight: 600;
+  font-size: 12px; color: var(--text-3); font-weight: 600;
   letter-spacing: 0.8px; text-transform: uppercase;
 }
 .section-actions {
