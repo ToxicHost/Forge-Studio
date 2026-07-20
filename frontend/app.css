@@ -1387,6 +1387,10 @@ body {
 .param-grid[data-gate].search-reveal { display: grid !important; }
 .param-cell > label.search-match { color: var(--accent-bright); }
 
+/* Model-adaptive visibility: cells inapplicable to the loaded model's
+   architecture. Values keep applying; search never reveals these. */
+.arch-hidden { display: none !important; }
+
 /* ═══════════════════════════════════════════
    PER-PARAMETER HELP
    ═══════════════════════════════════════════ */

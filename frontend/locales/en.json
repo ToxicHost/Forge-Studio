@@ -1349,6 +1349,8 @@
   "panel.search.count": "{n} matches",
   "panel.search.noMatches": "No matches",
   "shortcuts.action.panel_searchFocus": "Focus parameter search",
+  "settings.archShowAll": "Always show all parameters",
+  "settings.archShowAll.tooltip": "Show parameters even when the loaded model's architecture doesn't use them.",
   "settings.density.title": "Density",
   "settings.density.comfortable": "Comfortable",
   "settings.density.compact": "Compact",

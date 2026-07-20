@@ -1890,6 +1890,7 @@ async function populateDropdowns() {
           previousArch: previousArchForRestore,
         });
         State._currentModelArch = check.arch || "unknown";
+        _applyArchRules(State._currentModelArch);
         delete teSelect.dataset.pendingValue;
         _syncSearchable(teSelect);
       } else if (teSelect) {
@@ -3174,6 +3175,38 @@ function _syncEnableGates() {
   });
 }
 
+// ── Model-adaptive control visibility ───────────────────────────────
+// Hides controls that do not apply to the loaded checkpoint's
+// architecture (detect_architecture values: sd15, sdxl, sd3, flux1,
+// flux2, cosmos, unknown). Hiding is CSS-only on the .param-cell
+// wrapper: hidden inputs keep their values and keep riding requests,
+// exactly like a collapsed-Advanced value. `unknown` fails open, and
+// the "Always show all parameters" setting (panel_ui.arch_show_all)
+// makes the whole mechanism inert. The map is the extension point —
+// `relabel` is reserved and intentionally unused this pass.
+const ARCH_UI_RULES = {
+  flux1:  { hide: ["paramClipSkip"], relabel: {} },
+  flux2:  { hide: ["paramClipSkip"], relabel: {} },
+  cosmos: { hide: ["paramClipSkip"], relabel: {} },
+};
+
+function _archShowAll() {
+  return _readPanelUi().arch_show_all === true;
+}
+
+function _applyArchRules(arch) {
+  document.querySelectorAll("#page-generate .arch-hidden")
+    .forEach(el => el.classList.remove("arch-hidden"));
+  if (_archShowAll()) return;
+  const rules = ARCH_UI_RULES[arch];
+  if (!rules) return;
+  (rules.hide || []).forEach(id => {
+    const el = document.getElementById(id);
+    if (!el) return; // fail open when the control doesn't exist
+    (el.closest(".param-cell") || el).classList.add("arch-hidden");
+  });
+}
+
 // ── Collapsed-block value badges ────────────────────────────────────
 // A compact monospace summary of a block's key values, shown on its
 // header only while the block is collapsed (a hidden-but-active value
@@ -4429,6 +4462,7 @@ function bindUI() {
       check,
     });
     State._currentModelArch = check.arch || "unknown";
+    _applyArchRules(State._currentModelArch);
 
     const textEncoder = teSelect?.value || "None";
     const vaeVal = document.getElementById("paramVAE")?.value;
@@ -4563,6 +4597,23 @@ function bindUI() {
     t.addEventListener("click", () => t.classList.toggle("on"));
   });
 
+  // Always-show-all-parameters escape hatch for the arch rules. This
+  // listener registers after the generic toggle above so it reads the
+  // post-flip state. Boot sync runs here too (arch resolves async on
+  // model checks; unknown fails open until then).
+  {
+    const archToggle = document.getElementById("toggleArchShowAll");
+    if (_archShowAll()) archToggle?.classList.add("on");
+    archToggle?.addEventListener("click", () => {
+      const on = archToggle.classList.contains("on");
+      const ui = _readPanelUi();
+      ui.arch_show_all = on;
+      window.Prefs?.set("panel_ui", ui);
+      _applyArchRules(State._currentModelArch || "unknown");
+    });
+    _applyArchRules(State._currentModelArch || "unknown");
+  }
+
   // ===== REFRESH BUTTONS =====
   document.getElementById("refreshModelsBtn")?.addEventListener("click", async () => {
     showToast(I18N.t("toast.refreshingModels", "Refreshing models..."), "info");
@@ -4653,6 +4704,7 @@ function bindUI() {
           previousArch: State._currentModelArch || null,
         });
         State._currentModelArch = check.arch || "unknown";
+        _applyArchRules(State._currentModelArch);
       } else if (teSelect && _optionExists(teSelect, current)) {
         teSelect.value = current;
       }
