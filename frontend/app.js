@@ -364,7 +364,7 @@ let _liveEntrySeq = 0;
 
 // User-configurable session history cap (Settings → "Session history size").
 function _sessionLimit() {
-  const raw = parseInt(localStorage.getItem("studio-session-limit") || "", 10);
+  const raw = parseInt(window.Prefs?.get("session_limit", 50), 10);
   const v = isNaN(raw) ? 50 : raw;
   return Math.max(8, Math.min(200, v));
 }
@@ -4079,7 +4079,7 @@ function bindUI() {
       limitInput.addEventListener("change", () => {
         const v = Math.max(8, Math.min(200, parseInt(limitInput.value, 10) || 50));
         limitInput.value = v;
-        localStorage.setItem("studio-session-limit", String(v));
+        window.Prefs?.set("session_limit", v);
         _applySessionLimit();
         renderOutputGallery();
       });
@@ -4273,12 +4273,13 @@ function bindUI() {
 
   // ===== Save to Gallery folder =====
   // Folder paths are machine config, not per-image workflow params, so they
-  // persist immediately to localStorage (no need to click "Save Defaults").
-  // _restoreFolderSettings() re-applies them on boot, after defaults load.
+  // persist immediately to server-backed preferences (no need to click
+  // "Save Defaults"). init() re-applies them on boot, after defaults load.
+  // Persisting a folder never trusts it — trust is a separate action.
   const _galFolderInput = document.getElementById("settingGalleryFolder");
   const _syncGalFolder = () => {
     State.galleryFolder = (_galFolderInput?.value || "").trim();
-    try { localStorage.setItem("studio-gallery-folder", State.galleryFolder); } catch (_) {}
+    window.Prefs?.set("gallery_folder", State.galleryFolder);
   };
   _galFolderInput?.addEventListener("input", _syncGalFolder);
   _galFolderInput?.addEventListener("change", _syncGalFolder);
@@ -4322,7 +4323,7 @@ function bindUI() {
   const _saveDirInput = document.getElementById("settingSaveDir");
   const _syncSaveDir = () => {
     State.saveDir = (_saveDirInput?.value || "").trim();
-    try { localStorage.setItem("studio-save-dir", State.saveDir); } catch (_) {}
+    window.Prefs?.set("save_dir", State.saveDir);
   };
   _saveDirInput?.addEventListener("input", _syncSaveDir);
   _saveDirInput?.addEventListener("change", _syncSaveDir);
@@ -4488,9 +4489,10 @@ function bindUI() {
     }).then(res => res.json());
   };
   if (_vramSlider) {
-    // New storage key — old "studio-vram-reserve" values meant the opposite
-    // semantic, so ignore them and start at Auto until the user adjusts.
-    const saved = localStorage.getItem("studio-vram-weights");
+    // Numeric preference — the retired "studio-vram-reserve" key meant the
+    // opposite semantic, so only "vram_weights" values are honored.
+    const _savedWeights = window.Prefs?.get("vram_weights");
+    const saved = Number.isFinite(_savedWeights) ? String(_savedWeights) : "";
     if (saved) {
       _vramSlider.value = saved;
       if (_vramSliderVal) _vramSliderVal.textContent = _vramLabel(saved);
@@ -4500,7 +4502,7 @@ function bindUI() {
     });
     _vramSlider.addEventListener("change", async () => {
       const gb = parseFloat(_vramSlider.value);
-      localStorage.setItem("studio-vram-weights", String(gb));
+      if (Number.isFinite(gb)) window.Prefs?.set("vram_weights", gb);
       if (gb === 0) {
         try {
           await _vramSendWeights(0);
@@ -4541,18 +4543,15 @@ function bindUI() {
   const _autoUnloadSlider = document.getElementById("autoUnloadMinutes");
   const _autoUnloadVal = document.getElementById("autoUnloadMinutesVal");
 
-  // Restore auto-unload settings from localStorage
-  const _savedAutoUnload = localStorage.getItem("studio-auto-unload");
-  if (_savedAutoUnload) {
-    try {
-      const au = JSON.parse(_savedAutoUnload);
-      if (au.enabled) _autoUnloadToggle?.classList.add("on");
-      if (_autoUnloadSlider && au.minutes) _autoUnloadSlider.value = au.minutes;
-      if (_autoUnloadVal && au.minutes) _autoUnloadVal.textContent = au.minutes + " min";
-      if (au.enabled && _autoUnloadRow) _autoUnloadRow.style.display = "";
-      // Sync to server
-      API.autoUnload({ enabled: !!au.enabled, minutes: au.minutes || 10 }).catch(() => {});
-    } catch (_) {}
+  // Restore auto-unload settings from preferences ({ enabled, minutes })
+  const au = window.Prefs?.get("auto_unload");
+  if (au && typeof au === "object") {
+    if (au.enabled) _autoUnloadToggle?.classList.add("on");
+    if (_autoUnloadSlider && au.minutes) _autoUnloadSlider.value = au.minutes;
+    if (_autoUnloadVal && au.minutes) _autoUnloadVal.textContent = au.minutes + " min";
+    if (au.enabled && _autoUnloadRow) _autoUnloadRow.style.display = "";
+    // Sync to server
+    API.autoUnload({ enabled: !!au.enabled, minutes: au.minutes || 10 }).catch(() => {});
   }
 
   _autoUnloadToggle?.addEventListener("click", () => {
@@ -4560,7 +4559,7 @@ function bindUI() {
     if (_autoUnloadRow) _autoUnloadRow.style.display = on ? "" : "none";
     const minutes = parseInt(_autoUnloadSlider?.value) || 10;
     API.autoUnload({ enabled: on, minutes }).catch(() => {});
-    localStorage.setItem("studio-auto-unload", JSON.stringify({ enabled: on, minutes }));
+    window.Prefs?.set("auto_unload", { enabled: on, minutes });
   });
 
   _autoUnloadSlider?.addEventListener("input", () => {
@@ -4571,20 +4570,20 @@ function bindUI() {
     const minutes = parseInt(_autoUnloadSlider.value) || 10;
     const on = _autoUnloadToggle?.classList.contains("on") ?? false;
     API.autoUnload({ enabled: on, minutes }).catch(() => {});
-    localStorage.setItem("studio-auto-unload", JSON.stringify({ enabled: on, minutes }));
+    window.Prefs?.set("auto_unload", { enabled: on, minutes });
   });
 
   // ===== UX-014: REMEMBER LAST SESSION =====
 
-  // Restore toggle state from localStorage (this toggle is self-referential —
+  // Restore toggle state from preferences (this toggle is self-referential —
   // it must persist independently of the session data it controls)
   const _rememberToggle = document.getElementById("toggleRememberSession");
-  if (localStorage.getItem("studio-remember-session") === "true") {
+  if (window.Prefs?.get("remember_session", false) === true) {
     _rememberToggle?.classList.add("on");
   }
   _rememberToggle?.addEventListener("click", () => {
     const on = _rememberToggle?.classList.contains("on") ?? false;
-    localStorage.setItem("studio-remember-session", on ? "true" : "false");
+    window.Prefs?.set("remember_session", on);
     if (!on) {
       // User turned it off — clear saved session data
       localStorage.removeItem("studio-session-data");
@@ -6570,10 +6569,10 @@ const LayoutSwitcher = {
     SessionStrip.initCollapse();
     SessionStrip.initClassicToggle();
     Customizer.init();
-    const saved = localStorage.getItem("studio-layout-preset") || "classic";
+    const saved = window.Prefs?.get("layout_preset", "classic") || "classic";
     this.apply(saved, /*boot*/ true);
-    // localStorage wiped but a named layout was active: restore it from
-    // the server file (best-effort, async).
+    // Local layout cache wiped but a named layout was active: restore it
+    // from the server file (best-effort, async).
     if (!LayoutManager.working && LayoutManager.activeName) {
       LayoutManager.loadByName(LayoutManager.activeName, { silent: true });
     }
@@ -6604,7 +6603,7 @@ const LayoutSwitcher = {
     if (base === "deck") document.documentElement.setAttribute("data-layout", "deck");
     else document.documentElement.removeAttribute("data-layout");
     this.current = base;
-    localStorage.setItem("studio-layout-preset", base);
+    window.Prefs?.set("layout_preset", base);
     this._updateButtons(base);
     SessionStrip.syncStripCol();
   },
@@ -7319,6 +7318,13 @@ function _initParamScrub() {
 async function init() {
   console.log("[Studio] Standalone UI initializing...");
 
+  // Preferences must be available before bindUI() — many handlers
+  // initialize their controls from persisted values. ?reset has to run
+  // first so a reset boot can't load the state it just deleted.
+  await _handleEmergencyResetIfRequested();
+  try { await window.Prefs?.load(); } catch (_) {}
+  window.Shortcuts?.reloadFromPrefs?.();
+
   bindUI();
   _initParamScrub();
 
@@ -7349,21 +7355,23 @@ async function init() {
     StatusBar.setDimensions(w, h);
   }
 
-  // Folder paths persist immediately via localStorage (machine config, not
-  // per-image workflow). Re-apply after defaults load so the most recent
-  // user choice wins regardless of whether "Save Defaults" was clicked.
+  // Folder paths persist immediately via server-backed preferences
+  // (machine config, not per-image workflow). Re-apply after defaults load
+  // so the most recent user choice wins regardless of whether "Save
+  // Defaults" was clicked. These are inert strings — trusting a folder
+  // remains a separate explicit action.
   try {
-    const _sd = localStorage.getItem("studio-save-dir");
+    const _sd = window.Prefs?.get("save_dir");
     if (_sd != null) {
       const el = document.getElementById("settingSaveDir");
       if (el) el.value = _sd;
-      State.saveDir = _sd.trim();
+      State.saveDir = String(_sd).trim();
     }
-    const _gf = localStorage.getItem("studio-gallery-folder");
+    const _gf = window.Prefs?.get("gallery_folder");
     if (_gf != null) {
       const el = document.getElementById("settingGalleryFolder");
       if (el) el.value = _gf;
-      State.galleryFolder = _gf.trim();
+      State.galleryFolder = String(_gf).trim();
     }
   } catch (_) {}
 
@@ -7867,11 +7875,21 @@ function _showFirstRunModal() {
 // ═══════════════════════════════════════════
 // EMERGENCY RESET — ?reset in URL nukes corrupted state
 // ═══════════════════════════════════════════
+// Runs at the top of init(), before Prefs.load(), so the server-side
+// preference file is wiped before the first GET could cache stale state.
+// Defaults, layout files, and trusted roots live elsewhere and are kept.
 
-if (new URLSearchParams(window.location.search).has("reset")) {
+async function _handleEmergencyResetIfRequested() {
+  if (!new URLSearchParams(window.location.search).has("reset")) return;
   const keys = Object.keys(localStorage).filter(k => k.startsWith("studio"));
   keys.forEach(k => localStorage.removeItem(k));
-  console.warn(`[Studio] Emergency reset: cleared ${keys.length} localStorage keys`);
+  try {
+    await fetch("/studio/prefs", { method: "DELETE" });
+  } catch (err) {
+    console.warn("[Studio] Emergency reset: server preference delete failed", err);
+  }
+  try { window.Prefs?._clearLoadedStateForReset?.(); } catch (_) {}
+  console.warn(`[Studio] Emergency reset: cleared ${keys.length} localStorage keys and server prefs`);
   // Strip ?reset from URL so it doesn't fire on every reload
   const url = new URL(window.location);
   url.searchParams.delete("reset");
