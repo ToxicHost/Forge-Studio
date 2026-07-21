@@ -713,7 +713,8 @@ function bindCanvas() {
     let _spaceHeld = false;
     let _zoomDrag = { active: false, startY: 0, startScale: 1, anchorX: 0, anchorY: 0 };
     document.addEventListener("keydown", e => { if (!document.getElementById("app-studio")?.classList.contains("active")) return; if (e.code === "Space" && !["INPUT","TEXTAREA","SELECT"].includes(e.target.tagName) && !e.target.isContentEditable) { _spaceHeld = true; if (S.canvas) S.canvas.style.cursor = e.shiftKey ? "ns-resize" : "grab"; e.preventDefault(); } });
-    document.addEventListener("keyup", e => { if (!document.getElementById("app-studio")?.classList.contains("active")) return; if (e.code === "Space") { _spaceHeld = false; if (S.canvas && !S.zoom.panning && !_zoomDrag.active) setTool(S.tool); } });
+    // keyup is intentionally NOT page-guarded: it must always clear _spaceHeld, or holding Space while switching away from Canvas would leave the pan/zoom gate stuck true. Setting the flag is guarded above; clearing it never is.
+    document.addEventListener("keyup", e => { if (e.code === "Space") { _spaceHeld = false; if (S.canvas && !S.zoom.panning && !_zoomDrag.active) setTool(S.tool); } });
 
     cv.addEventListener("pointerdown", e => {
         // Shift+Space+LeftClick → zoom-drag (Krita-style). Must come before pan check.
@@ -3959,7 +3960,8 @@ function bindKeys() {
     });
 
     document.addEventListener("keyup", e => {
-        if (!document.getElementById("app-studio")?.classList.contains("active")) return;
+        // Not page-guarded — clearing space state must always run (see the
+        // bindCanvas keyup note); the keydown guard above is what isolates input.
         if (e.key === " ") {
             _spaceDown = false;
             if (S.canvas && !S.zoom.panning) setTool(S.tool); // restore cursor
