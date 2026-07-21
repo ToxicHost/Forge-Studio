@@ -361,8 +361,7 @@
   "lora.empty.noMatch": "No LoRAs match your search",
   "lora.allFolder": "All LoRAs",
   "lora.menu.previewFromFile": "Set preview from file…",
-  "lora.menu.editMeta": "Edit metadata\u2026",
-  "lora.card.insertAll": "+ all",
+  "lora.menu.editMeta": "Edit & insert triggers\u2026",
   "lora.detail.family": "Model family",
   "lora.detail.familyPlaceholder": "e.g. SDXL, Pony, Illustrious, SD 1.5",
   "lora.detail.triggers": "Trigger words (comma-separated)",
@@ -1303,7 +1302,10 @@
   "workflows.toast.applied": "Workflow applied",
   "workflows.toast.appliedPartial": "Workflow applied with {count} unavailable settings",
 
-  "loraStack.triggers.tooltip": "Include trigger words in prompt",
+  "loraStack.triggers.tooltip": "Auto-add all trigger words at generate",
+  "loraStack.triggers.chipTip": "Move this word into the prompt",
+  "loraStack.triggers.moveAll": "\u2192 prompt",
+  "loraStack.triggers.moveAllTip": "Move all trigger words into the prompt to edit them",
 
   "settings.shortcuts.title": "Keyboard Shortcuts",
   "settings.shortcuts.description": "Change a shortcut by pressing the key you want. Bind by character for your current layout, or by physical position for layout-independent muscle memory.",
