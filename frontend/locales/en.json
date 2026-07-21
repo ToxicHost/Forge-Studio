@@ -1302,7 +1302,10 @@
   "workflows.toast.applied": "Workflow applied",
   "workflows.toast.appliedPartial": "Workflow applied with {count} unavailable settings",
 
-  "loraStack.triggers.tooltip": "Include trigger words in prompt",
+  "loraStack.triggers.tooltip": "Auto-add all trigger words at generate",
+  "loraStack.triggers.chipTip": "Move this word into the prompt",
+  "loraStack.triggers.moveAll": "\u2192 prompt",
+  "loraStack.triggers.moveAllTip": "Move all trigger words into the prompt to edit them",
 
   "settings.shortcuts.title": "Keyboard Shortcuts",
   "settings.shortcuts.description": "Change a shortcut by pressing the key you want. Bind by character for your current layout, or by physical position for layout-independent muscle memory.",

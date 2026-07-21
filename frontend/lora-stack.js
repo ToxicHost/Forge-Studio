@@ -102,6 +102,39 @@ function _triggerKey(value) {
   return _normalizeLoraName(value).toLowerCase();
 }
 
+function _splitTriggers(text) {
+  return String(text || "").split(",").map(function (s) { return s.trim(); }).filter(Boolean);
+}
+
+// Insert text into the positive prompt at the caret, comma-separated so
+// tags stay cleanly delimited.
+function _insertIntoPrompt(text) {
+  var ta = document.getElementById("paramPrompt");
+  if (!ta || !text) return;
+  var start = ta.selectionStart == null ? ta.value.length : ta.selectionStart;
+  var end = ta.selectionEnd == null ? start : ta.selectionEnd;
+  var val = ta.value;
+  var before = val.slice(0, start);
+  var after = val.slice(end);
+  var prefix = (before.length && !/[\s,]$/.test(before)) ? ", " : "";
+  var suffix = (after.length && !/^[\s,]/.test(after)) ? ", " : "";
+  ta.value = before + prefix + text + suffix + after;
+  var pos = start + prefix.length + text.length + suffix.length;
+  ta.selectionStart = ta.selectionEnd = pos;
+  ta.focus();
+  ta.dispatchEvent(new Event("input", { bubbles: true }));
+}
+
+// Move trigger word(s) into the prompt field so the user can edit them
+// (e.g. swap a baked-in outfit). Switches the row to manual triggers so
+// the same words aren't also auto-appended at generate.
+function _moveTriggers(idx, words) {
+  var text = (words || []).join(", ");
+  if (!text) return;
+  _insertIntoPrompt(text);
+  if (state[idx] && state[idx].triggers !== false) setTriggers(idx, false);
+}
+
 // Load activation_text for every LoRA from /studio/loras. Non-fatal on
 // failure — compile then appends tags only. force=true refetches even if
 // already loaded (the browser's refresh passes it); otherwise concurrent
@@ -413,18 +446,41 @@ function _buildRow(idx, row) {
     tbtn.className = "lora-stack-trigger-toggle" + (row.triggers !== false ? " active" : "");
     tbtn.draggable = false;
     tbtn.textContent = "T";
-    tbtn.title = _t("loraStack.triggers.tooltip", "Include trigger words in prompt");
+    tbtn.title = _t("loraStack.triggers.tooltip", "Auto-add all trigger words at generate");
     tbtn.setAttribute("aria-pressed", row.triggers !== false ? "true" : "false");
     tbtn.addEventListener("click", function () {
       setTriggers(idx, !(state[idx] && state[idx].triggers !== false));
     });
     tline.appendChild(tbtn);
 
-    var chip = document.createElement("span");
-    chip.className = "lora-stack-trigger-chip";
-    chip.title = trig;
-    chip.textContent = trig;
-    tline.appendChild(chip);
+    // Trigger words as clickable chips: click a word to move just that one
+    // into the prompt field (where you can edit it, e.g. swap an outfit);
+    // "→ prompt" moves them all. Either switches the row to manual (T off).
+    var words = _splitTriggers(trig);
+    var chips = document.createElement("span");
+    chips.className = "lora-stack-trigger-chips";
+    words.forEach(function (word) {
+      var c = document.createElement("button");
+      c.type = "button";
+      c.className = "lora-stack-trigger-chip";
+      c.draggable = false;
+      c.textContent = word;
+      c.title = _t("loraStack.triggers.chipTip", "Move this word into the prompt");
+      c.addEventListener("click", function () { _moveTriggers(idx, [word]); });
+      chips.appendChild(c);
+    });
+    tline.appendChild(chips);
+
+    if (words.length > 1) {
+      var moveAll = document.createElement("button");
+      moveAll.type = "button";
+      moveAll.className = "lora-stack-trigger-moveall";
+      moveAll.draggable = false;
+      moveAll.textContent = _t("loraStack.triggers.moveAll", "→ prompt");
+      moveAll.title = _t("loraStack.triggers.moveAllTip", "Move all trigger words into the prompt to edit them");
+      moveAll.addEventListener("click", function () { _moveTriggers(idx, words); });
+      tline.appendChild(moveAll);
+    }
 
     r.appendChild(tline);
   }
