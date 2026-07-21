@@ -4330,24 +4330,32 @@ def setup_studio_routes(app: FastAPI):
                     # "activation text" (trigger words) and "preferred weight".
                     activation_text = ""
                     preferred_weight = 0.0
+                    user_base_model = ""
                     meta_path = os.path.splitext(full_path)[0] + ".json"
                     if os.path.isfile(meta_path):
                         try:
                             with open(meta_path, "r", encoding="utf-8") as mf:
                                 user_meta = json.load(mf)
                                 activation_text = user_meta.get("activation text", "")
-                                preferred_weight = float(user_meta.get("preferred weight", 0.0))
+                                try:
+                                    preferred_weight = float(user_meta.get("preferred weight", 0.0) or 0.0)
+                                except (TypeError, ValueError):
+                                    preferred_weight = 0.0
+                                # Model family the user set in-app (a1111's
+                                # "sd version" key, so other tools read it too).
+                                user_base_model = str(user_meta.get("sd version") or "").strip()
                         except Exception:
                             log.exception("Failed to read embedding user-metadata file")
 
                     # Civitai Helper sidecar (<stem>.civitai.info). Merge
                     # precedence per field: user sidecar (intent) → CH info →
                     # Studio's own Civitai cache (enrichment below) → network.
-                    base_model = ""
+                    base_model = user_base_model
                     if _civitai_read_ch is not None:
                         ch_info = _civitai_read_ch(full_path)
                         if ch_info:
-                            base_model = ch_info.get("base_model") or ""
+                            if not base_model:
+                                base_model = ch_info.get("base_model") or ""
                             if not activation_text and ch_info.get("trigger_words"):
                                 activation_text = ", ".join(ch_info["trigger_words"])
 
@@ -4466,6 +4474,70 @@ def setup_studio_routes(app: FastAPI):
                         deleted = True
 
         return {"ok": deleted}
+
+    def _resolve_lora_by_stem(name):
+        """Resolve a browser name ("subfolder/file", no extension) to a real
+        LoRA file. The user string is only ever joined under configured LoRA
+        roots with a whitelisted extension, must hit an existing file, and
+        the result must resolve inside a root (realpath containment) — so a
+        sidecar write can only touch <stem>.json beside an actual LoRA."""
+        if not name:
+            return None
+        primary, extras = _resolve_lora_dirs()
+        roots = [d for d in ([primary] + list(extras)) if d]
+        for base_dir in roots:
+            if not base_dir or not os.path.isdir(base_dir):
+                continue
+            for ext in ('.safetensors', '.ckpt', '.pt'):
+                candidate = os.path.join(base_dir, name.replace("/", os.sep) + ext)
+                if os.path.isfile(candidate) and _is_path_within_roots(candidate, roots):
+                    return candidate
+        return None
+
+    @app.post("/studio/lora_metadata")
+    async def save_lora_metadata(req: dict):
+        """Save user-editable metadata for a LoRA into its a1111 sidecar
+        (<stem>.json) — the highest-precedence layer the listing reads.
+
+        Body: {name, activation_text?, base_model?, preferred_weight?}. Only
+        provided keys are written; existing keys (description, notes, …) are
+        preserved. activation_text -> "activation text" (trigger words),
+        base_model -> "sd version" (model family, a1111-compatible so other
+        tools see it), preferred_weight -> "preferred weight". An empty
+        string clears that field; omitting a key leaves it untouched.
+        """
+        name = str(req.get("name") or "")
+        if not name:
+            return JSONResponse({"ok": False, "error": "Missing name"}, status_code=400)
+        target_path = _resolve_lora_by_stem(name)
+        if not target_path:
+            return JSONResponse({"ok": False, "error": f"LoRA not found: {name}"}, status_code=404)
+        meta_path = os.path.splitext(target_path)[0] + ".json"
+        try:
+            meta = {}
+            if os.path.isfile(meta_path):
+                try:
+                    with open(meta_path, "r", encoding="utf-8") as mf:
+                        loaded = json.load(mf)
+                        if isinstance(loaded, dict):
+                            meta = loaded
+                except Exception:
+                    log.warning("existing LoRA sidecar unreadable, rewriting: %s", meta_path)
+            if "activation_text" in req:
+                meta["activation text"] = str(req.get("activation_text") or "")
+            if "base_model" in req:
+                meta["sd version"] = str(req.get("base_model") or "")
+            if "preferred_weight" in req:
+                try:
+                    meta["preferred weight"] = float(req.get("preferred_weight") or 0.0)
+                except (TypeError, ValueError):
+                    meta["preferred weight"] = 0.0
+            _atomic_write_json(Path(meta_path), meta)
+            print(f"{TAG} Saved LoRA metadata: {meta_path}")
+            return {"ok": True, "path": meta_path}
+        except Exception as e:
+            log.exception("LoRA metadata save failed")
+            return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
     # ------------------------------------------------------------------
     # Checkpoint browser: rich listing + user-selectable previews

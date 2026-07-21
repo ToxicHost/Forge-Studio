@@ -777,6 +777,18 @@
     const menu = document.createElement("div");
     menu.className = "lora-card-menu";
 
+    // Edit metadata + selective trigger insertion — the primary way to set
+    // a LoRA's trigger words / model family and to add only the trigger
+    // words you want (e.g. skip a baked-in outfit).
+    const btnEdit = document.createElement("button");
+    btnEdit.className = "lora-card-menu-item";
+    btnEdit.dataset.i18n = "lora.menu.editMeta";
+    btnEdit.textContent = _t("lora.menu.editMeta", "Edit & insert triggers…");
+    btnEdit.addEventListener("click", () => { dismissContextMenu(); openDetail(lora); });
+    menu.appendChild(btnEdit);
+    const sepEdit = document.createElement("div"); sepEdit.className = "lora-card-menu-sep";
+    menu.appendChild(sepEdit);
+
     // "Add to Stack" only appears when the structured stack is
     // available AND we're not already in pick mode (in pick mode the
     // card click already targets the stack \u2014 a menu duplicate would
@@ -1135,6 +1147,295 @@
     textarea.dispatchEvent(new Event("input", { bubbles: true }));
   }
 
+  // Comma-separated tag insert into the last-focused prompt — keeps
+  // prompt tags cleanly delimited when adding individual trigger words.
+  function _insertTag(text) {
+    const ta = getTargetTextarea();
+    if (!ta || !text) return;
+    const start = ta.selectionStart ?? ta.value.length;
+    const end = ta.selectionEnd ?? start;
+    const val = ta.value;
+    const before = val.slice(0, start);
+    const after = val.slice(end);
+    const prefix = (before.length && !/[\s,]$/.test(before)) ? ", " : "";
+    const suffix = (after.length && !/^[\s,]/.test(after)) ? ", " : "";
+    ta.value = before + prefix + text + suffix + after;
+    const pos = start + prefix.length + text.length + suffix.length;
+    ta.selectionStart = ta.selectionEnd = pos;
+    ta.focus();
+    ta.dispatchEvent(new Event("input", { bubbles: true }));
+  }
+
+
+  // ── Detail / edit panel ────────────────────────────────
+  // Edit a LoRA's user metadata (trigger words, model family, preferred
+  // weight) — written to the a1111 <stem>.json sidecar, the highest-
+  // precedence layer the listing reads — and insert trigger words
+  // selectively, one at a time, so you can skip parts you don't want.
+  let detailOverlay = null;
+
+  function _triggerWords(text) {
+    return String(text || "").split(",").map(s => s.trim()).filter(Boolean);
+  }
+
+  async function saveLoraMetadata(name, patch) {
+    const resp = await fetch("/studio/lora_metadata", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(Object.assign({ name }, patch)),
+    });
+    const data = await resp.json().catch(() => null);
+    if (!resp.ok || !data || !data.ok) throw new Error((data && data.error) || `HTTP ${resp.status}`);
+    return data;
+  }
+
+  function _injectDetailStyles() {
+    if (document.getElementById("lora-detail-styles")) return;
+    const s = document.createElement("style");
+    s.id = "lora-detail-styles";
+    s.textContent = `
+.lora-detail-overlay {
+  position: fixed; inset: 0; z-index: 320;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex; align-items: center; justify-content: center;
+}
+.lora-detail-panel {
+  background: var(--bg-surface); border: 1px solid var(--border);
+  border-radius: var(--radius-lg); width: min(94vw, 460px);
+  max-height: 88vh; display: flex; flex-direction: column;
+  overflow: hidden; box-shadow: 0 16px 48px rgba(0,0,0,0.55);
+}
+.lora-detail-head {
+  display: flex; align-items: center; gap: 8px;
+  padding: 12px 14px; border-bottom: 1px solid var(--border-subtle);
+}
+.lora-detail-title {
+  font-family: var(--font); font-size: 13px; font-weight: 600;
+  color: var(--text-1); flex: 1; overflow: hidden;
+  text-overflow: ellipsis; white-space: nowrap;
+}
+.lora-detail-close {
+  background: none; border: none; color: var(--text-3);
+  font-size: 18px; cursor: pointer; line-height: 1; padding: 0 4px;
+}
+.lora-detail-close:hover { color: var(--text-1); }
+.lora-detail-body { padding: 12px 14px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
+.lora-detail-field { display: flex; flex-direction: column; gap: 4px; }
+.lora-detail-label { font-family: var(--font); font-size: 10px; text-transform: uppercase; letter-spacing: 0.4px; color: var(--text-3); }
+.lora-detail-input, .lora-detail-textarea {
+  background: var(--bg-input); border: 1px solid var(--border-subtle);
+  border-radius: var(--radius-sm); color: var(--text-1);
+  font-family: var(--font); font-size: 12px; padding: 6px 8px;
+  width: 100%; box-sizing: border-box; outline: none;
+}
+.lora-detail-input:focus, .lora-detail-textarea:focus { border-color: var(--accent); }
+.lora-detail-textarea { resize: vertical; min-height: 54px; }
+.lora-detail-weight { width: 80px; }
+.lora-detail-hint { font-family: var(--font); font-size: 10px; color: var(--text-4); margin: 0; }
+.lora-detail-chips { display: flex; flex-wrap: wrap; gap: 4px; }
+.lora-detail-chip {
+  font-family: var(--font); font-size: 11px; padding: 3px 9px;
+  border-radius: 999px; border: 1px solid var(--border);
+  color: var(--text-2); background: var(--bg-raised); cursor: pointer;
+  transition: all 0.12s; user-select: none;
+}
+.lora-detail-chip:hover { color: var(--accent-bright, var(--accent)); border-color: var(--accent); background: var(--accent-dim); }
+.lora-detail-chips-empty { font-family: var(--font); font-size: 11px; color: var(--text-4); font-style: italic; }
+.lora-detail-foot {
+  display: flex; flex-wrap: wrap; gap: 6px; justify-content: flex-end;
+  padding: 12px 14px; border-top: 1px solid var(--border-subtle);
+}
+.lora-detail-btn {
+  font-family: var(--font); font-size: 11px; padding: 5px 12px;
+  border-radius: var(--radius-sm); border: 1px solid var(--border);
+  color: var(--text-2); background: var(--bg-raised); cursor: pointer;
+  transition: all 0.12s;
+}
+.lora-detail-btn:hover { color: var(--text-1); border-color: var(--border-hover, var(--accent)); }
+.lora-detail-btn.primary { color: var(--accent-bright, var(--accent)); border-color: var(--accent); background: var(--accent-dim); }
+`;
+    document.head.appendChild(s);
+  }
+
+  function closeDetail() {
+    if (detailOverlay) { detailOverlay.remove(); detailOverlay = null; }
+  }
+
+  function openDetail(lora) {
+    _injectDetailStyles();
+    closeDetail();
+    const baseName = lora.name.split("/").pop();
+
+    const overlay = document.createElement("div");
+    overlay.className = "lora-detail-overlay";
+    overlay.addEventListener("mousedown", e => { if (e.target === overlay) closeDetail(); });
+    // Keep keystrokes inside the editor from leaking to the browser modal
+    overlay.addEventListener("keydown", e => {
+      e.stopPropagation();
+      if (e.key === "Escape") closeDetail();
+    });
+
+    const panel = document.createElement("div");
+    panel.className = "lora-detail-panel";
+
+    // Header
+    const head = document.createElement("div");
+    head.className = "lora-detail-head";
+    const title = document.createElement("span");
+    title.className = "lora-detail-title";
+    title.textContent = baseName;
+    title.title = lora.name;
+    const closeBtn = document.createElement("button");
+    closeBtn.className = "lora-detail-close";
+    closeBtn.innerHTML = "&times;";
+    closeBtn.addEventListener("click", closeDetail);
+    head.appendChild(title); head.appendChild(closeBtn);
+
+    const body = document.createElement("div");
+    body.className = "lora-detail-body";
+
+    // Model family
+    const familyField = document.createElement("div");
+    familyField.className = "lora-detail-field";
+    const familyLabel = document.createElement("label");
+    familyLabel.className = "lora-detail-label";
+    familyLabel.textContent = _t("lora.detail.family", "Model family");
+    const familyInput = document.createElement("input");
+    familyInput.className = "lora-detail-input";
+    familyInput.type = "text";
+    familyInput.value = lora.base_model || "";
+    familyInput.placeholder = _t("lora.detail.familyPlaceholder", "e.g. SDXL, Pony, Illustrious, SD 1.5");
+    familyField.appendChild(familyLabel); familyField.appendChild(familyInput);
+
+    // Trigger words
+    const trigField = document.createElement("div");
+    trigField.className = "lora-detail-field";
+    const trigLabel = document.createElement("label");
+    trigLabel.className = "lora-detail-label";
+    trigLabel.textContent = _t("lora.detail.triggers", "Trigger words (comma-separated)");
+    const trigArea = document.createElement("textarea");
+    trigArea.className = "lora-detail-textarea";
+    trigArea.value = lora.activation_text || "";
+    trigArea.placeholder = _t("lora.detail.triggersPlaceholder", "trigger, style tag, outfit…");
+    trigField.appendChild(trigLabel); trigField.appendChild(trigArea);
+
+    // Selective-insert chips
+    const hint = document.createElement("p");
+    hint.className = "lora-detail-hint";
+    hint.textContent = _t("lora.detail.chipsHint", "Click a word to add just that one to your prompt:");
+    const chips = document.createElement("div");
+    chips.className = "lora-detail-chips";
+    const renderChips = () => {
+      chips.innerHTML = "";
+      const words = _triggerWords(trigArea.value);
+      if (!words.length) {
+        const empty = document.createElement("span");
+        empty.className = "lora-detail-chips-empty";
+        empty.textContent = _t("lora.detail.noTriggers", "No trigger words");
+        chips.appendChild(empty);
+        return;
+      }
+      for (const w of words) {
+        const chip = document.createElement("span");
+        chip.className = "lora-detail-chip";
+        chip.textContent = w;
+        chip.addEventListener("click", () => _insertTag(w));
+        chips.appendChild(chip);
+      }
+    };
+    trigArea.addEventListener("input", renderChips);
+
+    // Preferred weight
+    const weightField = document.createElement("div");
+    weightField.className = "lora-detail-field";
+    const weightLabel = document.createElement("label");
+    weightLabel.className = "lora-detail-label";
+    weightLabel.textContent = _t("lora.detail.weight", "Preferred weight (0 = use default)");
+    const weightInput = document.createElement("input");
+    weightInput.className = "lora-detail-input lora-detail-weight";
+    weightInput.type = "number"; weightInput.step = "0.05"; weightInput.min = "0"; weightInput.max = "2";
+    weightInput.value = (lora.preferred_weight && lora.preferred_weight > 0) ? String(lora.preferred_weight) : "";
+    weightField.appendChild(weightLabel); weightField.appendChild(weightInput);
+
+    body.appendChild(familyField);
+    body.appendChild(trigField);
+    body.appendChild(hint);
+    body.appendChild(chips);
+    body.appendChild(weightField);
+
+    // Footer actions
+    const foot = document.createElement("div");
+    foot.className = "lora-detail-foot";
+
+    const insertAllBtn = document.createElement("button");
+    insertAllBtn.className = "lora-detail-btn";
+    insertAllBtn.textContent = _t("lora.detail.insertAll", "Insert all triggers");
+    insertAllBtn.addEventListener("click", () => {
+      const words = _triggerWords(trigArea.value);
+      if (words.length) _insertTag(words.join(", "));
+    });
+
+    const insertLoraBtn = document.createElement("button");
+    insertLoraBtn.className = "lora-detail-btn";
+    insertLoraBtn.textContent = _t("lora.detail.insertLora", "Insert LoRA tag");
+    insertLoraBtn.addEventListener("click", () => {
+      const ta = getTargetTextarea();
+      if (!ta) return;
+      const w = (lora.preferred_weight && lora.preferred_weight > 0) ? lora.preferred_weight : insertWeight;
+      insertAtCursor(ta, `<lora:${baseName}:${w}>`);
+    });
+
+    const saveBtn = document.createElement("button");
+    saveBtn.className = "lora-detail-btn primary";
+    saveBtn.textContent = _t("lora.detail.save", "Save");
+    saveBtn.addEventListener("click", async () => {
+      const wRaw = weightInput.value.trim();
+      const patch = {
+        activation_text: trigArea.value.trim(),
+        base_model: familyInput.value.trim(),
+        preferred_weight: wRaw === "" ? 0 : (parseFloat(wRaw) || 0),
+      };
+      saveBtn.disabled = true;
+      try {
+        await saveLoraMetadata(lora.name, patch);
+        // Reflect immediately in the open browser (and base-model chips).
+        lora.activation_text = patch.activation_text;
+        lora.base_model = patch.base_model;
+        lora.preferred_weight = patch.preferred_weight;
+        title.textContent = baseName; // unchanged; keeps parity if renamed later
+        renderBaseChips();
+        renderGrid();
+        window.showToast?.(_t("lora.detail.saved", "LoRA metadata saved"), "success");
+        // Keep the LoRA Stack's trigger map fresh if present.
+        window.LoraStack?.refreshTriggers?.(true);
+      } catch (e) {
+        console.error(`${TAG} metadata save failed:`, e);
+        window.showToast?.(_t("lora.detail.saveFailed", "Couldn't save LoRA metadata"), "error");
+      } finally {
+        saveBtn.disabled = false;
+      }
+    });
+
+    const closeFootBtn = document.createElement("button");
+    closeFootBtn.className = "lora-detail-btn";
+    closeFootBtn.textContent = _t("lora.detail.close", "Close");
+    closeFootBtn.addEventListener("click", closeDetail);
+
+    foot.appendChild(insertAllBtn);
+    foot.appendChild(insertLoraBtn);
+    foot.appendChild(saveBtn);
+    foot.appendChild(closeFootBtn);
+
+    panel.appendChild(head);
+    panel.appendChild(body);
+    panel.appendChild(foot);
+    overlay.appendChild(panel);
+    document.body.appendChild(overlay);
+    detailOverlay = overlay;
+    renderChips();
+    setTimeout(() => trigArea.focus(), 30);
+  }
+
 
   // ── Open / Close ───────────────────────────────────────
   async function openModal() {
@@ -1167,6 +1468,7 @@
   }
 
   function closeModal() {
+    closeDetail();
     if (modal) modal.style.display = "none";
     pickCallback = null;
     const target = getTargetTextarea();
