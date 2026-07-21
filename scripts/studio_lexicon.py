@@ -29,6 +29,18 @@ VERSION = "1.0.0"
 
 _default_wildcards_root: str = ""
 
+def _walk_follow(root):
+    """Scanner walk that follows symlinked directories (see studio_walk)."""
+    try:
+        try:
+            from studio_walk import walk_follow
+        except ImportError:
+            from scripts.studio_walk import walk_follow
+    except Exception:
+        return os.walk(root)
+    return walk_follow(root)
+
+
 
 def _find_wildcards_dir() -> str:
     """Auto-detect the Dynamic Prompts wildcards directory."""
@@ -481,7 +493,7 @@ def setup_lexicon_routes(app: FastAPI):
         root = _get_root()
         q_lower = q.lower()
         results = []
-        for dirpath, _, filenames in os.walk(root):
+        for dirpath, _, filenames in _walk_follow(root):
             for fn in filenames:
                 if not fn.endswith(".txt"):
                     continue
@@ -514,7 +526,7 @@ def setup_lexicon_routes(app: FastAPI):
         root = _get_root()
         q_lower = q.lower()
         results = []
-        for dirpath, _, filenames in os.walk(root):
+        for dirpath, _, filenames in _walk_follow(root):
             for fn in filenames:
                 if not fn.endswith(".txt"):
                     continue
@@ -549,7 +561,7 @@ def setup_lexicon_routes(app: FastAPI):
 
         buf = io.BytesIO()
         with zipfile.ZipFile(buf, "w", zipfile.ZIP_DEFLATED) as zf:
-            for dirpath, dirnames, filenames in os.walk(root):
+            for dirpath, dirnames, filenames in _walk_follow(root):
                 # Skip hidden dirs
                 dirnames[:] = [d for d in dirnames if not d.startswith(".")]
                 for fn in filenames:
@@ -629,7 +641,7 @@ def setup_lexicon_routes(app: FastAPI):
         root = _get_root()
         file_count = 0
         if os.path.isdir(root):
-            for _, _, files in os.walk(root):
+            for _, _, files in _walk_follow(root):
                 file_count += sum(1 for f in files if f.endswith(".txt"))
         return {"root": root, "exists": os.path.isdir(root), "file_count": file_count}
 

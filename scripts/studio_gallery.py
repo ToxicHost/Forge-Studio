@@ -80,6 +80,18 @@ except ImportError:
 TAG = "[Gallery]"
 VERSION = "1.1"
 
+def _walk_follow(root):
+    """Scanner walk that follows symlinked directories (see studio_walk)."""
+    try:
+        try:
+            from studio_walk import walk_follow
+        except ImportError:
+            from scripts.studio_walk import walk_follow
+    except Exception:
+        return os.walk(root)
+    return walk_follow(root)
+
+
 # =========================================================================
 # AUTO-SYNC: FILESYSTEM WATCHER + SSE
 # =========================================================================
@@ -329,7 +341,7 @@ def _incremental_sync():
             root = Path(sf["path"])
             if not root.exists() or not root.is_dir():
                 continue
-            for dirpath, dirnames, filenames in os.walk(root):
+            for dirpath, dirnames, filenames in _walk_follow(root):
                 dirnames.sort()
                 rel_folder = os.path.relpath(dirpath, root)
                 display_folder = (
@@ -1911,7 +1923,7 @@ def scan_all_folders():
             if not root.exists():
                 continue
             cnt = 0
-            for dirpath, dirnames, filenames in os.walk(root):
+            for dirpath, dirnames, filenames in _walk_follow(root):
                 cnt += sum(1 for fn in filenames if Path(fn).suffix.lower() in MEDIA_EXTENSIONS)
             folder_counts[sf["path"]] = cnt
 
@@ -1930,7 +1942,7 @@ def scan_all_folders():
             scan_progress["folders"].append(fprog)
             processed = 0
 
-            for dirpath, dirnames, filenames in os.walk(root):
+            for dirpath, dirnames, filenames in _walk_follow(root):
                 dirnames.sort()
                 rel_folder = os.path.relpath(dirpath, root)
                 if rel_folder == ".":
@@ -2675,7 +2687,7 @@ def setup_gallery_routes(app: FastAPI):
                 root = Path(sf["path"])
                 if not root.exists():
                     continue
-                for dirpath, dirnames, filenames in os.walk(root):
+                for dirpath, dirnames, filenames in _walk_follow(root):
                     dirnames.sort()
                     rel = os.path.relpath(dirpath, root)
                     display = f"{root.name}\\{rel}" if rel != "." else root.name

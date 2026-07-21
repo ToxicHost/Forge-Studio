@@ -51,6 +51,18 @@ ALLOWED_PREVIEW_EXTS = {".jpg", ".jpeg", ".png", ".webp"}
 MAX_PREVIEW_BYTES = 8 * 1024 * 1024  # 8 MiB cap on downloads
 LORA_EXTENSIONS = (".safetensors", ".ckpt", ".pt")
 
+def _walk_follow(root):
+    """Scanner walk that follows symlinked directories (see studio_walk)."""
+    try:
+        try:
+            from studio_walk import walk_follow
+        except ImportError:
+            from scripts.studio_walk import walk_follow
+    except Exception:
+        return os.walk(root)
+    return walk_follow(root)
+
+
 
 # =========================================================================
 # Path / cache helpers
@@ -644,7 +656,7 @@ def setup_civitai_routes(app, get_lora_dirs) -> None:
             for base in roots:
                 if not base or not os.path.isdir(base):
                     continue
-                for root, dirs, files in os.walk(base):
+                for root, dirs, files in _walk_follow(base):
                     for f in files:
                         if not f.endswith(LORA_EXTENSIONS):
                             continue

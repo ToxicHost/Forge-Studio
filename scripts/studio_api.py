@@ -47,6 +47,18 @@ from modules import shared, sd_models, sd_samplers, sd_schedulers
 
 TAG = "[Studio API]"
 
+def _walk_follow(root):
+    """Scanner walk that follows symlinked directories (see studio_walk)."""
+    try:
+        try:
+            from studio_walk import walk_follow
+        except ImportError:
+            from scripts.studio_walk import walk_follow
+    except Exception:
+        return os.walk(root)
+    return walk_follow(root)
+
+
 
 # sRGB ICC profile bytes — built once at import. Passed to every PIL save
 # (PNG / JPEG / WebP) so output files are explicitly tagged as sRGB instead
@@ -4245,7 +4257,7 @@ def setup_studio_routes(app: FastAPI):
         for base_dir in all_dirs:
             if not base_dir or not os.path.isdir(base_dir):
                 continue
-            for root, dirs, files in os.walk(base_dir):
+            for root, dirs, files in _walk_follow(base_dir):
                 dirs.sort(key=_natural_sort_key)
                 for f in sorted(files, key=_natural_sort_key):
                     if not f.endswith(('.safetensors', '.ckpt', '.pt')):
