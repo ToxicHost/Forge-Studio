@@ -964,13 +964,22 @@ const StatusBar = {
     }
   },
 
-  setVRAM(allocated, total) {
+  setVRAM(allocated, reserved, total) {
     const el = document.getElementById("statusVRAM");
     if (!el) return;
-    if (allocated == null || total == null) { el.textContent = ""; return; }
-    el.textContent = `VRAM ${allocated.toFixed(1)} / ${total.toFixed(1)} GB`;
+    if (reserved == null || total == null) { el.textContent = ""; return; }
+    // Reserved is the primary figure: with Neo's weight offloading and
+    // memory-mapped safetensors, tensor-allocated legitimately undershoots
+    // what users understand as "in use".
+    el.textContent = `VRAM ${reserved.toFixed(1)} / ${total.toFixed(1)} GB`;
+    // All three figures feed the hover tooltip (data-help on #statusVRAM)
+    el.dataset.helpParams = JSON.stringify({
+      alloc: (allocated ?? 0).toFixed(1),
+      reserved: reserved.toFixed(1),
+      total: total.toFixed(1),
+    });
     // Color coding: green < 60%, amber 60-85%, red > 85%
-    const pct = allocated / total;
+    const pct = reserved / total;
     el.classList.remove("vram-low", "vram-mid", "vram-high");
     if (pct > 0.85) el.classList.add("vram-high");
     else if (pct > 0.6) el.classList.add("vram-mid");
@@ -3652,7 +3661,13 @@ function bindUI() {
     const _tipTextFor = (cell) => {
       if (cell.dataset.toolTip) return _toolTipLabel(cell.dataset.toolTip);
       const key = cell.dataset.help || "";
-      const text = key ? _i18n(key, "") : "";
+      // Optional interpolation values, kept current by whoever owns the
+      // element (e.g. the VRAM readout) — resolved lazily at show time
+      let params = null;
+      if (cell.dataset.helpParams) {
+        try { params = JSON.parse(cell.dataset.helpParams); } catch (_) {}
+      }
+      const text = key ? _i18n(key, "", params) : "";
       return (text && text !== key) ? text : "";
     };
 
@@ -5238,8 +5253,8 @@ function bindUI() {
         // Fetch VRAM separately — inline response from unload was unreliable
         const v = await API.vram().catch(() => null);
         if (v?.available) {
-          StatusBar.setVRAM(v.allocated_gb, v.total_gb);
-          showToast(`Model unloaded — VRAM: ${v.allocated_gb} / ${v.total_gb} GB`, "success");
+          StatusBar.setVRAM(v.allocated_gb, v.reserved_gb, v.total_gb);
+          showToast(`Model unloaded — VRAM: ${v.reserved_gb} / ${v.total_gb} GB`, "success");
         } else if (r.status === "already_unloaded") {
           showToast(_i18n("toast.model.alreadyUnloaded", "Model already unloaded"), "info");
         } else {
@@ -8072,7 +8087,7 @@ async function _refreshVRAM() {
   try {
     const v = await API.vram();
     if (v.available) {
-      StatusBar.setVRAM(v.allocated_gb, v.total_gb);
+      StatusBar.setVRAM(v.allocated_gb, v.reserved_gb, v.total_gb);
       console.log(`[Studio VRAM] ${v.allocated_gb} GB allocated / ${v.reserved_gb} GB reserved / ${v.total_gb} GB total` +
         (v.vram_reserve_gb > 0 ? ` (${v.vram_reserve_gb} GB set aside for compute)` : "") +
         (v.gpu_name ? ` (${v.gpu_name})` : ""));

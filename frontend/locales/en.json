@@ -1324,6 +1324,7 @@
   "help.hires.upscaler": "Upscaler used for the hires pass. Latent upscales inside the model; ESRGAN-style upscalers work on the pixels.",
   "help.hires.scale": "Multiplier applied to the base resolution before the hires pass. 1.5–2.0 is typical.",
   "help.hires.steps": "Steps for the hires pass. 0 reuses the main step count.",
+  "help.status.vram": "{alloc} GB allocated by tensors \u00b7 {reserved} GB reserved by PyTorch \u00b7 {total} GB total. Model weights may be partially offloaded to RAM.",
   "help.hires.denoise": "How much the upscaled image may change during the hires pass. Lower keeps the composition; 0.3–0.5 is typical.",
   "help.hires.cfg": "Prompt strength for the hires pass. 0 reuses the main CFG.",
   "help.hires.checkpoint": "Optional different checkpoint for the hires pass. Same uses the main model.",
