@@ -304,9 +304,11 @@ const State = {
   saveDir: "",             // optional absolute server-side folder for auto-save on generate (empty = Forge output dir)
   highPrecision: false,    // capture float32 VAE output, save .float32.bin sidecar
   livePreview: true,       // show preview thumbnail during generation
+  promptCleanup: true,     // tidy the payload copy of prompts on generate
   // Auto Watermark (composited onto the final generated image)
   watermarkEnable: false,
   watermarkName: "",
+  watermarkApplyMode: "export", // "export" (stamp on Save/Export) | "generation" (legacy: stamp generated files)
   watermarkPosition: "bottom-right",
   watermarkOpacity: 1.0,   // 0..1
   watermarkScale: 0.15,    // fraction of the shorter edge
@@ -579,6 +581,7 @@ const Live = {
       this._updateUI();
       window.Customizer?.updateToggleState();
       console.log("[Live] Active, seed:", this.seed);
+      window.Education?.maybeShowTip?.("live");
       // Trigger an initial submit with current canvas state
       this._scheduleCanvasCheck(0);
     } catch (e) {
@@ -964,13 +967,22 @@ const StatusBar = {
     }
   },
 
-  setVRAM(allocated, total) {
+  setVRAM(allocated, reserved, total) {
     const el = document.getElementById("statusVRAM");
     if (!el) return;
-    if (allocated == null || total == null) { el.textContent = ""; return; }
-    el.textContent = `VRAM ${allocated.toFixed(1)} / ${total.toFixed(1)} GB`;
+    if (reserved == null || total == null) { el.textContent = ""; return; }
+    // Reserved is the primary figure: with Neo's weight offloading and
+    // memory-mapped safetensors, tensor-allocated legitimately undershoots
+    // what users understand as "in use".
+    el.textContent = `VRAM ${reserved.toFixed(1)} / ${total.toFixed(1)} GB`;
+    // All three figures feed the hover tooltip (data-help on #statusVRAM)
+    el.dataset.helpParams = JSON.stringify({
+      alloc: (allocated ?? 0).toFixed(1),
+      reserved: reserved.toFixed(1),
+      total: total.toFixed(1),
+    });
     // Color coding: green < 60%, amber 60-85%, red > 85%
-    const pct = allocated / total;
+    const pct = reserved / total;
     el.classList.remove("vram-low", "vram-mid", "vram-high");
     if (pct > 0.85) el.classList.add("vram-high");
     else if (pct > 0.6) el.classList.add("vram-mid");
@@ -2014,6 +2026,169 @@ async function ensureSelectedComponentsLoadedForGenerate() {
   return ok !== false;
 }
 
+// ═══════════════════════════════════════════
+// PROMPT QOL — weight shortcuts, cleanup-on-generate, bracket balance
+// ═══════════════════════════════════════════
+
+// The prompt surfaces tag-complete covers: main, negative, ADetailer slot
+// prompts, regional rows, plus anything attached at runtime (_tacAttached).
+function _isPromptSurface(el) {
+  if (!el || (el.tagName !== "TEXTAREA" && el.tagName !== "INPUT")) return false;
+  if (el._tacAttached) return true;
+  if (el.classList.contains("region-prompt")) return true;
+  return ["paramPrompt", "paramNeg", "paramAD1Prompt", "paramAD2Prompt", "paramAD3Prompt"].includes(el.id);
+}
+
+// A1111-style attention weight editing. With a selection, wraps it as
+// (selection:1.1); without, uses the attention-delimited token span under
+// the caret; repeat presses step the existing weight; landing exactly on
+// 1.0 unwraps. Caret/selection survive the edit so presses chain.
+function _adjustPromptWeight(el, delta) {
+  const text = el.value ?? "";
+  let start = el.selectionStart ?? 0;
+  let end = el.selectionEnd ?? 0;
+
+  if (start === end) {
+    // Caret inside an existing (content:weight) group → target its content
+    const open = text.lastIndexOf("(", start - 1);
+    if (open !== -1 && text.lastIndexOf(")", start - 1) < open) {
+      const close = text.indexOf(")", start);
+      const nextOpen = text.indexOf("(", start);
+      if (close !== -1 && (nextOpen === -1 || nextOpen > close)) {
+        const wm = text.slice(open + 1, close).match(/^(.*):(-?[0-9]*\.?[0-9]+)$/);
+        if (wm && !wm[1].includes("(")) {
+          start = open + 1;
+          end = open + 1 + wm[1].length;
+        }
+      }
+    }
+    if (start === end) {
+      // Token span under the caret, delimited by attention syntax
+      const DELIM = "\n,()[]{}<>|:";
+      while (start > 0 && !DELIM.includes(text[start - 1])) start--;
+      while (end < text.length && !DELIM.includes(text[end])) end++;
+      while (start < end && text[start] === " ") start++;
+      while (end > start && text[end - 1] === " ") end--;
+      if (start >= end) return false;
+    }
+  }
+
+  // Already weighted? ("(" immediately before, ":w)" immediately after)
+  let weight = null, repStart = start, repEnd = end;
+  const wmAfter = text.slice(end).match(/^:(-?[0-9]*\.?[0-9]+)\)/);
+  if (start > 0 && text[start - 1] === "(" && wmAfter) {
+    weight = parseFloat(wmAfter[1]);
+    repStart = start - 1;
+    repEnd = end + wmAfter[0].length;
+  }
+
+  const content = text.slice(start, end);
+  if (!content.trim()) return false;
+  const newWeight = Math.round(((weight === null ? 1 : weight) + delta) * 100) / 100;
+  let replacement, selFrom;
+  if (weight !== null && Math.abs(newWeight - 1) < 1e-9) {
+    replacement = content; // stepped back to 1.0 — unwrap
+    selFrom = repStart;
+  } else {
+    replacement = `(${content}:${newWeight})`;
+    selFrom = repStart + 1;
+  }
+  el.value = text.slice(0, repStart) + replacement + text.slice(repEnd);
+  el.selectionStart = selFrom;
+  el.selectionEnd = selFrom + content.length;
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+  return true;
+}
+
+// Payload-only prompt normalization. Wildcard calls (__name__, {a|b|c})
+// are opaque tokens — text inside them stays byte-identical (empty {a||b}
+// options are meaningful). Removes empty attention groups, collapses
+// duplicate commas and space runs, trims stray edge commas. Attention
+// weights are never touched beyond empty-group removal.
+function _cleanupPromptText(text) {
+  if (!text || typeof text !== "string") return text || "";
+  const parts = text.split(/(__[A-Za-z0-9_./ \-]+?__|\{[^{}]*\})/g);
+  for (let i = 0; i < parts.length; i += 2) { // even indices = plain text
+    let seg = parts[i];
+    // Empty attention groups, innermost-out: (), ( ), (:1.2), []
+    for (let pass = 0; pass < 4; pass++) {
+      const next = seg
+        .replace(/\(\s*(?::-?[0-9.]*)?\s*\)/g, "")
+        .replace(/\[\s*\]/g, "");
+      if (next === seg) break;
+      seg = next;
+    }
+    seg = seg
+      .replace(/\s*,(?:\s*,)+/g, ",")  // duplicate commas
+      .replace(/[ \t]{2,}/g, " ");     // runs of spaces (newlines kept)
+    parts[i] = seg;
+  }
+  return parts.join("")
+    .replace(/^[ \t]*(?:,[ \t]*)+/, "")   // stray leading commas
+    .replace(/[ \t]*(?:,[ \t]*)+$/, "")   // stray trailing commas
+    .trim();
+}
+
+// Regional prompts live inside the serialized regions JSON, not in DOM
+// inputs — clean the copies there the same way.
+function _cleanRegionsJson(regionsJson) {
+  if (!regionsJson || (State.promptCleanup ?? true) === false) return regionsJson;
+  try {
+    const rj = JSON.parse(regionsJson);
+    if (!rj || !Array.isArray(rj.regions)) return regionsJson;
+    for (const r of rj.regions) {
+      r.prompt = _cleanupPromptText(r.prompt || "");
+      r.negPrompt = _cleanupPromptText(r.negPrompt || "");
+    }
+    return JSON.stringify(rj);
+  } catch (_) {
+    return regionsJson;
+  }
+}
+
+// Bracket-balance indicator: informational only — per-pair counts of
+// unescaped ()[]{} (\( is a literal in attention syntax).
+function _bracketIssues(text) {
+  const t = String(text || "").replace(/\\[()\[\]{}]/g, "");
+  const c = { "( )": 0, "[ ]": 0, "{ }": 0 };
+  for (const ch of t) {
+    if (ch === "(") c["( )"]++; else if (ch === ")") c["( )"]--;
+    else if (ch === "[") c["[ ]"]++; else if (ch === "]") c["[ ]"]--;
+    else if (ch === "{") c["{ }"]++; else if (ch === "}") c["{ }"]--;
+  }
+  return Object.keys(c).filter(k => c[k] !== 0);
+}
+
+function _attachBracketIndicator(el, host) {
+  if (!el || !host || el._bracketBalAttached) return;
+  el._bracketBalAttached = true;
+  host.classList.add("bracket-host");
+  const glyph = document.createElement("span");
+  glyph.className = "bracket-balance";
+  glyph.textContent = "⚠";
+  glyph.style.display = "none";
+  host.appendChild(glyph);
+  const update = () => {
+    const issues = _bracketIssues(el.value);
+    if (issues.length) {
+      glyph.title = _i18n("prompt.bracketUnbalanced", "Unbalanced brackets: {pairs}", { pairs: issues.join("  ") });
+      glyph.style.display = "";
+    } else {
+      glyph.style.display = "none";
+    }
+  };
+  el.addEventListener("input", update);
+  update();
+}
+
+// Shared surface for modules that build prompt boxes dynamically
+// (canvas-ui.js regional rows)
+window.StudioPromptQoL = {
+  bracketIssues: _bracketIssues,
+  attachBracketIndicator: _attachBracketIndicator,
+  cleanup: _cleanupPromptText,
+};
+
 async function doGenerate() {
   if (State.generating || State._preflighting) return;
 
@@ -2088,6 +2263,10 @@ async function doGenerate() {
     }
   }, 200);
 
+  // Cleanup-on-generate: normalizes only the payload copy; textareas are
+  // never rewritten and wildcard calls pass through byte-identical.
+  const _clean = (s) => (State.promptCleanup ?? true) ? _cleanupPromptText(s) : s;
+
   // Collect params from UI
   const w = parseInt(document.getElementById("paramWidth")?.value) || 768;
   const h = parseInt(document.getElementById("paramHeight")?.value) || 768;
@@ -2136,10 +2315,10 @@ async function doGenerate() {
     mode: (window.StudioCore?.state?.editingMask || window.StudioCore?.state?._userMaskMode || maskB64) ? "Edit" : "Create",
     inpaint_mode: "Inpaint",
 
-    prompt:        (window.LoraStack?.compilePrompt
+    prompt:        _clean(window.LoraStack?.compilePrompt
                      ? window.LoraStack.compilePrompt(document.getElementById("paramPrompt")?.value || "")
                      : (document.getElementById("paramPrompt")?.value || "")),
-    neg_prompt:    document.getElementById("paramNeg")?.value || "",
+    neg_prompt:    _clean(document.getElementById("paramNeg")?.value || ""),
     steps:         parseInt(document.getElementById("paramSteps")?.value) || 30,
     sampler_name:  document.getElementById("paramSampler")?.value || "DPM++ 2M SDE",
     schedule_type: document.getElementById("paramScheduler")?.value || "Karras",
@@ -2189,12 +2368,12 @@ async function doGenerate() {
       confidence: _num(`paramAD${n}Conf`, 0.3),
       denoise:    _num(`paramAD${n}Denoise`, 0.4),
       mask_blur:  parseInt(document.getElementById(`paramAD${n}Blur`)?.value) || 4,
-      prompt:     document.getElementById(`paramAD${n}Prompt`)?.value || "",
+      prompt:     _clean(document.getElementById(`paramAD${n}Prompt`)?.value || ""),
       neg_prompt: "",
     })),
 
     // Regional / ControlNet
-    regions_json:  regionsJson,
+    regions_json:  _cleanRegionsJson(regionsJson),
     cn_json:       buildCNJson(),
     cn1_upload_b64: window._cnUploadData?.[1] || null,
     cn2_upload_b64: window._cnUploadData?.[2] || null,
@@ -2207,11 +2386,16 @@ async function doGenerate() {
     save_lossless: State.saveLossless || false,
     embed_metadata: State.embedMetadata ?? true,
     save_dir: State.saveDir || "",
+    save_tree: State.saveTree || "studio",
     high_precision: !!State.highPrecision,
     is_txt2img: isTxt2img,
 
     // Auto Watermark — composited onto the final image server-side.
-    watermark_enable: !!State.watermarkEnable,
+    // Only in legacy generation-time mode; in export mode (the default)
+    // generated files stay clean and stamping happens at Save/Export, so
+    // reusing any output as an img2img source never bakes a mark in.
+    watermark_enable: !!State.watermarkEnable
+      && (State.watermarkApplyMode || "export") === "generation",
     watermark_name: State.watermarkName || "",
     watermark_position: State.watermarkPosition || "bottom-right",
     watermark_opacity: State.watermarkOpacity ?? 1.0,
@@ -3291,7 +3475,11 @@ const BADGE_FORMATTERS = {
   hires() {
     if (!document.getElementById("checkHires")?.classList.contains("checked")) return "off";
     const scale = document.getElementById("paramHrScale")?.value || "?";
-    return `${scale}× ${document.getElementById("paramHrUpscaler")?.value || ""}`;
+    // 0 hires steps means "reuse the base step count" (A1111 semantics,
+    // honored on both generation paths) — show that, not a literal 0
+    const steps = parseInt(document.getElementById("paramHrSteps")?.value, 10) || 0;
+    const stepsPart = steps > 0 ? steps : _i18n("panel.hiresStepsBase", "base");
+    return `${scale}× ${document.getElementById("paramHrUpscaler")?.value || ""} · ${stepsPart}`;
   },
   adetailer() {
     if (!document.getElementById("checkAD")?.classList.contains("checked")) return "off";
@@ -3507,7 +3695,7 @@ function bindUI() {
   [
     "paramSampler", "paramSteps", "paramCFG", "paramWidth", "paramHeight",
     "paramSeed", "paramBatch", "paramBatchSize", "paramHrScale",
-    "paramHrUpscaler", "paramUpscaleScale", "paramUpscaleModel",
+    "paramHrUpscaler", "paramHrSteps", "paramUpscaleScale", "paramUpscaleModel",
   ].forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;
@@ -3648,7 +3836,13 @@ function bindUI() {
     const _tipTextFor = (cell) => {
       if (cell.dataset.toolTip) return _toolTipLabel(cell.dataset.toolTip);
       const key = cell.dataset.help || "";
-      const text = key ? _i18n(key, "") : "";
+      // Optional interpolation values, kept current by whoever owns the
+      // element (e.g. the VRAM readout) — resolved lazily at show time
+      let params = null;
+      if (cell.dataset.helpParams) {
+        try { params = JSON.parse(cell.dataset.helpParams); } catch (_) {}
+      }
+      const text = key ? _i18n(key, "", params) : "";
       return (text && text !== key) ? text : "";
     };
 
@@ -3906,6 +4100,19 @@ function bindUI() {
   // Live token counter
   document.getElementById("paramPrompt")?.addEventListener("input", () => TokenCounter.scheduleTokenCount());
   TokenCounter.scheduleTokenCount();
+
+  // Bracket-balance indicators on the static prompt surfaces (regional
+  // rows attach per-render in canvas-ui.js via StudioPromptQoL)
+  {
+    const p = document.getElementById("paramPrompt");
+    if (p) _attachBracketIndicator(p, p.closest(".prompt-box") || p.parentElement);
+    const n = document.getElementById("paramNeg");
+    if (n) _attachBracketIndicator(n, n.closest(".prompt-box") || n.parentElement);
+    for (const i of [1, 2, 3]) {
+      const ad = document.getElementById(`paramAD${i}Prompt`);
+      if (ad) _attachBracketIndicator(ad, ad.closest(".param-cell") || ad.parentElement);
+    }
+  }
 
   // Output gallery actions
   document.getElementById("outputToCanvas")?.addEventListener("click", () => {
@@ -5103,6 +5310,14 @@ function bindUI() {
     }
   });
 
+  // ===== Save tree: Studio folders vs Neo's own per-mode output dirs =====
+  const _saveTreeSelect = document.getElementById("settingSaveTree");
+  const _syncSaveTree = () => {
+    State.saveTree = _saveTreeSelect?.value === "neo" ? "neo" : "studio";
+    window.Prefs?.set("save_tree", State.saveTree);
+  };
+  _saveTreeSelect?.addEventListener("change", _syncSaveTree);
+
   // ===== Auto-save folder (where generated images are written) =====
   const _saveDirInput = document.getElementById("settingSaveDir");
   const _syncSaveDir = () => {
@@ -5180,6 +5395,10 @@ function bindUI() {
     if (State.watermarkEnable) _loadWatermarks();
   });
   _wmSelect?.addEventListener("change", () => { State.watermarkName = _wmSelect.value || ""; });
+  const _wmMode = document.getElementById("settingWatermarkMode");
+  _wmMode?.addEventListener("change", () => {
+    State.watermarkApplyMode = _wmMode.value === "generation" ? "generation" : "export";
+  });
   _wmPos?.addEventListener("change", () => { State.watermarkPosition = _wmPos.value || "bottom-right"; });
   _wmOpacity?.addEventListener("input", () => {
     const v = parseInt(_wmOpacity.value);
@@ -5234,8 +5453,8 @@ function bindUI() {
         // Fetch VRAM separately — inline response from unload was unreliable
         const v = await API.vram().catch(() => null);
         if (v?.available) {
-          StatusBar.setVRAM(v.allocated_gb, v.total_gb);
-          showToast(`Model unloaded — VRAM: ${v.allocated_gb} / ${v.total_gb} GB`, "success");
+          StatusBar.setVRAM(v.allocated_gb, v.reserved_gb, v.total_gb);
+          showToast(`Model unloaded — VRAM: ${v.reserved_gb} / ${v.total_gb} GB`, "success");
         } else if (r.status === "already_unloaded") {
           showToast(_i18n("toast.model.alreadyUnloaded", "Model already unloaded"), "info");
         } else {
@@ -5428,12 +5647,13 @@ function bindUI() {
     format: [
       ["settingSaveFormat", "val"], ["settingJpegQuality", "val"], ["settingWebpQuality", "val"],
       ["toggleWebpLossless", "on"], ["settingGalleryFolder", "val"],
-      ["settingSaveDir", "val"],
+      ["settingSaveDir", "val"], ["settingSaveTree", "val"],
     ],
     // Watermark settings persist regardless of the enable toggle, so a user's
     // configured mark/position/sliders survive disabling + reload.
     watermark: [
       ["toggleWatermark", "on"], ["settingWatermark", "val"],
+      ["settingWatermarkMode", "val"],
       ["settingWatermarkPosition", "val"], ["settingWatermarkOpacity", "val"],
       ["settingWatermarkScale", "val"], ["settingWatermarkMargin", "val"],
       ["settingWatermarkRotation", "val"],
@@ -5638,6 +5858,7 @@ function bindUI() {
     // Sync output format state
     State.galleryFolder = document.getElementById("settingGalleryFolder")?.value?.trim() || "";
     State.saveDir = document.getElementById("settingSaveDir")?.value?.trim() || "";
+    State.saveTree = document.getElementById("settingSaveTree")?.value === "neo" ? "neo" : "studio";
     _syncFormatUI();
     const jq = parseInt(document.getElementById("settingJpegQuality")?.value) || 80;
     const wq = parseInt(document.getElementById("settingWebpQuality")?.value) || 75;
@@ -5655,6 +5876,10 @@ function bindUI() {
     // Sync watermark state + labels from restored DOM (.value sets don't fire events)
     State.watermarkEnable = document.getElementById("toggleWatermark")?.classList.contains("on") ?? false;
     State.watermarkName = document.getElementById("settingWatermark")?.value || "";
+    // Pre-mode saves have no settingWatermarkMode value, so upgrades land
+    // on "export" (the new default) — the point of the change.
+    State.watermarkApplyMode = document.getElementById("settingWatermarkMode")?.value === "generation"
+      ? "generation" : "export";
     State.watermarkPosition = document.getElementById("settingWatermarkPosition")?.value || "bottom-right";
     const wmOp = parseInt(document.getElementById("settingWatermarkOpacity")?.value);
     const wmSc = parseInt(document.getElementById("settingWatermarkScale")?.value);
@@ -5932,6 +6157,20 @@ function bindUI() {
     doGenerate();
     return true;
   });
+
+  // Prompt weight shortcuts — modifier bindings, active inside text fields
+  // by design (allowInTyping + a required modifier passes the dispatch
+  // guard, same as Ctrl+Enter). Handlers no-op outside prompt surfaces so
+  // plain inputs keep their native Ctrl+Arrow behavior.
+  const _promptWeight = (delta) => {
+    const el = document.activeElement;
+    if (!_isPromptSurface(el)) return false;
+    return _adjustPromptWeight(el, delta);
+  };
+  window.Shortcuts?.registerHandler("prompt.weight-up", () => _promptWeight(0.1));
+  window.Shortcuts?.registerHandler("prompt.weight-down", () => _promptWeight(-0.1));
+  window.Shortcuts?.registerHandler("prompt.weight-up-fine", () => _promptWeight(0.05));
+  window.Shortcuts?.registerHandler("prompt.weight-down-fine", () => _promptWeight(-0.05));
   window.Shortcuts?.registerHandler("app.saveCanvas", () => {
     document.getElementById("layerSave")?.click();
     return true;
@@ -8068,7 +8307,7 @@ async function _refreshVRAM() {
   try {
     const v = await API.vram();
     if (v.available) {
-      StatusBar.setVRAM(v.allocated_gb, v.total_gb);
+      StatusBar.setVRAM(v.allocated_gb, v.reserved_gb, v.total_gb);
       console.log(`[Studio VRAM] ${v.allocated_gb} GB allocated / ${v.reserved_gb} GB reserved / ${v.total_gb} GB total` +
         (v.vram_reserve_gb > 0 ? ` (${v.vram_reserve_gb} GB set aside for compute)` : "") +
         (v.gpu_name ? ` (${v.gpu_name})` : ""));
@@ -8082,18 +8321,71 @@ async function _refreshVRAM() {
 // ═══════════════════════════════════════════
 
 // ── Param scrub: hold & drag on number inputs to change values ──
+// Attaches to every numeric .param-val input. Per-field ranges come from
+// data-min/data-max/data-step (bare min/max/step attributes are honored as
+// a fallback — the Soft Inpainting fields carry those); a field with no
+// step infers one from its value's precision, and a field missing either
+// bound scrubs with fixed per-pixel stepping instead of range mapping, so
+// unbounded fields like seeds still work.
+function _paramScrubDef(el) {
+  const attr = (n) => el.dataset[n] ?? el.getAttribute(n);
+  const min = parseFloat(attr("min"));
+  const max = parseFloat(attr("max"));
+  let step = parseFloat(attr("step"));
+  if (!Number.isFinite(step)) step = String(el.value).includes(".") ? 0.01 : 1;
+  return {
+    min: Number.isFinite(min) ? min : -Infinity,
+    max: Number.isFinite(max) ? max : Infinity,
+    step,
+  };
+}
+function _paramScrubFmt(v, step) {
+  if (step >= 1) return String(v);
+  // Round to the step's precision to avoid floating point noise
+  return v.toFixed(String(step).split(".")[1]?.length || 2);
+}
+function _paramScrubApply(el, v, def) {
+  v = Math.max(def.min, Math.min(def.max, v));
+  if (def.step < 1) v = Math.round(v / def.step) * def.step;
+  el.value = _paramScrubFmt(v, def.step);
+}
 function _initParamScrub() {
-  const scrubDefs = [
-    { id: "paramSteps",    min: 1,   max: 150,  step: 1   },
-    { id: "paramCFG",      min: 1,   max: 30,   step: 0.5 },
-    { id: "paramDenoise",  min: 0,   max: 1,    step: 0.01 },
-    { id: "paramWidth",    min: 64,  max: 2048, step: 64  },
-    { id: "paramHeight",   min: 64,  max: 2048, step: 64  },
-    { id: "paramBatch",    min: 1,   max: 16,   step: 1   },
-  ];
-  for (const def of scrubDefs) {
-    const el = document.getElementById(def.id);
-    if (!el) continue;
+  // Floating value readout, positioned above the field (below when clipped
+  // at the top) and offset from the cursor so the value stays visible.
+  const tip = document.createElement("div");
+  tip.className = "scrub-tip";
+  tip.setAttribute("aria-hidden", "true");
+  tip.hidden = true;
+  document.body.appendChild(tip);
+  const showTip = (el, clientX) => {
+    tip.textContent = el.value;
+    tip.hidden = false;
+    const r = el.getBoundingClientRect();
+    const tw = tip.offsetWidth, th = tip.offsetHeight;
+    const x = Math.min(Math.max(4, clientX + 16), window.innerWidth - tw - 4);
+    let y = r.top - th - 8;
+    if (y < 4) y = r.bottom + 8;
+    tip.style.left = x + "px";
+    tip.style.top = y + "px";
+  };
+  const hideTip = () => { tip.hidden = true; };
+
+  // A field is a scrub/step target only if it declares numeric intent via a
+  // range/step attribute (data-min/max/step, or bare min/max/step). This is
+  // the reliable discriminator: several .param-val inputs are free text
+  // (ADetailer prompts, the save/gallery folder paths) and their values can
+  // start with a digit, so a parseFloat("2 girls…") test would wrongly steal
+  // arrow keys and drag-scrub and overwrite the text. Every numeric field
+  // carries these attributes (added in index.html); text fields do not.
+  const _hasNumericAttrs = (el) =>
+    el.dataset.min != null || el.dataset.max != null || el.dataset.step != null ||
+    el.hasAttribute("min") || el.hasAttribute("max") || el.hasAttribute("step");
+  const isNumericVal = (el) =>
+    el.type !== "number" && _hasNumericAttrs(el) && Number.isFinite(parseFloat(el.value));
+
+  for (const el of document.querySelectorAll("input.param-val")) {
+    if (!isNumericVal(el)) continue;
+    el.classList.add("scrubbable");
     let dragStartX = 0, dragStartVal = 0, dragged = false, pointerId = null;
 
     el.addEventListener("pointerdown", e => {
@@ -8112,19 +8404,25 @@ function _initParamScrub() {
       const dx = e.clientX - dragStartX;
       if (Math.abs(dx) < 3 && !dragged) return;
       dragged = true;
-      // Sensitivity: ~250px drag covers the full range for any parameter
-      const sensitivity = (def.max - def.min) / 250;
-      let v = dragStartVal + Math.round(dx * sensitivity / def.step) * def.step;
-      v = Math.max(def.min, Math.min(def.max, v));
-      // Round to avoid floating point noise
-      if (def.step < 1) v = Math.round(v / def.step) * def.step;
-      el.value = def.step >= 1 ? v : v.toFixed(String(def.step).split(".")[1]?.length || 2);
+      const def = _paramScrubDef(el);
+      let v;
+      if (Number.isFinite(def.min) && Number.isFinite(def.max)) {
+        // Sensitivity: ~250px drag covers the full range for any parameter
+        const sensitivity = (def.max - def.min) / 250;
+        v = dragStartVal + Math.round(dx * sensitivity / def.step) * def.step;
+      } else {
+        // No full range — one step per 4px of drag
+        v = dragStartVal + Math.round(dx / 4) * def.step;
+      }
+      _paramScrubApply(el, v, def);
+      showTip(el, e.clientX);
       el.dispatchEvent(new Event("input", { bubbles: true }));
     });
 
     el.addEventListener("pointerup", e => {
       if (!el.classList.contains("scrubbing")) return;
       el.classList.remove("scrubbing");
+      hideTip();
       if (pointerId !== null) { try { el.releasePointerCapture(pointerId); } catch {} pointerId = null; }
       if (!dragged) {
         // Click — focus the input for manual typing
@@ -8135,6 +8433,23 @@ function _initParamScrub() {
       }
     });
   }
+
+  // Arrow-key stepping — the inputs are type="text", so there is no native
+  // stepping. Delegated so it covers every numeric .param-val uniformly.
+  document.addEventListener("keydown", e => {
+    if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+    if (e.ctrlKey || e.altKey || e.metaKey) return;
+    const el = e.target;
+    if (!(el instanceof HTMLInputElement)) return;
+    if (!el.classList.contains("param-val") || !isNumericVal(el)) return;
+    e.preventDefault();
+    const def = _paramScrubDef(el);
+    const dir = e.key === "ArrowUp" ? 1 : -1;
+    const cur = parseFloat(el.value) || 0;
+    _paramScrubApply(el, cur + dir * def.step * (e.shiftKey ? 10 : 1), def);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+  });
 }
 
 async function init() {
@@ -8188,6 +8503,13 @@ async function init() {
       const el = document.getElementById("settingSaveDir");
       if (el) el.value = _sd;
       State.saveDir = String(_sd).trim();
+    }
+    const _st = window.Prefs?.get("save_tree");
+    if (_st != null) {
+      const tree = _st === "neo" ? "neo" : "studio";
+      const el = document.getElementById("settingSaveTree");
+      if (el) el.value = tree;
+      State.saveTree = tree;
     }
     const _gf = window.Prefs?.get("gallery_folder");
     if (_gf != null) {
@@ -8260,6 +8582,18 @@ async function init() {
   // module) that flips its "on" class — read state AFTER it runs rather
   // than predicting and re-toggling, otherwise the two handlers cancel.
   {
+    // Cleanup-on-generate (payload-only prompt normalization, default ON)
+    const pcToggle = document.getElementById("togglePromptCleanup");
+    if (pcToggle) {
+      const enabled = localStorage.getItem("studio-prompt-cleanup") !== "0";
+      pcToggle.classList.toggle("on", enabled);
+      State.promptCleanup = enabled;
+      pcToggle.addEventListener("click", () => {
+        State.promptCleanup = pcToggle.classList.contains("on");
+        localStorage.setItem("studio-prompt-cleanup", State.promptCleanup ? "1" : "0");
+      });
+    }
+
     const tacToggle = document.getElementById("toggleTagAutocomplete");
     const tacSource = document.getElementById("settingTagSource");
     if (tacToggle) {
@@ -8374,7 +8708,8 @@ async function init() {
       // Keyboard shortcut: backslash
       document.addEventListener("keydown", (e) => {
         if (e.key === "\\" && !e.ctrlKey && !e.altKey && !e.metaKey &&
-            !["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName)) {
+            !["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName) &&
+            !e.target.isContentEditable) {
           e.preventDefault();
           _applyCollapse(!panel.classList.contains("collapsed"));
         }

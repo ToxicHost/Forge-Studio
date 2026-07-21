@@ -712,7 +712,7 @@ function bindCanvas() {
     // === ZOOM-DRAG (Krita-style Shift+Space+drag) ===
     let _spaceHeld = false;
     let _zoomDrag = { active: false, startY: 0, startScale: 1, anchorX: 0, anchorY: 0 };
-    document.addEventListener("keydown", e => { if (e.code === "Space" && !["INPUT","TEXTAREA","SELECT"].includes(e.target.tagName)) { _spaceHeld = true; if (S.canvas) S.canvas.style.cursor = e.shiftKey ? "ns-resize" : "grab"; e.preventDefault(); } });
+    document.addEventListener("keydown", e => { if (e.code === "Space" && !["INPUT","TEXTAREA","SELECT"].includes(e.target.tagName) && !e.target.isContentEditable) { _spaceHeld = true; if (S.canvas) S.canvas.style.cursor = e.shiftKey ? "ns-resize" : "grab"; e.preventDefault(); } });
     document.addEventListener("keyup", e => { if (e.code === "Space") { _spaceHeld = false; if (S.canvas && !S.zoom.panning && !_zoomDrag.active) setTool(S.tool); } });
 
     cv.addEventListener("pointerdown", e => {
@@ -745,7 +745,7 @@ function bindCanvas() {
     // images (save/open in new tab), and the gallery detail sidebar so
     // users can right-click → Copy on prompt / metadata text.
     document.addEventListener("contextmenu", e => {
-        if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName)) return;
+        if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName) || e.target.isContentEditable) return;
         if (e.target.closest(".gal-detail-img-area")) return;
         if (e.target.closest(".gal-detail-sidebar")) return;
         e.preventDefault();
@@ -1077,6 +1077,7 @@ function bindCanvas() {
         // Region painting
         if (S.regionMode && C.activeRegion() && (S.tool === "brush" || S.tool === "eraser")) {
             C.saveUndo("Region paint: " + C.activeRegion().name);
+            window.Education?.maybeShowTip?.("regions");
             S.drawing = true; cv.setPointerCapture(e.pointerId);
             _beginWebGLLiveFallbackIfNeeded();
             if (S.tool === "eraser") C.regionEraseMove(p.x, p.y, p.x, p.y);
@@ -2230,10 +2231,10 @@ function bindColorPicker() {
 // ========================================================================
 // SAVE / EXPORT
 // ========================================================================
-async function saveFlattened(ext, mime) {
+async function saveFlattened(ext, mime, applyWm) {
     // Map extensions to format names the API expects
     const fmtMap = { png: "png", jpg: "jpeg", webp: "webp" };
-    await _ctxSaveCanvas(fmtMap[ext] || "png");
+    await _ctxSaveCanvas(fmtMap[ext] || "png", applyWm);
 }
 
 // Cached sRGB ICC profile bytes — fetched lazily on the first PSD export
@@ -2328,10 +2329,20 @@ function showSaveMenu(anchor) {
     menu = document.createElement("div");
     menu.id = "saveMenu";
     menu.style.cssText = "position:fixed;z-index:200;background:var(--bg-surface);border:1px solid var(--border);border-radius:8px;padding:4px;box-shadow:0 4px 16px rgba(0,0,0,0.5);display:flex;flex-direction:column;gap:2px;";
+    // Export-time watermarking: when a watermark is configured and the
+    // apply mode is "export" (the default), the menu carries a pre-checked
+    // per-export opt-out. Legacy generation-time mode stamps during
+    // generation instead, so no checkbox shows. PSD (layered project
+    // export) is never stamped.
+    const St = window.State;
+    const wmAvailable = !!(St?.watermarkEnable && (St.watermarkName || "").trim()
+        && (St.watermarkApplyMode || "export") === "export");
+    let wmCheckbox = null;
+    const wmChecked = () => wmCheckbox ? wmCheckbox.checked : undefined;
     const items = [
-        { label: "Save as PNG", fn: () => saveFlattened("png", "image/png") },
-        { label: "Save as JPEG", fn: () => saveFlattened("jpg", "image/jpeg") },
-        { label: "Save as WebP", fn: () => saveFlattened("webp", "image/webp") },
+        { label: "Save as PNG", fn: () => saveFlattened("png", "image/png", wmChecked()) },
+        { label: "Save as JPEG", fn: () => saveFlattened("jpg", "image/jpeg", wmChecked()) },
+        { label: "Save as WebP", fn: () => saveFlattened("webp", "image/webp", wmChecked()) },
         { label: "Save as PSD (layers)", fn: () => savePSD() },
     ];
     for (const item of items) {
@@ -2342,6 +2353,19 @@ function showSaveMenu(anchor) {
         btn.addEventListener("mouseleave", () => btn.style.background = "none");
         btn.addEventListener("click", () => { menu.remove(); item.fn(); });
         menu.appendChild(btn);
+    }
+    if (wmAvailable) {
+        const row = document.createElement("label");
+        row.style.cssText = "display:flex;align-items:center;gap:6px;padding:6px 14px;font-size:11px;color:var(--text-2);cursor:pointer;font-family:var(--font);border-top:1px solid var(--border-subtle);margin-top:2px;white-space:nowrap;";
+        wmCheckbox = document.createElement("input");
+        wmCheckbox.type = "checkbox";
+        wmCheckbox.checked = true;
+        wmCheckbox.style.margin = "0";
+        const txt = document.createElement("span");
+        txt.textContent = window.I18N?.t?.("canvas.export.applyWatermark", "Apply watermark") || "Apply watermark";
+        row.appendChild(wmCheckbox);
+        row.appendChild(txt);
+        menu.appendChild(row);
     }
     const r = anchor.getBoundingClientRect();
     // Position above the button, clamped to viewport
@@ -3032,8 +3056,8 @@ function renderLayerPanel() {
             };
             nameEl.addEventListener("blur", commit, { once: true });
             nameEl.addEventListener("keydown", ev => {
-                if (ev.key === "Enter") { ev.preventDefault(); nameEl.blur(); }
-                if (ev.key === "Escape") { nameEl.textContent = L.name; nameEl.blur(); }
+                if (ev.key === "Enter") { ev.preventDefault(); ev.stopPropagation(); nameEl.blur(); }
+                if (ev.key === "Escape") { ev.stopPropagation(); nameEl.textContent = L.name; nameEl.blur(); }
             });
         });
 
@@ -3252,25 +3276,46 @@ function renderRegionPanel() {
         delBtn.textContent = "✕";
         delBtn.addEventListener("click", e => { e.stopPropagation(); C.deleteRegion(r.id); renderRegionPanel(); _redraw(); });
 
-        hdr.appendChild(dot); hdr.appendChild(nm); hdr.appendChild(eyeBtn); hdr.appendChild(clrBtn); hdr.appendChild(delBtn);
+        // Bracket-balance indicator for this region's prompts (informational
+        // only; one glyph per row covers prompt + negative)
+        const balEl = document.createElement("span");
+        balEl.className = "region-bracket-balance";
+        balEl.textContent = "⚠";
+        balEl.style.cssText = "display:none;font-size:10px;color:var(--amber);cursor:help;flex-shrink:0;user-select:none;";
+        const updateBal = () => {
+            const issues = window.StudioPromptQoL?.bracketIssues?.((r.prompt || "") + "\n" + (r.negPrompt || "")) || [];
+            balEl.style.display = issues.length ? "" : "none";
+            if (issues.length) {
+                balEl.title = window.I18N?.t
+                    ? window.I18N.t("prompt.bracketUnbalanced", "Unbalanced brackets: {pairs}", { pairs: issues.join("  ") })
+                    : "Unbalanced brackets: " + issues.join("  ");
+            }
+        };
+
+        hdr.appendChild(dot); hdr.appendChild(nm); hdr.appendChild(balEl); hdr.appendChild(eyeBtn); hdr.appendChild(clrBtn); hdr.appendChild(delBtn);
 
         // Prompt textarea
         const prompt = document.createElement("textarea");
+        prompt.className = "region-prompt";
         prompt.value = r.prompt;
         prompt.placeholder = "Region prompt...";
         prompt.style.cssText = "width:100%;font-size:10px;background:var(--bg-surface);color:var(--text-1);border:1px solid var(--border);border-radius:3px;padding:3px 5px;box-sizing:border-box;resize:vertical;min-height:32px;max-height:72px;font-family:var(--font);";
         prompt.addEventListener("click", e => e.stopPropagation());
-        prompt.addEventListener("input", () => { r.prompt = prompt.value; });
+        prompt.addEventListener("input", () => { r.prompt = prompt.value; updateBal(); });
         prompt.addEventListener("keydown", e => e.stopPropagation());
+        window.TagComplete?.attach?.(prompt);
 
         // Negative prompt
         const neg = document.createElement("textarea");
+        neg.className = "region-prompt";
         neg.value = r.negPrompt;
         neg.placeholder = "Negative (optional)...";
         neg.style.cssText = "width:100%;font-size:10px;background:var(--bg-surface);color:var(--text-4);border:1px solid var(--border);border-radius:3px;padding:3px 5px;box-sizing:border-box;resize:vertical;min-height:22px;max-height:50px;font-family:var(--font);margin-top:3px;";
         neg.addEventListener("click", e => e.stopPropagation());
-        neg.addEventListener("input", () => { r.negPrompt = neg.value; });
+        neg.addEventListener("input", () => { r.negPrompt = neg.value; updateBal(); });
         neg.addEventListener("keydown", e => e.stopPropagation());
+        window.TagComplete?.attach?.(neg);
+        updateBal();
 
         // Contextual slider: Weight (attention couple) or Denoise (regional inpaint)
         const isEditRegional = S.studioMode === "Edit";
@@ -3366,6 +3411,7 @@ function _addLayer() {
     S.layers.splice(S.activeLayerIdx + 1, 0, L);
     S.activeLayerIdx++;
     renderLayerPanel(); renderHistoryPanel(); _redraw();
+    window.Education?.maybeShowTip?.("layers");
 }
 
 function _duplicateLayer() {
@@ -3558,13 +3604,58 @@ function _showLayerCtxMenu(x, y) {
     menu.style.display = "block";
 }
 
-async function _ctxSaveCanvas(fmt) {
+async function _ctxSaveCanvas(fmt, applyWm) {
     const C = window.StudioCore;
     const mimeMap = { png: "image/png", jpeg: "image/jpeg", webp: "image/webp" };
-    const dataUrl = C.exportFlattened(mimeMap[fmt]);
+    let dataUrl = C.exportFlattened(mimeMap[fmt]);
+    const State = window.State;
+
+    // Export-time watermark: when a watermark is configured and the apply
+    // mode is "export" (the default), exports are stamped unless the save
+    // menu's checkbox was unticked (applyWm === false; undefined = auto).
+    // The flattened PNG round-trips through the backend compositor — the
+    // same apply_watermark the legacy generation-time mode uses — BEFORE
+    // the save call embeds infotext, so the shipped file carries both.
+    const wmConfigured = !!(State?.watermarkEnable && (State.watermarkName || "").trim()
+        && (State.watermarkApplyMode || "export") === "export");
+    if (wmConfigured && applyWm !== false) {
+        try {
+            const r = await fetch(`${window.API.base}/studio/export_watermark`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    image_b64: dataUrl,
+                    name: State.watermarkName,
+                    position: State.watermarkPosition || "bottom-right",
+                    opacity: State.watermarkOpacity ?? 1.0,
+                    scale: State.watermarkScale ?? 0.15,
+                    margin: State.watermarkMargin ?? 16,
+                    rotation: State.watermarkRotation ?? 0,
+                }),
+            });
+            const data = await r.json();
+            if (r.ok && data.ok && data.image_b64) {
+                dataUrl = data.image_b64;
+                // apply_watermark never raises: changed:false means the
+                // configured mark couldn't be applied (file missing/renamed,
+                // opacity 0). The export proceeds unstamped — say so rather
+                // than let the user believe a mark they can't see is there.
+                if (data.changed === false) {
+                    const msg = window.I18N?.t?.("toast.export.watermarkNotApplied",
+                        "Watermark not applied — check the watermark file in Settings")
+                        || "Watermark not applied — check the watermark file in Settings";
+                    if (window.showToast) window.showToast(msg, "info");
+                }
+            } else throw new Error(data.error || `HTTP ${r.status}`);
+        } catch (e) {
+            console.error("[StudioUI] Export watermark failed:", e);
+            const msg = window.I18N?.t?.("toast.export.watermarkFailed", "Watermark failed — exporting unstamped")
+                || "Watermark failed — exporting unstamped";
+            if (window.showToast) window.showToast(msg, "error");
+        }
+    }
 
     // Embed generation metadata when available (all formats that support it)
-    const State = window.State;
     let metadata = null;
     if (State?.embedMetadata && State.sessionEntries?.length) {
         metadata = State.sessionEntries[State.selectedOutputIdx]?.infotext
@@ -3659,10 +3750,10 @@ function _dispatchCanvasShortcut(actionId, e) {
             const tmp = S.color; S.color = S.bgColor; S.bgColor = tmp;
             updateColorUI(); return true;
         }
-        case "canvas.brushSize.decrease": S.brushSize = Math.max(1, S.brushSize - 1); _syncCtxBar(); return true;
-        case "canvas.brushSize.increase": S.brushSize = Math.min(100, S.brushSize + 1); _syncCtxBar(); return true;
-        case "canvas.brushHardness.decrease": S.brushHardness = Math.max(0, (S.brushHardness ?? 1) - 0.1); _syncCtxBar(); return true;
-        case "canvas.brushHardness.increase": S.brushHardness = Math.min(1, (S.brushHardness ?? 1) + 0.1); _syncCtxBar(); return true;
+        case "canvas.brushSize.decrease": S.brushSize = Math.max(1, S.brushSize - 1); _syncCtxBar(); _redraw(); return true;
+        case "canvas.brushSize.increase": S.brushSize = Math.min(100, S.brushSize + 1); _syncCtxBar(); _redraw(); return true;
+        case "canvas.brushHardness.decrease": S.brushHardness = Math.max(0, (S.brushHardness ?? 1) - 0.1); _syncCtxBar(); _redraw(); return true;
+        case "canvas.brushHardness.increase": S.brushHardness = Math.min(1, (S.brushHardness ?? 1) + 0.1); _syncCtxBar(); _redraw(); return true;
         case "canvas.zoom.fit": C.zoomFit(); updateStatus(); _redraw(); return true;
     }
     return false;
@@ -3670,7 +3761,7 @@ function _dispatchCanvasShortcut(actionId, e) {
 
 function bindKeys() {
     document.addEventListener("keydown", e => {
-        if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName)) return;
+        if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName) || e.target.isContentEditable) return;
 
         // Space for pan mode
         if (e.key === " " && !e.repeat) {
@@ -3957,7 +4048,7 @@ function _initScrubLabels() {
         let dragStartX = 0, dragStartVal = 0, dragged = false;
 
         el.addEventListener("pointerdown", e => {
-            if (e.target.tagName === "INPUT") return; // don't interfere with text input
+            if (e.target.tagName === "INPUT" || e.target.isContentEditable) return; // don't interfere with text input
             e.preventDefault();
             dragStartX = e.clientX;
             dragStartVal = m.get();
@@ -4386,6 +4477,7 @@ function bindToolbar() {
         S.layers.splice(S.activeLayerIdx + 1, 0, L);
         S.activeLayerIdx++;
         renderLayerPanel(); renderHistoryPanel(); _redraw();
+        window.Education?.maybeShowTip?.("layers");
     });
     document.getElementById("layerDel")?.addEventListener("click", () => {
         if (S.layers.length <= 1) return;

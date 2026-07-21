@@ -80,6 +80,18 @@ except ImportError:
 TAG = "[Gallery]"
 VERSION = "1.1"
 
+def _walk_follow(root):
+    """Scanner walk that follows symlinked directories (see studio_walk)."""
+    try:
+        try:
+            from studio_walk import walk_follow
+        except ImportError:
+            from scripts.studio_walk import walk_follow
+    except Exception:
+        return os.walk(root)
+    return walk_follow(root)
+
+
 # =========================================================================
 # AUTO-SYNC: FILESYSTEM WATCHER + SSE
 # =========================================================================
@@ -329,7 +341,7 @@ def _incremental_sync():
             root = Path(sf["path"])
             if not root.exists() or not root.is_dir():
                 continue
-            for dirpath, dirnames, filenames in os.walk(root):
+            for dirpath, dirnames, filenames in _walk_follow(root):
                 dirnames.sort()
                 rel_folder = os.path.relpath(dirpath, root)
                 display_folder = (
@@ -586,6 +598,49 @@ def get_scan_folders():
         return [r["path"] for r in rows if r and r["path"]]
     except Exception:
         return []
+
+
+def ensure_scan_folder(path, label=None):
+    """Idempotently register *path* as a Gallery scan folder.
+
+    Used by the save pipeline when saving into Neo's output tree (the
+    save_tree setting) so those folders join the scan set and show up in
+    Gallery alongside Studio's own tree — no files are ever moved. Never
+    raises into the save path. Returns True only when a new row was
+    inserted.
+
+    The scan-folders table is the durable coexistence mechanism: it is
+    shared across module instances (single DB, shared write lock), and
+    get_scan_folders reads it, so any later Gallery scan includes the Neo
+    tree. The live filesystem watcher is a separate, best-effort nicety —
+    and it is restarted here ONLY when this module instance actually owns
+    a running watcher. This module can be imported under two names, and
+    the instance that runs the routes/watcher is loaded by path (not
+    registered in sys.modules), so a cross-instance caller (the generate
+    handler reaches us via __import__) must NOT blindly restart_watcher:
+    that would spin up a second Observer on an instance whose SSE clients
+    are empty. Gating on _watcher_running keeps the restart on the owning
+    instance and makes the cross-instance call a pure DB registration.
+    """
+    try:
+        p = str(path or "").strip()
+        if not p:
+            return False
+        db = _get_db()
+        try:
+            cur = db.execute(
+                "INSERT OR IGNORE INTO scan_folders (path, label) VALUES (?,?)",
+                (p, Path(p).name or p if label is None else label),
+            )
+            db.commit()
+            inserted = cur.rowcount > 0
+        finally:
+            db.close()
+        if inserted and _watcher_running:
+            threading.Thread(target=restart_watcher, daemon=True).start()
+        return inserted
+    except Exception:
+        return False
 
 
 def _natural_sort_key(text):
@@ -1911,7 +1966,7 @@ def scan_all_folders():
             if not root.exists():
                 continue
             cnt = 0
-            for dirpath, dirnames, filenames in os.walk(root):
+            for dirpath, dirnames, filenames in _walk_follow(root):
                 cnt += sum(1 for fn in filenames if Path(fn).suffix.lower() in MEDIA_EXTENSIONS)
             folder_counts[sf["path"]] = cnt
 
@@ -1930,7 +1985,7 @@ def scan_all_folders():
             scan_progress["folders"].append(fprog)
             processed = 0
 
-            for dirpath, dirnames, filenames in os.walk(root):
+            for dirpath, dirnames, filenames in _walk_follow(root):
                 dirnames.sort()
                 rel_folder = os.path.relpath(dirpath, root)
                 if rel_folder == ".":
@@ -2675,7 +2730,7 @@ def setup_gallery_routes(app: FastAPI):
                 root = Path(sf["path"])
                 if not root.exists():
                     continue
-                for dirpath, dirnames, filenames in os.walk(root):
+                for dirpath, dirnames, filenames in _walk_follow(root):
                     dirnames.sort()
                     rel = os.path.relpath(dirpath, root)
                     display = f"{root.name}\\{rel}" if rel != "." else root.name

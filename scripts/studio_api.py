@@ -47,6 +47,18 @@ from modules import shared, sd_models, sd_samplers, sd_schedulers
 
 TAG = "[Studio API]"
 
+def _walk_follow(root):
+    """Scanner walk that follows symlinked directories (see studio_walk)."""
+    try:
+        try:
+            from studio_walk import walk_follow
+        except ImportError:
+            from scripts.studio_walk import walk_follow
+    except Exception:
+        return os.walk(root)
+    return walk_follow(root)
+
+
 
 # sRGB ICC profile bytes — built once at import. Passed to every PIL save
 # (PNG / JPEG / WebP) so output files are explicitly tagged as sRGB instead
@@ -363,8 +375,8 @@ _PREFS_LOCK = RLock()
 _PREFS_MAX_BYTES = 256 * 1024
 _PREFS_ALLOWED_KEYS = {
     "component_memory", "shortcuts", "layout_preset", "session_limit",
-    "gallery_folder", "save_dir", "vram_weights", "auto_unload",
-    "remember_session", "gal_send_prompt_version", "panel_ui",
+    "gallery_folder", "save_dir", "save_tree", "vram_weights", "auto_unload",
+    "remember_session", "gal_send_prompt_version", "panel_ui", "education",
 }
 
 
@@ -1078,6 +1090,7 @@ class GenerateRequest(BaseModel):
     save_lossless: bool = False      # WebP lossless mode
     embed_metadata: bool = True      # whether to embed generation params in saved files
     save_dir: str = ""               # optional auto-save folder override (empty = Forge output dir)
+    save_tree: str = "studio"        # "studio" (output/studio/{mode}/{date}) | "neo" (Neo's own per-mode outdirs)
     is_txt2img: bool = False
 
     # Extension bridge: {arg_index: value} overrides from auto-bridged extensions
@@ -2353,6 +2366,12 @@ def setup_studio_routes(app: FastAPI):
     # Captured by the get_loras closure so the response is decorated with
     # cached metadata when available. Defined here so the closure can see it.
     _civitai_enrich = None
+    # Civitai Helper sidecar reader (<stem>.civitai.info) — same lifecycle.
+    _civitai_read_ch = None
+    # Arch strings keyed by checkpoint filename, filled as a side effect of
+    # check_model_te header inspections. The checkpoint browser reads this
+    # cache only — it never bulk-scans headers at browse time.
+    _model_arch_cache = {}
 
     # ------------------------------------------------------------------
     # Standalone mode: root redirect + file serving
@@ -2616,6 +2635,7 @@ def setup_studio_routes(app: FastAPI):
             _save_dir_notice = ("Your custom save folder isn't trusted yet, so images were saved to the "
                                 "default output folder. Open Settings → Save folder and click “Trust folder”.")
             _save_override = ""
+        _neo_scan_register = None  # Neo scan-folder to register after mkdir
         if _save_override:
             try:
                 base_outdir = str(Path(_save_override).expanduser())
@@ -2623,7 +2643,44 @@ def setup_studio_routes(app: FastAPI):
             except Exception:
                 log.exception("Invalid save_dir override — falling back to default")
                 _save_override = ""
-        if not _save_override:
+        if not _save_override and (req.save_tree or "").strip().lower() == "neo":
+            # Settings → Save tree = Neo: save into Neo's own per-mode output
+            # dirs, exactly where its stock UI would. Scope limit (stated in
+            # the settings copy): Studio keeps its own filenames and metadata
+            # embedding; Neo's filename_pattern is not honored. getattr on
+            # shared.opts resolves Neo's defaults for options the user never
+            # customized (opts.data only holds overrides).
+            try:
+                from modules.paths import data_path
+            except Exception:
+                data_path = os.path.abspath(".")
+            _leaf = "txt2img-images" if req.is_txt2img else "img2img-images"
+            _mode_key = "outdir_txt2img_samples" if req.is_txt2img else "outdir_img2img_samples"
+            try:
+                neo_outdir = (
+                    getattr(shared.opts, "outdir_samples", "")  # "save all images to same dir" override
+                    or getattr(shared.opts, _mode_key, "")
+                    or os.path.join("outputs", _leaf)
+                )
+            except Exception:
+                neo_outdir = os.path.join("outputs", _leaf)
+            if not os.path.isabs(neo_outdir):
+                neo_outdir = os.path.join(data_path, neo_outdir)
+            output_dir = Path(neo_outdir)
+            # Honor Neo's date-subfolder convention ([date] is its default
+            # directories pattern) when save_to_dirs is set
+            try:
+                if bool(getattr(shared.opts, "save_to_dirs", False)):
+                    output_dir = output_dir / date.today().strftime("%Y-%m-%d")
+            except Exception:
+                pass
+            # Graceful switch: register the Neo dir in the Gallery scan set
+            # so old (Studio-tree) and new images coexist; no files move,
+            # and Studio's own root stays linked. Content-hash identity in
+            # the gallery DB makes the union safe. Deferred until after the
+            # mkdir below so the dir exists before any watcher inspects it.
+            _neo_scan_register = str(Path(neo_outdir))
+        elif not _save_override:
             try:
                 # Use the same output dir logic as the generation pipeline
                 base_outdir = shared.opts.data.get("outdir_samples", "")
@@ -2639,6 +2696,13 @@ def setup_studio_routes(app: FastAPI):
             output_dir = Path(base_outdir) / "studio" / mode_folder / date.today().strftime("%Y-%m-%d")
         if req.save_outputs:
             output_dir.mkdir(parents=True, exist_ok=True)
+        # Register the Neo output dir in the Gallery scan set now that it
+        # exists on disk (see the save_tree=neo branch above).
+        if _neo_scan_register:
+            try:
+                _import("studio_gallery", "ensure_scan_folder")(_neo_scan_register)
+            except Exception:
+                log.debug("could not register Neo outdir as gallery scan folder", exc_info=True)
 
         # Pre-parse settings_json once (was being re-parsed per image)
         _parsed_settings = None
@@ -4204,6 +4268,8 @@ def setup_studio_routes(app: FastAPI):
             except Exception:
                 log.exception("Architecture detection failed")
 
+            if arch and arch != "unknown":
+                _model_arch_cache[filepath] = arch
             return {"needs_te": not has_te, "needs_vae": not has_vae, "arch": arch}
         except Exception as e:
             print(f"{TAG} check_model_te error: {e}")
@@ -4245,7 +4311,7 @@ def setup_studio_routes(app: FastAPI):
         for base_dir in all_dirs:
             if not base_dir or not os.path.isdir(base_dir):
                 continue
-            for root, dirs, files in os.walk(base_dir):
+            for root, dirs, files in _walk_follow(base_dir):
                 dirs.sort(key=_natural_sort_key)
                 for f in sorted(files, key=_natural_sort_key):
                     if not f.endswith(('.safetensors', '.ckpt', '.pt')):
@@ -4274,6 +4340,17 @@ def setup_studio_routes(app: FastAPI):
                         except Exception:
                             log.exception("Failed to read embedding user-metadata file")
 
+                    # Civitai Helper sidecar (<stem>.civitai.info). Merge
+                    # precedence per field: user sidecar (intent) → CH info →
+                    # Studio's own Civitai cache (enrichment below) → network.
+                    base_model = ""
+                    if _civitai_read_ch is not None:
+                        ch_info = _civitai_read_ch(full_path)
+                        if ch_info:
+                            base_model = ch_info.get("base_model") or ""
+                            if not activation_text and ch_info.get("trigger_words"):
+                                activation_text = ", ".join(ch_info["trigger_words"])
+
                     try:
                         stat = os.stat(full_path)
                         size = stat.st_size
@@ -4291,6 +4368,7 @@ def setup_studio_routes(app: FastAPI):
                         "preview": preview_url,
                         "activation_text": activation_text,
                         "preferred_weight": preferred_weight,
+                        "base_model": base_model,
                     })
 
         loras.sort(key=lambda x: _natural_sort_key(x["name"]))
@@ -4387,6 +4465,154 @@ def setup_studio_routes(app: FastAPI):
                         print(f"{TAG} Deleted LoRA preview: {preview}")
                         deleted = True
 
+        return {"ok": deleted}
+
+    # ------------------------------------------------------------------
+    # Checkpoint browser: rich listing + user-selectable previews
+    # ------------------------------------------------------------------
+
+    _CKPT_EXTS = ('.safetensors', '.ckpt', '.gguf', '.pt')
+
+    def _resolve_ckpt_dirs():
+        """Checkpoint roots: --ckpt-dir when set, plus models/Stable-diffusion."""
+        dirs = []
+        ckpt_dir = getattr(shared.cmd_opts, 'ckpt_dir', None)
+        if ckpt_dir:
+            dirs.append(ckpt_dir)
+        try:
+            from modules.paths import models_path
+            dirs.append(os.path.join(models_path, "Stable-diffusion"))
+        except Exception:
+            pass
+        out, seen = [], set()
+        for d in dirs:
+            if d and d not in seen:
+                seen.add(d)
+                out.append(d)
+        return out
+
+    def _resolve_ckpt_by_stem(name):
+        """Resolve a browser stem ("subfolder/name", no extension) to a real
+        checkpoint file. The user string is only ever joined under the
+        configured checkpoint roots with a whitelisted model extension, must
+        hit an existing file, and the result must resolve inside a root
+        (realpath containment) — so preview writes/deletes can only touch
+        fixed-suffix siblings of actual checkpoints."""
+        if not name:
+            return None
+        roots = _resolve_ckpt_dirs()
+        for base_dir in roots:
+            if not base_dir or not os.path.isdir(base_dir):
+                continue
+            for ext in _CKPT_EXTS:
+                candidate = os.path.join(base_dir, name.replace("/", os.sep) + ext)
+                if os.path.isfile(candidate) and _is_path_within_roots(candidate, roots):
+                    return candidate
+        return None
+
+    @app.get("/studio/checkpoints")
+    async def get_checkpoints():
+        """Rich checkpoint listing for the checkpoint browser.
+
+        Rides Neo's in-memory registry — the same set the model dropdown
+        shows, so every card is guaranteed loadable — and enriches from
+        local data only: the <stem>.preview.png-first ladder, the Civitai
+        Helper .civitai.info base model, and the arch cache filled by
+        check_model_te for models that were actually inspected. Never
+        header-scans the collection at browse time.
+        """
+        roots = _resolve_ckpt_dirs()
+        out = []
+        try:
+            checkpoints = list(sd_models.checkpoints_list.values())
+        except Exception:
+            checkpoints = []
+        for m in checkpoints:
+            filename = getattr(m, "filename", "") or ""
+            stem_rel = ""
+            subfolder = ""
+            for r in roots:
+                try:
+                    rel = os.path.relpath(filename, r)
+                except ValueError:
+                    continue
+                if not rel.startswith(".."):
+                    stem_rel = os.path.splitext(rel)[0].replace(os.sep, "/")
+                    subfolder = os.path.dirname(rel).replace(os.sep, "/")
+                    break
+            preview_path = _find_lora_preview(filename) if filename else None
+            try:
+                stat = os.stat(filename)
+                size, mtime = stat.st_size, stat.st_mtime
+            except OSError:
+                size, mtime = 0, 0
+            base_model = ""
+            if _civitai_read_ch is not None and filename:
+                ch_info = _civitai_read_ch(filename)
+                if ch_info:
+                    base_model = ch_info.get("base_model") or ""
+            out.append({
+                "title": getattr(m, "title", "") or "",
+                "name": getattr(m, "model_name", "") or "",
+                "hash": getattr(m, "shorthash", None),
+                "filename": filename,
+                "stem": stem_rel,
+                "subfolder": subfolder,
+                "size": size,
+                "mtime": mtime,
+                "preview": f"/file={preview_path}" if preview_path else None,
+                "base_model": base_model,
+                "arch": _model_arch_cache.get(filename, ""),
+            })
+        out.sort(key=lambda x: _natural_sort_key(x["title"]))
+        return out
+
+    @app.post("/studio/checkpoint_preview")
+    async def save_checkpoint_preview(req: dict):
+        """Save a preview image beside a checkpoint (<stem>.preview.png).
+        Same contract as /studio/lora_preview, restricted to checkpoint
+        dirs; the sidecar PNG survives Studio and is visible to other
+        tools. Expects {name, image_b64} with name = listing stem."""
+        name = req.get("name", "")
+        image_b64 = req.get("image_b64", "")
+        if not name or not image_b64:
+            return JSONResponse({"ok": False, "error": "Missing name or image_b64"}, status_code=400)
+        target_path = _resolve_ckpt_by_stem(name)
+        if not target_path:
+            return JSONResponse({"ok": False, "error": f"Checkpoint not found: {name}"}, status_code=404)
+        try:
+            b64_data = image_b64
+            if "," in b64_data:
+                b64_data = b64_data.split(",", 1)[1]
+            img_bytes = base64.b64decode(b64_data)
+            preview_path = os.path.splitext(target_path)[0] + ".preview.png"
+            img = Image.open(io.BytesIO(img_bytes))
+            max_dim = 512
+            if img.width > max_dim or img.height > max_dim:
+                img.thumbnail((max_dim, max_dim), Image.LANCZOS)
+            img.save(preview_path, format="PNG", icc_profile=_SRGB_ICC)
+            print(f"{TAG} Saved checkpoint preview: {preview_path}")
+            return {"ok": True, "path": preview_path}
+        except Exception as e:
+            log.exception("Checkpoint preview save failed")
+            return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+    @app.delete("/studio/checkpoint_preview")
+    async def delete_checkpoint_preview(name: str = ""):
+        """Delete a checkpoint's preview sidecar(s)."""
+        if not name:
+            return JSONResponse({"ok": False, "error": "Missing name"}, status_code=400)
+        target_path = _resolve_ckpt_by_stem(name)
+        if not target_path:
+            return JSONResponse({"ok": False, "error": f"Checkpoint not found: {name}"}, status_code=404)
+        deleted = False
+        base = os.path.splitext(target_path)[0]
+        for pext in ('.preview.png', '.preview.jpg', '.preview.jpeg', '.preview.webp'):
+            preview = base + pext
+            if os.path.isfile(preview):
+                os.remove(preview)
+                print(f"{TAG} Deleted checkpoint preview: {preview}")
+                deleted = True
         return {"ok": deleted}
 
     @app.post("/studio/open_lora_folder")
@@ -4721,6 +4947,68 @@ def setup_studio_routes(app: FastAPI):
         except Exception:
             log.exception("watermark list failed")
             return []
+
+    @app.post("/studio/export_watermark")
+    async def export_watermark(req: dict):
+        """Stamp a flattened export image with the configured watermark.
+
+        Single-implementation rule: compositing is studio_generation's
+        apply_watermark — the exact code the legacy generation-time mode
+        uses. The canvas Save/Export flow round-trips its flattened PNG
+        through here only when export-time stamping is on, then embeds
+        infotext downstream so the shipped file carries both.
+        Expects {image_b64, name, position, opacity, scale, margin,
+        rotation}; returns {ok, changed, image_b64} (PNG data URL).
+        """
+        image_b64 = req.get("image_b64") or ""
+        name = str(req.get("name") or "").strip()
+        if not image_b64:
+            return JSONResponse({"ok": False, "error": "Missing image_b64"}, status_code=400)
+        if not name:
+            return JSONResponse({"ok": False, "error": "No watermark configured"}, status_code=400)
+
+        def _num(key, default, cast):
+            try:
+                v = req.get(key)
+                return default if v is None else cast(v)
+            except (TypeError, ValueError):
+                return default
+
+        try:
+            b64_data = image_b64.split(",", 1)[1] if "," in image_b64 else image_b64
+            img = Image.open(io.BytesIO(base64.b64decode(b64_data)))
+            # A canvas export can be RGBA (PNG preserves transparency).
+            # apply_watermark composites correctly but flattens to RGB, which
+            # would turn transparent pixels opaque black. Capture the original
+            # alpha so we can re-attach it to the stamped result, keeping the
+            # export transparent where the source was.
+            orig_alpha = None
+            if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
+                orig_alpha = img.convert("RGBA").getchannel("A")
+            wm_cfg = {
+                "enable": True,
+                "name": name,
+                "position": str(req.get("position") or "bottom-right"),
+                "opacity": _num("opacity", 1.0, float),
+                "scale": _num("scale", 0.15, float),
+                "margin": _num("margin", 16, int),
+                "rotation": _num("rotation", 0.0, float),
+            }
+            _apply = _import("studio_generation", "apply_watermark")
+            stamped, changed = _apply(img, wm_cfg)
+            if changed and orig_alpha is not None:
+                stamped = stamped.convert("RGBA")
+                stamped.putalpha(orig_alpha)
+            buf = io.BytesIO()
+            stamped.save(buf, format="PNG")
+            return {
+                "ok": True,
+                "changed": bool(changed),
+                "image_b64": "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii"),
+            }
+        except Exception as e:
+            log.exception("Export watermark failed")
+            return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
 
     @app.post("/studio/watermarks/open_folder")
     async def open_watermarks_folder():
@@ -6078,6 +6366,9 @@ def setup_studio_routes(app: FastAPI):
             _enrich = _load_optional_module("studio_civitai", "enrich_lora_entries")
             if _enrich:
                 _civitai_enrich = _enrich
+            _read_ch = _load_optional_module("studio_civitai", "read_ch_info")
+            if _read_ch:
+                _civitai_read_ch = _read_ch
         except Exception:
             print(f"{TAG} Civitai module setup failed")
     else:

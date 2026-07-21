@@ -46,6 +46,18 @@ from modules import shared, sd_models
 TAG = "[Workshop]"
 VERSION = "0.6.0"
 
+def _walk_follow(root):
+    """Scanner walk that follows symlinked directories (see studio_walk)."""
+    try:
+        try:
+            from studio_walk import walk_follow
+        except ImportError:
+            from scripts.studio_walk import walk_follow
+    except Exception:
+        return os.walk(root)
+    return walk_follow(root)
+
+
 _NAT_SORT_RE = re.compile(r'(\d+)')
 
 
@@ -2633,7 +2645,7 @@ def _resolve_lora_path(filename: str) -> str:
         for base in candidates:
             if not base or not os.path.isdir(base):
                 continue
-            for root, dirs, files in os.walk(base):
+            for root, dirs, files in _walk_follow(base):
                 for f in files:
                     if f == basename:
                         return os.path.join(root, f)
@@ -4687,7 +4699,7 @@ def setup_workshop_routes(app: FastAPI):
             for base in _lora_dir_candidates():
                 if not base or not os.path.isdir(base):
                     continue
-                for root, _dirs, files in os.walk(base):
+                for root, _dirs, files in _walk_follow(base):
                     for f in files:
                         if f.endswith(".safetensors"):
                             try:
@@ -4719,7 +4731,7 @@ def setup_workshop_routes(app: FastAPI):
         for base_dir in _lora_dir_candidates():
             if not base_dir or not os.path.isdir(base_dir):
                 continue
-            for root, dirs, files in os.walk(base_dir):
+            for root, dirs, files in _walk_follow(base_dir):
                 dirs.sort(key=_natural_sort_key)
                 for f in sorted(files, key=_natural_sort_key):
                     if not f.endswith(".safetensors"):

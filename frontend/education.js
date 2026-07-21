@@ -529,10 +529,98 @@ var Education = (function () {
   }
 
   // ========================================================================
+  // FIRST-ENCOUNTER TIPS
+  // ========================================================================
+  // Exactly three static callouts — Layers, Regions, Live — each shown once
+  // on the first meaningful interaction and never again after dismissal.
+  // Seen-state persists server-side via prefs key "education"
+  // ({seen:{layers:true,...}}), so it survives reloads and Clear Storage.
+  // Deliberately not a tour engine. Copy teaches workflow, not UI labels.
+
+  var TIPS = {
+    layers: {
+      i18n: "education.tip.layers",
+      fallback: "Generate, send to canvas, mask, and regenerate to composite elements — layers are for building images in passes, like a paint program.",
+      codexId: "layers_basics"
+    },
+    regions: {
+      i18n: "education.tip.regions",
+      fallback: "Each region carries its own prompt inside a single generation — draw where something should go, describe it in that region's prompt, and generate once.",
+      codexId: "regional_prompting"
+    },
+    live: {
+      i18n: "education.tip.live",
+      fallback: "Live is img2img over your canvas, not a scribble-to-image guide — low strength follows your sketch closely, higher strength takes liberties. Apply commits the result beneath your paint layer.",
+      codexId: "live_painting"
+    }
+  };
+  var _tipEl = null;
+
+  function _tipSeen() {
+    var edu = (window.Prefs && window.Prefs.get) ? (window.Prefs.get("education", null) || {}) : {};
+    return (edu && typeof edu.seen === "object" && edu.seen) ? edu.seen : {};
+  }
+
+  function _markTipSeen(id) {
+    if (!(window.Prefs && window.Prefs.set)) return;
+    var edu = window.Prefs.get("education", null);
+    if (!edu || typeof edu !== "object") edu = {};
+    edu.seen = Object.assign({}, _tipSeen());
+    edu.seen[id] = true;
+    window.Prefs.set("education", edu);
+  }
+
+  function _dismissTip() {
+    if (_tipEl) { _tipEl.remove(); _tipEl = null; }
+  }
+
+  function _showTip(spec) {
+    _dismissTip();
+    var el = document.createElement("div");
+    el.className = "edu-tip";
+    el.setAttribute("role", "note");
+    var text = document.createElement("div");
+    text.className = "edu-tip-text";
+    text.textContent = _t(spec.i18n, spec.fallback);
+    el.appendChild(text);
+    var row = document.createElement("div");
+    row.className = "edu-tip-actions";
+    var learn = document.createElement("button");
+    learn.className = "edu-tip-btn edu-tip-learn";
+    learn.textContent = _t("education.tip.learnMore", "Learn more in Codex");
+    learn.addEventListener("click", function () {
+      var codexId = spec.codexId;
+      _dismissTip();
+      if (window.Codex && window.Codex.openEntry) window.Codex.openEntry(codexId);
+    });
+    row.appendChild(learn);
+    var ok = document.createElement("button");
+    ok.className = "edu-tip-btn edu-tip-dismiss";
+    ok.textContent = _t("education.tip.gotIt", "Got it");
+    ok.addEventListener("click", _dismissTip);
+    row.appendChild(ok);
+    el.appendChild(row);
+    document.body.appendChild(el);
+    _tipEl = el;
+  }
+
+  function maybeShowTip(id) {
+    var spec = TIPS[id];
+    if (!spec) return;
+    if (_tipSeen()[id]) return;
+    _markTipSeen(id); // fires exactly once per install, dismissed or not
+    _showTip(spec);
+  }
+
+  // ========================================================================
   // INIT
   // ========================================================================
 
   function init() {
+    // Warm the prefs cache so tip seen-state is available synchronously by
+    // the time a first interaction can happen (cached promise; app.js
+    // already awaits the same load at boot).
+    try { if (window.Prefs && window.Prefs.load) window.Prefs.load(); } catch (e) {}
     if (!window.StudioTour) {
       console.error("[Education] StudioTour engine not loaded \u2014 walkthroughs disabled");
       _load();
@@ -575,6 +663,7 @@ var Education = (function () {
     reset: _reset,
     showFirstRun: _showFirstRun,
     startExperiencedTour: _startExperiencedTour,
+    maybeShowTip: maybeShowTip,
     get tour() { return _tour; },
   };
 })();

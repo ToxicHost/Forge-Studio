@@ -35,6 +35,10 @@
   let folders = [];
   let activeFolder = "";
   let searchQuery = "";
+  // Base-model filter — multi-select chips built from the distinct
+  // base_model values actually present ("" = untagged). ANDs with the
+  // folder filter and search.
+  let activeBaseModels = new Set();
   let sortMode = "name";
   let insertWeight = 1.0;
   let modal = null;
@@ -222,6 +226,24 @@
 .lora-folder-toggle:hover { opacity: 1; }
 .lora-folder-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; flex: 1; }
 .lora-folder-count { font-family: var(--mono); font-size: 9px; color: var(--text-4); flex-shrink: 0; }
+
+.lora-main { flex: 1; min-width: 0; display: flex; flex-direction: column; }
+.lora-chips { display: flex; flex-wrap: wrap; gap: 4px; padding: 8px 10px 0 10px; flex-shrink: 0; }
+.lora-chips:empty { display: none; }
+.lora-chip {
+  font-family: var(--font); font-size: 10px;
+  padding: 2px 8px; border-radius: 999px;
+  border: 1px solid var(--border); color: var(--text-2);
+  background: var(--bg-raised); cursor: pointer;
+  transition: all 0.12s; user-select: none;
+}
+.lora-chip:hover { color: var(--text-1); border-color: var(--text-4); }
+.lora-chip.active {
+  color: var(--accent-bright, var(--accent));
+  border-color: var(--accent);
+  background: var(--accent-dim);
+}
+.lora-chip-count { font-family: var(--mono); font-size: 9px; color: var(--text-4); margin-left: 4px; }
 
 .lora-grid-wrap { flex: 1; overflow-y: auto; padding: 10px; }
 .lora-grid {
@@ -427,7 +449,7 @@
     await fetchLoras(true);
     // Keep the stack's trigger-word map in sync with the refreshed list
     window.LoraStack?.refreshTriggers?.(true);
-    if (modal) { renderFolderTree(); renderGrid(); }
+    if (modal) { renderFolderTree(); renderBaseChips(); renderGrid(); }
     if (btn) setTimeout(() => btn.classList.remove("spinning"), 300);
   }
 
@@ -441,10 +463,46 @@
   }
 
 
+  // ── Base-model filter chips ────────────────────────────
+  const _baseModelKey = (l) => (l.base_model || "").trim();
+
+  function renderBaseChips() {
+    const row = modal?.querySelector(".lora-chips");
+    if (!row) return;
+    row.innerHTML = "";
+    const counts = new Map();
+    for (const l of allLoras) {
+      const k = _baseModelKey(l);
+      counts.set(k, (counts.get(k) || 0) + 1);
+    }
+    const tagged = [...counts.keys()].filter(k => k).sort((a, b) => a.localeCompare(b));
+    // No metadata anywhere → no row (a lone "untagged" chip filters nothing)
+    if (!tagged.length) { activeBaseModels.clear(); return; }
+    // Drop selections whose base model vanished (e.g. after a refresh)
+    for (const k of [...activeBaseModels]) {
+      if (!counts.has(k)) activeBaseModels.delete(k);
+    }
+    const keys = counts.has("") ? [...tagged, ""] : tagged;
+    for (const key of keys) {
+      const chip = document.createElement("span");
+      chip.className = "lora-chip" + (activeBaseModels.has(key) ? " active" : "");
+      const label = key || _t("lora.baseFilter.untagged", "untagged");
+      chip.innerHTML = `${escHtml(label)}<span class="lora-chip-count">${counts.get(key)}</span>`;
+      chip.addEventListener("click", () => {
+        if (activeBaseModels.has(key)) activeBaseModels.delete(key);
+        else activeBaseModels.add(key);
+        renderBaseChips();
+        renderGrid();
+      });
+      row.appendChild(chip);
+    }
+  }
+
   // ── Filtering & Sorting ────────────────────────────────
   function getFiltered() {
     let list = allLoras;
     if (activeFolder) list = list.filter(l => l.subfolder === activeFolder);
+    if (activeBaseModels.size) list = list.filter(l => activeBaseModels.has(_baseModelKey(l)));
     if (searchQuery) {
       const q = searchQuery.toLowerCase();
       list = list.filter(l => l.name.toLowerCase().includes(q)
@@ -498,7 +556,10 @@
         </div>
         <div class="lora-body">
           <div class="lora-folders"></div>
-          <div class="lora-grid-wrap"><div class="lora-grid"></div></div>
+          <div class="lora-main">
+            <div class="lora-chips"></div>
+            <div class="lora-grid-wrap"><div class="lora-grid"></div></div>
+          </div>
         </div>
         <div class="lora-footer">
           <span class="lora-status"></span>
@@ -991,6 +1052,7 @@
   function getVisibleLoras() {
     let arr = allLoras;
     if (activeFolder) arr = arr.filter(l => (l.subfolder || "") === activeFolder);
+    if (activeBaseModels.size) arr = arr.filter(l => activeBaseModels.has(_baseModelKey(l)));
     const q = searchQuery.toLowerCase();
     if (q) arr = arr.filter(l =>
       (l.name || "").toLowerCase().includes(q) ||
@@ -1081,6 +1143,7 @@
     buildModal();
     modal.style.display = "flex";
     renderFolderTree();
+    renderBaseChips();
     renderGrid();
     const search = modal.querySelector(".lora-search");
     search.value = searchQuery;
@@ -1096,6 +1159,7 @@
     buildModal();
     modal.style.display = "flex";
     renderFolderTree();
+    renderBaseChips();
     renderGrid();
     const search = modal.querySelector(".lora-search");
     search.value = searchQuery;

@@ -387,6 +387,47 @@
             ],
         },
 
+        // Prompt editing (handlers in app.js). Modifier bindings on purpose:
+        // allowInTyping + a required modifier is what lets these fire inside
+        // the prompt text fields, same as Ctrl+Enter generate. allowRepeat
+        // so holding the combo keeps stepping the weight.
+        {
+            id: "prompt.weight-up", label: "Prompt weight: increase",
+            i18nKey: "shortcuts.action.prompt_weight_up",
+            category: "Prompt", categoryI18nKey: "shortcuts.category.prompt",
+            scope: "app", allowInTyping: true, allowRepeat: true,
+            defaultBindings: [
+                { type: "key", value: "arrowup", ctrl: true, shift: false, alt: false, meta: false },
+            ],
+        },
+        {
+            id: "prompt.weight-down", label: "Prompt weight: decrease",
+            i18nKey: "shortcuts.action.prompt_weight_down",
+            category: "Prompt", categoryI18nKey: "shortcuts.category.prompt",
+            scope: "app", allowInTyping: true, allowRepeat: true,
+            defaultBindings: [
+                { type: "key", value: "arrowdown", ctrl: true, shift: false, alt: false, meta: false },
+            ],
+        },
+        {
+            id: "prompt.weight-up-fine", label: "Prompt weight: increase (fine)",
+            i18nKey: "shortcuts.action.prompt_weight_up_fine",
+            category: "Prompt", categoryI18nKey: "shortcuts.category.prompt",
+            scope: "app", allowInTyping: true, allowRepeat: true,
+            defaultBindings: [
+                { type: "key", value: "arrowup", ctrl: true, shift: true, alt: false, meta: false },
+            ],
+        },
+        {
+            id: "prompt.weight-down-fine", label: "Prompt weight: decrease (fine)",
+            i18nKey: "shortcuts.action.prompt_weight_down_fine",
+            category: "Prompt", categoryI18nKey: "shortcuts.category.prompt",
+            scope: "app", allowInTyping: true, allowRepeat: true,
+            defaultBindings: [
+                { type: "key", value: "arrowdown", ctrl: true, shift: true, alt: false, meta: false },
+            ],
+        },
+
         // Canvas tools (lookup-only; dispatched by canvas-ui.js) ------------
         { id: "canvas.tool.brush", label: "Brush tool", i18nKey: "shortcuts.action.canvas_tool_brush", category: "Canvas tools", categoryI18nKey: "shortcuts.category.canvasTools", scope: "canvas", defaultBindings: [_tool("b")] },
         { id: "canvas.tool.eraser", label: "Eraser tool", i18nKey: "shortcuts.action.canvas_tool_eraser", category: "Canvas tools", categoryI18nKey: "shortcuts.category.canvasTools", scope: "canvas", defaultBindings: [_tool("e")] },

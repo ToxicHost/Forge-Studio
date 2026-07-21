@@ -149,12 +149,39 @@
 
 
 /* ═══════════════════════════════════════════
+   FIRST-ENCOUNTER TIPS (dismissible callouts)
+   ═══════════════════════════════════════════ */
+
+.edu-tip {
+  position: fixed; right: 16px; bottom: 44px; z-index: 10000;
+  max-width: 320px;
+  background: var(--bg-raised);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 10px 12px;
+  font-size: var(--ui-font-small); line-height: 1.5;
+  color: var(--text-2);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+  animation: eduTipIn 0.25s ease;
+}
+.edu-tip-actions { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
+.edu-tip-btn {
+  background: none; border: 1px solid var(--border); border-radius: var(--radius-sm);
+  color: var(--text-3); font-size: 10px; font-family: var(--font);
+  padding: 3px 10px; cursor: pointer; transition: all 0.12s;
+}
+.edu-tip-btn:hover { color: var(--text-1); border-color: var(--border-hover); }
+.edu-tip-learn { color: var(--accent); border-color: var(--accent); }
+@keyframes eduTipIn { from { opacity: 0; transform: translateY(6px); } to { opacity: 1; transform: none; } }
+
+/* ═══════════════════════════════════════════
    REDUCED MOTION
    ═══════════════════════════════════════════ */
 
 [data-motion="reduced"] .edu-modal, [data-motion="reduced"] .edu-modal-overlay,
-[data-motion="reduced"] .edu-reel, [data-motion="reduced"] .edu-reel-overlay { animation: none !important; }
+[data-motion="reduced"] .edu-reel, [data-motion="reduced"] .edu-reel-overlay,
+[data-motion="reduced"] .edu-tip { animation: none !important; }
 
 @media (prefers-reduced-motion: reduce) {
-  .edu-modal, .edu-modal-overlay, .edu-reel, .edu-reel-overlay { animation: none !important; }
+  .edu-modal, .edu-modal-overlay, .edu-reel, .edu-reel-overlay, .edu-tip { animation: none !important; }
 }
