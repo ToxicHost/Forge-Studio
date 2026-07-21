@@ -4,18 +4,18 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Forge Studio</title>
-<link rel="icon" type="image/svg+xml" href="/studio/static/brand/favicon.svg?v=4.14.3">
-<link rel="icon" type="image/png" sizes="32x32" href="/studio/static/brand/favicon-32.png?v=4.14.3">
+<link rel="icon" type="image/svg+xml" href="/studio/static/brand/favicon.svg?v=4.15.0">
+<link rel="icon" type="image/png" sizes="32x32" href="/studio/static/brand/favicon-32.png?v=4.15.0">
 <link rel="apple-touch-icon" href="/studio/static/brand/apple-touch-icon.png">
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <!-- Keep the ?v= in sync with `const v` in the loader script at the bottom
      of this file — stylesheets had no cache-buster, so deploys kept serving
      stale CSS even after the versioned JS refreshed. -->
-<link rel="stylesheet" href="/studio/static/app.css?v=4.14.3">
-<link rel="stylesheet" href="/studio/static/searchable-select.css?v=4.14.3">
-<link rel="stylesheet" href="/studio/static/education.css?v=4.14.3">
-<link rel="stylesheet" href="/studio/static/studio-tour.css?v=4.14.3">
-<link rel="stylesheet" href="/studio/static/studio-docs.css?v=4.14.3">
+<link rel="stylesheet" href="/studio/static/app.css?v=4.15.0">
+<link rel="stylesheet" href="/studio/static/searchable-select.css?v=4.15.0">
+<link rel="stylesheet" href="/studio/static/education.css?v=4.15.0">
+<link rel="stylesheet" href="/studio/static/studio-tour.css?v=4.15.0">
+<link rel="stylesheet" href="/studio/static/studio-docs.css?v=4.15.0">
 </head>
 <body>
 
@@ -24,9 +24,10 @@
      ═══════════════════════════════════════════ -->
 
 <div class="titlebar">
-  <div class="brand"><img class="brand-mark" src="/studio/static/brand/forge-studio-mark.svg?v=4.14.3" alt=""><em>FORGE</em>&ensp;<span class="brand-studio">STUDIO</span></div>
+  <div class="brand"><img class="brand-mark" src="/studio/static/brand/forge-studio-mark.svg?v=4.15.0" alt=""><em>FORGE</em>&ensp;<span class="brand-studio">STUDIO</span></div>
   <div class="tab-bar" id="appTabs">
     <button class="active" data-app="studio">Canvas</button>
+    <button data-app="settings" data-i18n="tabs.settings">Settings</button>
   </div>
 </div>
 
@@ -323,7 +324,6 @@
       <div class="panel-tabs" id="panelTabs">
         <button class="panel-tab active" data-panel="generate" data-i18n="panels.generate">Generate</button>
         <button class="panel-tab" data-panel="extensions" data-i18n="panels.extensions">Extensions</button>
-        <button class="panel-tab" data-panel="settings" data-i18n="panels.settings">Settings</button>
       </div>
 
       <div class="panel-content">
@@ -904,16 +904,25 @@
           </div>
         </div>
 
-        <!-- ===== SETTINGS TAB ===== -->
-        <div class="panel-page" id="page-settings">
-          <div class="settings-content">
+      </div>
+    </div>
+  </div>
+
+  <!-- =================== SETTINGS PAGE =================== -->
+  <div class="app-page settings-page" id="app-settings">
+    <div class="settings-page-shell">
+      <header class="settings-page-header">
+        <h1 data-i18n="settings.title">Settings</h1>
+        <p data-i18n="settings.description">Configure Forge Studio preferences and application behavior.</p>
+      </header>
+      <div class="settings-content settings-grid">
             <div class="setting-group">
               <div class="setting-group-title" data-i18n="settings.canvas.title">Canvas</div>
               <div class="setting-row"><span class="setting-label" data-i18n="settings.canvas.showGrid">Show grid</span><div class="toggle-track" id="toggleGrid"><div class="toggle-knob"></div></div></div>
               <div class="setting-row" title="Uses the GPU/WebGL display backend for sharper color-managed canvas preview. Falls back to standard Canvas 2D if unavailable. Does not change exported pixels."><span class="setting-label">GPU canvas preview</span><div class="toggle-track" id="toggleCanvasColorPreview"><div class="toggle-knob"></div></div></div>
               <!-- Pen pressure is now on the brush context bar -->
             </div>
-            <div class="setting-group" id="keyboardShortcutsSettings">
+            <div class="setting-group" id="keyboardShortcutsSettings" data-settings-span="full">
               <div class="setting-group-title" data-i18n="settings.shortcuts.title">Keyboard Shortcuts</div>
               <p class="shortcut-settings-note" data-i18n="settings.shortcuts.description">Change a shortcut by pressing the key you want. Bind by character for your current layout, or by physical position for layout-independent muscle memory.</p>
               <div id="shortcutSettingsRows"></div>
@@ -1153,7 +1162,7 @@
                 </div>
               </div>
             </div>
-            <div class="setting-group">
+            <div class="setting-group" data-settings-span="full">
               <div class="setting-group-title" data-i18n="settings.extensions.title">Extensions</div>
               <p style="font-size:10px;color:var(--text-4);margin:0 0 8px 0;" data-i18n="settings.extensions.description">Toggle which extensions appear in the Extensions tab.</p>
               <div id="extToggles"></div>
@@ -1169,7 +1178,7 @@
                 <button class="theme-btn" data-theme="neon">Neon</button>
               </div>
             </div>
-            <div class="setting-group">
+            <div class="setting-group" data-settings-span="full">
               <div class="setting-group-title" data-i18n="settings.layout.title">Layout</div>
               <div class="theme-selector" id="layoutSelector">
                 <button class="layout-btn active" data-layout-preset="classic" data-i18n="settings.layout.classic">Classic</button>
@@ -1302,8 +1311,6 @@
                 <div id="creditsList" style="font-size:10px;color:var(--text-3);line-height:1.8;"></div>
               </div>
             </div>
-          </div>
-        </div>
       </div>
     </div>
   </div>
@@ -1338,7 +1345,7 @@
   // Optional modules — loaded if available, silently skipped if not.
   // debug.js exposes window.StudioDebug.* — dev-tools-only, no UI.
   const optionalScripts = ["develop.js", "workshop.js", "lexicon.js", "education.js", "codex.js", "studio-showme.js", "gallery.js", "module-tours.js", "debug.js", "canvas-webgl-preview.js"];
-  const v = "4.14.3";
+  const v = "4.15.0";
   window.__STUDIO_V = v;
   for (const s of scripts) {
     await new Promise((resolve, reject) => {

@@ -9,6 +9,9 @@
   "panels.generate": "Generar",
   "panels.extensions": "Extensiones",
   "panels.settings": "Ajustes",
+  "tabs.settings": "Ajustes",
+  "settings.title": "Ajustes",
+  "settings.description": "Configura las preferencias y el comportamiento de Forge Studio.",
 
   "actions.generate": "Generar",
   "actions.interrupt": "Cancelar",

@@ -462,7 +462,7 @@ var Education = (function () {
   // ========================================================================
 
   function _injectSettings() {
-    var sc = document.querySelector("#page-settings .settings-content"); if (!sc) return;
+    var sc = document.querySelector("#app-settings .settings-content"); if (!sc) return;
     var titles = sc.querySelectorAll(".setting-group-title"), ag = null;
     for (var i = 0; i < titles.length; i++) { if (titles[i].textContent.trim() === "Accessibility") { ag = titles[i]; break; } }
     var ib = ag ? ag.closest(".setting-group") : null;

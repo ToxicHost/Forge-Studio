@@ -27,7 +27,8 @@
 // ========================================================================
 
 const _modules = {};    // id → { config, container, initialized }
-let _activeId = null;   // currently active module id (null = Studio)
+let _activeId = null;   // currently active module id (null = a built-in app page)
+let _activeAppId = "studio"; // active top-level surface: a module id OR a built-in app id ("studio", "settings")
 const _initCallbacks = {};  // id → [fn, fn, ...]
 
 // ========================================================================
@@ -172,17 +173,51 @@ function _removeBuiltinPlaceholder(id) {
 // TAB SWITCHING — unified handler for both built-in and module tabs
 // ========================================================================
 
-function _activateStudio() {
-    // Deactivate current module
-    if (_activeId && _modules[_activeId]) {
-        const mod = _modules[_activeId];
-        mod.container.classList.remove("active");
-        if (mod.config.deactivate) {
-            try { mod.config.deactivate(); }
-            catch (e) { console.error(`[Modules] ${_activeId}.deactivate error:`, e); }
-        }
+// Deactivate whatever module is currently active (hide its page + run its
+// deactivate() once), then clear _activeId. Shared by every transition so a
+// module's teardown always runs exactly once when navigating away — including
+// to a built-in app page like Settings.
+function _deactivateCurrentModule() {
+    if (!_activeId || !_modules[_activeId]) return;
+
+    const mod = _modules[_activeId];
+    mod.container.classList.remove("active");
+
+    if (mod.config.deactivate) {
+        try { mod.config.deactivate(); }
+        catch (e) { console.error(`[Modules] ${_activeId}.deactivate error:`, e); }
     }
+
     _activeId = null;
+}
+
+// Activate a built-in (non-module) app page by id — "studio", "settings".
+function _activateBuiltin(id) {
+    _deactivateCurrentModule();
+
+    document.querySelectorAll(".app-page").forEach(page => {
+        page.classList.remove("active");
+    });
+
+    const page = document.getElementById("app-" + id);
+    if (!page) {
+        console.warn(`[Modules] Cannot activate unknown built-in app "${id}"`);
+        return false;
+    }
+
+    page.classList.add("active");
+    _activeAppId = id;
+
+    window.dispatchEvent(new CustomEvent("studio:app-activated", {
+        detail: { id },
+    }));
+
+    return true;
+}
+
+function _activateStudio() {
+    _deactivateCurrentModule();
+    _activeAppId = "studio";
 
     // Show Studio page
     const studioPage = document.getElementById("app-studio");
@@ -197,23 +232,18 @@ function _activateModule(id) {
     const studioPage = document.getElementById("app-studio");
     if (studioPage) studioPage.classList.remove("active");
 
-    // Deactivate previous module (if different)
-    if (_activeId && _activeId !== id && _modules[_activeId]) {
-        const prev = _modules[_activeId];
-        prev.container.classList.remove("active");
-        if (prev.config.deactivate) {
-            try { prev.config.deactivate(); }
-            catch (e) { console.error(`[Modules] ${_activeId}.deactivate error:`, e); }
-        }
-    }
+    // Deactivate previous module (only when switching to a different one, so
+    // re-activating the same module doesn't tear it down)
+    if (_activeId !== id) _deactivateCurrentModule();
 
-    // Hide any other built-in placeholder pages (workshop, corkboard that
-    // might still exist if no module replaced them)
+    // Hide any other built-in app pages (studio, settings, or leftover
+    // workshop/corkboard placeholders)
     document.querySelectorAll(".app-page:not(.module-page)").forEach(p => {
         if (p.id !== "app-studio") p.classList.remove("active");
     });
 
     _activeId = id;
+    _activeAppId = id;
     mod.container.classList.add("active");
 
     const services = _getServices();
@@ -264,11 +294,10 @@ function _onTabClick(e) {
         // Studio tab
         _activateStudio();
     } else if (btn.dataset.app) {
-        // Built-in placeholder tab (workshop, corkboard etc. that hasn't been
-        // replaced by a module yet)
-        _activeId = null;
-        const page = document.getElementById("app-" + btn.dataset.app);
-        if (page) page.classList.add("active");
+        // Built-in app page (Settings, or a workshop/corkboard placeholder
+        // not yet replaced by a module). Routes through _activateBuiltin so
+        // the current module's deactivate() runs.
+        _activateBuiltin(btn.dataset.app);
     }
 }
 
@@ -372,9 +401,37 @@ const StudioModules = {
     list() { return Object.keys(_modules); },
 
     /**
-     * Get the active module id (null if Studio is active).
+     * Get the active module id (null if a built-in app page is active).
      */
     get activeId() { return _activeId; },
+
+    /**
+     * Get the active top-level surface id — a module id, or a built-in app
+     * id ("studio", "settings"). Unlike activeId, never null.
+     */
+    get activeAppId() { return _activeAppId; },
+
+    /**
+     * Activate a built-in (non-module) app page by id — e.g. "settings",
+     * "studio". Syncs the main tab visual state and runs the active module's
+     * deactivate(). Returns false for an unknown built-in app.
+     */
+    activateApp(id) {
+        const tabBar = _getTabBar();
+        const button = tabBar?.querySelector(`button[data-app="${id}"]`);
+        const page = document.getElementById("app-" + id);
+
+        if (!button || !page) {
+            console.warn(`[Modules] Cannot activate unknown built-in app "${id}"`);
+            return false;
+        }
+
+        tabBar.querySelectorAll("button").forEach(btn => {
+            btn.classList.toggle("active", btn === button);
+        });
+
+        return _activateBuiltin(id);
+    },
 
     /**
      * Get shared services object.
@@ -403,7 +460,7 @@ const StudioModules = {
 // ========================================================================
 
 // Canonical tab order — applied inside register() after each new tab is added
-const TAB_ORDER = ["studio", "develop", "gallery", "workshop", "lexicon", "codex"];
+const TAB_ORDER = ["studio", "develop", "gallery", "workshop", "lexicon", "codex", "settings"];
 
 function _reorderTabs() {
     const bar = _getTabBar();

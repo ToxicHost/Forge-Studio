@@ -712,8 +712,8 @@ function bindCanvas() {
     // === ZOOM-DRAG (Krita-style Shift+Space+drag) ===
     let _spaceHeld = false;
     let _zoomDrag = { active: false, startY: 0, startScale: 1, anchorX: 0, anchorY: 0 };
-    document.addEventListener("keydown", e => { if (e.code === "Space" && !["INPUT","TEXTAREA","SELECT"].includes(e.target.tagName) && !e.target.isContentEditable) { _spaceHeld = true; if (S.canvas) S.canvas.style.cursor = e.shiftKey ? "ns-resize" : "grab"; e.preventDefault(); } });
-    document.addEventListener("keyup", e => { if (e.code === "Space") { _spaceHeld = false; if (S.canvas && !S.zoom.panning && !_zoomDrag.active) setTool(S.tool); } });
+    document.addEventListener("keydown", e => { if (!document.getElementById("app-studio")?.classList.contains("active")) return; if (e.code === "Space" && !["INPUT","TEXTAREA","SELECT"].includes(e.target.tagName) && !e.target.isContentEditable) { _spaceHeld = true; if (S.canvas) S.canvas.style.cursor = e.shiftKey ? "ns-resize" : "grab"; e.preventDefault(); } });
+    document.addEventListener("keyup", e => { if (!document.getElementById("app-studio")?.classList.contains("active")) return; if (e.code === "Space") { _spaceHeld = false; if (S.canvas && !S.zoom.panning && !_zoomDrag.active) setTool(S.tool); } });
 
     cv.addEventListener("pointerdown", e => {
         // Shift+Space+LeftClick → zoom-drag (Krita-style). Must come before pan check.
@@ -3761,6 +3761,8 @@ function _dispatchCanvasShortcut(actionId, e) {
 
 function bindKeys() {
     document.addEventListener("keydown", e => {
+        // Canvas keyboard is inactive while another main page (e.g. Settings) is open
+        if (!document.getElementById("app-studio")?.classList.contains("active")) return;
         if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName) || e.target.isContentEditable) return;
 
         // Space for pan mode
@@ -3957,6 +3959,7 @@ function bindKeys() {
     });
 
     document.addEventListener("keyup", e => {
+        if (!document.getElementById("app-studio")?.classList.contains("active")) return;
         if (e.key === " ") {
             _spaceDown = false;
             if (S.canvas && !S.zoom.panning) setTool(S.tool); // restore cursor

@@ -9135,6 +9135,38 @@ window.SessionStrip = SessionStrip;
 window.LayoutManager = LayoutManager;
 window.Customizer = Customizer;
 
+// ═══════════════════════════════════════════
+// SETTINGS PAGE NAVIGATION
+// ═══════════════════════════════════════════
+// Settings is a top-level app page (see module-system.js). This is the
+// supported way to send the user there — optionally scrolling to and
+// briefly highlighting a specific setting group. Safe to call before the
+// module system has loaded (returns without throwing).
+window.openStudioSettings = function openStudioSettings(sectionId) {
+  const activated = window.StudioModules?.activateApp("settings");
+  if (activated === false) return;
+
+  if (!sectionId) return;
+
+  requestAnimationFrame(() => {
+    const target = document.getElementById(sectionId);
+    if (!target) return;
+
+    target.scrollIntoView({ behavior: "smooth", block: "start" });
+    target.classList.add("settings-attention");
+    setTimeout(() => target.classList.remove("settings-attention"), 1200);
+  });
+};
+
+// Refresh display-only Settings state when the page becomes active. The
+// shortcuts table can be rebound elsewhere; re-render it so it shows live
+// bindings. Deliberately does NOT re-run init/bindUI/preference loading —
+// those bind once at boot.
+window.addEventListener("studio:app-activated", (event) => {
+  if (event.detail?.id !== "settings") return;
+  window.Shortcuts?.renderSettings?.();
+});
+
 // Go
 if (document.readyState === "loading") {
   document.addEventListener("DOMContentLoaded", init);
