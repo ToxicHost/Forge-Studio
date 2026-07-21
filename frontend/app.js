@@ -3291,7 +3291,11 @@ const BADGE_FORMATTERS = {
   hires() {
     if (!document.getElementById("checkHires")?.classList.contains("checked")) return "off";
     const scale = document.getElementById("paramHrScale")?.value || "?";
-    return `${scale}× ${document.getElementById("paramHrUpscaler")?.value || ""}`;
+    // 0 hires steps means "reuse the base step count" (A1111 semantics,
+    // honored on both generation paths) — show that, not a literal 0
+    const steps = parseInt(document.getElementById("paramHrSteps")?.value, 10) || 0;
+    const stepsPart = steps > 0 ? steps : _i18n("panel.hiresStepsBase", "base");
+    return `${scale}× ${document.getElementById("paramHrUpscaler")?.value || ""} · ${stepsPart}`;
   },
   adetailer() {
     if (!document.getElementById("checkAD")?.classList.contains("checked")) return "off";
@@ -3507,7 +3511,7 @@ function bindUI() {
   [
     "paramSampler", "paramSteps", "paramCFG", "paramWidth", "paramHeight",
     "paramSeed", "paramBatch", "paramBatchSize", "paramHrScale",
-    "paramHrUpscaler", "paramUpscaleScale", "paramUpscaleModel",
+    "paramHrUpscaler", "paramHrSteps", "paramUpscaleScale", "paramUpscaleModel",
   ].forEach(id => {
     const el = document.getElementById(id);
     if (!el) return;

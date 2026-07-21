@@ -1315,6 +1315,7 @@
   "shortcuts.action.canvas_zoom_fit": "Fit canvas to view",
 
   "panel.advanced": "Advanced",
+  "panel.hiresStepsBase": "base",
   "help.sampling.sampler": "Algorithm that steps the image from noise to the final result. Different samplers trade speed, detail, and reproducibility.",
   "help.sampling.scheduler": "Controls how denoising effort is distributed across steps. Karras concentrates steps where they matter most and is a safe default.",
   "help.sampling.steps": "How many denoising steps to run. More steps add detail with diminishing returns; 20–35 is typical.",
