@@ -604,10 +604,23 @@ def ensure_scan_folder(path, label=None):
     """Idempotently register *path* as a Gallery scan folder.
 
     Used by the save pipeline when saving into Neo's output tree (the
-    save_tree setting) so those folders show up in Gallery automatically
-    alongside Studio's own tree — no files are ever moved. Never raises
-    into the save path; the watcher restarts only when a row was actually
+    save_tree setting) so those folders join the scan set and show up in
+    Gallery alongside Studio's own tree — no files are ever moved. Never
+    raises into the save path. Returns True only when a new row was
     inserted.
+
+    The scan-folders table is the durable coexistence mechanism: it is
+    shared across module instances (single DB, shared write lock), and
+    get_scan_folders reads it, so any later Gallery scan includes the Neo
+    tree. The live filesystem watcher is a separate, best-effort nicety —
+    and it is restarted here ONLY when this module instance actually owns
+    a running watcher. This module can be imported under two names, and
+    the instance that runs the routes/watcher is loaded by path (not
+    registered in sys.modules), so a cross-instance caller (the generate
+    handler reaches us via __import__) must NOT blindly restart_watcher:
+    that would spin up a second Observer on an instance whose SSE clients
+    are empty. Gating on _watcher_running keeps the restart on the owning
+    instance and makes the cross-instance call a pure DB registration.
     """
     try:
         p = str(path or "").strip()
@@ -623,7 +636,7 @@ def ensure_scan_folder(path, label=None):
             inserted = cur.rowcount > 0
         finally:
             db.close()
-        if inserted:
+        if inserted and _watcher_running:
             threading.Thread(target=restart_watcher, daemon=True).start()
         return inserted
     except Exception:

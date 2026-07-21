@@ -3634,8 +3634,19 @@ async function _ctxSaveCanvas(fmt, applyWm) {
                 }),
             });
             const data = await r.json();
-            if (r.ok && data.ok && data.image_b64) dataUrl = data.image_b64;
-            else throw new Error(data.error || `HTTP ${r.status}`);
+            if (r.ok && data.ok && data.image_b64) {
+                dataUrl = data.image_b64;
+                // apply_watermark never raises: changed:false means the
+                // configured mark couldn't be applied (file missing/renamed,
+                // opacity 0). The export proceeds unstamped — say so rather
+                // than let the user believe a mark they can't see is there.
+                if (data.changed === false) {
+                    const msg = window.I18N?.t?.("toast.export.watermarkNotApplied",
+                        "Watermark not applied — check the watermark file in Settings")
+                        || "Watermark not applied — check the watermark file in Settings";
+                    if (window.showToast) window.showToast(msg, "info");
+                }
+            } else throw new Error(data.error || `HTTP ${r.status}`);
         } catch (e) {
             console.error("[StudioUI] Export watermark failed:", e);
             const msg = window.I18N?.t?.("toast.export.watermarkFailed", "Watermark failed — exporting unstamped")

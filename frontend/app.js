@@ -8370,8 +8370,18 @@ function _initParamScrub() {
   };
   const hideTip = () => { tip.hidden = true; };
 
+  // A field is a scrub/step target only if it declares numeric intent via a
+  // range/step attribute (data-min/max/step, or bare min/max/step). This is
+  // the reliable discriminator: several .param-val inputs are free text
+  // (ADetailer prompts, the save/gallery folder paths) and their values can
+  // start with a digit, so a parseFloat("2 girls…") test would wrongly steal
+  // arrow keys and drag-scrub and overwrite the text. Every numeric field
+  // carries these attributes (added in index.html); text fields do not.
+  const _hasNumericAttrs = (el) =>
+    el.dataset.min != null || el.dataset.max != null || el.dataset.step != null ||
+    el.hasAttribute("min") || el.hasAttribute("max") || el.hasAttribute("step");
   const isNumericVal = (el) =>
-    el.type !== "number" && Number.isFinite(parseFloat(el.value));
+    el.type !== "number" && _hasNumericAttrs(el) && Number.isFinite(parseFloat(el.value));
 
   for (const el of document.querySelectorAll("input.param-val")) {
     if (!isNumericVal(el)) continue;

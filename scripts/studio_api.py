@@ -2635,6 +2635,7 @@ def setup_studio_routes(app: FastAPI):
             _save_dir_notice = ("Your custom save folder isn't trusted yet, so images were saved to the "
                                 "default output folder. Open Settings → Save folder and click “Trust folder”.")
             _save_override = ""
+        _neo_scan_register = None  # Neo scan-folder to register after mkdir
         if _save_override:
             try:
                 base_outdir = str(Path(_save_override).expanduser())
@@ -2676,11 +2677,9 @@ def setup_studio_routes(app: FastAPI):
             # Graceful switch: register the Neo dir in the Gallery scan set
             # so old (Studio-tree) and new images coexist; no files move,
             # and Studio's own root stays linked. Content-hash identity in
-            # the gallery DB makes the union safe.
-            try:
-                _import("studio_gallery", "ensure_scan_folder")(str(Path(neo_outdir)))
-            except Exception:
-                log.debug("could not register Neo outdir as gallery scan folder", exc_info=True)
+            # the gallery DB makes the union safe. Deferred until after the
+            # mkdir below so the dir exists before any watcher inspects it.
+            _neo_scan_register = str(Path(neo_outdir))
         elif not _save_override:
             try:
                 # Use the same output dir logic as the generation pipeline
@@ -2697,6 +2696,13 @@ def setup_studio_routes(app: FastAPI):
             output_dir = Path(base_outdir) / "studio" / mode_folder / date.today().strftime("%Y-%m-%d")
         if req.save_outputs:
             output_dir.mkdir(parents=True, exist_ok=True)
+        # Register the Neo output dir in the Gallery scan set now that it
+        # exists on disk (see the save_tree=neo branch above).
+        if _neo_scan_register:
+            try:
+                _import("studio_gallery", "ensure_scan_folder")(_neo_scan_register)
+            except Exception:
+                log.debug("could not register Neo outdir as gallery scan folder", exc_info=True)
 
         # Pre-parse settings_json once (was being re-parsed per image)
         _parsed_settings = None
@@ -4971,6 +4977,14 @@ def setup_studio_routes(app: FastAPI):
         try:
             b64_data = image_b64.split(",", 1)[1] if "," in image_b64 else image_b64
             img = Image.open(io.BytesIO(base64.b64decode(b64_data)))
+            # A canvas export can be RGBA (PNG preserves transparency).
+            # apply_watermark composites correctly but flattens to RGB, which
+            # would turn transparent pixels opaque black. Capture the original
+            # alpha so we can re-attach it to the stamped result, keeping the
+            # export transparent where the source was.
+            orig_alpha = None
+            if img.mode in ("RGBA", "LA") or (img.mode == "P" and "transparency" in img.info):
+                orig_alpha = img.convert("RGBA").getchannel("A")
             wm_cfg = {
                 "enable": True,
                 "name": name,
@@ -4982,6 +4996,9 @@ def setup_studio_routes(app: FastAPI):
             }
             _apply = _import("studio_generation", "apply_watermark")
             stamped, changed = _apply(img, wm_cfg)
+            if changed and orig_alpha is not None:
+                stamped = stamped.convert("RGBA")
+                stamped.putalpha(orig_alpha)
             buf = io.BytesIO()
             stamped.save(buf, format="PNG")
             return {

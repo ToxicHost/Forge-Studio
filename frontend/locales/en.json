@@ -46,6 +46,7 @@
   "settings.watermark.modeHint": "On export: generated files stay clean; the mark is applied when you Save/Export the canvas, with a per-export opt-out. On generation: every generated file is stamped as before (skipped for inpaint).",
   "canvas.export.applyWatermark": "Apply watermark",
   "toast.export.watermarkFailed": "Watermark failed \u2014 exporting unstamped",
+  "toast.export.watermarkNotApplied": "Watermark not applied \u2014 check the watermark file in Settings",
   "settings.saveDir.tree": "Save tree",
   "settings.saveDir.treeStudio": "Studio folders",
   "settings.saveDir.treeNeo": "Neo output folders",
