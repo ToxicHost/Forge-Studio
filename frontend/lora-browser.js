@@ -250,6 +250,7 @@
   display: grid;
   grid-template-columns: repeat(auto-fill, minmax(130px, 1fr));
   gap: 8px;
+  align-items: start; /* cards keep natural height with variable trigger chips */
 }
 
 .lora-card {
@@ -361,11 +362,22 @@
   text-overflow: ellipsis; white-space: nowrap;
 }
 .lora-card-meta { font-family: var(--mono); font-size: 9px; color: var(--text-4); margin-top: 2px; }
-.lora-card-trigger {
-  font-family: var(--mono); font-size: 9px; color: var(--accent-bright, var(--accent));
-  margin-top: 2px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
-  opacity: 0.8;
+.lora-card-triggers {
+  display: flex; flex-wrap: wrap; gap: 3px; margin-top: 4px;
+  max-height: 48px; overflow-y: auto;
 }
+.lora-card-trig {
+  font-family: var(--font); font-size: 9px; line-height: 1.2;
+  padding: 2px 6px; border-radius: 999px;
+  border: 1px solid var(--border-subtle);
+  color: var(--accent-bright, var(--accent));
+  background: var(--bg-input); cursor: pointer;
+  max-width: 100%; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+  transition: background 0.1s, border-color 0.1s, color 0.1s;
+}
+.lora-card-trig:hover { border-color: var(--accent); background: var(--accent-dim); }
+.lora-card-trig.trig-hit { background: var(--accent); color: var(--bg-surface); border-color: var(--accent); }
+.lora-card-trig-all { color: var(--text-3); font-weight: 600; }
 
 .lora-card-menu {
   position: fixed; z-index: 310;
@@ -705,8 +717,17 @@
       }
       card.title = tipLines.join("\n");
       const baseName = lora.name.split("/").pop();
-      const triggerHtml = lora.activation_text
-        ? `<div class="lora-card-trigger" title="${escHtml(lora.activation_text)}">${escHtml(lora.activation_text)}</div>`
+      // Trigger words as clickable chips right on the card: tap a word to
+      // add just that one to the prompt (skip the ones you don't want), or
+      // "+ all" for everything. Selecting the LoRA (card body) inserts only
+      // the tag — triggers are added here, deliberately.
+      const _trigWords = _triggerWords(lora.activation_text);
+      const triggerHtml = _trigWords.length
+        ? `<div class="lora-card-triggers">${
+            _trigWords.map(w =>
+              `<span class="lora-card-trig" data-trig="${escHtml(w)}" title="${escHtml("Add: " + w)}">${escHtml(w)}</span>`
+            ).join("")
+          }<span class="lora-card-trig lora-card-trig-all" data-trig-all="1" title="${escHtml("Add all trigger words")}">${escHtml(_t("lora.card.insertAll", "+ all"))}</span></div>`
         : "";
       // Small civitai badge: C in accent for fetched (R if it came from
       // civitai.red), · dim for not-found, 🔒 for private. Visually
@@ -743,10 +764,24 @@
 
       card.addEventListener("click", e => {
         if (e.target.closest(".lora-card-menu")) return;
+        // Trigger chip → add that word (or all) to the prompt; never
+        // selects the LoRA.
+        const trig = e.target.closest(".lora-card-trig");
+        if (trig) {
+          e.stopPropagation();
+          if (trig.dataset.trigAll) {
+            const words = _triggerWords(lora.activation_text);
+            if (words.length) _insertTag(words.join(", "));
+          } else if (trig.dataset.trig != null) {
+            _insertTag(trig.dataset.trig);
+          }
+          trig.classList.add("trig-hit");
+          setTimeout(() => trig.classList.remove("trig-hit"), 350);
+          return;
+        }
+        // Card body → select the LoRA. Inserts only the <lora:…> tag; the
+        // trigger words are added via the chips above, so you choose which.
         if (pickCallback) {
-          // Resolve the same weight insertLora would have used so the
-          // browser's weight field (and the LoRA's preferred_weight
-          // sidecar) carry through to the structured stack.
           const weight = (lora.preferred_weight && lora.preferred_weight > 0)
             ? lora.preferred_weight : insertWeight;
           try { pickCallback(lora, weight); }
@@ -777,13 +812,13 @@
     const menu = document.createElement("div");
     menu.className = "lora-card-menu";
 
-    // Edit metadata + selective trigger insertion — the primary way to set
-    // a LoRA's trigger words / model family and to add only the trigger
-    // words you want (e.g. skip a baked-in outfit).
+    // Edit the LoRA's trigger words / model family / weight. Inserting
+    // triggers happens directly on the card (click the word chips); this
+    // panel is only for editing the saved metadata.
     const btnEdit = document.createElement("button");
     btnEdit.className = "lora-card-menu-item";
     btnEdit.dataset.i18n = "lora.menu.editMeta";
-    btnEdit.textContent = _t("lora.menu.editMeta", "Edit & insert triggers…");
+    btnEdit.textContent = _t("lora.menu.editMeta", "Edit metadata…");
     btnEdit.addEventListener("click", () => { dismissContextMenu(); openDetail(lora); });
     menu.appendChild(btnEdit);
     const sepEdit = document.createElement("div"); sepEdit.className = "lora-card-menu-sep";
@@ -1128,8 +1163,8 @@
     if (!textarea) return;
     const weight = (lora.preferred_weight && lora.preferred_weight > 0)
       ? lora.preferred_weight : insertWeight;
-    let text = `<lora:${lora.name.split("/").pop()}:${weight}>`;
-    if (lora.activation_text) text += " " + lora.activation_text;
+    // Tag only — trigger words are added selectively via the card chips.
+    const text = `<lora:${lora.name.split("/").pop()}:${weight}>`;
     insertAtCursor(textarea, text);
     console.log(`${TAG} Inserted ${text}`);
   }
