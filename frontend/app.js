@@ -3863,8 +3863,13 @@ function bindUI() {
       helpCell = cell;
       tip.textContent = text;
       tip.hidden = false;
-      const anchor = cell.querySelector("label, span") || cell;
-      const r = anchor.getBoundingClientRect();
+      // Anchor on the whole cell (label + input), not just the label.
+      // The label sits directly above the input, so anchoring on it put
+      // the tip at label.bottom — right on top of the input the user was
+      // about to type into (the tip also shows on focus). Using the cell
+      // rect places the tip below the entire field, or above it when
+      // there's no room below, so it never covers the input being edited.
+      const r = cell.getBoundingClientRect();
       // measure, then clamp to the viewport (flip above when needed)
       tip.style.left = "0px";
       tip.style.top = "0px";
