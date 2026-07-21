@@ -2368,6 +2368,10 @@ def setup_studio_routes(app: FastAPI):
     _civitai_enrich = None
     # Civitai Helper sidecar reader (<stem>.civitai.info) — same lifecycle.
     _civitai_read_ch = None
+    # Arch strings keyed by checkpoint filename, filled as a side effect of
+    # check_model_te header inspections. The checkpoint browser reads this
+    # cache only — it never bulk-scans headers at browse time.
+    _model_arch_cache = {}
 
     # ------------------------------------------------------------------
     # Standalone mode: root redirect + file serving
@@ -4258,6 +4262,8 @@ def setup_studio_routes(app: FastAPI):
             except Exception:
                 log.exception("Architecture detection failed")
 
+            if arch and arch != "unknown":
+                _model_arch_cache[filepath] = arch
             return {"needs_te": not has_te, "needs_vae": not has_vae, "arch": arch}
         except Exception as e:
             print(f"{TAG} check_model_te error: {e}")
@@ -4453,6 +4459,154 @@ def setup_studio_routes(app: FastAPI):
                         print(f"{TAG} Deleted LoRA preview: {preview}")
                         deleted = True
 
+        return {"ok": deleted}
+
+    # ------------------------------------------------------------------
+    # Checkpoint browser: rich listing + user-selectable previews
+    # ------------------------------------------------------------------
+
+    _CKPT_EXTS = ('.safetensors', '.ckpt', '.gguf', '.pt')
+
+    def _resolve_ckpt_dirs():
+        """Checkpoint roots: --ckpt-dir when set, plus models/Stable-diffusion."""
+        dirs = []
+        ckpt_dir = getattr(shared.cmd_opts, 'ckpt_dir', None)
+        if ckpt_dir:
+            dirs.append(ckpt_dir)
+        try:
+            from modules.paths import models_path
+            dirs.append(os.path.join(models_path, "Stable-diffusion"))
+        except Exception:
+            pass
+        out, seen = [], set()
+        for d in dirs:
+            if d and d not in seen:
+                seen.add(d)
+                out.append(d)
+        return out
+
+    def _resolve_ckpt_by_stem(name):
+        """Resolve a browser stem ("subfolder/name", no extension) to a real
+        checkpoint file. The user string is only ever joined under the
+        configured checkpoint roots with a whitelisted model extension, must
+        hit an existing file, and the result must resolve inside a root
+        (realpath containment) — so preview writes/deletes can only touch
+        fixed-suffix siblings of actual checkpoints."""
+        if not name:
+            return None
+        roots = _resolve_ckpt_dirs()
+        for base_dir in roots:
+            if not base_dir or not os.path.isdir(base_dir):
+                continue
+            for ext in _CKPT_EXTS:
+                candidate = os.path.join(base_dir, name.replace("/", os.sep) + ext)
+                if os.path.isfile(candidate) and _is_path_within_roots(candidate, roots):
+                    return candidate
+        return None
+
+    @app.get("/studio/checkpoints")
+    async def get_checkpoints():
+        """Rich checkpoint listing for the checkpoint browser.
+
+        Rides Neo's in-memory registry — the same set the model dropdown
+        shows, so every card is guaranteed loadable — and enriches from
+        local data only: the <stem>.preview.png-first ladder, the Civitai
+        Helper .civitai.info base model, and the arch cache filled by
+        check_model_te for models that were actually inspected. Never
+        header-scans the collection at browse time.
+        """
+        roots = _resolve_ckpt_dirs()
+        out = []
+        try:
+            checkpoints = list(sd_models.checkpoints_list.values())
+        except Exception:
+            checkpoints = []
+        for m in checkpoints:
+            filename = getattr(m, "filename", "") or ""
+            stem_rel = ""
+            subfolder = ""
+            for r in roots:
+                try:
+                    rel = os.path.relpath(filename, r)
+                except ValueError:
+                    continue
+                if not rel.startswith(".."):
+                    stem_rel = os.path.splitext(rel)[0].replace(os.sep, "/")
+                    subfolder = os.path.dirname(rel).replace(os.sep, "/")
+                    break
+            preview_path = _find_lora_preview(filename) if filename else None
+            try:
+                stat = os.stat(filename)
+                size, mtime = stat.st_size, stat.st_mtime
+            except OSError:
+                size, mtime = 0, 0
+            base_model = ""
+            if _civitai_read_ch is not None and filename:
+                ch_info = _civitai_read_ch(filename)
+                if ch_info:
+                    base_model = ch_info.get("base_model") or ""
+            out.append({
+                "title": getattr(m, "title", "") or "",
+                "name": getattr(m, "model_name", "") or "",
+                "hash": getattr(m, "shorthash", None),
+                "filename": filename,
+                "stem": stem_rel,
+                "subfolder": subfolder,
+                "size": size,
+                "mtime": mtime,
+                "preview": f"/file={preview_path}" if preview_path else None,
+                "base_model": base_model,
+                "arch": _model_arch_cache.get(filename, ""),
+            })
+        out.sort(key=lambda x: _natural_sort_key(x["title"]))
+        return out
+
+    @app.post("/studio/checkpoint_preview")
+    async def save_checkpoint_preview(req: dict):
+        """Save a preview image beside a checkpoint (<stem>.preview.png).
+        Same contract as /studio/lora_preview, restricted to checkpoint
+        dirs; the sidecar PNG survives Studio and is visible to other
+        tools. Expects {name, image_b64} with name = listing stem."""
+        name = req.get("name", "")
+        image_b64 = req.get("image_b64", "")
+        if not name or not image_b64:
+            return JSONResponse({"ok": False, "error": "Missing name or image_b64"}, status_code=400)
+        target_path = _resolve_ckpt_by_stem(name)
+        if not target_path:
+            return JSONResponse({"ok": False, "error": f"Checkpoint not found: {name}"}, status_code=404)
+        try:
+            b64_data = image_b64
+            if "," in b64_data:
+                b64_data = b64_data.split(",", 1)[1]
+            img_bytes = base64.b64decode(b64_data)
+            preview_path = os.path.splitext(target_path)[0] + ".preview.png"
+            img = Image.open(io.BytesIO(img_bytes))
+            max_dim = 512
+            if img.width > max_dim or img.height > max_dim:
+                img.thumbnail((max_dim, max_dim), Image.LANCZOS)
+            img.save(preview_path, format="PNG", icc_profile=_SRGB_ICC)
+            print(f"{TAG} Saved checkpoint preview: {preview_path}")
+            return {"ok": True, "path": preview_path}
+        except Exception as e:
+            log.exception("Checkpoint preview save failed")
+            return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
+    @app.delete("/studio/checkpoint_preview")
+    async def delete_checkpoint_preview(name: str = ""):
+        """Delete a checkpoint's preview sidecar(s)."""
+        if not name:
+            return JSONResponse({"ok": False, "error": "Missing name"}, status_code=400)
+        target_path = _resolve_ckpt_by_stem(name)
+        if not target_path:
+            return JSONResponse({"ok": False, "error": f"Checkpoint not found: {name}"}, status_code=404)
+        deleted = False
+        base = os.path.splitext(target_path)[0]
+        for pext in ('.preview.png', '.preview.jpg', '.preview.jpeg', '.preview.webp'):
+            preview = base + pext
+            if os.path.isfile(preview):
+                os.remove(preview)
+                print(f"{TAG} Deleted checkpoint preview: {preview}")
+                deleted = True
         return {"ok": deleted}
 
     @app.post("/studio/open_lora_folder")

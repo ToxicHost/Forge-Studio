@@ -482,6 +482,7 @@
                   <select class="param-select" id="paramModel" style="flex:1;">
                     <option>Loading models...</option>
                   </select>
+                  <button class="cn-upload-btn" id="browseModelsBtn" data-i18n-title="ckpt.browse.tooltip" title="Browse checkpoints" style="padding:4px 6px;font-size:12px;">&#x25a6;</button>
                   <button class="cn-upload-btn" id="refreshModelsBtn" title="Refresh model list" style="padding:4px 6px;font-size:12px;">&#x21bb;</button>
                 </div>
               </div>
@@ -1319,7 +1320,7 @@
     "searchable-select.js", "canvas-core.js",
     "canvas-ui.js", "workflow-state.js", "app.js", "workflows.js",
     "module-system.js", "studio-tour.js", "studio-docs.js", "tag-complete.js",
-    "lora-browser.js", "lora-stack.js", "wildcard-browser.js"
+    "lora-browser.js", "checkpoint-browser.js", "lora-stack.js", "wildcard-browser.js"
   ];
   // Optional modules — loaded if available, silently skipped if not.
   // debug.js exposes window.StudioDebug.* — dev-tools-only, no UI.
