@@ -712,7 +712,7 @@ function bindCanvas() {
     // === ZOOM-DRAG (Krita-style Shift+Space+drag) ===
     let _spaceHeld = false;
     let _zoomDrag = { active: false, startY: 0, startScale: 1, anchorX: 0, anchorY: 0 };
-    document.addEventListener("keydown", e => { if (e.code === "Space" && !["INPUT","TEXTAREA","SELECT"].includes(e.target.tagName)) { _spaceHeld = true; if (S.canvas) S.canvas.style.cursor = e.shiftKey ? "ns-resize" : "grab"; e.preventDefault(); } });
+    document.addEventListener("keydown", e => { if (e.code === "Space" && !["INPUT","TEXTAREA","SELECT"].includes(e.target.tagName) && !e.target.isContentEditable) { _spaceHeld = true; if (S.canvas) S.canvas.style.cursor = e.shiftKey ? "ns-resize" : "grab"; e.preventDefault(); } });
     document.addEventListener("keyup", e => { if (e.code === "Space") { _spaceHeld = false; if (S.canvas && !S.zoom.panning && !_zoomDrag.active) setTool(S.tool); } });
 
     cv.addEventListener("pointerdown", e => {
@@ -745,7 +745,7 @@ function bindCanvas() {
     // images (save/open in new tab), and the gallery detail sidebar so
     // users can right-click → Copy on prompt / metadata text.
     document.addEventListener("contextmenu", e => {
-        if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName)) return;
+        if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName) || e.target.isContentEditable) return;
         if (e.target.closest(".gal-detail-img-area")) return;
         if (e.target.closest(".gal-detail-sidebar")) return;
         e.preventDefault();
@@ -3032,8 +3032,8 @@ function renderLayerPanel() {
             };
             nameEl.addEventListener("blur", commit, { once: true });
             nameEl.addEventListener("keydown", ev => {
-                if (ev.key === "Enter") { ev.preventDefault(); nameEl.blur(); }
-                if (ev.key === "Escape") { nameEl.textContent = L.name; nameEl.blur(); }
+                if (ev.key === "Enter") { ev.preventDefault(); ev.stopPropagation(); nameEl.blur(); }
+                if (ev.key === "Escape") { ev.stopPropagation(); nameEl.textContent = L.name; nameEl.blur(); }
             });
         });
 
@@ -3670,7 +3670,7 @@ function _dispatchCanvasShortcut(actionId, e) {
 
 function bindKeys() {
     document.addEventListener("keydown", e => {
-        if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName)) return;
+        if (["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName) || e.target.isContentEditable) return;
 
         // Space for pan mode
         if (e.key === " " && !e.repeat) {
@@ -3957,7 +3957,7 @@ function _initScrubLabels() {
         let dragStartX = 0, dragStartVal = 0, dragged = false;
 
         el.addEventListener("pointerdown", e => {
-            if (e.target.tagName === "INPUT") return; // don't interfere with text input
+            if (e.target.tagName === "INPUT" || e.target.isContentEditable) return; // don't interfere with text input
             e.preventDefault();
             dragStartX = e.clientX;
             dragStartVal = m.get();

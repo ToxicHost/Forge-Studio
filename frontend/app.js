@@ -8374,7 +8374,8 @@ async function init() {
       // Keyboard shortcut: backslash
       document.addEventListener("keydown", (e) => {
         if (e.key === "\\" && !e.ctrlKey && !e.altKey && !e.metaKey &&
-            !["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName)) {
+            !["INPUT", "TEXTAREA", "SELECT"].includes(e.target.tagName) &&
+            !e.target.isContentEditable) {
           e.preventDefault();
           _applyCollapse(!panel.classList.contains("collapsed"));
         }
