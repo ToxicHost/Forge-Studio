@@ -2216,6 +2216,7 @@ async function doGenerate() {
     save_lossless: State.saveLossless || false,
     embed_metadata: State.embedMetadata ?? true,
     save_dir: State.saveDir || "",
+    save_tree: State.saveTree || "studio",
     high_precision: !!State.highPrecision,
     is_txt2img: isTxt2img,
 
@@ -5122,6 +5123,14 @@ function bindUI() {
     }
   });
 
+  // ===== Save tree: Studio folders vs Neo's own per-mode output dirs =====
+  const _saveTreeSelect = document.getElementById("settingSaveTree");
+  const _syncSaveTree = () => {
+    State.saveTree = _saveTreeSelect?.value === "neo" ? "neo" : "studio";
+    window.Prefs?.set("save_tree", State.saveTree);
+  };
+  _saveTreeSelect?.addEventListener("change", _syncSaveTree);
+
   // ===== Auto-save folder (where generated images are written) =====
   const _saveDirInput = document.getElementById("settingSaveDir");
   const _syncSaveDir = () => {
@@ -5447,7 +5456,7 @@ function bindUI() {
     format: [
       ["settingSaveFormat", "val"], ["settingJpegQuality", "val"], ["settingWebpQuality", "val"],
       ["toggleWebpLossless", "on"], ["settingGalleryFolder", "val"],
-      ["settingSaveDir", "val"],
+      ["settingSaveDir", "val"], ["settingSaveTree", "val"],
     ],
     // Watermark settings persist regardless of the enable toggle, so a user's
     // configured mark/position/sliders survive disabling + reload.
@@ -5657,6 +5666,7 @@ function bindUI() {
     // Sync output format state
     State.galleryFolder = document.getElementById("settingGalleryFolder")?.value?.trim() || "";
     State.saveDir = document.getElementById("settingSaveDir")?.value?.trim() || "";
+    State.saveTree = document.getElementById("settingSaveTree")?.value === "neo" ? "neo" : "studio";
     _syncFormatUI();
     const jq = parseInt(document.getElementById("settingJpegQuality")?.value) || 80;
     const wq = parseInt(document.getElementById("settingWebpQuality")?.value) || 75;
@@ -8273,6 +8283,13 @@ async function init() {
       const el = document.getElementById("settingSaveDir");
       if (el) el.value = _sd;
       State.saveDir = String(_sd).trim();
+    }
+    const _st = window.Prefs?.get("save_tree");
+    if (_st != null) {
+      const tree = _st === "neo" ? "neo" : "studio";
+      const el = document.getElementById("settingSaveTree");
+      if (el) el.value = tree;
+      State.saveTree = tree;
     }
     const _gf = window.Prefs?.get("gallery_folder");
     if (_gf != null) {

@@ -1040,6 +1040,14 @@
             </div>
             <div class="setting-group">
               <div class="setting-group-title" data-i18n="settings.saveDir.title">Save folder</div>
+              <div class="setting-row">
+                <span class="setting-label" data-i18n="settings.saveDir.tree">Save tree</span>
+                <select class="param-select" id="settingSaveTree" style="width:160px;padding:4px 8px;">
+                  <option value="studio" data-i18n="settings.saveDir.treeStudio">Studio folders</option>
+                  <option value="neo" data-i18n="settings.saveDir.treeNeo">Neo output folders</option>
+                </select>
+              </div>
+              <p style="font-size:10px;color:var(--text-4);margin:4px 0 0 0;" data-i18n="settings.saveDir.treeHint">With Neo output folders, new images save into Neo&rsquo;s own txt2img / img2img folders (using Studio&rsquo;s filenames and metadata); existing images stay where they are and remain visible in Gallery.</p>
               <div class="setting-row" style="align-items:flex-start;flex-direction:column;gap:5px;">
                 <span class="setting-label" data-i18n="settings.saveDir.folder">Auto-save folder</span>
                 <input type="text" class="param-val" id="settingSaveDir" data-i18n-placeholder="settings.saveDir.placeholder" placeholder="Leave blank for the default Forge output folder" style="width:100%;box-sizing:border-box;font-size:11px;">

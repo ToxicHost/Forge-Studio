@@ -600,6 +600,36 @@ def get_scan_folders():
         return []
 
 
+def ensure_scan_folder(path, label=None):
+    """Idempotently register *path* as a Gallery scan folder.
+
+    Used by the save pipeline when saving into Neo's output tree (the
+    save_tree setting) so those folders show up in Gallery automatically
+    alongside Studio's own tree — no files are ever moved. Never raises
+    into the save path; the watcher restarts only when a row was actually
+    inserted.
+    """
+    try:
+        p = str(path or "").strip()
+        if not p:
+            return False
+        db = _get_db()
+        try:
+            cur = db.execute(
+                "INSERT OR IGNORE INTO scan_folders (path, label) VALUES (?,?)",
+                (p, Path(p).name or p if label is None else label),
+            )
+            db.commit()
+            inserted = cur.rowcount > 0
+        finally:
+            db.close()
+        if inserted:
+            threading.Thread(target=restart_watcher, daemon=True).start()
+        return inserted
+    except Exception:
+        return False
+
+
 def _natural_sort_key(text):
     if not text:
         return ""

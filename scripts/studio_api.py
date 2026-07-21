@@ -375,7 +375,7 @@ _PREFS_LOCK = RLock()
 _PREFS_MAX_BYTES = 256 * 1024
 _PREFS_ALLOWED_KEYS = {
     "component_memory", "shortcuts", "layout_preset", "session_limit",
-    "gallery_folder", "save_dir", "vram_weights", "auto_unload",
+    "gallery_folder", "save_dir", "save_tree", "vram_weights", "auto_unload",
     "remember_session", "gal_send_prompt_version", "panel_ui",
 }
 
@@ -1090,6 +1090,7 @@ class GenerateRequest(BaseModel):
     save_lossless: bool = False      # WebP lossless mode
     embed_metadata: bool = True      # whether to embed generation params in saved files
     save_dir: str = ""               # optional auto-save folder override (empty = Forge output dir)
+    save_tree: str = "studio"        # "studio" (output/studio/{mode}/{date}) | "neo" (Neo's own per-mode outdirs)
     is_txt2img: bool = False
 
     # Extension bridge: {arg_index: value} overrides from auto-bridged extensions
@@ -2635,7 +2636,46 @@ def setup_studio_routes(app: FastAPI):
             except Exception:
                 log.exception("Invalid save_dir override — falling back to default")
                 _save_override = ""
-        if not _save_override:
+        if not _save_override and (req.save_tree or "").strip().lower() == "neo":
+            # Settings → Save tree = Neo: save into Neo's own per-mode output
+            # dirs, exactly where its stock UI would. Scope limit (stated in
+            # the settings copy): Studio keeps its own filenames and metadata
+            # embedding; Neo's filename_pattern is not honored. getattr on
+            # shared.opts resolves Neo's defaults for options the user never
+            # customized (opts.data only holds overrides).
+            try:
+                from modules.paths import data_path
+            except Exception:
+                data_path = os.path.abspath(".")
+            _leaf = "txt2img-images" if req.is_txt2img else "img2img-images"
+            _mode_key = "outdir_txt2img_samples" if req.is_txt2img else "outdir_img2img_samples"
+            try:
+                neo_outdir = (
+                    getattr(shared.opts, "outdir_samples", "")  # "save all images to same dir" override
+                    or getattr(shared.opts, _mode_key, "")
+                    or os.path.join("outputs", _leaf)
+                )
+            except Exception:
+                neo_outdir = os.path.join("outputs", _leaf)
+            if not os.path.isabs(neo_outdir):
+                neo_outdir = os.path.join(data_path, neo_outdir)
+            output_dir = Path(neo_outdir)
+            # Honor Neo's date-subfolder convention ([date] is its default
+            # directories pattern) when save_to_dirs is set
+            try:
+                if bool(getattr(shared.opts, "save_to_dirs", False)):
+                    output_dir = output_dir / date.today().strftime("%Y-%m-%d")
+            except Exception:
+                pass
+            # Graceful switch: register the Neo dir in the Gallery scan set
+            # so old (Studio-tree) and new images coexist; no files move,
+            # and Studio's own root stays linked. Content-hash identity in
+            # the gallery DB makes the union safe.
+            try:
+                _import("studio_gallery", "ensure_scan_folder")(str(Path(neo_outdir)))
+            except Exception:
+                log.debug("could not register Neo outdir as gallery scan folder", exc_info=True)
+        elif not _save_override:
             try:
                 # Use the same output dir logic as the generation pipeline
                 base_outdir = shared.opts.data.get("outdir_samples", "")
