@@ -2366,6 +2366,8 @@ def setup_studio_routes(app: FastAPI):
     # Captured by the get_loras closure so the response is decorated with
     # cached metadata when available. Defined here so the closure can see it.
     _civitai_enrich = None
+    # Civitai Helper sidecar reader (<stem>.civitai.info) — same lifecycle.
+    _civitai_read_ch = None
 
     # ------------------------------------------------------------------
     # Standalone mode: root redirect + file serving
@@ -4326,6 +4328,17 @@ def setup_studio_routes(app: FastAPI):
                         except Exception:
                             log.exception("Failed to read embedding user-metadata file")
 
+                    # Civitai Helper sidecar (<stem>.civitai.info). Merge
+                    # precedence per field: user sidecar (intent) → CH info →
+                    # Studio's own Civitai cache (enrichment below) → network.
+                    base_model = ""
+                    if _civitai_read_ch is not None:
+                        ch_info = _civitai_read_ch(full_path)
+                        if ch_info:
+                            base_model = ch_info.get("base_model") or ""
+                            if not activation_text and ch_info.get("trigger_words"):
+                                activation_text = ", ".join(ch_info["trigger_words"])
+
                     try:
                         stat = os.stat(full_path)
                         size = stat.st_size
@@ -4343,6 +4356,7 @@ def setup_studio_routes(app: FastAPI):
                         "preview": preview_url,
                         "activation_text": activation_text,
                         "preferred_weight": preferred_weight,
+                        "base_model": base_model,
                     })
 
         loras.sort(key=lambda x: _natural_sort_key(x["name"]))
@@ -6130,6 +6144,9 @@ def setup_studio_routes(app: FastAPI):
             _enrich = _load_optional_module("studio_civitai", "enrich_lora_entries")
             if _enrich:
                 _civitai_enrich = _enrich
+            _read_ch = _load_optional_module("studio_civitai", "read_ch_info")
+            if _read_ch:
+                _civitai_read_ch = _read_ch
         except Exception:
             print(f"{TAG} Civitai module setup failed")
     else:

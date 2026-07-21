@@ -508,6 +508,43 @@ def _public_view(
     }
 
 
+def read_ch_info(model_path: str) -> Optional[dict]:
+    """Read a Civitai Helper sidecar (`<stem>.civitai.info`) beside a model.
+
+    The file is a verbatim Civitai model-version API response written by
+    the Civitai Helper extension. CH writes an EMPTY file for models
+    Civitai doesn't recognize — empty, `{}`, or unparseable content all
+    mean "no data" and return None, silently. Never raises. Works for any
+    model kind (LoRAs, checkpoints) since CH uses the same convention.
+    """
+    try:
+        info_path = os.path.splitext(model_path)[0] + ".civitai.info"
+        if not os.path.isfile(info_path):
+            return None
+        with open(info_path, "r", encoding="utf-8") as f:
+            text = f.read().strip()
+        if not text:
+            return None
+        raw = json.loads(text)
+        if not isinstance(raw, dict) or not raw:
+            return None
+        model = raw.get("model") if isinstance(raw.get("model"), dict) else {}
+        words = raw.get("trainedWords") or []
+        if not isinstance(words, list):
+            words = []
+        return {
+            "base_model": str(raw.get("baseModel") or ""),
+            "trigger_words": [str(w).strip() for w in words if str(w).strip()],
+            "description": raw.get("description") or "",
+            "model_id": raw.get("modelId"),
+            "version_id": raw.get("id"),
+            "model_name": model.get("name") or "",
+            "version_name": raw.get("name") or "",
+        }
+    except Exception:
+        return None
+
+
 def enrich_lora_entries(
     loras: List[dict], lora_dirs_in_order: List[str]
 ) -> List[dict]:
@@ -565,6 +602,8 @@ def enrich_lora_entries(
             entry["preview"] = view["preview"]
         if not entry.get("activation_text") and view.get("trigger_words"):
             entry["activation_text"] = ", ".join(view["trigger_words"])
+        if not entry.get("base_model") and view.get("base_model"):
+            entry["base_model"] = view["base_model"]
 
     return loras
 

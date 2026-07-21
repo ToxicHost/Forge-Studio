@@ -336,6 +336,7 @@
   "lora.openFolder": "Open Folder",
   "lora.openFolder.tooltip": "Open LoRA folder in file manager",
   "lora.hint": "Click to insert · Right-click for options",
+  "lora.baseFilter.untagged": "untagged",
   "lora.empty.none": "No LoRAs found in your models/Lora directory",
   "lora.empty.noMatch": "No LoRAs match your search",
   "lora.allFolder": "All LoRAs",
