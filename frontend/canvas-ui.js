@@ -1077,6 +1077,7 @@ function bindCanvas() {
         // Region painting
         if (S.regionMode && C.activeRegion() && (S.tool === "brush" || S.tool === "eraser")) {
             C.saveUndo("Region paint: " + C.activeRegion().name);
+            window.Education?.maybeShowTip?.("regions");
             S.drawing = true; cv.setPointerCapture(e.pointerId);
             _beginWebGLLiveFallbackIfNeeded();
             if (S.tool === "eraser") C.regionEraseMove(p.x, p.y, p.x, p.y);
@@ -3410,6 +3411,7 @@ function _addLayer() {
     S.layers.splice(S.activeLayerIdx + 1, 0, L);
     S.activeLayerIdx++;
     renderLayerPanel(); renderHistoryPanel(); _redraw();
+    window.Education?.maybeShowTip?.("layers");
 }
 
 function _duplicateLayer() {
@@ -4464,6 +4466,7 @@ function bindToolbar() {
         S.layers.splice(S.activeLayerIdx + 1, 0, L);
         S.activeLayerIdx++;
         renderLayerPanel(); renderHistoryPanel(); _redraw();
+        window.Education?.maybeShowTip?.("layers");
     });
     document.getElementById("layerDel")?.addEventListener("click", () => {
         if (S.layers.length <= 1) return;

@@ -581,6 +581,7 @@ const Live = {
       this._updateUI();
       window.Customizer?.updateToggleState();
       console.log("[Live] Active, seed:", this.seed);
+      window.Education?.maybeShowTip?.("live");
       // Trigger an initial submit with current canvas state
       this._scheduleCanvasCheck(0);
     } catch (e) {

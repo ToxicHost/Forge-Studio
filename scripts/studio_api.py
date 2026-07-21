@@ -376,7 +376,7 @@ _PREFS_MAX_BYTES = 256 * 1024
 _PREFS_ALLOWED_KEYS = {
     "component_memory", "shortcuts", "layout_preset", "session_limit",
     "gallery_folder", "save_dir", "save_tree", "vram_weights", "auto_unload",
-    "remember_session", "gal_send_prompt_version", "panel_ui",
+    "remember_session", "gal_send_prompt_version", "panel_ui", "education",
 }
 
 

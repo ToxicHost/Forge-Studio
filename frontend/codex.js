@@ -334,7 +334,7 @@ var ENTRIES = [
 
   { id: "layers_basics", title: "Working with Layers", category: "layers",
     tags: ["layers", "stack", "blend", "opacity", "reference", "paint"],
-    content: "<p>Layers are transparent sheets stacked on each other. <strong>+</strong> adds a new layer, \u25b2\u25bc reorder, \u21e9 merge down, eye toggles visibility. Each layer has its own Opacity and Blend Mode.</p><p>Generated images land on the <strong>reference layer</strong> (bottom). Your painting goes on <strong>paint layers</strong> above. This means regenerating never destroys your painted edits \u2014 they live on a different layer.</p><p>Blend modes (Normal, Multiply, Screen, Overlay, Soft Light, Hard Light, Difference, etc.) control how layers interact. Merge Down composites using the current blend mode and opacity.</p>",
+    content: "<p><strong>1 \u2014 Composite in passes.</strong> Generate a base, send it to the canvas, add a layer, mask the area you want to change, and regenerate just that region. Repeat to build the image element by element \u2014 background first, then a character, then details. If your instinct is \u201cbackground first, then the character,\u201d that instinct is right \u2014 the spelling is mask + regenerate, not per-layer generation.</p><p><strong>2 \u2014 Paint-over correction.</strong> Paint fixes on a layer above the image \u2014 rough shapes, color blocks, redraws \u2014 then inpaint through them: mask the painted area and regenerate at moderate denoise so your strokes become finished detail.</p><p><strong>3 \u2014 Live iteration.</strong> With Live active, paint on your layer and <strong>Apply</strong> commits each result to the <strong>[Live]</strong> layers below it, so you keep sketching over the latest result and apply again.</p><hr class=\"cx-divider\"><p>Layers are transparent sheets stacked on each other. <strong>+</strong> adds a new layer, \u25b2\u25bc reorder, \u21e9 merge down, the eye toggles visibility. Each layer has its own Opacity and Blend Mode (Normal, Multiply, Screen, Overlay, Soft Light, Hard Light, Difference, \u2026); Merge Down composites using the current blend mode and opacity.</p><p>Generated images land on the <strong>reference layer</strong> (bottom); your painting goes on <strong>paint layers</strong> above, so regenerating never destroys painted edits \u2014 they live on a different layer.</p>",
   },
 
   { id: "psd_export", title: "PSD Export", category: "layers",
@@ -794,5 +794,19 @@ if (document.readyState === "loading") {
 } else {
   setTimeout(_buildPopover, 100);
 }
+
+// Public deep-link API — the education first-encounter tips use it for
+// their "Learn more" links. Activates the Codex tab and selects the entry
+// by id; unknown ids are a safe no-op. Selection is deferred a tick since
+// the module's init builds the UI on first activation.
+window.Codex = {
+  openEntry: function (id) {
+    var e = ENTRIES.find(function (x) { return x.id === id; });
+    if (!e) return false;
+    try { if (window.StudioModules) StudioModules.activate("codex"); } catch (err) {}
+    setTimeout(function () { try { _selectEntry(e); } catch (err) {} }, 150);
+    return true;
+  },
+};
 
 })();
