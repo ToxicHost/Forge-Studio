@@ -1126,7 +1126,7 @@ body {
 .param-val:hover { border-color: var(--border); }
 .param-val:focus { border-color: var(--accent); }
 .param-val.scrubbing { border-color: var(--accent); background: var(--accent-dim); color: var(--accent); cursor: ew-resize; }
-.param-val { cursor: ew-resize; }
+.param-val.scrubbable { cursor: ew-resize; }
 
 .param-select {
   appearance: none;
@@ -1414,6 +1414,19 @@ label[data-help] {
   padding: 6px 9px;
   font-size: var(--ui-font-small); line-height: 1.45;
   color: var(--text-2);
+  box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
+  pointer-events: none;
+}
+
+/* Floating value readout while scrubbing a numeric field */
+.scrub-tip {
+  position: fixed; z-index: 10000;
+  background: var(--bg-raised);
+  border: 1px solid var(--accent);
+  border-radius: var(--radius-sm);
+  padding: 3px 8px;
+  font-size: var(--ui-font-small); font-family: var(--mono);
+  color: var(--accent);
   box-shadow: 0 4px 14px rgba(0, 0, 0, 0.4);
   pointer-events: none;
 }

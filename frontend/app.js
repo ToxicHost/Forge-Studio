@@ -8082,18 +8082,61 @@ async function _refreshVRAM() {
 // ═══════════════════════════════════════════
 
 // ── Param scrub: hold & drag on number inputs to change values ──
+// Attaches to every numeric .param-val input. Per-field ranges come from
+// data-min/data-max/data-step (bare min/max/step attributes are honored as
+// a fallback — the Soft Inpainting fields carry those); a field with no
+// step infers one from its value's precision, and a field missing either
+// bound scrubs with fixed per-pixel stepping instead of range mapping, so
+// unbounded fields like seeds still work.
+function _paramScrubDef(el) {
+  const attr = (n) => el.dataset[n] ?? el.getAttribute(n);
+  const min = parseFloat(attr("min"));
+  const max = parseFloat(attr("max"));
+  let step = parseFloat(attr("step"));
+  if (!Number.isFinite(step)) step = String(el.value).includes(".") ? 0.01 : 1;
+  return {
+    min: Number.isFinite(min) ? min : -Infinity,
+    max: Number.isFinite(max) ? max : Infinity,
+    step,
+  };
+}
+function _paramScrubFmt(v, step) {
+  if (step >= 1) return String(v);
+  // Round to the step's precision to avoid floating point noise
+  return v.toFixed(String(step).split(".")[1]?.length || 2);
+}
+function _paramScrubApply(el, v, def) {
+  v = Math.max(def.min, Math.min(def.max, v));
+  if (def.step < 1) v = Math.round(v / def.step) * def.step;
+  el.value = _paramScrubFmt(v, def.step);
+}
 function _initParamScrub() {
-  const scrubDefs = [
-    { id: "paramSteps",    min: 1,   max: 150,  step: 1   },
-    { id: "paramCFG",      min: 1,   max: 30,   step: 0.5 },
-    { id: "paramDenoise",  min: 0,   max: 1,    step: 0.01 },
-    { id: "paramWidth",    min: 64,  max: 2048, step: 64  },
-    { id: "paramHeight",   min: 64,  max: 2048, step: 64  },
-    { id: "paramBatch",    min: 1,   max: 16,   step: 1   },
-  ];
-  for (const def of scrubDefs) {
-    const el = document.getElementById(def.id);
-    if (!el) continue;
+  // Floating value readout, positioned above the field (below when clipped
+  // at the top) and offset from the cursor so the value stays visible.
+  const tip = document.createElement("div");
+  tip.className = "scrub-tip";
+  tip.setAttribute("aria-hidden", "true");
+  tip.hidden = true;
+  document.body.appendChild(tip);
+  const showTip = (el, clientX) => {
+    tip.textContent = el.value;
+    tip.hidden = false;
+    const r = el.getBoundingClientRect();
+    const tw = tip.offsetWidth, th = tip.offsetHeight;
+    const x = Math.min(Math.max(4, clientX + 16), window.innerWidth - tw - 4);
+    let y = r.top - th - 8;
+    if (y < 4) y = r.bottom + 8;
+    tip.style.left = x + "px";
+    tip.style.top = y + "px";
+  };
+  const hideTip = () => { tip.hidden = true; };
+
+  const isNumericVal = (el) =>
+    el.type !== "number" && Number.isFinite(parseFloat(el.value));
+
+  for (const el of document.querySelectorAll("input.param-val")) {
+    if (!isNumericVal(el)) continue;
+    el.classList.add("scrubbable");
     let dragStartX = 0, dragStartVal = 0, dragged = false, pointerId = null;
 
     el.addEventListener("pointerdown", e => {
@@ -8112,19 +8155,25 @@ function _initParamScrub() {
       const dx = e.clientX - dragStartX;
       if (Math.abs(dx) < 3 && !dragged) return;
       dragged = true;
-      // Sensitivity: ~250px drag covers the full range for any parameter
-      const sensitivity = (def.max - def.min) / 250;
-      let v = dragStartVal + Math.round(dx * sensitivity / def.step) * def.step;
-      v = Math.max(def.min, Math.min(def.max, v));
-      // Round to avoid floating point noise
-      if (def.step < 1) v = Math.round(v / def.step) * def.step;
-      el.value = def.step >= 1 ? v : v.toFixed(String(def.step).split(".")[1]?.length || 2);
+      const def = _paramScrubDef(el);
+      let v;
+      if (Number.isFinite(def.min) && Number.isFinite(def.max)) {
+        // Sensitivity: ~250px drag covers the full range for any parameter
+        const sensitivity = (def.max - def.min) / 250;
+        v = dragStartVal + Math.round(dx * sensitivity / def.step) * def.step;
+      } else {
+        // No full range — one step per 4px of drag
+        v = dragStartVal + Math.round(dx / 4) * def.step;
+      }
+      _paramScrubApply(el, v, def);
+      showTip(el, e.clientX);
       el.dispatchEvent(new Event("input", { bubbles: true }));
     });
 
     el.addEventListener("pointerup", e => {
       if (!el.classList.contains("scrubbing")) return;
       el.classList.remove("scrubbing");
+      hideTip();
       if (pointerId !== null) { try { el.releasePointerCapture(pointerId); } catch {} pointerId = null; }
       if (!dragged) {
         // Click — focus the input for manual typing
@@ -8135,6 +8184,7 @@ function _initParamScrub() {
       }
     });
   }
+
 }
 
 async function init() {
