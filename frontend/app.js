@@ -8185,6 +8185,22 @@ function _initParamScrub() {
     });
   }
 
+  // Arrow-key stepping — the inputs are type="text", so there is no native
+  // stepping. Delegated so it covers every numeric .param-val uniformly.
+  document.addEventListener("keydown", e => {
+    if (e.key !== "ArrowUp" && e.key !== "ArrowDown") return;
+    if (e.ctrlKey || e.altKey || e.metaKey) return;
+    const el = e.target;
+    if (!(el instanceof HTMLInputElement)) return;
+    if (!el.classList.contains("param-val") || !isNumericVal(el)) return;
+    e.preventDefault();
+    const def = _paramScrubDef(el);
+    const dir = e.key === "ArrowUp" ? 1 : -1;
+    const cur = parseFloat(el.value) || 0;
+    _paramScrubApply(el, cur + dir * def.step * (e.shiftKey ? 10 : 1), def);
+    el.dispatchEvent(new Event("input", { bubbles: true }));
+    el.dispatchEvent(new Event("change", { bubbles: true }));
+  });
 }
 
 async function init() {
