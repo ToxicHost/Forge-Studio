@@ -3275,7 +3275,23 @@ function renderRegionPanel() {
         delBtn.textContent = "✕";
         delBtn.addEventListener("click", e => { e.stopPropagation(); C.deleteRegion(r.id); renderRegionPanel(); _redraw(); });
 
-        hdr.appendChild(dot); hdr.appendChild(nm); hdr.appendChild(eyeBtn); hdr.appendChild(clrBtn); hdr.appendChild(delBtn);
+        // Bracket-balance indicator for this region's prompts (informational
+        // only; one glyph per row covers prompt + negative)
+        const balEl = document.createElement("span");
+        balEl.className = "region-bracket-balance";
+        balEl.textContent = "⚠";
+        balEl.style.cssText = "display:none;font-size:10px;color:var(--amber);cursor:help;flex-shrink:0;user-select:none;";
+        const updateBal = () => {
+            const issues = window.StudioPromptQoL?.bracketIssues?.((r.prompt || "") + "\n" + (r.negPrompt || "")) || [];
+            balEl.style.display = issues.length ? "" : "none";
+            if (issues.length) {
+                balEl.title = window.I18N?.t
+                    ? window.I18N.t("prompt.bracketUnbalanced", "Unbalanced brackets: {pairs}", { pairs: issues.join("  ") })
+                    : "Unbalanced brackets: " + issues.join("  ");
+            }
+        };
+
+        hdr.appendChild(dot); hdr.appendChild(nm); hdr.appendChild(balEl); hdr.appendChild(eyeBtn); hdr.appendChild(clrBtn); hdr.appendChild(delBtn);
 
         // Prompt textarea
         const prompt = document.createElement("textarea");
@@ -3284,7 +3300,7 @@ function renderRegionPanel() {
         prompt.placeholder = "Region prompt...";
         prompt.style.cssText = "width:100%;font-size:10px;background:var(--bg-surface);color:var(--text-1);border:1px solid var(--border);border-radius:3px;padding:3px 5px;box-sizing:border-box;resize:vertical;min-height:32px;max-height:72px;font-family:var(--font);";
         prompt.addEventListener("click", e => e.stopPropagation());
-        prompt.addEventListener("input", () => { r.prompt = prompt.value; });
+        prompt.addEventListener("input", () => { r.prompt = prompt.value; updateBal(); });
         prompt.addEventListener("keydown", e => e.stopPropagation());
         window.TagComplete?.attach?.(prompt);
 
@@ -3295,9 +3311,10 @@ function renderRegionPanel() {
         neg.placeholder = "Negative (optional)...";
         neg.style.cssText = "width:100%;font-size:10px;background:var(--bg-surface);color:var(--text-4);border:1px solid var(--border);border-radius:3px;padding:3px 5px;box-sizing:border-box;resize:vertical;min-height:22px;max-height:50px;font-family:var(--font);margin-top:3px;";
         neg.addEventListener("click", e => e.stopPropagation());
-        neg.addEventListener("input", () => { r.negPrompt = neg.value; });
+        neg.addEventListener("input", () => { r.negPrompt = neg.value; updateBal(); });
         neg.addEventListener("keydown", e => e.stopPropagation());
         window.TagComplete?.attach?.(neg);
+        updateBal();
 
         // Contextual slider: Weight (attention couple) or Denoise (regional inpaint)
         const isEditRegional = S.studioMode === "Edit";

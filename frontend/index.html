@@ -1214,6 +1214,11 @@
                 <div class="toggle-track on" id="toggleTagAutocomplete"><div class="toggle-knob"></div></div>
               </div>
               <div class="setting-row">
+                <span class="setting-label" data-i18n="settings.prompt.cleanup">Tidy prompt on generate</span>
+                <div class="toggle-track on" id="togglePromptCleanup"><div class="toggle-knob"></div></div>
+              </div>
+              <p style="font-size:10px;color:var(--text-4);margin:2px 0 4px 0;" data-i18n="settings.prompt.cleanupHint">Collapses duplicate commas, extra spaces, and empty attention groups in the copy sent to generation. Your text is never rewritten; wildcards pass through untouched.</p>
+              <div class="setting-row">
                 <span class="setting-label" data-i18n="settings.tagAutocomplete.source">Tag source</span>
                 <select class="param-select" id="settingTagSource" style="width:160px;padding:4px 8px;">
                   <option value="danbooru">Danbooru</option>

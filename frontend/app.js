@@ -304,6 +304,7 @@ const State = {
   saveDir: "",             // optional absolute server-side folder for auto-save on generate (empty = Forge output dir)
   highPrecision: false,    // capture float32 VAE output, save .float32.bin sidecar
   livePreview: true,       // show preview thumbnail during generation
+  promptCleanup: true,     // tidy the payload copy of prompts on generate
   // Auto Watermark (composited onto the final generated image)
   watermarkEnable: false,
   watermarkName: "",
@@ -2024,6 +2025,169 @@ async function ensureSelectedComponentsLoadedForGenerate() {
   return ok !== false;
 }
 
+// ═══════════════════════════════════════════
+// PROMPT QOL — weight shortcuts, cleanup-on-generate, bracket balance
+// ═══════════════════════════════════════════
+
+// The prompt surfaces tag-complete covers: main, negative, ADetailer slot
+// prompts, regional rows, plus anything attached at runtime (_tacAttached).
+function _isPromptSurface(el) {
+  if (!el || (el.tagName !== "TEXTAREA" && el.tagName !== "INPUT")) return false;
+  if (el._tacAttached) return true;
+  if (el.classList.contains("region-prompt")) return true;
+  return ["paramPrompt", "paramNeg", "paramAD1Prompt", "paramAD2Prompt", "paramAD3Prompt"].includes(el.id);
+}
+
+// A1111-style attention weight editing. With a selection, wraps it as
+// (selection:1.1); without, uses the attention-delimited token span under
+// the caret; repeat presses step the existing weight; landing exactly on
+// 1.0 unwraps. Caret/selection survive the edit so presses chain.
+function _adjustPromptWeight(el, delta) {
+  const text = el.value ?? "";
+  let start = el.selectionStart ?? 0;
+  let end = el.selectionEnd ?? 0;
+
+  if (start === end) {
+    // Caret inside an existing (content:weight) group → target its content
+    const open = text.lastIndexOf("(", start - 1);
+    if (open !== -1 && text.lastIndexOf(")", start - 1) < open) {
+      const close = text.indexOf(")", start);
+      const nextOpen = text.indexOf("(", start);
+      if (close !== -1 && (nextOpen === -1 || nextOpen > close)) {
+        const wm = text.slice(open + 1, close).match(/^(.*):(-?[0-9]*\.?[0-9]+)$/);
+        if (wm && !wm[1].includes("(")) {
+          start = open + 1;
+          end = open + 1 + wm[1].length;
+        }
+      }
+    }
+    if (start === end) {
+      // Token span under the caret, delimited by attention syntax
+      const DELIM = "\n,()[]{}<>|:";
+      while (start > 0 && !DELIM.includes(text[start - 1])) start--;
+      while (end < text.length && !DELIM.includes(text[end])) end++;
+      while (start < end && text[start] === " ") start++;
+      while (end > start && text[end - 1] === " ") end--;
+      if (start >= end) return false;
+    }
+  }
+
+  // Already weighted? ("(" immediately before, ":w)" immediately after)
+  let weight = null, repStart = start, repEnd = end;
+  const wmAfter = text.slice(end).match(/^:(-?[0-9]*\.?[0-9]+)\)/);
+  if (start > 0 && text[start - 1] === "(" && wmAfter) {
+    weight = parseFloat(wmAfter[1]);
+    repStart = start - 1;
+    repEnd = end + wmAfter[0].length;
+  }
+
+  const content = text.slice(start, end);
+  if (!content.trim()) return false;
+  const newWeight = Math.round(((weight === null ? 1 : weight) + delta) * 100) / 100;
+  let replacement, selFrom;
+  if (weight !== null && Math.abs(newWeight - 1) < 1e-9) {
+    replacement = content; // stepped back to 1.0 — unwrap
+    selFrom = repStart;
+  } else {
+    replacement = `(${content}:${newWeight})`;
+    selFrom = repStart + 1;
+  }
+  el.value = text.slice(0, repStart) + replacement + text.slice(repEnd);
+  el.selectionStart = selFrom;
+  el.selectionEnd = selFrom + content.length;
+  el.dispatchEvent(new Event("input", { bubbles: true }));
+  return true;
+}
+
+// Payload-only prompt normalization. Wildcard calls (__name__, {a|b|c})
+// are opaque tokens — text inside them stays byte-identical (empty {a||b}
+// options are meaningful). Removes empty attention groups, collapses
+// duplicate commas and space runs, trims stray edge commas. Attention
+// weights are never touched beyond empty-group removal.
+function _cleanupPromptText(text) {
+  if (!text || typeof text !== "string") return text || "";
+  const parts = text.split(/(__[A-Za-z0-9_./ \-]+?__|\{[^{}]*\})/g);
+  for (let i = 0; i < parts.length; i += 2) { // even indices = plain text
+    let seg = parts[i];
+    // Empty attention groups, innermost-out: (), ( ), (:1.2), []
+    for (let pass = 0; pass < 4; pass++) {
+      const next = seg
+        .replace(/\(\s*(?::-?[0-9.]*)?\s*\)/g, "")
+        .replace(/\[\s*\]/g, "");
+      if (next === seg) break;
+      seg = next;
+    }
+    seg = seg
+      .replace(/\s*,(?:\s*,)+/g, ",")  // duplicate commas
+      .replace(/[ \t]{2,}/g, " ");     // runs of spaces (newlines kept)
+    parts[i] = seg;
+  }
+  return parts.join("")
+    .replace(/^[ \t]*(?:,[ \t]*)+/, "")   // stray leading commas
+    .replace(/[ \t]*(?:,[ \t]*)+$/, "")   // stray trailing commas
+    .trim();
+}
+
+// Regional prompts live inside the serialized regions JSON, not in DOM
+// inputs — clean the copies there the same way.
+function _cleanRegionsJson(regionsJson) {
+  if (!regionsJson || (State.promptCleanup ?? true) === false) return regionsJson;
+  try {
+    const rj = JSON.parse(regionsJson);
+    if (!rj || !Array.isArray(rj.regions)) return regionsJson;
+    for (const r of rj.regions) {
+      r.prompt = _cleanupPromptText(r.prompt || "");
+      r.negPrompt = _cleanupPromptText(r.negPrompt || "");
+    }
+    return JSON.stringify(rj);
+  } catch (_) {
+    return regionsJson;
+  }
+}
+
+// Bracket-balance indicator: informational only — per-pair counts of
+// unescaped ()[]{} (\( is a literal in attention syntax).
+function _bracketIssues(text) {
+  const t = String(text || "").replace(/\\[()\[\]{}]/g, "");
+  const c = { "( )": 0, "[ ]": 0, "{ }": 0 };
+  for (const ch of t) {
+    if (ch === "(") c["( )"]++; else if (ch === ")") c["( )"]--;
+    else if (ch === "[") c["[ ]"]++; else if (ch === "]") c["[ ]"]--;
+    else if (ch === "{") c["{ }"]++; else if (ch === "}") c["{ }"]--;
+  }
+  return Object.keys(c).filter(k => c[k] !== 0);
+}
+
+function _attachBracketIndicator(el, host) {
+  if (!el || !host || el._bracketBalAttached) return;
+  el._bracketBalAttached = true;
+  host.classList.add("bracket-host");
+  const glyph = document.createElement("span");
+  glyph.className = "bracket-balance";
+  glyph.textContent = "⚠";
+  glyph.style.display = "none";
+  host.appendChild(glyph);
+  const update = () => {
+    const issues = _bracketIssues(el.value);
+    if (issues.length) {
+      glyph.title = _i18n("prompt.bracketUnbalanced", "Unbalanced brackets: {pairs}", { pairs: issues.join("  ") });
+      glyph.style.display = "";
+    } else {
+      glyph.style.display = "none";
+    }
+  };
+  el.addEventListener("input", update);
+  update();
+}
+
+// Shared surface for modules that build prompt boxes dynamically
+// (canvas-ui.js regional rows)
+window.StudioPromptQoL = {
+  bracketIssues: _bracketIssues,
+  attachBracketIndicator: _attachBracketIndicator,
+  cleanup: _cleanupPromptText,
+};
+
 async function doGenerate() {
   if (State.generating || State._preflighting) return;
 
@@ -2098,6 +2262,10 @@ async function doGenerate() {
     }
   }, 200);
 
+  // Cleanup-on-generate: normalizes only the payload copy; textareas are
+  // never rewritten and wildcard calls pass through byte-identical.
+  const _clean = (s) => (State.promptCleanup ?? true) ? _cleanupPromptText(s) : s;
+
   // Collect params from UI
   const w = parseInt(document.getElementById("paramWidth")?.value) || 768;
   const h = parseInt(document.getElementById("paramHeight")?.value) || 768;
@@ -2146,10 +2314,10 @@ async function doGenerate() {
     mode: (window.StudioCore?.state?.editingMask || window.StudioCore?.state?._userMaskMode || maskB64) ? "Edit" : "Create",
     inpaint_mode: "Inpaint",
 
-    prompt:        (window.LoraStack?.compilePrompt
+    prompt:        _clean(window.LoraStack?.compilePrompt
                      ? window.LoraStack.compilePrompt(document.getElementById("paramPrompt")?.value || "")
                      : (document.getElementById("paramPrompt")?.value || "")),
-    neg_prompt:    document.getElementById("paramNeg")?.value || "",
+    neg_prompt:    _clean(document.getElementById("paramNeg")?.value || ""),
     steps:         parseInt(document.getElementById("paramSteps")?.value) || 30,
     sampler_name:  document.getElementById("paramSampler")?.value || "DPM++ 2M SDE",
     schedule_type: document.getElementById("paramScheduler")?.value || "Karras",
@@ -2199,12 +2367,12 @@ async function doGenerate() {
       confidence: _num(`paramAD${n}Conf`, 0.3),
       denoise:    _num(`paramAD${n}Denoise`, 0.4),
       mask_blur:  parseInt(document.getElementById(`paramAD${n}Blur`)?.value) || 4,
-      prompt:     document.getElementById(`paramAD${n}Prompt`)?.value || "",
+      prompt:     _clean(document.getElementById(`paramAD${n}Prompt`)?.value || ""),
       neg_prompt: "",
     })),
 
     // Regional / ControlNet
-    regions_json:  regionsJson,
+    regions_json:  _cleanRegionsJson(regionsJson),
     cn_json:       buildCNJson(),
     cn1_upload_b64: window._cnUploadData?.[1] || null,
     cn2_upload_b64: window._cnUploadData?.[2] || null,
@@ -3931,6 +4099,19 @@ function bindUI() {
   // Live token counter
   document.getElementById("paramPrompt")?.addEventListener("input", () => TokenCounter.scheduleTokenCount());
   TokenCounter.scheduleTokenCount();
+
+  // Bracket-balance indicators on the static prompt surfaces (regional
+  // rows attach per-render in canvas-ui.js via StudioPromptQoL)
+  {
+    const p = document.getElementById("paramPrompt");
+    if (p) _attachBracketIndicator(p, p.closest(".prompt-box") || p.parentElement);
+    const n = document.getElementById("paramNeg");
+    if (n) _attachBracketIndicator(n, n.closest(".prompt-box") || n.parentElement);
+    for (const i of [1, 2, 3]) {
+      const ad = document.getElementById(`paramAD${i}Prompt`);
+      if (ad) _attachBracketIndicator(ad, ad.closest(".param-cell") || ad.parentElement);
+    }
+  }
 
   // Output gallery actions
   document.getElementById("outputToCanvas")?.addEventListener("click", () => {
@@ -5975,6 +6156,20 @@ function bindUI() {
     doGenerate();
     return true;
   });
+
+  // Prompt weight shortcuts — modifier bindings, active inside text fields
+  // by design (allowInTyping + a required modifier passes the dispatch
+  // guard, same as Ctrl+Enter). Handlers no-op outside prompt surfaces so
+  // plain inputs keep their native Ctrl+Arrow behavior.
+  const _promptWeight = (delta) => {
+    const el = document.activeElement;
+    if (!_isPromptSurface(el)) return false;
+    return _adjustPromptWeight(el, delta);
+  };
+  window.Shortcuts?.registerHandler("prompt.weight-up", () => _promptWeight(0.1));
+  window.Shortcuts?.registerHandler("prompt.weight-down", () => _promptWeight(-0.1));
+  window.Shortcuts?.registerHandler("prompt.weight-up-fine", () => _promptWeight(0.05));
+  window.Shortcuts?.registerHandler("prompt.weight-down-fine", () => _promptWeight(-0.05));
   window.Shortcuts?.registerHandler("app.saveCanvas", () => {
     document.getElementById("layerSave")?.click();
     return true;
@@ -8376,6 +8571,18 @@ async function init() {
   // module) that flips its "on" class — read state AFTER it runs rather
   // than predicting and re-toggling, otherwise the two handlers cancel.
   {
+    // Cleanup-on-generate (payload-only prompt normalization, default ON)
+    const pcToggle = document.getElementById("togglePromptCleanup");
+    if (pcToggle) {
+      const enabled = localStorage.getItem("studio-prompt-cleanup") !== "0";
+      pcToggle.classList.toggle("on", enabled);
+      State.promptCleanup = enabled;
+      pcToggle.addEventListener("click", () => {
+        State.promptCleanup = pcToggle.classList.contains("on");
+        localStorage.setItem("studio-prompt-cleanup", State.promptCleanup ? "1" : "0");
+      });
+    }
+
     const tacToggle = document.getElementById("toggleTagAutocomplete");
     const tacSource = document.getElementById("settingTagSource");
     if (tacToggle) {

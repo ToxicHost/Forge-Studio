@@ -1418,6 +1418,14 @@ label[data-help] {
   pointer-events: none;
 }
 
+/* Bracket-balance indicator (informational only) */
+.bracket-host { position: relative; }
+.bracket-balance {
+  position: absolute; top: 2px; right: 6px;
+  font-size: 10px; color: var(--amber);
+  cursor: help; z-index: 2; user-select: none;
+}
+
 /* Floating value readout while scrubbing a numeric field */
 .scrub-tip {
   position: fixed; z-index: 10000;
