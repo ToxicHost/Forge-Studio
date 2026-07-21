@@ -2230,10 +2230,10 @@ function bindColorPicker() {
 // ========================================================================
 // SAVE / EXPORT
 // ========================================================================
-async function saveFlattened(ext, mime) {
+async function saveFlattened(ext, mime, applyWm) {
     // Map extensions to format names the API expects
     const fmtMap = { png: "png", jpg: "jpeg", webp: "webp" };
-    await _ctxSaveCanvas(fmtMap[ext] || "png");
+    await _ctxSaveCanvas(fmtMap[ext] || "png", applyWm);
 }
 
 // Cached sRGB ICC profile bytes — fetched lazily on the first PSD export
@@ -2328,10 +2328,20 @@ function showSaveMenu(anchor) {
     menu = document.createElement("div");
     menu.id = "saveMenu";
     menu.style.cssText = "position:fixed;z-index:200;background:var(--bg-surface);border:1px solid var(--border);border-radius:8px;padding:4px;box-shadow:0 4px 16px rgba(0,0,0,0.5);display:flex;flex-direction:column;gap:2px;";
+    // Export-time watermarking: when a watermark is configured and the
+    // apply mode is "export" (the default), the menu carries a pre-checked
+    // per-export opt-out. Legacy generation-time mode stamps during
+    // generation instead, so no checkbox shows. PSD (layered project
+    // export) is never stamped.
+    const St = window.State;
+    const wmAvailable = !!(St?.watermarkEnable && (St.watermarkName || "").trim()
+        && (St.watermarkApplyMode || "export") === "export");
+    let wmCheckbox = null;
+    const wmChecked = () => wmCheckbox ? wmCheckbox.checked : undefined;
     const items = [
-        { label: "Save as PNG", fn: () => saveFlattened("png", "image/png") },
-        { label: "Save as JPEG", fn: () => saveFlattened("jpg", "image/jpeg") },
-        { label: "Save as WebP", fn: () => saveFlattened("webp", "image/webp") },
+        { label: "Save as PNG", fn: () => saveFlattened("png", "image/png", wmChecked()) },
+        { label: "Save as JPEG", fn: () => saveFlattened("jpg", "image/jpeg", wmChecked()) },
+        { label: "Save as WebP", fn: () => saveFlattened("webp", "image/webp", wmChecked()) },
         { label: "Save as PSD (layers)", fn: () => savePSD() },
     ];
     for (const item of items) {
@@ -2342,6 +2352,19 @@ function showSaveMenu(anchor) {
         btn.addEventListener("mouseleave", () => btn.style.background = "none");
         btn.addEventListener("click", () => { menu.remove(); item.fn(); });
         menu.appendChild(btn);
+    }
+    if (wmAvailable) {
+        const row = document.createElement("label");
+        row.style.cssText = "display:flex;align-items:center;gap:6px;padding:6px 14px;font-size:11px;color:var(--text-2);cursor:pointer;font-family:var(--font);border-top:1px solid var(--border-subtle);margin-top:2px;white-space:nowrap;";
+        wmCheckbox = document.createElement("input");
+        wmCheckbox.type = "checkbox";
+        wmCheckbox.checked = true;
+        wmCheckbox.style.margin = "0";
+        const txt = document.createElement("span");
+        txt.textContent = window.I18N?.t?.("canvas.export.applyWatermark", "Apply watermark") || "Apply watermark";
+        row.appendChild(wmCheckbox);
+        row.appendChild(txt);
+        menu.appendChild(row);
     }
     const r = anchor.getBoundingClientRect();
     // Position above the button, clamped to viewport
@@ -3562,13 +3585,47 @@ function _showLayerCtxMenu(x, y) {
     menu.style.display = "block";
 }
 
-async function _ctxSaveCanvas(fmt) {
+async function _ctxSaveCanvas(fmt, applyWm) {
     const C = window.StudioCore;
     const mimeMap = { png: "image/png", jpeg: "image/jpeg", webp: "image/webp" };
-    const dataUrl = C.exportFlattened(mimeMap[fmt]);
+    let dataUrl = C.exportFlattened(mimeMap[fmt]);
+    const State = window.State;
+
+    // Export-time watermark: when a watermark is configured and the apply
+    // mode is "export" (the default), exports are stamped unless the save
+    // menu's checkbox was unticked (applyWm === false; undefined = auto).
+    // The flattened PNG round-trips through the backend compositor — the
+    // same apply_watermark the legacy generation-time mode uses — BEFORE
+    // the save call embeds infotext, so the shipped file carries both.
+    const wmConfigured = !!(State?.watermarkEnable && (State.watermarkName || "").trim()
+        && (State.watermarkApplyMode || "export") === "export");
+    if (wmConfigured && applyWm !== false) {
+        try {
+            const r = await fetch(`${window.API.base}/studio/export_watermark`, {
+                method: "POST",
+                headers: { "Content-Type": "application/json" },
+                body: JSON.stringify({
+                    image_b64: dataUrl,
+                    name: State.watermarkName,
+                    position: State.watermarkPosition || "bottom-right",
+                    opacity: State.watermarkOpacity ?? 1.0,
+                    scale: State.watermarkScale ?? 0.15,
+                    margin: State.watermarkMargin ?? 16,
+                    rotation: State.watermarkRotation ?? 0,
+                }),
+            });
+            const data = await r.json();
+            if (r.ok && data.ok && data.image_b64) dataUrl = data.image_b64;
+            else throw new Error(data.error || `HTTP ${r.status}`);
+        } catch (e) {
+            console.error("[StudioUI] Export watermark failed:", e);
+            const msg = window.I18N?.t?.("toast.export.watermarkFailed", "Watermark failed — exporting unstamped")
+                || "Watermark failed — exporting unstamped";
+            if (window.showToast) window.showToast(msg, "error");
+        }
+    }
 
     // Embed generation metadata when available (all formats that support it)
-    const State = window.State;
     let metadata = null;
     if (State?.embedMetadata && State.sessionEntries?.length) {
         metadata = State.sessionEntries[State.selectedOutputIdx]?.infotext

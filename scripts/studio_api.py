@@ -4942,6 +4942,57 @@ def setup_studio_routes(app: FastAPI):
             log.exception("watermark list failed")
             return []
 
+    @app.post("/studio/export_watermark")
+    async def export_watermark(req: dict):
+        """Stamp a flattened export image with the configured watermark.
+
+        Single-implementation rule: compositing is studio_generation's
+        apply_watermark — the exact code the legacy generation-time mode
+        uses. The canvas Save/Export flow round-trips its flattened PNG
+        through here only when export-time stamping is on, then embeds
+        infotext downstream so the shipped file carries both.
+        Expects {image_b64, name, position, opacity, scale, margin,
+        rotation}; returns {ok, changed, image_b64} (PNG data URL).
+        """
+        image_b64 = req.get("image_b64") or ""
+        name = str(req.get("name") or "").strip()
+        if not image_b64:
+            return JSONResponse({"ok": False, "error": "Missing image_b64"}, status_code=400)
+        if not name:
+            return JSONResponse({"ok": False, "error": "No watermark configured"}, status_code=400)
+
+        def _num(key, default, cast):
+            try:
+                v = req.get(key)
+                return default if v is None else cast(v)
+            except (TypeError, ValueError):
+                return default
+
+        try:
+            b64_data = image_b64.split(",", 1)[1] if "," in image_b64 else image_b64
+            img = Image.open(io.BytesIO(base64.b64decode(b64_data)))
+            wm_cfg = {
+                "enable": True,
+                "name": name,
+                "position": str(req.get("position") or "bottom-right"),
+                "opacity": _num("opacity", 1.0, float),
+                "scale": _num("scale", 0.15, float),
+                "margin": _num("margin", 16, int),
+                "rotation": _num("rotation", 0.0, float),
+            }
+            _apply = _import("studio_generation", "apply_watermark")
+            stamped, changed = _apply(img, wm_cfg)
+            buf = io.BytesIO()
+            stamped.save(buf, format="PNG")
+            return {
+                "ok": True,
+                "changed": bool(changed),
+                "image_b64": "data:image/png;base64," + base64.b64encode(buf.getvalue()).decode("ascii"),
+            }
+        except Exception as e:
+            log.exception("Export watermark failed")
+            return JSONResponse({"ok": False, "error": str(e)}, status_code=500)
+
     @app.post("/studio/watermarks/open_folder")
     async def open_watermarks_folder():
         """Open the watermarks folder in the OS file manager so the user can

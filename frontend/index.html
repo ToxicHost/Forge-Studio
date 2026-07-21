@@ -1069,6 +1069,14 @@
               </div>
               <div id="watermarkOpts" style="display:none;">
                 <div class="setting-row">
+                  <span class="setting-label" data-i18n="settings.watermark.mode">Apply</span>
+                  <select class="param-select" id="settingWatermarkMode" style="width:170px;padding:4px 8px;">
+                    <option value="export" selected data-i18n="settings.watermark.modeExport">On export (recommended)</option>
+                    <option value="generation" data-i18n="settings.watermark.modeGeneration">On generation (legacy)</option>
+                  </select>
+                </div>
+                <p style="font-size:10px;color:var(--text-4);margin:2px 0 4px 0;" data-i18n="settings.watermark.modeHint">On export: generated files stay clean; the mark is applied when you Save/Export the canvas, with a per-export opt-out. On generation: every generated file is stamped as before (skipped for inpaint).</p>
+                <div class="setting-row">
                   <span class="setting-label">Image</span>
                   <select class="param-select" id="settingWatermark" style="width:140px;padding:4px 8px;">
                     <option value="">— None —</option>

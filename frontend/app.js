@@ -307,6 +307,7 @@ const State = {
   // Auto Watermark (composited onto the final generated image)
   watermarkEnable: false,
   watermarkName: "",
+  watermarkApplyMode: "export", // "export" (stamp on Save/Export) | "generation" (legacy: stamp generated files)
   watermarkPosition: "bottom-right",
   watermarkOpacity: 1.0,   // 0..1
   watermarkScale: 0.15,    // fraction of the shorter edge
@@ -2221,7 +2222,11 @@ async function doGenerate() {
     is_txt2img: isTxt2img,
 
     // Auto Watermark — composited onto the final image server-side.
-    watermark_enable: !!State.watermarkEnable,
+    // Only in legacy generation-time mode; in export mode (the default)
+    // generated files stay clean and stamping happens at Save/Export, so
+    // reusing any output as an img2img source never bakes a mark in.
+    watermark_enable: !!State.watermarkEnable
+      && (State.watermarkApplyMode || "export") === "generation",
     watermark_name: State.watermarkName || "",
     watermark_position: State.watermarkPosition || "bottom-right",
     watermark_opacity: State.watermarkOpacity ?? 1.0,
@@ -5208,6 +5213,10 @@ function bindUI() {
     if (State.watermarkEnable) _loadWatermarks();
   });
   _wmSelect?.addEventListener("change", () => { State.watermarkName = _wmSelect.value || ""; });
+  const _wmMode = document.getElementById("settingWatermarkMode");
+  _wmMode?.addEventListener("change", () => {
+    State.watermarkApplyMode = _wmMode.value === "generation" ? "generation" : "export";
+  });
   _wmPos?.addEventListener("change", () => { State.watermarkPosition = _wmPos.value || "bottom-right"; });
   _wmOpacity?.addEventListener("input", () => {
     const v = parseInt(_wmOpacity.value);
@@ -5462,6 +5471,7 @@ function bindUI() {
     // configured mark/position/sliders survive disabling + reload.
     watermark: [
       ["toggleWatermark", "on"], ["settingWatermark", "val"],
+      ["settingWatermarkMode", "val"],
       ["settingWatermarkPosition", "val"], ["settingWatermarkOpacity", "val"],
       ["settingWatermarkScale", "val"], ["settingWatermarkMargin", "val"],
       ["settingWatermarkRotation", "val"],
@@ -5684,6 +5694,10 @@ function bindUI() {
     // Sync watermark state + labels from restored DOM (.value sets don't fire events)
     State.watermarkEnable = document.getElementById("toggleWatermark")?.classList.contains("on") ?? false;
     State.watermarkName = document.getElementById("settingWatermark")?.value || "";
+    // Pre-mode saves have no settingWatermarkMode value, so upgrades land
+    // on "export" (the new default) — the point of the change.
+    State.watermarkApplyMode = document.getElementById("settingWatermarkMode")?.value === "generation"
+      ? "generation" : "export";
     State.watermarkPosition = document.getElementById("settingWatermarkPosition")?.value || "bottom-right";
     const wmOp = parseInt(document.getElementById("settingWatermarkOpacity")?.value);
     const wmSc = parseInt(document.getElementById("settingWatermarkScale")?.value);
