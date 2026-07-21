@@ -3659,10 +3659,10 @@ function _dispatchCanvasShortcut(actionId, e) {
             const tmp = S.color; S.color = S.bgColor; S.bgColor = tmp;
             updateColorUI(); return true;
         }
-        case "canvas.brushSize.decrease": S.brushSize = Math.max(1, S.brushSize - 1); _syncCtxBar(); return true;
-        case "canvas.brushSize.increase": S.brushSize = Math.min(100, S.brushSize + 1); _syncCtxBar(); return true;
-        case "canvas.brushHardness.decrease": S.brushHardness = Math.max(0, (S.brushHardness ?? 1) - 0.1); _syncCtxBar(); return true;
-        case "canvas.brushHardness.increase": S.brushHardness = Math.min(1, (S.brushHardness ?? 1) + 0.1); _syncCtxBar(); return true;
+        case "canvas.brushSize.decrease": S.brushSize = Math.max(1, S.brushSize - 1); _syncCtxBar(); _redraw(); return true;
+        case "canvas.brushSize.increase": S.brushSize = Math.min(100, S.brushSize + 1); _syncCtxBar(); _redraw(); return true;
+        case "canvas.brushHardness.decrease": S.brushHardness = Math.max(0, (S.brushHardness ?? 1) - 0.1); _syncCtxBar(); _redraw(); return true;
+        case "canvas.brushHardness.increase": S.brushHardness = Math.min(1, (S.brushHardness ?? 1) + 0.1); _syncCtxBar(); _redraw(); return true;
         case "canvas.zoom.fit": C.zoomFit(); updateStatus(); _redraw(); return true;
     }
     return false;
