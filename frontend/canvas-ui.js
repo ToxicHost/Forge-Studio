@@ -3256,21 +3256,25 @@ function renderRegionPanel() {
 
         // Prompt textarea
         const prompt = document.createElement("textarea");
+        prompt.className = "region-prompt";
         prompt.value = r.prompt;
         prompt.placeholder = "Region prompt...";
         prompt.style.cssText = "width:100%;font-size:10px;background:var(--bg-surface);color:var(--text-1);border:1px solid var(--border);border-radius:3px;padding:3px 5px;box-sizing:border-box;resize:vertical;min-height:32px;max-height:72px;font-family:var(--font);";
         prompt.addEventListener("click", e => e.stopPropagation());
         prompt.addEventListener("input", () => { r.prompt = prompt.value; });
         prompt.addEventListener("keydown", e => e.stopPropagation());
+        window.TagComplete?.attach?.(prompt);
 
         // Negative prompt
         const neg = document.createElement("textarea");
+        neg.className = "region-prompt";
         neg.value = r.negPrompt;
         neg.placeholder = "Negative (optional)...";
         neg.style.cssText = "width:100%;font-size:10px;background:var(--bg-surface);color:var(--text-4);border:1px solid var(--border);border-radius:3px;padding:3px 5px;box-sizing:border-box;resize:vertical;min-height:22px;max-height:50px;font-family:var(--font);margin-top:3px;";
         neg.addEventListener("click", e => e.stopPropagation());
         neg.addEventListener("input", () => { r.negPrompt = neg.value; });
         neg.addEventListener("keydown", e => e.stopPropagation());
+        window.TagComplete?.attach?.(neg);
 
         // Contextual slider: Weight (attention couple) or Denoise (regional inpaint)
         const isEditRegional = S.studioMode === "Edit";

@@ -588,7 +588,9 @@
     const ddH = Math.min(dd.scrollHeight, 320);
     const margin = 8;
 
-    let top  = y + 4;
+    // A full line-height below the caret line, so the box never sits on
+    // top of the text being typed
+    let top  = y + lineH;
     let left = x;
 
     // Flip above caret if not enough room below
@@ -841,9 +843,12 @@
       if (el) attachToTextarea(el);
     });
 
-    // Watch for dynamically created region prompt textareas
+    // Watch for dynamically created region prompt textareas. Rows are
+    // rebuilt on every region render, so this re-attaches as they appear
+    // (attachToTextarea is idempotent); canvas-ui.js also attaches
+    // directly at row creation — this observer is the safety net.
     const observer = new MutationObserver(() => {
-      document.querySelectorAll("[id^=regionPrompt]").forEach(el => attachToTextarea(el));
+      document.querySelectorAll("#regionList .region-prompt").forEach(el => attachToTextarea(el));
     });
     const regionList = document.getElementById("regionList");
     if (regionList) observer.observe(regionList, { childList: true, subtree: true });
