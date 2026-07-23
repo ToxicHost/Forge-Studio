@@ -279,12 +279,14 @@ const Progress = {
     const visible = (typeof document !== "undefined" && document.visibilityState)
       ? document.visibilityState === "visible"
       : true;
+    const qmode = (window.State && window.State.livePreviewQuality) || "auto";
     try {
       this.ws.send(JSON.stringify({
         type: "preview_config",
         enabled: !!(window.State && window.State.livePreview),
         visible,
         max_edge: 480,
+        quality_mode: qmode,   // auto (default) | fast (experimental) | legacy
       }));
     } catch (_) {}
   },
@@ -380,6 +382,7 @@ const State = {
   saveDir: "",             // optional absolute server-side folder for auto-save on generate (empty = Forge output dir)
   highPrecision: false,    // capture float32 VAE output, save .float32.bin sidecar
   livePreview: true,       // show preview thumbnail during generation
+  livePreviewQuality: "auto", // preview decode mode: auto (full-res, safe) | fast (experimental) | legacy
   promptCleanup: true,     // tidy the payload copy of prompts on generate
   // Auto Watermark (composited onto the final generated image)
   watermarkEnable: false,
@@ -5214,6 +5217,26 @@ function bindUI() {
     // Update backend preview demand so it can stop/resume decoding.
     if (window.Progress) window.Progress.sendPreviewConfig();
   });
+
+  // Live preview quality mode (auto/fast/legacy) — a machine display preference,
+  // persisted in localStorage. Restore the saved value, then push changes to the
+  // backend decode path.
+  const _lpqSelect = document.getElementById("settingLivePreviewQuality");
+  if (_lpqSelect) {
+    try {
+      const saved = localStorage.getItem("studio-live-preview-quality");
+      if (saved && ["auto", "fast", "legacy"].includes(saved)) {
+        State.livePreviewQuality = saved;
+        _lpqSelect.value = saved;
+      }
+    } catch (_) {}
+    _lpqSelect.addEventListener("change", () => {
+      const v = _lpqSelect.value;
+      State.livePreviewQuality = ["auto", "fast", "legacy"].includes(v) ? v : "auto";
+      try { localStorage.setItem("studio-live-preview-quality", State.livePreviewQuality); } catch (_) {}
+      if (window.Progress) window.Progress.sendPreviewConfig();
+    });
+  }
 
   // Embed metadata in PNG
   document.getElementById("toggleMetadata")?.addEventListener("click", () => {

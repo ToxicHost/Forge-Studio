@@ -16,9 +16,9 @@ identical settings), which produced one false "the fix is inert" verdict.
 3. **Hires `s/it` is the primary metric** — it is stable within a condition.
    Base `it/s` is noisy (±10% within a single session) and must never gate a
    decision on its own.
-4. **Every perf log submitted must include the `[Studio API] Preview path:`
-   status line**, so the active preview configuration (stream / interval /
-   downscale) is part of the record. A number without that line is unanchored.
+4. **Every perf log submitted must include the `[Studio Preview]` diagnostic
+   line**, so the active preview path (mode / stream / filter / dims / interval)
+   is part of the record. A number without that line is unanchored.
 5. **Also capture the `[Studio Perf]` telemetry lines** (see below). They print
    the environment once and one summary per generation, so a submitted log
    self-identifies the hardware, launch flags, and where time actually went.
@@ -33,13 +33,24 @@ Emitted to the Python console (grep `[Studio Perf]`):
   anchors every number that follows to a concrete machine + configuration.
 - **`model reload: N.NNs (method)`** — printed only when a generation triggered
   a checkpoint reload, so a slow first run is distinguishable from a slow swap.
-- **`gen:`** — one per generation: `compute` (the sampler/VAE work), `save`
-  (encode + disk + sidecars), `total`, plus preview cost for that run
-  (`previews=` fresh-decode count, `decode_total`/`avg` ms), the `stream` and
-  `downscale` path taken, and the `task` id.
+- **`gen:`** — one per generation, with **non-additive** accounting:
+  - `run_generation` — the whole generation call (model load + all sampling
+    passes + ADetailer + final VAE). It reads several seconds over the
+    sampler-only tqdm rate **by design** — it is not sampling-only.
+  - `save` — encode + disk + sidecars; `setup` — preflight before generation;
+    `total_wall` — measured independently with `perf_counter` from handler entry.
+  - `preview_work_sum` — cumulative preview decode/encode time. It **overlaps**
+    `run_generation` (side stream during sampling) and is labeled
+    *non-additive* — never add it to `run_generation`.
+  - A `WARNING: timer accounting drift` line prints if the separately-measured
+    phases (`setup + run_generation + save`) fail to reconcile with `total_wall`.
 
-When comparing an A/B pair, read `compute` from the `gen:` line — it excludes
-save/postprocess noise and is the cleanest per-run number after hires `s/it`.
+All preview/timing metrics use `time.perf_counter()`. Forge's own "Time taken"
+is now reset immediately before `process_images()` (not during Studio preflight),
+so it excludes model-load time.
+
+When comparing an A/B pair, read `run_generation` from the `gen:` line together
+with hires `s/it`; do not treat `run_generation` as sampling time.
 
 ## Preview demand-gating (Preview-off case)
 
@@ -60,20 +71,35 @@ activity and `[Studio Perf] gen:` reports `previews=0`; hires `s/it` for Run A
 is at or below Run B. This is the case gating is meant to fix — cosmetic decodes
 must not run when nobody is watching.
 
-## Latent-first decode + stream priority (Preview-on case)
+## Preview quality modes (Preview-on case)
 
-Two changes target the default Preview-on path:
+The **default is `Auto`**: a **full-resolution TAESD decode** (the latent is NOT
+resized — its statistics match what the decoder expects, so it can't garble),
+followed by a **GPU resize of the decoded RGB** (bicubic + antialias) to display
+size *before* the CPU transfer. This keeps the old decoder semantics while
+transferring only the small display-size tensor. The `[Studio Preview]` line
+reads `mode=auto path=post-decode-gpu filter=bicubic-aa`.
 
-- The latent is downscaled **before** the TAESD decode (`downscale=latent-first`
-  in the status line), so the decoder itself processes far fewer pixels at hires
-  rather than decoding full-res and shrinking afterward.
-- The Studio preview side-stream is created at **normal priority** (`priority=0`,
-  not the old `-1`, which in PyTorch is *higher* priority and let cosmetic
-  decodes preempt the sampler). Studio no longer borrows Neo's `vae_stream`.
+Two other modes (Settings → Live preview quality):
+
+- **`Fast` (experimental)** — resizes the latent *before* TAESD
+  (`path=reduced-latent`). Cheaper at hires but format-sensitive; gated to
+  validated latent channel counts (4 / 16) and **auto-falls back to Auto** on
+  anything else. Some model families produce garbled previews here — it is opt-in.
+- **`Legacy`** — exact former path: full-res decode + CPU (PIL/Lanczos)
+  downscale (`path=post-decode-cpu`). Diagnostic / A-B only.
+
+The Studio preview side-stream is normal priority (`priority=0`, never `-1`);
+Studio does not borrow Neo's `vae_stream`.
+
+**Garble diagnosis:** capture the same seed/step in all three modes. `Legacy`
+clean + `Auto` clean + `Fast` garbled → the reduced-latent path is incompatible
+for that model/format. `Legacy` and `Auto` both garbled → snapshot race or wrong
+latent format. Only hires garbled → hires phase-transition / stale cache.
 
 Validate with the **Standard preview A/B** below; the pass criterion (open-tab
-within ~2% of closed-tab) is unchanged, but the status line should now read
-`stream=studio` and `downscale=latent-first`.
+within ~2% of closed-tab) is unchanged, and the status line should read
+`mode=auto stream=studio`.
 
 ## Standard preview A/B
 

@@ -2844,6 +2844,14 @@ def run_generation(
                     _hp_warn_fp16_vae_once()
                     _hp_begin_capture()
                     _hp_install_dfs_audit()
+            # Timer accuracy: reset Forge's wall-clock immediately before the
+            # actual generation so its "Time taken" excludes Studio preflight and
+            # model loading (which run before this point). See the timer rules in
+            # the preview hotfix.
+            try:
+                shared.state.time_start = time.time()
+            except Exception:
+                pass
             try:
                 processed = process_images(p)
             except Exception as e:
@@ -3158,6 +3166,13 @@ def run_generation(
                         # that can swap the VAE between base and hires passes).
                         _hp_install_dfs_audit()
                 try:
+                    # Timer accuracy: reset Forge's wall-clock right before the
+                    # real generation so "Time taken" excludes Studio preflight /
+                    # model loading.
+                    try:
+                        shared.state.time_start = time.time()
+                    except Exception:
+                        pass
                     # Native ADetailer fires inside process_images() via its
                     # postprocess_image hook. AD slot params were injected
                     # into native AD's script_args in _attach_script_runner
