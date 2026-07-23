@@ -92,6 +92,7 @@
   "settings.outputFormat.format": "Format",
   "settings.outputFormat.embedMetadata": "Embed metadata",
   "settings.outputFormat.quality": "Quality",
+  "settings.outputFormat.jpegChromaHint": "Saves at full color detail (4:4:4 chroma) — no color smearing on fine edges or text.",
   "settings.outputFormat.lossless": "Lossless",
 
   "settings.gallery.title": "Save to Gallery",

@@ -19,6 +19,61 @@ identical settings), which produced one false "the fix is inert" verdict.
 4. **Every perf log submitted must include the `[Studio API] Preview path:`
    status line**, so the active preview configuration (stream / interval /
    downscale) is part of the record. A number without that line is unanchored.
+5. **Also capture the `[Studio Perf]` telemetry lines** (see below). They print
+   the environment once and one summary per generation, so a submitted log
+   self-identifies the hardware, launch flags, and where time actually went.
+
+## `[Studio Perf]` telemetry
+
+Emitted to the Python console (grep `[Studio Perf]`):
+
+- **`env:`** — logged once on the first generation: GPU, VRAM, torch/CUDA
+  versions, active launch flags (attention backend, medvram/lowvram), whether
+  Neo exposes `vae_stream`, and the Studio preview-stream priority. This line
+  anchors every number that follows to a concrete machine + configuration.
+- **`model reload: N.NNs (method)`** — printed only when a generation triggered
+  a checkpoint reload, so a slow first run is distinguishable from a slow swap.
+- **`gen:`** — one per generation: `compute` (the sampler/VAE work), `save`
+  (encode + disk + sidecars), `total`, plus preview cost for that run
+  (`previews=` fresh-decode count, `decode_total`/`avg` ms), the `stream` and
+  `downscale` path taken, and the `task` id.
+
+When comparing an A/B pair, read `compute` from the `gen:` line — it excludes
+save/postprocess noise and is the cleanest per-run number after hires `s/it`.
+
+## Preview demand-gating (Preview-off case)
+
+The preview decode is now gated on client demand: the backend skips the TAESD
+decode entirely when no connected client has the Live Preview toggle on **and**
+a visible tab (Live Painting always forces previews on). The frontend declares
+its state over the progress WebSocket (`preview_config`) on connect, on toggle,
+on tab visibility change, and at generation start.
+
+**Preview-off A/B** (same session, fixed seed, `1024×1280 → 2048×2560`,
+20 + 20 steps):
+
+- **Run A:** Live Preview toggle **off** (or tab hidden the whole run).
+- **Run B:** Live Preview toggle **on**, tab foregrounded.
+
+**Pass:** with the toggle off, the console shows **no** `Preview path:` decode
+activity and `[Studio Perf] gen:` reports `previews=0`; hires `s/it` for Run A
+is at or below Run B. This is the case gating is meant to fix — cosmetic decodes
+must not run when nobody is watching.
+
+## Latent-first decode + stream priority (Preview-on case)
+
+Two changes target the default Preview-on path:
+
+- The latent is downscaled **before** the TAESD decode (`downscale=latent-first`
+  in the status line), so the decoder itself processes far fewer pixels at hires
+  rather than decoding full-res and shrinking afterward.
+- The Studio preview side-stream is created at **normal priority** (`priority=0`,
+  not the old `-1`, which in PyTorch is *higher* priority and let cosmetic
+  decodes preempt the sampler). Studio no longer borrows Neo's `vae_stream`.
+
+Validate with the **Standard preview A/B** below; the pass criterion (open-tab
+within ~2% of closed-tab) is unchanged, but the status line should now read
+`stream=studio` and `downscale=latent-first`.
 
 ## Standard preview A/B
 
