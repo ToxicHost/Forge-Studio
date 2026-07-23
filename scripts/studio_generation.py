@@ -708,12 +708,17 @@ def _ensure_model_loaded():
             except Exception:
                 return  # Can't check — assume it's fine
 
+        # A reload is actually happening from here — time it so the [Studio Perf]
+        # picture distinguishes a slow generation from a slow model swap.
+        _reload_t0 = time.time()
+
         # Method 1: Forge-specific full reload (sets up forge_objects)
         if hasattr(sd_models, 'forge_model_reload'):
             try:
                 sd_models.forge_model_reload()
                 if hasattr(shared.sd_model, 'forge_objects') and shared.sd_model.forge_objects is not None:
                     print("[Studio] Model loaded via forge_model_reload")
+                    print(f"[Studio Perf] model reload: {time.time() - _reload_t0:.2f}s (forge_model_reload)")
                     return
             except Exception as e:
                 print(f"[Studio] forge_model_reload failed: {e}")
@@ -723,6 +728,7 @@ def _ensure_model_loaded():
             sd_models.load_model()
             if hasattr(shared.sd_model, 'forge_objects') and shared.sd_model.forge_objects is not None:
                 print("[Studio] Model loaded via load_model")
+                print(f"[Studio Perf] model reload: {time.time() - _reload_t0:.2f}s (load_model)")
                 return
         except (AttributeError, Exception) as e:
             print(f"[Studio] load_model failed: {e}")
@@ -732,6 +738,7 @@ def _ensure_model_loaded():
             sd_models.reload_model_weights()
             if hasattr(shared.sd_model, 'forge_objects') and shared.sd_model.forge_objects is not None:
                 print("[Studio] Model loaded via reload_model_weights")
+                print(f"[Studio Perf] model reload: {time.time() - _reload_t0:.2f}s (reload_model_weights)")
                 return
         except (AttributeError, Exception) as e:
             print(f"[Studio] reload_model_weights failed: {e}")

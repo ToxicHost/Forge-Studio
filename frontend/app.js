@@ -181,6 +181,9 @@ const Progress = {
     this.ws.onopen = () => {
       console.log("[Studio] WebSocket connected");
       StatusBar.setStatus("ready");
+      // Declare this client's preview demand up front so the backend can
+      // skip decoding previews nobody is watching.
+      this.sendPreviewConfig();
     };
 
     this.ws.onmessage = (e) => {
@@ -264,6 +267,26 @@ const Progress = {
     if (this.ws?.readyState === WebSocket.OPEN) {
       this.ws.send("ping");
     }
+  },
+
+  // Tell the backend whether this client currently wants live previews
+  // (Live Preview toggle) and whether its tab is visible. The backend gates
+  // the expensive preview decode on this: if no connected client wants a
+  // preview, it stops decoding entirely. Safe to call anytime; it no-ops
+  // when the socket isn't open (config is re-sent on the next onopen).
+  sendPreviewConfig() {
+    if (this.ws?.readyState !== WebSocket.OPEN) return;
+    const visible = (typeof document !== "undefined" && document.visibilityState)
+      ? document.visibilityState === "visible"
+      : true;
+    try {
+      this.ws.send(JSON.stringify({
+        type: "preview_config",
+        enabled: !!(window.State && window.State.livePreview),
+        visible,
+        max_edge: 480,
+      }));
+    } catch (_) {}
   },
 };
 
@@ -2306,6 +2329,10 @@ async function doGenerate() {
   // stale State.livePreview from permanently suppressing the preview.
   // Also reset the deferred-hide flag so previous gen's cleanup doesn't interfere.
   State.livePreview = document.getElementById("toggleLivePreview")?.classList.contains("on") ?? true;
+  // Re-declare preview demand to the backend right before it matters, in case
+  // the toggle was changed via a path that didn't fire its click handler
+  // (workflow restore / defaults apply).
+  if (window.Progress) window.Progress.sendPreviewConfig();
   State._deferPreviewHide = false;
   State._previewShown = false;       // reset sticky preview flag
   State._resultPreviewActive = false; // dismiss result preview for new gen
@@ -5184,6 +5211,8 @@ function bindUI() {
       const wrap = document.getElementById("canvasPreviewWrap");
       if (wrap) wrap.style.display = "none";
     }
+    // Update backend preview demand so it can stop/resume decoding.
+    if (window.Progress) window.Progress.sendPreviewConfig();
   });
 
   // Embed metadata in PNG
@@ -8556,6 +8585,9 @@ async function init() {
   // If gen finished while tab was hidden, hide preview when user returns
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden && State._deferPreviewHide) _hidePreview();
+    // Update backend preview demand: a hidden tab doesn't need previews
+    // decoded, so the backend can skip that work while we're backgrounded.
+    if (window.Progress) window.Progress.sendPreviewConfig();
   });
 
   // Populate dropdowns from API
