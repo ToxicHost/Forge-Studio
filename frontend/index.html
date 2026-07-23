@@ -933,414 +933,866 @@
   <div class="app-page settings-page" id="app-settings">
     <div class="settings-page-shell">
       <header class="settings-page-header">
-        <h1 data-i18n="settings.title">Settings</h1>
-        <p data-i18n="settings.description">Configure Forge Studio preferences and application behavior.</p>
+        <div class="settings-header-text">
+          <h1 data-i18n="settings.title">Settings</h1>
+          <p data-i18n="settings.description">Configure Forge Studio preferences and application behavior.</p>
+        </div>
+        <div class="settings-search">
+          <svg class="settings-search-icon" width="14" height="14" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></svg>
+          <input type="search" id="settingsSearchInput" class="settings-search-input" role="searchbox" autocomplete="off" spellcheck="false" data-i18n-placeholder="settings.search.placeholder" placeholder="Search settings, shortcuts, extensions…" data-i18n-aria-label="settings.search.ariaLabel" aria-label="Search settings" aria-controls="settingsSearchResults">
+          <button type="button" id="settingsSearchClear" class="settings-search-clear" hidden data-i18n-aria-label="settings.search.clear" aria-label="Clear search">&times;</button>
+        </div>
       </header>
-      <div class="settings-content settings-grid">
-            <div class="setting-group">
-              <div class="setting-group-title" data-i18n="settings.canvas.title">Canvas</div>
-              <div class="setting-row"><span class="setting-label" data-i18n="settings.canvas.showGrid">Show grid</span><div class="toggle-track" id="toggleGrid"><div class="toggle-knob"></div></div></div>
-              <div class="setting-row" title="Uses the GPU/WebGL display backend for sharper color-managed canvas preview. Falls back to standard Canvas 2D if unavailable. Does not change exported pixels."><span class="setting-label">GPU canvas preview</span><div class="toggle-track" id="toggleCanvasColorPreview"><div class="toggle-knob"></div></div></div>
-              <!-- Pen pressure is now on the brush context bar -->
-            </div>
-            <div class="setting-group" id="keyboardShortcutsSettings" data-settings-span="full">
-              <div class="setting-group-title" data-i18n="settings.shortcuts.title">Keyboard Shortcuts</div>
-              <p class="shortcut-settings-note" data-i18n="settings.shortcuts.description">Change a shortcut by pressing the key you want. Bind by character for your current layout, or by physical position for layout-independent muscle memory.</p>
-              <div id="shortcutSettingsRows"></div>
-              <button class="defaults-btn defaults-btn-reset" id="shortcutResetAll" data-i18n="settings.shortcuts.resetAll">Reset all to defaults</button>
-            </div>
-            <div class="setting-group">
-              <div class="setting-group-title" data-i18n="settings.generation.title">Generation</div>
-              <div class="setting-row"><span class="setting-label" data-i18n="settings.generation.saveOutputs">Save outputs</span><div class="toggle-track on" id="toggleSaveOutputs"><div class="toggle-knob"></div></div></div>
-              <div class="setting-row" data-i18n-title="settings.archShowAll.tooltip" title="Show parameters even when the loaded model's architecture doesn't use them."><span class="setting-label" data-i18n="settings.archShowAll">Always show all parameters</span><div class="toggle-track" id="toggleArchShowAll"><div class="toggle-knob"></div></div></div>
-              <div class="setting-row" data-i18n-title="settings.generation.sessionLimit.tooltip" title="How many recent results the session keeps (8–200). Entries that fall off are gone from the session; unsaved scratch previews are deleted with them. Saved files on disk are never touched.">
-                <span class="setting-label" data-i18n="settings.generation.sessionLimit">Session history size</span>
-                <input type="number" class="param-val" id="settingSessionLimit" min="8" max="200" step="1" value="50" style="width:64px;">
-              </div>
-              <div class="setting-row" style="gap:6px;justify-content:flex-end;">
-                <button class="defaults-btn" id="clearSessionBtn" style="font-size:10px;padding:3px 8px;" data-i18n-title="settings.generation.clearSession.tooltip" title="Empty the session history and delete its temporary scratch previews. Saved output files are never deleted." data-i18n="settings.generation.clearSession">Clear session</button>
-              </div>
-              <div class="setting-row" data-i18n-title="settings.generation.highPrecision.tooltip" title="Saves high-precision float data alongside each image. Eliminates banding and gives the Develop module ~0.5 stops of highlight headroom. Adds ~0.5–3s and ~12 MB per image. Best with fp32 VAE."><span class="setting-label" data-i18n="settings.generation.highPrecision">High precision</span><div class="toggle-track" id="toggleHighPrecision"><div class="toggle-knob"></div></div></div>
-              <div class="setting-row"><span class="setting-label" data-i18n="settings.generation.livePreview">Live preview</span><div class="toggle-track on" id="toggleLivePreview"><div class="toggle-knob"></div></div></div>
-              <div class="setting-row" data-i18n-title="settings.generation.livePreviewQuality.tooltip" title="Auto (recommended): full-resolution decode, resized for display — always compatible. Fast: experimental reduced-latent decode; faster on some setups but can look garbled on certain models (auto-falls back). Legacy: exact old decode, for comparison; slower.">
-                <span class="setting-label" data-i18n="settings.generation.livePreviewQuality">Live preview quality</span>
-                <select class="param-select" id="settingLivePreviewQuality" style="width:120px;padding:4px 8px;">
-                  <option value="auto" data-i18n="settings.generation.livePreviewQuality.auto">Auto (recommended)</option>
-                  <option value="fast" data-i18n="settings.generation.livePreviewQuality.fast">Fast (experimental)</option>
-                  <option value="legacy" data-i18n="settings.generation.livePreviewQuality.legacy">Legacy</option>
-                </select>
-              </div>
-              <div class="setting-row"><span class="setting-label" data-i18n="settings.generation.rememberSession">Remember last session</span><div class="toggle-track" id="toggleRememberSession"><div class="toggle-knob"></div></div></div>
-              <div id="sessionCategories" style="display:none;">
-                <div class="session-accordion" id="sessionAccordionHeader">
-                  <span style="font-size:10px;color:var(--text-3);cursor:pointer;user-select:none;display:flex;align-items:center;gap:4px;padding:4px 0 2px 8px;">
-                    <svg class="session-accordion-arrow" id="sessionAccordionArrow" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" style="transition:transform 0.2s;"><path d="M2 3.5l3 3 3-3"/></svg>
-                    Session categories
+
+      <div class="settings-layout">
+        <nav class="settings-sidebar" aria-label="Settings categories" data-i18n-aria-label="settings.nav.ariaLabel">
+          <select class="settings-nav-select" id="settingsNavSelect" aria-label="Settings category" data-i18n-aria-label="settings.nav.selectAria">
+            <option value="general" data-i18n="settings.cat.general.title">General</option>
+            <option value="appearance-layout" data-i18n="settings.cat.appearance.title">Appearance &amp; Layout</option>
+            <option value="canvas-tools" data-i18n="settings.cat.canvas.title">Canvas &amp; Tools</option>
+            <option value="generation-preview" data-i18n="settings.cat.generation.title">Generation &amp; Preview</option>
+            <option value="prompts-metadata" data-i18n="settings.cat.prompts.title">Prompts &amp; Metadata</option>
+            <option value="output-files" data-i18n="settings.cat.output.title">Output &amp; Files</option>
+            <option value="performance-vram" data-i18n="settings.cat.performance.title">Performance &amp; VRAM</option>
+            <option value="keyboard-shortcuts" data-i18n="settings.cat.shortcuts.title">Keyboard Shortcuts</option>
+            <option value="extensions" data-i18n="settings.cat.extensions.title">Extensions</option>
+            <option value="about" data-i18n="settings.cat.about.title">About</option>
+          </select>
+          <div class="settings-nav-list" role="tablist" aria-orientation="vertical">
+            <button class="settings-nav-button active" type="button" data-settings-nav="general" role="tab" aria-current="page" aria-selected="true">
+              <svg class="settings-nav-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><path d="M8 1.5l5.5 3v4c0 3-2.3 5.3-5.5 6-3.2-.7-5.5-3-5.5-6v-4L8 1.5z"/></svg>
+              <span data-i18n="settings.cat.general.title">General</span>
+            </button>
+            <button class="settings-nav-button" type="button" data-settings-nav="appearance-layout" role="tab" aria-selected="false">
+              <svg class="settings-nav-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M8 2v12M2 8h12"/></svg>
+              <span data-i18n="settings.cat.appearance.title">Appearance &amp; Layout</span>
+            </button>
+            <button class="settings-nav-button" type="button" data-settings-nav="canvas-tools" role="tab" aria-selected="false">
+              <svg class="settings-nav-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><rect x="2" y="2.5" width="12" height="11" rx="1.5"/><path d="M2 6h12"/></svg>
+              <span data-i18n="settings.cat.canvas.title">Canvas &amp; Tools</span>
+            </button>
+            <button class="settings-nav-button" type="button" data-settings-nav="generation-preview" role="tab" aria-selected="false">
+              <svg class="settings-nav-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><path d="M8 1.5l1.6 4.3 4.4.3-3.4 2.9 1.1 4.3L8 11.2 4.3 13.6l1.1-4.3L2 6.4l4.4-.3L8 1.5z"/></svg>
+              <span data-i18n="settings.cat.generation.title">Generation &amp; Preview</span>
+            </button>
+            <button class="settings-nav-button" type="button" data-settings-nav="prompts-metadata" role="tab" aria-selected="false">
+              <svg class="settings-nav-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><path d="M3 3.5h10M3 7h10M3 10.5h6"/></svg>
+              <span data-i18n="settings.cat.prompts.title">Prompts &amp; Metadata</span>
+            </button>
+            <button class="settings-nav-button" type="button" data-settings-nav="output-files" role="tab" aria-selected="false">
+              <svg class="settings-nav-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><path d="M2 5.5l1-2h4l1 2h5v7a1 1 0 0 1-1 1H3a1 1 0 0 1-1-1v-7z"/></svg>
+              <span data-i18n="settings.cat.output.title">Output &amp; Files</span>
+            </button>
+            <button class="settings-nav-button" type="button" data-settings-nav="performance-vram" role="tab" aria-selected="false">
+              <svg class="settings-nav-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><rect x="3" y="3" width="10" height="10" rx="1"/><path d="M6 1v2M10 1v2M6 13v2M10 13v2M1 6h2M1 10h2M13 6h2M13 10h2"/></svg>
+              <span data-i18n="settings.cat.performance.title">Performance &amp; VRAM</span>
+            </button>
+            <button class="settings-nav-button" type="button" data-settings-nav="keyboard-shortcuts" role="tab" aria-selected="false">
+              <svg class="settings-nav-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><rect x="1.5" y="4" width="13" height="8" rx="1.5"/><path d="M4 7h.01M6.5 7h.01M9 7h.01M11.5 7h.01M4.5 9.5h7"/></svg>
+              <span data-i18n="settings.cat.shortcuts.title">Keyboard Shortcuts</span>
+            </button>
+            <button class="settings-nav-button" type="button" data-settings-nav="extensions" role="tab" aria-selected="false">
+              <svg class="settings-nav-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><path d="M6 2.5h4v2.5h2.5v3H10v3.5H6V8H3.5V5H6V2.5z"/></svg>
+              <span data-i18n="settings.cat.extensions.title">Extensions</span>
+            </button>
+            <button class="settings-nav-button" type="button" data-settings-nav="about" role="tab" aria-selected="false">
+              <svg class="settings-nav-icon" width="15" height="15" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.3" aria-hidden="true"><circle cx="8" cy="8" r="6"/><path d="M8 7.5v3.5M8 5h.01"/></svg>
+              <span data-i18n="settings.cat.about.title">About</span>
+            </button>
+          </div>
+        </nav>
+
+        <div class="settings-main settings-content">
+          <p class="settings-search-status" id="settingsSearchStatus" aria-live="polite" role="status"></p>
+          <div class="settings-search-empty" id="settingsSearchEmpty" hidden>
+            <p data-i18n="settings.search.noResults">No settings match your search.</p>
+          </div>
+          <div id="settingsSearchResults" hidden></div>
+
+          <!-- ══════════ GENERAL ══════════ -->
+          <section class="settings-category" data-settings-category="general" aria-labelledby="settings-cat-general-title" tabindex="-1">
+            <header class="settings-category-header">
+              <p class="settings-eyebrow" data-i18n="settings.eyebrow">Settings</p>
+              <h2 id="settings-cat-general-title" data-i18n="settings.cat.general.title">General</h2>
+              <p class="settings-category-sub" data-i18n="settings.cat.general.sub">App-wide preferences, session persistence, defaults, and language.</p>
+            </header>
+            <div class="settings-section-stack">
+
+              <section class="settings-card" data-settings-section="session">
+                <div class="settings-card-head settings-card-head-static">
+                  <span class="settings-card-titles">
+                    <span class="settings-card-title" data-i18n="settings.card.session.title">Session</span>
+                    <span class="settings-card-summary" data-i18n="settings.card.session.summary">Choose what Studio restores between visits.</span>
                   </span>
                 </div>
-                <div id="sessionAccordionBody" style="display:none;padding-left:16px;padding-bottom:4px;">
-                  <label class="session-cat-label">
-                    <input type="checkbox" class="session-cat" data-cat="prompts" checked> Prompts
-                  </label>
-                  <label class="session-cat-label">
-                    <input type="checkbox" class="session-cat" data-cat="gen" checked> Generation params &amp; AR pools
-                  </label>
-                  <label class="session-cat-label">
-                    <input type="checkbox" class="session-cat" data-cat="hires" checked> Hires Fix
-                  </label>
-                  <label class="session-cat-label">
-                    <input type="checkbox" class="session-cat" data-cat="ad" checked> ADetailer
-                  </label>
-                  <label class="session-cat-label">
-                    <input type="checkbox" class="session-cat" data-cat="upscale" checked> Upscale
-                  </label>
-                  <label class="session-cat-label">
-                    <input type="checkbox" class="session-cat" data-cat="canvas" checked> Canvas settings
-                  </label>
-                  <label class="session-cat-label">
-                    <input type="checkbox" class="session-cat" data-cat="brush" checked> Brush settings
-                  </label>
-                  <label class="session-cat-label">
-                    <input type="checkbox" class="session-cat" data-cat="format" checked> Output format
-                  </label>
-                  <label class="session-cat-label">
-                    <input type="checkbox" class="session-cat" data-cat="inpaint" checked> Inpaint settings
-                  </label>
-                </div>
-              </div>
-            </div>
-            <div class="setting-group" id="dynamicPromptsSettings">
-              <div class="setting-group-title">Dynamic Prompts</div>
-              <div class="setting-row" title="Expand __wildcard__ and {a|b|c} prompts inside Studio without relying on Dynamic Prompts.">
-                <span class="setting-label">Studio dynamic prompts</span>
-                <div class="toggle-track on" id="toggleStudioDynPrompts"><div class="toggle-knob"></div></div>
-              </div>
-              <div class="setting-row" id="dynPromptsFolderRow" title="Choose the folder Studio uses for wildcard .txt files.">
-                <span class="setting-label">Wildcard folder</span>
-                <span class="dyn-prompts-folder-display" id="dynPromptsFolderDisplay" style="font-size:10px;color:var(--text-3);max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;flex:1;text-align:right;">Default folders</span>
-              </div>
-              <div class="setting-row" id="dynPromptsFolderControls" style="gap:6px;justify-content:flex-end;">
-                <button class="defaults-btn" id="dynPromptsFolderBrowse" style="font-size:10px;padding:3px 8px;">Browse...</button>
-                <button class="defaults-btn" id="dynPromptsFolderReset" style="font-size:10px;padding:3px 8px;">Reset</button>
-              </div>
-              <!-- Manual-path fallback: shown only if the native picker
-                   reports it's unavailable (headless host, no display). -->
-              <div class="setting-row" id="dynPromptsFolderManualRow" style="display:none;gap:6px;justify-content:flex-end;">
-                <input type="text" id="dynPromptsFolderInput" placeholder="Custom wildcards folder path" style="flex:1;min-width:0;padding:4px 6px;font-size:11px;background:var(--bg-2);border:1px solid var(--border);border-radius:4px;color:var(--text-2);">
-                <button class="defaults-btn" id="dynPromptsFolderSet" style="font-size:10px;padding:3px 8px;">Set</button>
-              </div>
-              <p class="dyn-prompts-dp-note" id="dynPromptsDpNote" style="display:none;font-size:10px;color:var(--text-4);margin:4px 0 0 0;">
-                Dynamic Prompts detected. Studio suppresses it during Studio-native expansion to avoid double processing.
-              </p>
-            </div>
-            <div class="setting-group">
-              <div class="setting-group-title" data-i18n="settings.outputFormat.title">Output Format</div>
-              <div class="setting-row">
-                <span class="setting-label" data-i18n="settings.outputFormat.format">Format</span>
-                <select class="param-select" id="settingSaveFormat" style="width:90px;padding:4px 8px;">
-                  <option value="png" selected>PNG</option>
-                  <option value="jpeg">JPEG</option>
-                  <option value="webp">WebP</option>
-                </select>
-              </div>
-              <div class="setting-row"><span class="setting-label" data-i18n="settings.outputFormat.embedMetadata">Embed metadata</span><div class="toggle-track on" id="toggleMetadata"><div class="toggle-knob"></div></div></div>
-              <div id="fmtJpegOpts" style="display:none;">
-                <div class="setting-row">
-                  <span class="setting-label" data-i18n="settings.outputFormat.quality">Quality</span>
-                  <div style="display:flex;align-items:center;gap:6px;">
-                    <input type="range" id="settingJpegQuality" min="1" max="100" value="80" style="width:90px;">
-                    <span id="settingJpegQualityVal" style="font-size:11px;color:var(--text-3);min-width:28px;">80%</span>
+                <div class="settings-card-body">
+                  <div class="settings-item" data-setting-key="toggleRememberSession" data-setting-search="remember last session restore reopen persist previous">
+                    <div class="settings-item-copy">
+                      <span class="settings-item-title" data-i18n="settings.generation.rememberSession">Remember last session</span>
+                      <p class="settings-item-description" data-i18n="settings.card.session.rememberDesc">Reopen Studio with your previous prompts and settings restored.</p>
+                    </div>
+                    <div class="settings-item-control"><div class="toggle-track" id="toggleRememberSession"><div class="toggle-knob"></div></div></div>
+                  </div>
+
+                  <!-- Session categories: shown only when Remember last session is on (app.js drives #sessionCategories visibility). Kept intact with its own accordion. -->
+                  <div id="sessionCategories" style="display:none;">
+                    <div class="session-accordion" id="sessionAccordionHeader">
+                      <span class="session-accordion-label">
+                        <svg class="session-accordion-arrow" id="sessionAccordionArrow" width="9" height="9" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5"><path d="M2 3.5l3 3 3-3"/></svg>
+                        <span data-i18n="settings.card.session.categories">Session categories</span>
+                      </span>
+                    </div>
+                    <div id="sessionAccordionBody" style="display:none;" class="session-accordion-body">
+                      <label class="session-cat-label"><input type="checkbox" class="session-cat" data-cat="prompts" checked> Prompts</label>
+                      <label class="session-cat-label"><input type="checkbox" class="session-cat" data-cat="gen" checked> Generation params &amp; AR pools</label>
+                      <label class="session-cat-label"><input type="checkbox" class="session-cat" data-cat="hires" checked> Hires Fix</label>
+                      <label class="session-cat-label"><input type="checkbox" class="session-cat" data-cat="ad" checked> ADetailer</label>
+                      <label class="session-cat-label"><input type="checkbox" class="session-cat" data-cat="upscale" checked> Upscale</label>
+                      <label class="session-cat-label"><input type="checkbox" class="session-cat" data-cat="canvas" checked> Canvas settings</label>
+                      <label class="session-cat-label"><input type="checkbox" class="session-cat" data-cat="brush" checked> Brush settings</label>
+                      <label class="session-cat-label"><input type="checkbox" class="session-cat" data-cat="format" checked> Output format</label>
+                      <label class="session-cat-label"><input type="checkbox" class="session-cat" data-cat="inpaint" checked> Inpaint settings</label>
+                    </div>
+                  </div>
+
+                  <div class="settings-item" data-setting-key="settingSessionLimit" data-setting-search="session history size limit count entries scratch previews">
+                    <div class="settings-item-copy">
+                      <span class="settings-item-title" data-i18n="settings.generation.sessionLimit">Session history size</span>
+                      <p class="settings-item-description" data-i18n-title="settings.generation.sessionLimit.tooltip" data-i18n="settings.card.session.limitDesc">How many recent results the session keeps (8–200). Saved files on disk are never touched.</p>
+                    </div>
+                    <div class="settings-item-control"><input type="number" class="param-val settings-num" id="settingSessionLimit" min="8" max="200" step="1" value="50"></div>
+                  </div>
+
+                  <div class="settings-action-row" data-setting-key="clearSessionBtn" data-setting-search="clear session history delete scratch previews reset">
+                    <div class="settings-item-copy">
+                      <strong data-i18n="settings.card.session.clearTitle">Clear session history</strong>
+                      <p data-i18n="settings.card.session.clearDesc">Empties the session history and its temporary scratch previews. Saved output files are never deleted.</p>
+                    </div>
+                    <button class="defaults-btn defaults-btn-danger" id="clearSessionBtn" data-i18n-title="settings.generation.clearSession.tooltip" title="Empty the session history and delete its temporary scratch previews. Saved output files are never deleted." data-i18n="settings.generation.clearSession">Clear session</button>
                   </div>
                 </div>
-                <div style="font-size:10px;color:var(--text-3);line-height:1.4;margin-top:2px;" data-i18n="settings.outputFormat.jpegChromaHint">Saves at full color detail (4:4:4 chroma) — no color smearing on fine edges or text.</div>
-              </div>
-              <div id="fmtWebpOpts" style="display:none;">
-                <div class="setting-row"><span class="setting-label" data-i18n="settings.outputFormat.lossless">Lossless</span><div class="toggle-track" id="toggleWebpLossless"><div class="toggle-knob"></div></div></div>
-                <div class="setting-row" id="webpQualityRow">
-                  <span class="setting-label" data-i18n="settings.outputFormat.quality">Quality</span>
-                  <div style="display:flex;align-items:center;gap:6px;">
-                    <input type="range" id="settingWebpQuality" min="1" max="100" value="75" style="width:90px;">
-                    <span id="settingWebpQualityVal" style="font-size:11px;color:var(--text-3);min-width:28px;">75%</span>
+              </section>
+
+              <section class="settings-card" data-settings-section="defaults">
+                <div class="settings-card-head settings-card-head-static">
+                  <span class="settings-card-titles">
+                    <span class="settings-card-title" data-i18n="settings.defaults.title">Defaults</span>
+                    <span class="settings-card-summary" data-i18n="settings.defaults.description">Save current workflow settings as defaults for future sessions.</span>
+                  </span>
+                </div>
+                <div class="settings-card-body">
+                  <div class="settings-item settings-item-buttons" data-setting-key="saveDefaults" data-setting-search="save current defaults workflow reset defaults future sessions">
+                    <div class="settings-item-copy">
+                      <span class="settings-item-title" data-i18n="settings.card.defaults.title">Workflow defaults</span>
+                      <p class="settings-item-description" data-i18n="settings.defaults.description">Save current workflow settings as defaults for future sessions.</p>
+                    </div>
+                    <div class="settings-item-control settings-btn-group">
+                      <button class="defaults-btn" id="saveDefaults" data-i18n="settings.defaults.saveButton">Save Current as Defaults</button>
+                      <button class="defaults-btn defaults-btn-reset" id="resetDefaults" data-i18n="settings.defaults.resetButton">Reset</button>
+                    </div>
                   </div>
                 </div>
-              </div>
-            </div>
-            <div class="setting-group">
-              <div class="setting-group-title" data-i18n="settings.gallery.title">Save to Gallery</div>
-              <div class="setting-row" style="align-items:flex-start;flex-direction:column;gap:5px;">
-                <span class="setting-label" data-i18n="settings.gallery.folder">Gallery folder</span>
-                <input type="text" class="param-val" id="settingGalleryFolder" data-i18n-placeholder="settings.gallery.placeholder" placeholder="Leave blank for the default output folder" style="width:100%;box-sizing:border-box;font-size:11px;">
-              </div>
-              <div class="setting-row" style="gap:6px;justify-content:flex-end;">
-                <button class="defaults-btn" id="galleryFolderTrust" style="font-size:10px;padding:3px 8px;" data-i18n="settings.gallery.trust">Trust folder</button>
-                <button class="defaults-btn" id="galleryFolderBrowse" style="font-size:10px;padding:3px 8px;" data-i18n="settings.gallery.browse">Browse…</button>
-                <button class="defaults-btn" id="galleryFolderOpen" style="font-size:10px;padding:3px 8px;" data-i18n="settings.gallery.open">Open folder</button>
-              </div>
-              <p style="font-size:10px;color:var(--text-4);margin:4px 0 0 0;" data-i18n="settings.gallery.hint">Where “Save to Gallery” writes. This folder lives on the machine running Forge/Studio — the Browse dialog opens there, not on your browser. Leave blank to use the default output folder.</p>
-            </div>
-            <div class="setting-group">
-              <div class="setting-group-title" data-i18n="settings.saveDir.title">Save folder</div>
-              <div class="setting-row">
-                <span class="setting-label" data-i18n="settings.saveDir.tree">Save tree</span>
-                <select class="param-select" id="settingSaveTree" style="width:160px;padding:4px 8px;">
-                  <option value="studio" data-i18n="settings.saveDir.treeStudio">Studio folders</option>
-                  <option value="neo" data-i18n="settings.saveDir.treeNeo">Neo output folders</option>
-                </select>
-              </div>
-              <p style="font-size:10px;color:var(--text-4);margin:4px 0 0 0;" data-i18n="settings.saveDir.treeHint">With Neo output folders, new images save into Neo&rsquo;s own txt2img / img2img folders (using Studio&rsquo;s filenames and metadata); existing images stay where they are and remain visible in Gallery.</p>
-              <div class="setting-row" style="align-items:flex-start;flex-direction:column;gap:5px;">
-                <span class="setting-label" data-i18n="settings.saveDir.folder">Auto-save folder</span>
-                <input type="text" class="param-val" id="settingSaveDir" data-i18n-placeholder="settings.saveDir.placeholder" placeholder="Leave blank for the default Forge output folder" style="width:100%;box-sizing:border-box;font-size:11px;">
-              </div>
-              <div class="setting-row" style="gap:6px;justify-content:flex-end;">
-                <button class="defaults-btn" id="saveDirTrust" style="font-size:10px;padding:3px 8px;" data-i18n="settings.saveDir.trust">Trust folder</button>
-                <button class="defaults-btn" id="saveDirBrowse" style="font-size:10px;padding:3px 8px;" data-i18n="settings.saveDir.browse">Browse…</button>
-                <button class="defaults-btn" id="saveDirOpen" style="font-size:10px;padding:3px 8px;" data-i18n="settings.saveDir.open">Open folder</button>
-              </div>
-              <p style="font-size:10px;color:var(--text-4);margin:4px 0 0 0;" data-i18n="settings.saveDir.hint">Where generated images are written automatically. This folder is on the machine running Forge Studio. If you’re using Studio remotely, type a path visible to the server/VM, then click <b>Trust folder</b>. Leave blank for Forge’s default output folder.</p>
-              <div id="trustedRootsList" style="margin-top:6px;display:flex;flex-direction:column;gap:3px;"></div>
-            </div>
-            <div class="setting-group">
-              <div class="setting-group-title">Watermark</div>
-              <div class="setting-row" title="Composite a watermark image onto every generated image as the final step. Drop PNG/WebP files (transparency recommended) into the watermarks folder.">
-                <span class="setting-label">Auto watermark</span>
-                <div class="toggle-track" id="toggleWatermark"><div class="toggle-knob"></div></div>
-              </div>
-              <div id="watermarkOpts" style="display:none;">
-                <div class="setting-row">
-                  <span class="setting-label" data-i18n="settings.watermark.mode">Apply</span>
-                  <select class="param-select" id="settingWatermarkMode" style="width:170px;padding:4px 8px;">
-                    <option value="export" selected data-i18n="settings.watermark.modeExport">On export (recommended)</option>
-                    <option value="generation" data-i18n="settings.watermark.modeGeneration">On generation (legacy)</option>
-                  </select>
+              </section>
+
+              <section class="settings-card" data-settings-section="language">
+                <div class="settings-card-head settings-card-head-static">
+                  <span class="settings-card-titles">
+                    <span class="settings-card-title" data-i18n="settings.language.title">Language</span>
+                  </span>
                 </div>
-                <p style="font-size:10px;color:var(--text-4);margin:2px 0 4px 0;" data-i18n="settings.watermark.modeHint">On export: generated files stay clean; the mark is applied when you Save/Export the canvas, with a per-export opt-out. On generation: every generated file is stamped as before (skipped for inpaint).</p>
-                <div class="setting-row">
-                  <span class="setting-label">Image</span>
-                  <select class="param-select" id="settingWatermark" style="width:140px;padding:4px 8px;">
-                    <option value="">— None —</option>
-                  </select>
-                </div>
-                <div class="setting-row" style="gap:6px;justify-content:flex-end;">
-                  <button class="defaults-btn" id="watermarkRefresh" style="font-size:10px;padding:3px 8px;">Refresh</button>
-                  <button class="defaults-btn" id="watermarkOpenFolder" style="font-size:10px;padding:3px 8px;">Open folder</button>
-                </div>
-                <p id="watermarkFolderHint" style="display:none;font-size:10px;color:var(--text-4);margin:4px 0 0 0;word-break:break-all;"></p>
-                <div class="setting-row">
-                  <span class="setting-label">Position</span>
-                  <select class="param-select" id="settingWatermarkPosition" style="width:120px;padding:4px 8px;">
-                    <option value="top-left">Top left</option>
-                    <option value="top-center">Top center</option>
-                    <option value="top-right">Top right</option>
-                    <option value="center-left">Center left</option>
-                    <option value="center">Center</option>
-                    <option value="center-right">Center right</option>
-                    <option value="bottom-left">Bottom left</option>
-                    <option value="bottom-center">Bottom center</option>
-                    <option value="bottom-right" selected>Bottom right</option>
-                  </select>
-                </div>
-                <div class="setting-row">
-                  <span class="setting-label">Opacity</span>
-                  <div style="display:flex;align-items:center;gap:6px;">
-                    <input type="range" id="settingWatermarkOpacity" min="0" max="100" value="100" style="width:90px;">
-                    <span id="settingWatermarkOpacityVal" style="font-size:11px;color:var(--text-3);min-width:28px;">100%</span>
+                <div class="settings-card-body">
+                  <div class="settings-item" data-setting-key="settingLocale" data-setting-search="language locale interface translation english deutsch francais espanol">
+                    <div class="settings-item-copy">
+                      <span class="settings-item-title" data-i18n="settings.language.label">Interface language</span>
+                      <p class="settings-item-description" data-i18n="settings.language.note">AI generation parameters (Steps, Sampler, CFG Scale, etc.) stay in English to match the terminology in tutorials and guides.</p>
+                    </div>
+                    <div class="settings-item-control">
+                      <select class="param-select settings-select" id="settingLocale">
+                        <option value="en">English</option>
+                        <option value="de">Deutsch</option>
+                        <option value="fr">Français</option>
+                        <option value="es">Español</option>
+                      </select>
+                    </div>
                   </div>
                 </div>
-                <div class="setting-row" title="Size as a percent of the image's shorter edge — keeps the watermark optically consistent across aspect ratios.">
-                  <span class="setting-label">Size</span>
-                  <div style="display:flex;align-items:center;gap:6px;">
-                    <input type="range" id="settingWatermarkScale" min="1" max="50" value="15" style="width:90px;">
-                    <span id="settingWatermarkScaleVal" style="font-size:11px;color:var(--text-3);min-width:28px;">15%</span>
+              </section>
+
+            </div>
+          </section>
+
+          <!-- ══════════ APPEARANCE & LAYOUT ══════════ -->
+          <section class="settings-category" data-settings-category="appearance-layout" aria-labelledby="settings-cat-appearance-title" hidden tabindex="-1">
+            <header class="settings-category-header">
+              <p class="settings-eyebrow" data-i18n="settings.eyebrow">Settings</p>
+              <h2 id="settings-cat-appearance-title" data-i18n="settings.cat.appearance.title">Appearance &amp; Layout</h2>
+              <p class="settings-category-sub" data-i18n="settings.cat.appearance.sub">Theme, workspace layout, density, saved layouts, and accessibility.</p>
+            </header>
+            <div class="settings-section-stack">
+
+              <section class="settings-card" data-settings-section="theme">
+                <div class="settings-card-head settings-card-head-static">
+                  <span class="settings-card-titles"><span class="settings-card-title" data-i18n="settings.theme.title">Theme</span></span>
+                </div>
+                <div class="settings-card-body">
+                  <div class="settings-item settings-item-stacked" data-setting-key="themeSelector" data-setting-search="theme color scheme dark studio liam oliver toxichost neutral neon appearance">
+                    <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.theme.label">Color theme</span></div>
+                    <div class="settings-item-control settings-item-control-wide">
+                      <div class="theme-selector" id="themeSelector">
+                        <button class="theme-btn active" data-theme="">Studio</button>
+                        <button class="theme-btn" data-theme="liam">Liam</button>
+                        <button class="theme-btn" data-theme="oliver">Oliver</button>
+                        <button class="theme-btn" data-theme="toxic">ToxicHost</button>
+                        <button class="theme-btn" data-theme="neutral">Neutral</button>
+                        <button class="theme-btn" data-theme="neon">Neon</button>
+                      </div>
+                    </div>
                   </div>
                 </div>
-                <div class="setting-row">
-                  <span class="setting-label">Margin</span>
-                  <div style="display:flex;align-items:center;gap:6px;">
-                    <input type="range" id="settingWatermarkMargin" min="0" max="200" value="16" style="width:90px;">
-                    <span id="settingWatermarkMarginVal" style="font-size:11px;color:var(--text-3);min-width:28px;">16px</span>
+              </section>
+
+              <section class="settings-card" data-settings-section="layout">
+                <div class="settings-card-head settings-card-head-static">
+                  <span class="settings-card-titles">
+                    <span class="settings-card-title" data-i18n="settings.layout.title">Layout</span>
+                    <span class="settings-card-summary" data-i18n="settings.card.layout.summary">Workspace preset, density, and customization.</span>
+                  </span>
+                </div>
+                <div class="settings-card-body">
+                  <div class="settings-item settings-item-stacked" data-setting-key="layoutSelector" data-setting-search="layout preset workspace classic deck arrangement">
+                    <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.card.layout.preset">Workspace preset</span></div>
+                    <div class="settings-item-control settings-item-control-wide">
+                      <div class="theme-selector" id="layoutSelector">
+                        <button class="layout-btn active" data-layout-preset="classic" data-i18n="settings.layout.classic">Classic</button>
+                        <button class="layout-btn" data-layout-preset="deck" data-i18n="settings.layout.deck">Deck</button>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="settings-item settings-item-stacked" data-setting-key="densitySelector" data-setting-search="density comfortable compact spacing size">
+                    <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.density.title">Density</span></div>
+                    <div class="settings-item-control settings-item-control-wide">
+                      <div class="theme-selector" id="densitySelector">
+                        <button class="layout-btn active" data-density="comfortable" data-i18n="settings.density.comfortable">Comfortable</button>
+                        <button class="layout-btn" data-density="compact" data-i18n="settings.density.compact">Compact</button>
+                      </div>
+                    </div>
+                  </div>
+                  <div class="settings-item" data-setting-key="toggleCustomize" data-setting-search="customize layout edit panels drag rearrange">
+                    <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.layout.customize">Customize layout</span></div>
+                    <div class="settings-item-control"><div class="toggle-track" id="toggleCustomize"><div class="toggle-knob"></div></div></div>
+                  </div>
+                  <div class="settings-item" data-setting-key="toggleClassicStrip" data-setting-search="session strip classic history filmstrip" data-i18n-title="settings.layout.classicStrip.tooltip" title="Show the session history strip next to the canvas in the Classic layout too.">
+                    <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.layout.classicStrip">Session strip in Classic</span></div>
+                    <div class="settings-item-control"><div class="toggle-track" id="toggleClassicStrip"><div class="toggle-knob"></div></div></div>
                   </div>
                 </div>
-                <div class="setting-row">
-                  <span class="setting-label">Rotation</span>
-                  <div style="display:flex;align-items:center;gap:6px;">
-                    <input type="range" id="settingWatermarkRotation" min="-180" max="180" value="0" style="width:90px;">
-                    <span id="settingWatermarkRotationVal" style="font-size:11px;color:var(--text-3);min-width:28px;">0°</span>
+              </section>
+
+              <section class="settings-card" data-settings-section="saved-layouts" data-collapsible="true">
+                <button class="settings-card-head" type="button" aria-expanded="false" aria-controls="settingsCardBody-saved-layouts">
+                  <span class="settings-card-titles">
+                    <span class="settings-card-title" data-i18n="settings.card.savedLayouts.title">Saved Layouts</span>
+                    <span class="settings-card-summary" data-i18n="settings.card.savedLayouts.summary">Load, save, and manage custom layouts.</span>
+                  </span>
+                  <svg class="settings-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M3 4.5l3 3 3-3"/></svg>
+                </button>
+                <div class="settings-card-body" id="settingsCardBody-saved-layouts" hidden>
+                  <div class="settings-item" data-setting-key="layoutCurrentName" data-setting-search="current layout name active">
+                    <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.layout.current">Current layout</span></div>
+                    <div class="settings-item-control"><span id="layoutCurrentName" class="settings-mono-value">&mdash;</span></div>
+                  </div>
+                  <div class="settings-item settings-item-stacked" data-setting-key="layoutLoadSelect" data-setting-search="load saved layout select import">
+                    <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.card.savedLayouts.load">Load layout</span></div>
+                    <div class="settings-item-control settings-item-control-wide">
+                      <select class="param-select settings-select-wide" id="layoutLoadSelect">
+                        <option value="" data-i18n="layout.load.placeholder">Load layout…</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="settings-item settings-item-stacked" data-setting-key="layoutSaveBtn" data-setting-search="save layout save as delete reset new">
+                    <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.card.savedLayouts.manage">Manage layouts</span></div>
+                    <div class="settings-item-control settings-item-control-wide settings-btn-group">
+                      <button class="defaults-btn defaults-btn-reset" id="layoutResetBtn" data-i18n-title="layout.reset.tooltip" title="Back to the default layout for the current preset (saved layout files are kept)" data-i18n="layout.reset">Reset</button>
+                      <button class="defaults-btn" id="layoutSaveBtn" data-i18n="layout.save">Save</button>
+                      <button class="defaults-btn" id="layoutSaveAsBtn" data-i18n="layout.saveAs">Save as…</button>
+                      <button class="defaults-btn" id="layoutDeleteBtn" data-i18n="layout.delete">Delete</button>
+                    </div>
+                  </div>
+                  <p class="settings-card-note" data-i18n="settings.layout.shareHint">Layouts are JSON files in the extension's studio_layouts/ folder — copy a file there to import a shared layout.</p>
+                </div>
+              </section>
+
+              <section class="settings-card" data-settings-section="accessibility">
+                <div class="settings-card-head settings-card-head-static">
+                  <span class="settings-card-titles"><span class="settings-card-title" data-i18n="settings.accessibility.title">Accessibility</span></span>
+                </div>
+                <div class="settings-card-body">
+                  <div class="settings-item" data-setting-key="settingColorblind" data-setting-search="colorblind color blind deuteranopia protanopia tritanopia accessibility vision">
+                    <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.accessibility.colorblind">Colorblind mode</span></div>
+                    <div class="settings-item-control">
+                      <select class="param-select settings-select" id="settingColorblind">
+                        <option value="" data-i18n="common.none">None</option>
+                        <option value="deutan">Deuteranopia (red-green)</option>
+                        <option value="protan">Protanopia (red-green)</option>
+                        <option value="tritan">Tritanopia (blue-yellow)</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="settings-item" data-setting-key="settingMotion" data-setting-search="reduced motion animation accessibility prefers">
+                    <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.accessibility.reducedMotion">Reduced motion</span></div>
+                    <div class="settings-item-control">
+                      <select class="param-select settings-select" id="settingMotion">
+                        <option value="" data-i18n="settings.accessibility.systemDefault">System default</option>
+                        <option value="reduced" data-i18n="settings.accessibility.reduced">Reduced</option>
+                        <option value="full" data-i18n="settings.accessibility.full">Full</option>
+                      </select>
+                    </div>
+                  </div>
+                  <!-- education.js injects its card immediately before this anchor -->
+                  <div data-settings-inject-point="education"></div>
+                </div>
+              </section>
+
+            </div>
+          </section>
+
+          <!-- ══════════ CANVAS & TOOLS ══════════ -->
+          <section class="settings-category" data-settings-category="canvas-tools" aria-labelledby="settings-cat-canvas-title" hidden tabindex="-1">
+            <header class="settings-category-header">
+              <p class="settings-eyebrow" data-i18n="settings.eyebrow">Settings</p>
+              <h2 id="settings-cat-canvas-title" data-i18n="settings.cat.canvas.title">Canvas &amp; Tools</h2>
+              <p class="settings-category-sub" data-i18n="settings.cat.canvas.sub">Canvas display and editing behavior.</p>
+            </header>
+            <div class="settings-section-stack">
+              <section class="settings-card" data-settings-section="canvas">
+                <div class="settings-card-head settings-card-head-static">
+                  <span class="settings-card-titles"><span class="settings-card-title" data-i18n="settings.canvas.title">Canvas</span></span>
+                </div>
+                <div class="settings-card-body">
+                  <div class="settings-item" data-setting-key="toggleGrid" data-setting-search="grid canvas overlay guides show">
+                    <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.canvas.showGrid">Show grid</span></div>
+                    <div class="settings-item-control"><div class="toggle-track" id="toggleGrid"><div class="toggle-knob"></div></div></div>
+                  </div>
+                  <div class="settings-item" data-setting-key="toggleCanvasColorPreview" data-setting-search="gpu canvas preview webgl color managed display backend" data-i18n-title="settings.canvas.gpuPreview.tooltip" title="Uses the GPU/WebGL display backend for sharper color-managed canvas preview. Falls back to standard Canvas 2D if unavailable. Does not change exported pixels.">
+                    <div class="settings-item-copy">
+                      <span class="settings-item-title" data-i18n="settings.canvas.gpuPreview">GPU canvas preview</span>
+                      <p class="settings-item-description" data-i18n="settings.canvas.gpuPreview.desc">Sharper color-managed preview via WebGL. Falls back to Canvas 2D when unavailable; exported pixels are unchanged.</p>
+                    </div>
+                    <div class="settings-item-control"><div class="toggle-track" id="toggleCanvasColorPreview"><div class="toggle-knob"></div></div></div>
                   </div>
                 </div>
-              </div>
+              </section>
             </div>
-            <div class="setting-group">
-              <div class="setting-group-title">VRAM</div>
-              <div style="margin-bottom:8px;">
-                <button class="defaults-btn" id="unloadModelBtn" style="width:100%;" data-i18n="settings.vram.unloadModel">Unload Model from VRAM</button>
-              </div>
-              <div class="setting-row">
-                <span class="setting-label">GPU Weights</span>
-                <div style="display:flex;align-items:center;gap:6px;">
-                  <input type="range" id="vramReserveSlider" min="0" max="8.0" step="0.25" value="0" style="width:100px;">
-                  <span id="vramReserveVal" style="font-size:11px;color:var(--text-2);font-family:var(--mono);min-width:36px;">Auto</span>
+          </section>
+
+          <!-- ══════════ GENERATION & PREVIEW ══════════ -->
+          <section class="settings-category" data-settings-category="generation-preview" aria-labelledby="settings-cat-generation-title" hidden tabindex="-1">
+            <header class="settings-category-header">
+              <p class="settings-eyebrow" data-i18n="settings.eyebrow">Settings</p>
+              <h2 id="settings-cat-generation-title" data-i18n="settings.cat.generation.title">Generation &amp; Preview</h2>
+              <p class="settings-category-sub" data-i18n="settings.cat.generation.sub">Generation behavior, precision, and live progress previews.</p>
+            </header>
+            <div class="settings-section-stack">
+              <section class="settings-card" data-settings-section="generation">
+                <div class="settings-card-head settings-card-head-static">
+                  <span class="settings-card-titles"><span class="settings-card-title" data-i18n="settings.card.generation.title">Generation</span></span>
                 </div>
-              </div>
-              <div style="font-size:9px;color:var(--text-4);padding:2px 0 6px 0;" data-i18n="settings.vram.gpuWeights.description">How much VRAM to use for model weights. 0 = Forge default. Higher values keep more of the model in VRAM for faster generation; lower values offload weights to RAM to free VRAM for inference. Peak usage during generation may still exceed this — it's a loading budget, not a hard cap.</div>
-              <div class="setting-row"><span class="setting-label" data-i18n="settings.vram.autoUnload">Auto-unload when idle</span><div class="toggle-track" id="toggleAutoUnload"><div class="toggle-knob"></div></div></div>
-              <div class="setting-row" id="autoUnloadMinutesRow" style="display:none;">
-                <span class="setting-label" data-i18n="settings.vram.idleTimeout">Idle timeout</span>
-                <div style="display:flex;align-items:center;gap:6px;">
-                  <input type="range" id="autoUnloadMinutes" min="5" max="30" step="5" value="10" style="width:80px;">
-                  <span id="autoUnloadMinutesVal" style="font-size:11px;color:var(--text-3);min-width:32px;">10 min</span>
+                <div class="settings-card-body">
+                  <div class="settings-item" data-setting-key="toggleSaveOutputs" data-setting-search="save outputs generated images automatic disk">
+                    <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.generation.saveOutputs">Save outputs</span></div>
+                    <div class="settings-item-control"><div class="toggle-track on" id="toggleSaveOutputs"><div class="toggle-knob"></div></div></div>
+                  </div>
+                  <div class="settings-item" data-setting-key="toggleArchShowAll" data-setting-search="always show all parameters architecture model" data-i18n-title="settings.archShowAll.tooltip" title="Show parameters even when the loaded model's architecture doesn't use them.">
+                    <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.archShowAll">Always show all parameters</span></div>
+                    <div class="settings-item-control"><div class="toggle-track" id="toggleArchShowAll"><div class="toggle-knob"></div></div></div>
+                  </div>
+                  <div class="settings-item" data-setting-key="toggleHighPrecision" data-setting-search="high precision float fp32 banding highlight headroom develop" data-i18n-title="settings.generation.highPrecision.tooltip" title="Saves high-precision float data alongside each image. Eliminates banding and gives the Develop module ~0.5 stops of highlight headroom. Adds ~0.5–3s and ~12 MB per image. Best with fp32 VAE.">
+                    <div class="settings-item-copy">
+                      <span class="settings-item-title" data-i18n="settings.generation.highPrecision">High precision</span>
+                      <p class="settings-item-description" data-i18n="settings.card.generation.highPrecisionDesc">Store float data per image for banding-free Develop edits. Adds ~0.5–3s and ~12 MB each.</p>
+                    </div>
+                    <div class="settings-item-control"><div class="toggle-track" id="toggleHighPrecision"><div class="toggle-knob"></div></div></div>
+                  </div>
                 </div>
-              </div>
+              </section>
+              <section class="settings-card" data-settings-section="live-preview">
+                <div class="settings-card-head settings-card-head-static">
+                  <span class="settings-card-titles"><span class="settings-card-title" data-i18n="settings.card.livePreview.title">Live Preview</span></span>
+                </div>
+                <div class="settings-card-body">
+                  <div class="settings-item" data-setting-key="toggleLivePreview" data-setting-search="live preview progress intermediate sampling">
+                    <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.generation.livePreview">Live preview</span></div>
+                    <div class="settings-item-control"><div class="toggle-track on" id="toggleLivePreview"><div class="toggle-knob"></div></div></div>
+                  </div>
+                  <div class="settings-item" data-setting-key="settingLivePreviewQuality" data-setting-search="live preview quality taesd fast legacy auto decode" data-setting-depends="toggleLivePreview" data-i18n-title="settings.generation.livePreviewQuality.tooltip" title="Auto (recommended): full-resolution decode, resized for display — always compatible. Fast: experimental reduced-latent decode; faster on some setups but can look garbled on certain models (auto-falls back). Legacy: exact old decode, for comparison; slower.">
+                    <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.generation.livePreviewQuality">Live preview quality</span></div>
+                    <div class="settings-item-control">
+                      <select class="param-select settings-select" id="settingLivePreviewQuality">
+                        <option value="auto" data-i18n="settings.generation.livePreviewQuality.auto">Auto (recommended)</option>
+                        <option value="fast" data-i18n="settings.generation.livePreviewQuality.fast">Fast (experimental)</option>
+                        <option value="legacy" data-i18n="settings.generation.livePreviewQuality.legacy">Legacy</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              </section>
             </div>
-            <div class="setting-group" data-settings-span="full">
-              <div class="setting-group-title" data-i18n="settings.extensions.title">Extensions</div>
-              <p style="font-size:10px;color:var(--text-4);margin:0 0 8px 0;" data-i18n="settings.extensions.description">Toggle which extensions appear in the Extensions tab.</p>
-              <div id="extToggles"></div>
+          </section>
+
+          <!-- ══════════ PROMPTS & METADATA ══════════ -->
+          <section class="settings-category" data-settings-category="prompts-metadata" aria-labelledby="settings-cat-prompts-title" hidden tabindex="-1">
+            <header class="settings-category-header">
+              <p class="settings-eyebrow" data-i18n="settings.eyebrow">Settings</p>
+              <h2 id="settings-cat-prompts-title" data-i18n="settings.cat.prompts.title">Prompts &amp; Metadata</h2>
+              <p class="settings-category-sub" data-i18n="settings.cat.prompts.sub">Dynamic prompts, autocomplete, cleanup, and external metadata.</p>
+            </header>
+            <div class="settings-section-stack">
+
+              <section class="settings-card" data-settings-section="prompt-autocomplete">
+                <div class="settings-card-head settings-card-head-static">
+                  <span class="settings-card-titles"><span class="settings-card-title" data-i18n="settings.tagAutocomplete.title">Prompt Autocomplete</span></span>
+                </div>
+                <div class="settings-card-body">
+                  <div class="settings-item" data-setting-key="toggleTagAutocomplete" data-setting-search="tag suggestions autocomplete danbooru e621 completion">
+                    <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.tagAutocomplete.enabled">Tag suggestions</span></div>
+                    <div class="settings-item-control"><div class="toggle-track on" id="toggleTagAutocomplete"><div class="toggle-knob"></div></div></div>
+                  </div>
+                  <div class="settings-item" data-setting-key="togglePromptCleanup" data-setting-search="tidy prompt cleanup commas spaces attention groups generate">
+                    <div class="settings-item-copy">
+                      <span class="settings-item-title" data-i18n="settings.prompt.cleanup">Tidy prompt on generate</span>
+                      <p class="settings-item-description" data-i18n="settings.prompt.cleanupHint">Collapses duplicate commas, extra spaces, and empty attention groups in the copy sent to generation. Your text is never rewritten; wildcards pass through untouched.</p>
+                    </div>
+                    <div class="settings-item-control"><div class="toggle-track on" id="togglePromptCleanup"><div class="toggle-knob"></div></div></div>
+                  </div>
+                  <div class="settings-item" data-setting-key="settingTagSource" data-setting-search="tag source danbooru e621 derpibooru merged autocomplete" data-setting-depends="toggleTagAutocomplete">
+                    <div class="settings-item-copy">
+                      <span class="settings-item-title" data-i18n="settings.tagAutocomplete.source">Tag source</span>
+                      <p class="settings-item-description" data-i18n="settings.tagAutocomplete.note">LoRA, embedding, and wildcard suggestions remain available regardless of this setting.</p>
+                    </div>
+                    <div class="settings-item-control">
+                      <select class="param-select settings-select" id="settingTagSource">
+                        <option value="danbooru">Danbooru</option>
+                        <option value="e621">e621</option>
+                        <option value="danbooru_e621_merged" data-i18n="settings.tagAutocomplete.sourceMerged">Danbooru + e621</option>
+                        <option value="derpibooru">Derpibooru</option>
+                      </select>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="settings-card" data-settings-section="dynamic-prompts" id="dynamicPromptsSettings">
+                <div class="settings-card-head settings-card-head-static">
+                  <span class="settings-card-titles">
+                    <span class="settings-card-title" data-i18n="settings.card.dynamicPrompts.title">Dynamic Prompts</span>
+                    <span class="settings-card-summary" data-i18n="settings.card.dynamicPrompts.summary">Expand wildcards and variant syntax inside Studio.</span>
+                  </span>
+                </div>
+                <div class="settings-card-body">
+                  <div class="settings-item" data-setting-key="toggleStudioDynPrompts" data-setting-search="studio dynamic prompts wildcards variants expand __wildcard__" title="Expand __wildcard__ and {a|b|c} prompts inside Studio without relying on Dynamic Prompts.">
+                    <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.card.dynamicPrompts.enabled">Studio dynamic prompts</span></div>
+                    <div class="settings-item-control"><div class="toggle-track on" id="toggleStudioDynPrompts"><div class="toggle-knob"></div></div></div>
+                  </div>
+                  <div class="settings-item" id="dynPromptsFolderRow" data-setting-key="dynPromptsFolderRow" data-setting-search="wildcard folder txt files location" data-setting-depends="toggleStudioDynPrompts" title="Choose the folder Studio uses for wildcard .txt files.">
+                    <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.card.dynamicPrompts.folder">Wildcard folder</span></div>
+                    <div class="settings-item-control"><span class="dyn-prompts-folder-display settings-mono-value" id="dynPromptsFolderDisplay">Default folders</span></div>
+                  </div>
+                  <div class="settings-item settings-item-actions" id="dynPromptsFolderControls" data-setting-depends="toggleStudioDynPrompts">
+                    <div class="settings-item-control settings-btn-group settings-btn-group-end">
+                      <button class="defaults-btn" id="dynPromptsFolderBrowse">Browse...</button>
+                      <button class="defaults-btn" id="dynPromptsFolderReset">Reset</button>
+                    </div>
+                  </div>
+                  <div class="settings-item settings-item-actions" id="dynPromptsFolderManualRow" style="display:none;">
+                    <div class="settings-item-control settings-btn-group settings-btn-group-end">
+                      <input type="text" id="dynPromptsFolderInput" class="settings-text-input" placeholder="Custom wildcards folder path">
+                      <button class="defaults-btn" id="dynPromptsFolderSet">Set</button>
+                    </div>
+                  </div>
+                  <p class="dyn-prompts-dp-note settings-card-note" id="dynPromptsDpNote" style="display:none;">Dynamic Prompts detected. Studio suppresses it during Studio-native expansion to avoid double processing.</p>
+                </div>
+              </section>
+
+              <section class="settings-card" data-settings-section="civitai" data-collapsible="true" data-summary-source="toggleCivitaiLookup">
+                <button class="settings-card-head" type="button" aria-expanded="false" aria-controls="settingsCardBody-civitai">
+                  <span class="settings-card-titles">
+                    <span class="settings-card-title" data-i18n="settings.civitai.title">Civitai metadata</span>
+                    <span class="settings-card-summary" data-card-summary data-i18n="common.off">Off</span>
+                  </span>
+                  <svg class="settings-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M3 4.5l3 3 3-3"/></svg>
+                </button>
+                <div class="settings-card-body" id="settingsCardBody-civitai" hidden>
+                  <div class="settings-item" data-setting-key="toggleCivitaiLookup" data-setting-search="civitai metadata lookup lora hash trigger words preview model" data-i18n-title="settings.civitai.tooltip" title="Looks up LoRA preview images, trigger words, and model info by file hash. Off by default. Per-file privacy is available from the LoRA browser context menu.">
+                    <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.civitai.enable">Enable Civitai lookup</span></div>
+                    <div class="settings-item-control"><div class="toggle-track" id="toggleCivitaiLookup"><div class="toggle-knob"></div></div></div>
+                  </div>
+                  <p class="settings-card-note" data-i18n="settings.civitai.note">Uses model hashes to look up metadata on civitai.com (with civitai.red as a fallback for adult content that has moved there). No prompts or images are sent. Filenames are not transmitted. Lookups happen only when you ask.</p>
+                </div>
+              </section>
+
             </div>
-            <div class="setting-group">
-              <div class="setting-group-title" data-i18n="settings.theme.title">Theme</div>
-              <div class="theme-selector" id="themeSelector">
-                <button class="theme-btn active" data-theme="">Studio</button>
-                <button class="theme-btn" data-theme="liam">Liam</button>
-                <button class="theme-btn" data-theme="oliver">Oliver</button>
-                <button class="theme-btn" data-theme="toxic">ToxicHost</button>
-                <button class="theme-btn" data-theme="neutral">Neutral</button>
-                <button class="theme-btn" data-theme="neon">Neon</button>
-              </div>
+          </section>
+
+          <!-- ══════════ OUTPUT & FILES ══════════ -->
+          <section class="settings-category" data-settings-category="output-files" aria-labelledby="settings-cat-output-title" hidden tabindex="-1">
+            <header class="settings-category-header">
+              <p class="settings-eyebrow" data-i18n="settings.eyebrow">Settings</p>
+              <h2 id="settings-cat-output-title" data-i18n="settings.cat.output.title">Output &amp; Files</h2>
+              <p class="settings-category-sub" data-i18n="settings.cat.output.sub">File format, destinations, Gallery storage, and watermarking.</p>
+            </header>
+            <div class="settings-section-stack">
+
+              <section class="settings-card" data-settings-section="output-format">
+                <div class="settings-card-head settings-card-head-static">
+                  <span class="settings-card-titles"><span class="settings-card-title" data-i18n="settings.outputFormat.title">Output Format</span></span>
+                </div>
+                <div class="settings-card-body">
+                  <div class="settings-item" data-setting-key="settingSaveFormat" data-setting-search="output format png jpeg jpg webp file type">
+                    <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.outputFormat.format">Format</span></div>
+                    <div class="settings-item-control">
+                      <select class="param-select settings-select" id="settingSaveFormat">
+                        <option value="png" selected>PNG</option>
+                        <option value="jpeg">JPEG</option>
+                        <option value="webp">WebP</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="settings-item" data-setting-key="toggleMetadata" data-setting-search="embed metadata png parameters generation info">
+                    <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.outputFormat.embedMetadata">Embed metadata</span></div>
+                    <div class="settings-item-control"><div class="toggle-track on" id="toggleMetadata"><div class="toggle-knob"></div></div></div>
+                  </div>
+                  <div id="fmtJpegOpts" style="display:none;">
+                    <div class="settings-item" data-setting-key="settingJpegQuality" data-setting-search="jpeg quality compression chroma">
+                      <div class="settings-item-copy">
+                        <span class="settings-item-title" data-i18n="settings.outputFormat.quality">Quality</span>
+                        <p class="settings-item-description" data-i18n="settings.outputFormat.jpegChromaHint">Saves at full color detail (4:4:4 chroma) — no color smearing on fine edges or text.</p>
+                      </div>
+                      <div class="settings-item-control settings-range">
+                        <input type="range" id="settingJpegQuality" min="1" max="100" value="80">
+                        <span id="settingJpegQualityVal" class="settings-range-val">80%</span>
+                      </div>
+                    </div>
+                  </div>
+                  <div id="fmtWebpOpts" style="display:none;">
+                    <div class="settings-item" data-setting-key="toggleWebpLossless" data-setting-search="webp lossless compression">
+                      <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.outputFormat.lossless">Lossless</span></div>
+                      <div class="settings-item-control"><div class="toggle-track" id="toggleWebpLossless"><div class="toggle-knob"></div></div></div>
+                    </div>
+                    <div class="settings-item" id="webpQualityRow" data-setting-key="settingWebpQuality" data-setting-search="webp quality compression">
+                      <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.outputFormat.quality">Quality</span></div>
+                      <div class="settings-item-control settings-range">
+                        <input type="range" id="settingWebpQuality" min="1" max="100" value="75">
+                        <span id="settingWebpQualityVal" class="settings-range-val">75%</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="settings-card" data-settings-section="save-to-gallery">
+                <div class="settings-card-head settings-card-head-static">
+                  <span class="settings-card-titles"><span class="settings-card-title" data-i18n="settings.gallery.title">Save to Gallery</span></span>
+                </div>
+                <div class="settings-card-body">
+                  <div class="settings-item settings-item-stacked" data-setting-key="settingGalleryFolder" data-setting-search="gallery folder save destination path directory">
+                    <div class="settings-item-copy">
+                      <span class="settings-item-title" data-i18n="settings.gallery.folder">Gallery folder</span>
+                      <p class="settings-item-description" data-i18n="settings.gallery.hint">Where “Save to Gallery” writes. This folder lives on the machine running Forge/Studio — the Browse dialog opens there, not on your browser. Leave blank to use the default output folder.</p>
+                    </div>
+                    <div class="settings-item-control settings-item-control-wide">
+                      <input type="text" class="param-val settings-text-input" id="settingGalleryFolder" data-i18n-placeholder="settings.gallery.placeholder" placeholder="Leave blank for the default output folder">
+                    </div>
+                  </div>
+                  <div class="settings-item settings-item-actions">
+                    <div class="settings-item-control settings-btn-group settings-btn-group-end">
+                      <button class="defaults-btn" id="galleryFolderTrust" data-i18n="settings.gallery.trust">Trust folder</button>
+                      <button class="defaults-btn" id="galleryFolderBrowse" data-i18n="settings.gallery.browse">Browse…</button>
+                      <button class="defaults-btn" id="galleryFolderOpen" data-i18n="settings.gallery.open">Open folder</button>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="settings-card" data-settings-section="save-folder">
+                <div class="settings-card-head settings-card-head-static">
+                  <span class="settings-card-titles"><span class="settings-card-title" data-i18n="settings.saveDir.title">Save folder</span></span>
+                </div>
+                <div class="settings-card-body">
+                  <div class="settings-item" data-setting-key="settingSaveTree" data-setting-search="save tree studio neo output folders structure">
+                    <div class="settings-item-copy">
+                      <span class="settings-item-title" data-i18n="settings.saveDir.tree">Save tree</span>
+                      <p class="settings-item-description" data-i18n="settings.saveDir.treeHint">With Neo output folders, new images save into Neo’s own txt2img / img2img folders (using Studio’s filenames and metadata); existing images stay where they are and remain visible in Gallery.</p>
+                    </div>
+                    <div class="settings-item-control">
+                      <select class="param-select settings-select-wide" id="settingSaveTree">
+                        <option value="studio" data-i18n="settings.saveDir.treeStudio">Studio folders</option>
+                        <option value="neo" data-i18n="settings.saveDir.treeNeo">Neo output folders</option>
+                      </select>
+                    </div>
+                  </div>
+                  <div class="settings-item settings-item-stacked" data-setting-key="settingSaveDir" data-setting-search="auto save folder directory path output destination">
+                    <div class="settings-item-copy">
+                      <span class="settings-item-title" data-i18n="settings.saveDir.folder">Auto-save folder</span>
+                      <p class="settings-item-description" data-i18n="settings.saveDir.hint">Where generated images are written automatically. This folder is on the machine running Forge Studio. If you’re using Studio remotely, type a path visible to the server/VM, then click <b>Trust folder</b>. Leave blank for Forge’s default output folder.</p>
+                    </div>
+                    <div class="settings-item-control settings-item-control-wide">
+                      <input type="text" class="param-val settings-text-input" id="settingSaveDir" data-i18n-placeholder="settings.saveDir.placeholder" placeholder="Leave blank for the default Forge output folder">
+                    </div>
+                  </div>
+                  <div class="settings-item settings-item-actions">
+                    <div class="settings-item-control settings-btn-group settings-btn-group-end">
+                      <button class="defaults-btn" id="saveDirTrust" data-i18n="settings.saveDir.trust">Trust folder</button>
+                      <button class="defaults-btn" id="saveDirBrowse" data-i18n="settings.saveDir.browse">Browse…</button>
+                      <button class="defaults-btn" id="saveDirOpen" data-i18n="settings.saveDir.open">Open folder</button>
+                    </div>
+                  </div>
+                  <div id="trustedRootsList" class="settings-trusted-roots"></div>
+                </div>
+              </section>
+
+              <section class="settings-card" data-settings-section="watermark" data-collapsible="true" data-summary-source="toggleWatermark" data-auto-expand-on="toggleWatermark">
+                <button class="settings-card-head" type="button" aria-expanded="false" aria-controls="settingsCardBody-watermark">
+                  <span class="settings-card-titles">
+                    <span class="settings-card-title" data-i18n="settings.watermark.title">Watermark</span>
+                    <span class="settings-card-summary" data-card-summary data-i18n="common.off">Off</span>
+                  </span>
+                  <svg class="settings-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M3 4.5l3 3 3-3"/></svg>
+                </button>
+                <div class="settings-card-body" id="settingsCardBody-watermark" hidden>
+                  <div class="settings-item" data-setting-key="toggleWatermark" data-setting-search="auto watermark stamp logo overlay export" title="Composite a watermark image onto every generated image as the final step. Drop PNG/WebP files (transparency recommended) into the watermarks folder.">
+                    <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.watermark.enable">Auto watermark</span></div>
+                    <div class="settings-item-control"><div class="toggle-track" id="toggleWatermark"><div class="toggle-knob"></div></div></div>
+                  </div>
+                  <div id="watermarkOpts" style="display:none;">
+                    <div class="settings-item" data-setting-key="settingWatermarkMode" data-setting-search="watermark apply mode export generation">
+                      <div class="settings-item-copy">
+                        <span class="settings-item-title" data-i18n="settings.watermark.mode">Apply</span>
+                        <p class="settings-item-description" data-i18n="settings.watermark.modeHint">On export: generated files stay clean; the mark is applied when you Save/Export the canvas, with a per-export opt-out. On generation: every generated file is stamped as before (skipped for inpaint).</p>
+                      </div>
+                      <div class="settings-item-control">
+                        <select class="param-select settings-select-wide" id="settingWatermarkMode">
+                          <option value="export" selected data-i18n="settings.watermark.modeExport">On export (recommended)</option>
+                          <option value="generation" data-i18n="settings.watermark.modeGeneration">On generation (legacy)</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div class="settings-item" data-setting-key="settingWatermark" data-setting-search="watermark image file select">
+                      <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.watermark.image">Image</span></div>
+                      <div class="settings-item-control">
+                        <select class="param-select settings-select" id="settingWatermark"><option value="">— None —</option></select>
+                      </div>
+                    </div>
+                    <div class="settings-item settings-item-actions">
+                      <div class="settings-item-control settings-btn-group settings-btn-group-end">
+                        <button class="defaults-btn" id="watermarkRefresh" data-i18n="common.refresh">Refresh</button>
+                        <button class="defaults-btn" id="watermarkOpenFolder" data-i18n="settings.watermark.openFolder">Open folder</button>
+                      </div>
+                    </div>
+                    <p id="watermarkFolderHint" class="settings-card-note settings-break-all" style="display:none;"></p>
+                    <div class="settings-item" data-setting-key="settingWatermarkPosition" data-setting-search="watermark position corner placement">
+                      <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.watermark.position">Position</span></div>
+                      <div class="settings-item-control">
+                        <select class="param-select settings-select" id="settingWatermarkPosition">
+                          <option value="top-left">Top left</option>
+                          <option value="top-center">Top center</option>
+                          <option value="top-right">Top right</option>
+                          <option value="center-left">Center left</option>
+                          <option value="center">Center</option>
+                          <option value="center-right">Center right</option>
+                          <option value="bottom-left">Bottom left</option>
+                          <option value="bottom-center">Bottom center</option>
+                          <option value="bottom-right" selected>Bottom right</option>
+                        </select>
+                      </div>
+                    </div>
+                    <div class="settings-item" data-setting-key="settingWatermarkOpacity" data-setting-search="watermark opacity transparency">
+                      <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.watermark.opacity">Opacity</span></div>
+                      <div class="settings-item-control settings-range">
+                        <input type="range" id="settingWatermarkOpacity" min="0" max="100" value="100">
+                        <span id="settingWatermarkOpacityVal" class="settings-range-val">100%</span>
+                      </div>
+                    </div>
+                    <div class="settings-item" data-setting-key="settingWatermarkScale" data-setting-search="watermark size scale" title="Size as a percent of the image's shorter edge — keeps the watermark optically consistent across aspect ratios.">
+                      <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.watermark.size">Size</span></div>
+                      <div class="settings-item-control settings-range">
+                        <input type="range" id="settingWatermarkScale" min="1" max="50" value="15">
+                        <span id="settingWatermarkScaleVal" class="settings-range-val">15%</span>
+                      </div>
+                    </div>
+                    <div class="settings-item" data-setting-key="settingWatermarkMargin" data-setting-search="watermark margin padding edge inset">
+                      <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.watermark.margin">Margin</span></div>
+                      <div class="settings-item-control settings-range">
+                        <input type="range" id="settingWatermarkMargin" min="0" max="200" value="16">
+                        <span id="settingWatermarkMarginVal" class="settings-range-val">16px</span>
+                      </div>
+                    </div>
+                    <div class="settings-item" data-setting-key="settingWatermarkRotation" data-setting-search="watermark rotation angle tilt">
+                      <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.watermark.rotation">Rotation</span></div>
+                      <div class="settings-item-control settings-range">
+                        <input type="range" id="settingWatermarkRotation" min="-180" max="180" value="0">
+                        <span id="settingWatermarkRotationVal" class="settings-range-val">0°</span>
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
             </div>
-            <div class="setting-group" data-settings-span="full">
-              <div class="setting-group-title" data-i18n="settings.layout.title">Layout</div>
-              <div class="theme-selector" id="layoutSelector">
-                <button class="layout-btn active" data-layout-preset="classic" data-i18n="settings.layout.classic">Classic</button>
-                <button class="layout-btn" data-layout-preset="deck" data-i18n="settings.layout.deck">Deck</button>
-              </div>
-              <div class="setting-row" style="margin-top:8px;">
-                <span class="setting-label" data-i18n="settings.density.title">Density</span>
-              </div>
-              <div class="theme-selector" id="densitySelector">
-                <button class="layout-btn active" data-density="comfortable" data-i18n="settings.density.comfortable">Comfortable</button>
-                <button class="layout-btn" data-density="compact" data-i18n="settings.density.compact">Compact</button>
-              </div>
-              <div class="setting-row" style="margin-top:8px;">
-                <span class="setting-label" data-i18n="settings.layout.customize">Customize layout</span>
-                <div class="toggle-track" id="toggleCustomize"><div class="toggle-knob"></div></div>
-              </div>
-              <div class="setting-row" data-i18n-title="settings.layout.classicStrip.tooltip" title="Show the session history strip next to the canvas in the Classic layout too.">
-                <span class="setting-label" data-i18n="settings.layout.classicStrip">Session strip in Classic</span>
-                <div class="toggle-track" id="toggleClassicStrip"><div class="toggle-knob"></div></div>
-              </div>
-              <div class="setting-row">
-                <span class="setting-label" data-i18n="settings.layout.current">Current layout</span>
-                <span id="layoutCurrentName" style="font-size:11px;color:var(--text-3);font-family:var(--mono);max-width:150px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">&mdash;</span>
-              </div>
-              <div class="setting-row" style="gap:6px;">
-                <select class="param-select" id="layoutLoadSelect" style="flex:1;min-width:0;padding:4px 8px;">
-                  <option value="" data-i18n="layout.load.placeholder">Load layout…</option>
-                </select>
-              </div>
-              <div class="setting-row" style="gap:6px;justify-content:flex-end;">
-                <button class="defaults-btn defaults-btn-reset" id="layoutResetBtn" style="font-size:10px;padding:3px 8px;" data-i18n-title="layout.reset.tooltip" title="Back to the default layout for the current preset (saved layout files are kept)" data-i18n="layout.reset">Reset</button>
-                <button class="defaults-btn" id="layoutSaveBtn" style="font-size:10px;padding:3px 8px;" data-i18n="layout.save">Save</button>
-                <button class="defaults-btn" id="layoutSaveAsBtn" style="font-size:10px;padding:3px 8px;" data-i18n="layout.saveAs">Save as…</button>
-                <button class="defaults-btn" id="layoutDeleteBtn" style="font-size:10px;padding:3px 8px;" data-i18n="layout.delete">Delete</button>
-              </div>
-              <p style="font-size:10px;color:var(--text-4);margin:4px 0 0 0;" data-i18n="settings.layout.shareHint">Layouts are JSON files in the extension's studio_layouts/ folder — copy a file there to import a shared layout.</p>
+          </section>
+
+          <!-- ══════════ PERFORMANCE & VRAM ══════════ -->
+          <section class="settings-category" data-settings-category="performance-vram" aria-labelledby="settings-cat-performance-title" hidden tabindex="-1">
+            <header class="settings-category-header">
+              <p class="settings-eyebrow" data-i18n="settings.eyebrow">Settings</p>
+              <h2 id="settings-cat-performance-title" data-i18n="settings.cat.performance.title">Performance &amp; VRAM</h2>
+              <p class="settings-category-sub" data-i18n="settings.cat.performance.sub">GPU memory allocation, model residency, and idle cleanup.</p>
+            </header>
+            <div class="settings-section-stack">
+              <section class="settings-card" data-settings-section="vram">
+                <div class="settings-card-head settings-card-head-static">
+                  <span class="settings-card-titles"><span class="settings-card-title" data-i18n="settings.vram.title">VRAM</span></span>
+                </div>
+                <div class="settings-card-body">
+                  <div class="settings-item settings-item-actions" data-setting-key="unloadModelBtn" data-setting-search="unload model vram free memory gpu">
+                    <div class="settings-item-control settings-item-control-wide">
+                      <button class="defaults-btn settings-btn-block" id="unloadModelBtn" data-i18n="settings.vram.unloadModel">Unload Model from VRAM</button>
+                    </div>
+                  </div>
+                  <div class="settings-item" data-setting-key="vramReserveSlider" data-setting-search="gpu weights vram memory model residency offload ram performance budget">
+                    <div class="settings-item-copy">
+                      <span class="settings-item-title" data-i18n="settings.vram.gpuWeights">GPU Weights</span>
+                      <p class="settings-item-description" data-i18n="settings.vram.gpuWeights.description">How much VRAM to use for model weights. 0 = Forge default. Higher values keep more of the model in VRAM for faster generation; lower values offload weights to RAM to free VRAM for inference. Peak usage during generation may still exceed this — it's a loading budget, not a hard cap.</p>
+                    </div>
+                    <div class="settings-item-control settings-range">
+                      <input type="range" id="vramReserveSlider" min="0" max="8.0" step="0.25" value="0">
+                      <span id="vramReserveVal" class="settings-range-val settings-mono-value">Auto</span>
+                    </div>
+                  </div>
+                  <div class="settings-item" data-setting-key="toggleAutoUnload" data-setting-search="auto unload idle vram free timeout">
+                    <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.vram.autoUnload">Auto-unload when idle</span></div>
+                    <div class="settings-item-control"><div class="toggle-track" id="toggleAutoUnload"><div class="toggle-knob"></div></div></div>
+                  </div>
+                  <div class="settings-item" id="autoUnloadMinutesRow" data-setting-key="autoUnloadMinutes" data-setting-search="idle timeout minutes auto unload" style="display:none;">
+                    <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.vram.idleTimeout">Idle timeout</span></div>
+                    <div class="settings-item-control settings-range">
+                      <input type="range" id="autoUnloadMinutes" min="5" max="30" step="5" value="10">
+                      <span id="autoUnloadMinutesVal" class="settings-range-val">10 min</span>
+                    </div>
+                  </div>
+                </div>
+              </section>
             </div>
-            <div class="setting-group">
-              <div class="setting-group-title" data-i18n="settings.tagAutocomplete.title">Prompt Autocomplete</div>
-              <div class="setting-row">
-                <span class="setting-label" data-i18n="settings.tagAutocomplete.enabled">Tag suggestions</span>
-                <div class="toggle-track on" id="toggleTagAutocomplete"><div class="toggle-knob"></div></div>
-              </div>
-              <div class="setting-row">
-                <span class="setting-label" data-i18n="settings.prompt.cleanup">Tidy prompt on generate</span>
-                <div class="toggle-track on" id="togglePromptCleanup"><div class="toggle-knob"></div></div>
-              </div>
-              <p style="font-size:10px;color:var(--text-4);margin:2px 0 4px 0;" data-i18n="settings.prompt.cleanupHint">Collapses duplicate commas, extra spaces, and empty attention groups in the copy sent to generation. Your text is never rewritten; wildcards pass through untouched.</p>
-              <div class="setting-row">
-                <span class="setting-label" data-i18n="settings.tagAutocomplete.source">Tag source</span>
-                <select class="param-select" id="settingTagSource" style="width:160px;padding:4px 8px;">
-                  <option value="danbooru">Danbooru</option>
-                  <option value="e621">e621</option>
-                  <option value="danbooru_e621_merged" data-i18n="settings.tagAutocomplete.sourceMerged">Danbooru + e621</option>
-                  <option value="derpibooru">Derpibooru</option>
-                </select>
-              </div>
-              <p style="font-size:10px;color:var(--text-4);margin:6px 0 0 0;" data-i18n="settings.tagAutocomplete.note">
-                LoRA, embedding, and wildcard suggestions remain available regardless of this setting.
-              </p>
+          </section>
+
+          <!-- ══════════ KEYBOARD SHORTCUTS ══════════ -->
+          <section class="settings-category" data-settings-category="keyboard-shortcuts" aria-labelledby="settings-cat-shortcuts-title" hidden tabindex="-1">
+            <header class="settings-category-header">
+              <p class="settings-eyebrow" data-i18n="settings.eyebrow">Settings</p>
+              <h2 id="settings-cat-shortcuts-title" data-i18n="settings.cat.shortcuts.title">Keyboard Shortcuts</h2>
+              <p class="settings-category-sub" data-i18n="settings.cat.shortcuts.sub">Customize application, prompt, canvas, and navigation controls.</p>
+            </header>
+            <div class="settings-section-stack">
+              <section class="settings-card" data-settings-section="keyboard-shortcuts" id="keyboardShortcutsSettings">
+                <div class="settings-card-head settings-card-head-static settings-card-head-toolbar">
+                  <span class="settings-card-titles">
+                    <span class="settings-card-title" data-i18n="settings.shortcuts.title">Keyboard Shortcuts</span>
+                    <span class="settings-card-summary" id="shortcutSummary" data-i18n="settings.shortcuts.description">Change a shortcut by pressing the key you want.</span>
+                  </span>
+                  <div class="settings-inline-search">
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></svg>
+                    <input type="search" id="shortcutSearchInput" class="settings-inline-search-input" autocomplete="off" spellcheck="false" data-i18n-placeholder="settings.shortcuts.searchPlaceholder" placeholder="Search shortcuts…" data-i18n-aria-label="settings.shortcuts.searchAria" aria-label="Search shortcuts">
+                  </div>
+                </div>
+                <div class="settings-card-body">
+                  <p class="shortcut-settings-note settings-card-note" data-i18n="settings.shortcuts.description">Change a shortcut by pressing the key you want. Bind by character for your current layout, or by physical position for layout-independent muscle memory.</p>
+                  <div id="shortcutSettingsRows"></div>
+                  <button class="defaults-btn defaults-btn-reset" id="shortcutResetAll" data-i18n="settings.shortcuts.resetAll">Reset all to defaults</button>
+                </div>
+              </section>
             </div>
-            <div class="setting-group">
-              <div class="setting-group-title" data-i18n="settings.civitai.title">Civitai metadata</div>
-              <div class="setting-row" data-i18n-title="settings.civitai.tooltip" title="Looks up LoRA preview images, trigger words, and model info by file hash. Off by default. Per-file privacy is available from the LoRA browser context menu.">
-                <span class="setting-label" data-i18n="settings.civitai.enable">Enable Civitai lookup</span>
-                <div class="toggle-track" id="toggleCivitaiLookup"><div class="toggle-knob"></div></div>
-              </div>
-              <p style="font-size:10px;color:var(--text-4);margin:6px 0 0 0;" data-i18n="settings.civitai.note">
-                Uses model hashes to look up metadata on civitai.com (with civitai.red as a fallback for adult content that has moved there). No prompts or images are sent. Filenames are not transmitted. Lookups happen only when you ask.
-              </p>
+          </section>
+
+          <!-- ══════════ EXTENSIONS ══════════ -->
+          <section class="settings-category" data-settings-category="extensions" aria-labelledby="settings-cat-extensions-title" hidden tabindex="-1">
+            <header class="settings-category-header">
+              <p class="settings-eyebrow" data-i18n="settings.eyebrow">Settings</p>
+              <h2 id="settings-cat-extensions-title" data-i18n="settings.cat.extensions.title">Extensions</h2>
+              <p class="settings-category-sub" data-i18n="settings.cat.extensions.sub">Choose which integrated extensions appear in the application.</p>
+            </header>
+            <div class="settings-section-stack">
+              <section class="settings-card" data-settings-section="extensions">
+                <div class="settings-card-head settings-card-head-static settings-card-head-toolbar">
+                  <span class="settings-card-titles">
+                    <span class="settings-card-title" data-i18n="settings.extensions.title">Extensions</span>
+                    <span class="settings-card-summary" id="extEnabledSummary" data-i18n="settings.extensions.description">Toggle which extensions appear in the Extensions tab.</span>
+                  </span>
+                  <div class="settings-inline-search">
+                    <svg width="12" height="12" viewBox="0 0 16 16" fill="none" stroke="currentColor" stroke-width="1.4" aria-hidden="true"><circle cx="7" cy="7" r="4.5"/><path d="M10.5 10.5L14 14"/></svg>
+                    <input type="search" id="extSearchInput" class="settings-inline-search-input" autocomplete="off" spellcheck="false" data-i18n-placeholder="settings.extensions.searchPlaceholder" placeholder="Search extensions…" data-i18n-aria-label="settings.extensions.searchAria" aria-label="Search extensions">
+                  </div>
+                </div>
+                <div class="settings-card-body">
+                  <p class="settings-card-note" data-i18n="settings.extensions.trust">Only enable extensions you trust. Disabling an extension hides its tab and controls but does not uninstall it.</p>
+                  <div id="extToggles"></div>
+                </div>
+              </section>
             </div>
-            <div class="setting-group">
-              <div class="setting-group-title" data-i18n="settings.language.title">Language</div>
-              <div class="setting-row">
-                <span class="setting-label" data-i18n="settings.language.label">Interface language</span>
-                <select class="param-select" id="settingLocale" style="width:160px;padding:4px 8px;">
-                  <option value="en">English</option>
-                  <option value="de">Deutsch</option>
-                  <option value="fr">Français</option>
-                  <option value="es">Español</option>
-                </select>
-              </div>
-              <p style="font-size:10px;color:var(--text-4);margin:6px 0 0 0;" data-i18n="settings.language.note">
-                AI generation parameters (Steps, Sampler, CFG Scale, etc.) stay in English to match the terminology in tutorials and guides.
-              </p>
+          </section>
+
+          <!-- ══════════ ABOUT ══════════ -->
+          <section class="settings-category" data-settings-category="about" aria-labelledby="settings-cat-about-title" hidden tabindex="-1">
+            <header class="settings-category-header">
+              <p class="settings-eyebrow" data-i18n="settings.eyebrow">Settings</p>
+              <h2 id="settings-cat-about-title" data-i18n="settings.cat.about.title">About</h2>
+              <p class="settings-category-sub" data-i18n="settings.cat.about.sub">Version, updates, and credits.</p>
+            </header>
+            <div class="settings-section-stack">
+
+              <section class="settings-card" data-settings-section="version">
+                <div class="settings-card-head settings-card-head-static">
+                  <span class="settings-card-titles"><span class="settings-card-title" data-i18n="settings.about.version.title">Version</span></span>
+                </div>
+                <div class="settings-card-body">
+                  <div class="settings-item" data-setting-key="aboutVersion" data-setting-search="version build about forge studio">
+                    <div class="settings-item-copy"><span class="settings-item-title" data-i18n="settings.about.appVersion">Forge Studio</span></div>
+                    <div class="settings-item-control"><span id="aboutStudioVersion" class="settings-mono-value">—</span></div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="settings-card" data-settings-section="updates">
+                <div class="settings-card-head settings-card-head-static">
+                  <span class="settings-card-titles"><span class="settings-card-title" data-i18n="settings.updates.title">Updates</span></span>
+                </div>
+                <div class="settings-card-body">
+                  <div class="settings-action-row" data-setting-key="checkUpdateBtn" data-setting-search="check updates version new release upgrade">
+                    <div class="settings-item-copy">
+                      <strong data-i18n="settings.updates.title">Updates</strong>
+                      <p data-i18n="settings.updates.desc">Check whether a newer version of Forge Studio is available.</p>
+                    </div>
+                    <div class="settings-updates-control">
+                      <button class="defaults-btn" id="checkUpdateBtn" data-i18n="settings.updates.checkButton">Check for Updates</button>
+                      <span id="updateCheckStatus" class="settings-update-status"></span>
+                    </div>
+                  </div>
+                </div>
+              </section>
+
+              <section class="settings-card" data-settings-section="credits" data-collapsible="bespoke">
+                <div class="settings-card-head settings-card-head-bespoke" id="creditsToggle" role="button" tabindex="0" aria-expanded="false" aria-controls="creditsBody">
+                  <span class="settings-card-titles"><span class="settings-card-title" data-i18n="settings.credits.title">Credits</span></span>
+                  <svg class="collapse-arrow settings-chevron" width="12" height="12" viewBox="0 0 12 12" fill="none" stroke="currentColor" stroke-width="1.5" aria-hidden="true"><path d="M3 4.5l3 3 3-3"/></svg>
+                </div>
+                <div id="creditsBody" class="settings-card-body" style="display:none;">
+                  <p class="settings-credits-by">by <strong>ToxicHost</strong> &amp; <strong>Moritz</strong></p>
+                  <div id="creditsList" class="settings-credits-list"></div>
+                </div>
+              </section>
+
             </div>
-            <div class="setting-group">
-              <div class="setting-group-title" data-i18n="settings.accessibility.title">Accessibility</div>
-              <div class="setting-row">
-                <span class="setting-label" data-i18n="settings.accessibility.colorblind">Colorblind mode</span>
-                <select class="param-select" id="settingColorblind" style="width:140px;padding:4px 8px;">
-                  <option value="" data-i18n="common.none">None</option>
-                  <option value="deutan">Deuteranopia (red-green)</option>
-                  <option value="protan">Protanopia (red-green)</option>
-                  <option value="tritan">Tritanopia (blue-yellow)</option>
-                </select>
-              </div>
-              <div class="setting-row">
-                <span class="setting-label" data-i18n="settings.accessibility.reducedMotion">Reduced motion</span>
-                <select class="param-select" id="settingMotion" style="width:140px;padding:4px 8px;">
-                  <option value="" data-i18n="settings.accessibility.systemDefault">System default</option>
-                  <option value="reduced" data-i18n="settings.accessibility.reduced">Reduced</option>
-                  <option value="full" data-i18n="settings.accessibility.full">Full</option>
-                </select>
-              </div>
-            </div>
-            <div class="setting-group">
-              <div class="setting-group-title" data-i18n="settings.updates.title">Updates</div>
-              <div style="display:flex;gap:6px;align-items:center;">
-                <button class="defaults-btn" id="checkUpdateBtn" data-i18n="settings.updates.checkButton">Check for Updates</button>
-                <span id="updateCheckStatus" style="font-size:10px;color:var(--text-4);"></span>
-              </div>
-            </div>
-            <div class="setting-group">
-              <div class="setting-group-title" data-i18n="settings.defaults.title">Defaults</div>
-              <p style="font-size:10px;color:var(--text-4);margin:0 0 8px 0;" data-i18n="settings.defaults.description">Save current workflow settings as defaults for future sessions.</p>
-              <div style="display:flex;gap:6px;">
-                <button class="defaults-btn" id="saveDefaults" data-i18n="settings.defaults.saveButton">Save Current as Defaults</button>
-                <button class="defaults-btn defaults-btn-reset" id="resetDefaults" data-i18n="settings.defaults.resetButton">Reset</button>
-              </div>
-            </div>
-            <!-- FR-001: Credits -->
-            <div class="setting-group">
-              <div class="setting-group-title" style="cursor:pointer;display:flex;align-items:center;gap:6px;" id="creditsToggle">
-                Credits
-                <svg class="collapse-arrow" width="8" height="8" viewBox="0 0 10 10" fill="none" stroke="currentColor" stroke-width="1.5" style="transition:transform 0.2s;"><path d="M2 3.5l3 3 3-3"/></svg>
-              </div>
-              <div id="creditsBody" style="display:none;">
-                <p style="font-size:11px;color:var(--text-2);margin:0 0 10px 0;">by <strong>ToxicHost</strong> &amp; <strong>Moritz</strong></p>
-                <div id="creditsList" style="font-size:10px;color:var(--text-3);line-height:1.8;"></div>
-              </div>
-            </div>
+          </section>
+
+        </div>
       </div>
     </div>
   </div>
@@ -1369,7 +1821,7 @@
     "ag-psd.js", "png-metadata.js", "i18n.js", "prefs.js", "shortcuts.js",
     "searchable-select.js", "canvas-core.js",
     "canvas-ui.js", "workflow-state.js", "app.js", "workflows.js",
-    "module-system.js", "studio-tour.js", "studio-docs.js",
+    "module-system.js", "settings-page.js", "studio-tour.js", "studio-docs.js",
     "prompt-targets.js", "wildcard-preview.js", "tag-complete.js",
     "lora-browser.js", "checkpoint-browser.js", "lora-stack.js", "ad-lora-stack.js", "wildcard-browser.js"
   ];

@@ -462,19 +462,28 @@ var Education = (function () {
   // ========================================================================
 
   function _injectSettings() {
-    var sc = document.querySelector("#app-settings .settings-content"); if (!sc) return;
-    var titles = sc.querySelectorAll(".setting-group-title"), ag = null;
-    for (var i = 0; i < titles.length; i++) { if (titles[i].textContent.trim() === "Accessibility") { ag = titles[i]; break; } }
-    var ib = ag ? ag.closest(".setting-group") : null;
+    if (document.getElementById("eduRestartTour")) return; // already injected
 
-    var g = document.createElement("div"); g.className = "setting-group";
-    g.innerHTML = '<div class="setting-group-title" data-i18n="education.settings.title">' + _t("education.settings.title", "Education") + '</div>' +
-      '<div class="edu-settings-row"><span class="setting-label" data-i18n="education.settings.currentPath">' + _t("education.settings.currentPath", "Current path") + '</span>' +
-      '<span style="font-size:10px;color:var(--text-3);font-family:var(--mono);" id="eduCurrentTier">' + _tierLabel(_state.tier) + '</span></div>' +
-      '<div style="display:flex;gap:6px;margin-top:6px;">' +
-      '<button class="edu-reset-btn" id="eduRestartTour" data-i18n="education.settings.restartTour">' + _t("education.settings.restartTour", "Restart Tour") + '</button>' +
-      '<button class="edu-reset-btn" id="eduChangePath" data-i18n="education.settings.changePath">' + _t("education.settings.changePath", "Change Path") + '</button></div>';
-    if (ib) sc.insertBefore(g, ib); else sc.appendChild(g);
+    // Preferred: stable anchor inside the Accessibility card (redesigned page).
+    var anchor = document.querySelector('[data-settings-inject-point="education"]');
+    var host = anchor ? anchor.parentNode : null;
+    // Fallback for any layout without the anchor.
+    if (!host) host = document.querySelector('#app-settings [data-settings-section="accessibility"] .settings-card-body')
+      || document.querySelector("#app-settings .settings-content")
+      || document.querySelector("#app-settings");
+    if (!host) return;
+
+    var g = document.createElement("div"); g.className = "settings-edu-inject";
+    g.innerHTML =
+      '<p class="settings-eyebrow" data-i18n="education.settings.title">' + _t("education.settings.title", "Education") + '</p>' +
+      '<div class="settings-item"><div class="settings-item-copy">' +
+        '<span class="settings-item-title" data-i18n="education.settings.currentPath">' + _t("education.settings.currentPath", "Current path") + '</span></div>' +
+        '<div class="settings-item-control"><span class="settings-mono-value" id="eduCurrentTier">' + _tierLabel(_state.tier) + '</span></div></div>' +
+      '<div class="settings-item settings-item-actions"><div class="settings-item-control settings-btn-group settings-btn-group-end">' +
+        '<button class="defaults-btn" id="eduRestartTour" data-i18n="education.settings.restartTour">' + _t("education.settings.restartTour", "Restart Tour") + '</button>' +
+        '<button class="defaults-btn" id="eduChangePath" data-i18n="education.settings.changePath">' + _t("education.settings.changePath", "Change Path") + '</button></div></div>';
+    if (anchor && anchor.parentNode === host) host.insertBefore(g, anchor); else host.appendChild(g);
+    if (window.I18N && typeof window.I18N.applyToDom === "function") { try { window.I18N.applyToDom(g); } catch (e) {} }
 
     g.querySelector("#eduRestartTour").addEventListener("click", function () {
       if (!_state.tier || _state.tier === "skip") {
