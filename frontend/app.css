@@ -1827,6 +1827,88 @@ label[data-help] {
 
 
 /* ═══════════════════════════════════════════
+   SETTINGS PAGE (top-level app tab)
+   ═══════════════════════════════════════════ */
+
+#app-settings.settings-page {
+  display: none;
+  overflow-y: auto;
+  overflow-x: hidden;
+  background: var(--bg-base);
+}
+#app-settings.settings-page.active { display: block; }
+
+.settings-page-shell {
+  width: min(1120px, calc(100% - 48px));
+  margin: 0 auto;
+  padding: 28px 0 64px;
+}
+
+.settings-page-header { margin-bottom: 22px; }
+.settings-page-header h1 {
+  margin: 0;
+  font-size: 24px;
+  color: var(--text-1);
+}
+.settings-page-header p {
+  margin: 6px 0 0;
+  color: var(--text-3);
+  font-size: 12px;
+}
+
+/* Responsive two-column grid; wide groups span the full width. min-width:0
+   lets long paths / shortcut chips wrap instead of forcing a scrollbar. */
+#app-settings .settings-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 18px;
+  align-items: start;
+  padding: 0;
+}
+#app-settings .setting-group {
+  min-width: 0;
+  margin: 0;
+}
+#app-settings .setting-group[data-settings-span="full"] {
+  grid-column: 1 / -1;
+}
+
+@media (max-width: 820px) {
+  .settings-page-shell {
+    width: min(100% - 24px, 720px);
+    padding-top: 18px;
+  }
+  #app-settings .settings-grid { grid-template-columns: 1fr; }
+  #app-settings .setting-group[data-settings-span="full"] { grid-column: auto; }
+}
+
+/* Long/dynamic content wraps or scrolls locally rather than widening the page */
+#app-settings .setting-row { flex-wrap: wrap; gap: 6px; }
+#app-settings .settings-content input[type="text"],
+#app-settings .settings-content select { max-width: 100%; }
+
+/* Attention highlight for openStudioSettings(sectionId) */
+#app-settings .settings-attention {
+  animation: settings-attention 1.2s ease-out;
+}
+@keyframes settings-attention {
+  0%   { outline: 1px solid var(--accent); outline-offset: 4px; }
+  100% { outline-color: transparent; outline-offset: 8px; }
+}
+/* Reduced motion: the global rules zero the animation, so show a brief
+   static outline instead (JS clears the class after ~1.2s). */
+[data-motion="reduced"] #app-settings .settings-attention {
+  animation: none;
+  outline: 1px solid var(--accent); outline-offset: 4px;
+}
+@media (prefers-reduced-motion: reduce) {
+  :root:not([data-motion="full"]) #app-settings .settings-attention {
+    animation: none;
+    outline: 1px solid var(--accent); outline-offset: 4px;
+  }
+}
+
+/* ═══════════════════════════════════════════
    SETTINGS TAB
    ═══════════════════════════════════════════ */
 

@@ -46,6 +46,7 @@ from PIL import Image
 from modules import shared, sd_models, sd_samplers, sd_schedulers
 
 TAG = "[Studio API]"
+PERF = "[Studio Perf]"  # performance telemetry prefix (grep-friendly)
 
 def _walk_follow(root):
     """Scanner walk that follows symlinked directories (see studio_walk)."""
@@ -1086,7 +1087,7 @@ class GenerateRequest(BaseModel):
     session_id: str = ""
     save_outputs: bool = True
     save_format: str = "png"         # png | jpeg | webp
-    save_quality: int = 80           # JPEG/WebP quality (0-100)
+    save_quality: int = Field(default=80, ge=1, le=100)  # JPEG/WebP quality
     save_lossless: bool = False      # WebP lossless mode
     embed_metadata: bool = True      # whether to embed generation params in saved files
     save_dir: str = ""               # optional auto-save folder override (empty = Forge output dir)
@@ -1418,12 +1419,42 @@ def _pil_to_b64(img: Image.Image) -> str:
 
 def _pil_to_preview_b64(img: Image.Image) -> str:
     """Fast preview encoder — JPEG at q=70 balances quality and payload size.
-    Used for both TAESD step previews and live preview thumbnails."""
+    Used for both TAESD step previews and live preview thumbnails.
+
+    This is a TRANSIENT UI image, not a final artifact: it keeps 4:2:0
+    subsampling for speed/size and must NOT adopt the final-output 4:4:4
+    policy (_final_jpeg_save_kwargs)."""
     buf = io.BytesIO()
     if img.mode != "RGB":
         img = img.convert("RGB")
-    img.save(buf, format="JPEG", quality=70, icc_profile=_SRGB_ICC)
+    img.save(buf, format="JPEG", quality=70, subsampling=2, optimize=False, icc_profile=_SRGB_ICC)
     return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+
+
+def _normalize_jpeg_quality(value, fallback: int = 80) -> int:
+    """Clamp a JPEG quality value to the supported 1–100 range."""
+    try:
+        quality = int(value)
+    except (TypeError, ValueError):
+        quality = fallback
+    return max(1, min(100, quality))
+
+
+def _final_jpeg_save_kwargs(quality, *, exif_bytes=None) -> dict:
+    """Canonical Pillow save kwargs for every USER-VISIBLE final JPEG.
+
+    Forces JPEG 4:4:4 chroma (subsampling=0) so saturated edges and line
+    art keep full color resolution — Pillow/libjpeg otherwise default to
+    4:2:0, which bleeds color. Callers still pass icc_profile=_SRGB_ICC at
+    save time. Not for the transient step preview (_pil_to_preview_b64)."""
+    kwargs = {
+        "quality": _normalize_jpeg_quality(quality),
+        "subsampling": 0,   # JPEG 4:4:4 — retain full chroma resolution
+        "optimize": True,
+    }
+    if exif_bytes:
+        kwargs["exif"] = exif_bytes
+    return kwargs
 
 
 def _studio_upscale_image(img, upscaler_name: str, scale: float):
@@ -1935,12 +1966,70 @@ def _build_layout_tree(controls, runner, layout_id_map):
 _progress_connections: list[WebSocket] = []
 _uvicorn_loop = None  # Captured on first WebSocket connect
 
+# ── Preview demand-gating ─────────────────────────────────────────────────
+# Per-client preview configuration, keyed by the WebSocket object. A client
+# declares whether it currently wants previews (toggle on) AND whether its tab
+# is visible; the polling thread skips the expensive TAESD decode entirely when
+# no client wants one (or Live Painting is active, which always forces it). A
+# freshly connected client defaults to enabled+visible so behavior is unchanged
+# until it sends its real state — the gate engages the moment it does.
+_preview_client_configs: dict = {}
+_PREVIEW_CONFIG_DEFAULT = {"enabled": True, "visible": True, "max_edge": 480}
+
+# Cadence bounds for normal-generation previews (Live mode uses its own faster
+# gate). Together they cap how often the TAESD decode can run so it never
+# contends with a fast-stepping sampler.
+_MIN_PREVIEW_WALL = 1.0        # seconds between decodes (floor)
+_MIN_PREVIEW_STEP_DELTA = 4    # sampling-steps between decodes (floor)
+
+
+def _preview_requested() -> bool:
+    """True if any connected client currently wants live previews.
+
+    Live Painting always forces previews on regardless of client config. For a
+    normal generation, at least one client must have the preview toggle on AND
+    a visible tab. Non-throwing.
+    """
+    try:
+        if _is_live_active():
+            return True
+        for cfg in _preview_client_configs.values():
+            if cfg.get("enabled") and cfg.get("visible"):
+                return True
+    except Exception:
+        return True  # on any error, fail open (show previews)
+    return False
+
+
+def _preview_requested_max_edge(default: int = 480) -> int:
+    """Largest max_edge any active (enabled + visible) client asked for.
+
+    Broadcast sends one preview to all clients, so use the max so every viewer
+    gets at least its requested resolution. Falls back to ``default``.
+    """
+    best = 0
+    try:
+        for cfg in _preview_client_configs.values():
+            if cfg.get("enabled") and cfg.get("visible"):
+                me = int(cfg.get("max_edge") or 0)
+                if me > best:
+                    best = me
+    except Exception:
+        return default
+    return best if best > 0 else default
+
 # Preview delta protocol: the full ~100KB base64 preview is sent ONLY on the
 # tick it was freshly decoded; intervening ticks send preview=None. These hold
 # the last decoded preview so a client connecting mid-generation can be caught
 # up immediately. preview_id is monotonic per fresh decode, reset on idle-clear.
 _last_preview_b64 = None
 _last_preview_id = 0
+
+# Preview-decode telemetry ([Studio Perf]). Monotonic counters incremented by
+# the polling thread on each fresh TAESD decode; the generate handler samples
+# the delta across one generation to report preview cost. Never reset.
+_preview_decode_count = 0
+_preview_decode_time_total = 0.0
 
 
 # =========================================================================
@@ -2016,6 +2105,56 @@ def _log_vram(context=""):
         print(f"{TAG} VRAM log error: {e}")
 
 
+_perf_env_logged = False
+
+
+def _log_perf_environment():
+    """Log GPU / launch-flag / attention environment ONCE for perf triage.
+
+    Emitted on the first generation so a captured log identifies the exact
+    hardware and launch configuration the timing numbers were produced on.
+    Non-throwing; best-effort for every field.
+    """
+    global _perf_env_logged
+    if _perf_env_logged:
+        return
+    _perf_env_logged = True
+    try:
+        import torch
+        parts = []
+        if torch.cuda.is_available():
+            props = torch.cuda.get_device_properties(0)
+            parts.append(f"gpu={props.name!r}")
+            parts.append(f"vram={props.total_memory / (1024 ** 3):.1f}GB")
+            parts.append(f"torch={torch.__version__}")
+            parts.append(f"cuda={getattr(torch.version, 'cuda', '?')}")
+        else:
+            parts.append("gpu=none(cpu)")
+        # Launch flags that affect VAE/preview/attention behavior.
+        flags = []
+        for name in ("opt_sdp_attention", "opt_sdp_no_mem_attention",
+                     "xformers", "opt_split_attention", "medvram",
+                     "medvram_sdxl", "lowvram", "always_gpu"):
+            try:
+                if getattr(shared.cmd_opts, name, False):
+                    flags.append(name)
+            except Exception:
+                pass
+        parts.append("flags=" + (",".join(flags) if flags else "none"))
+        # Neo vae_stream presence (informational — Studio no longer borrows it,
+        # but its presence signals Neo's launch-flag VAE-stream path is active).
+        try:
+            has_vae_stream = getattr(shared.state, "vae_stream", None) is not None
+            parts.append(f"neo_vae_stream={'yes' if has_vae_stream else 'no'}")
+        except Exception:
+            pass
+        # Studio preview stream priority (0 = normal band; see _get_preview_stream).
+        parts.append("studio_preview_stream_priority=0")
+        print(f"{PERF} env: " + " ".join(parts))
+    except Exception as e:
+        print(f"{PERF} env log error: {e}")
+
+
 async def _broadcast_progress(data: dict):
     """Send progress to all connected WebSocket clients."""
     dead = []
@@ -2041,9 +2180,9 @@ def _is_live_active():
         return False
 
 
-# Studio-owned preview side stream — created lazily ONLY when Neo's build does
-# not expose shared.state.vae_stream (its creation is gated behind a launch
-# flag, so it is frequently None). Reused across decodes; never recreated.
+# Studio-owned preview side stream — created lazily and used for every preview
+# decode (we no longer borrow Neo's shared.state.vae_stream; see
+# _taesd_decode_preview). Normal priority. Reused across decodes; never recreated.
 _studio_preview_stream = None
 _studio_preview_stream_failed = False
 
@@ -2054,10 +2193,17 @@ _preview_path_info = {"stream": "default", "downscale": "n/a"}
 
 
 def _get_preview_stream():
-    """Lazily create one low-priority CUDA side stream for preview decodes.
+    """Lazily create one normal-priority CUDA side stream for preview decodes.
 
-    Raw torch only (no Neo imports) — used when Neo exposes no vae_stream.
-    Returns None on CPU-only builds or if stream creation fails.
+    Raw torch only (no Neo imports). Returns None on CPU-only builds or if
+    stream creation fails.
+
+    Priority note: in PyTorch, a *lower* priority number means *higher*
+    scheduling priority. The old value ``priority=-1`` (mislabeled "low") gave
+    the preview stream HIGHER priority than the sampler's default-stream work,
+    letting cosmetic TAESD decodes preempt the actual generation. We use
+    ``priority=0`` (the default/normal band) so previews overlap the sampler
+    without ever contending ahead of it.
     """
     global _studio_preview_stream, _studio_preview_stream_failed
     if _studio_preview_stream_failed:
@@ -2066,7 +2212,7 @@ def _get_preview_stream():
         try:
             import torch
             if torch.cuda.is_available():
-                _studio_preview_stream = torch.cuda.Stream(priority=-1)  # low priority
+                _studio_preview_stream = torch.cuda.Stream(priority=0)  # normal priority
             else:
                 _studio_preview_stream_failed = True
                 return None
@@ -2074,6 +2220,49 @@ def _get_preview_stream():
             _studio_preview_stream_failed = True
             return None
     return _studio_preview_stream
+
+
+def _resize_latent_for_preview(sample, max_edge, decoder_scale=8):
+    """Downscale a single latent tensor so its TAESD decode lands near max_edge.
+
+    ``sample`` is a 3-D latent ``[C, H, W]`` (already indexed out of the batch)
+    or a 4-D ``[1, C, H, W]``. The TAESD/VAE decoder upsamples by
+    ``decoder_scale`` (8 for every SD/SDXL VAE), so decoding the full latent
+    yields an ``H*8 x W*8`` image. We interpolate the latent down so the DECODED
+    long edge is ~``max_edge`` — moving the downscale AHEAD of the expensive
+    decode + CPU transfer instead of after it. At hires this cuts the TAESD
+    pixel work from ~15.7M px to ~0.4M px.
+
+    Returns the resized latent (same rank as input), or the original if it is
+    already small enough, ``max_edge <= 0``, or anything unexpected. Never
+    raises — a resize failure falls back to a full-size decode.
+    """
+    import torch
+    if max_edge <= 0 or sample is None:
+        return sample
+    try:
+        if sample.ndim == 3:
+            _, h, w = sample.shape
+            batched = sample.unsqueeze(0)
+            squeeze = True
+        elif sample.ndim == 4:
+            _, _, h, w = sample.shape
+            batched = sample
+            squeeze = False
+        else:
+            return sample  # unexpected rank — let the decoder handle it
+        img_long = max(h, w) * decoder_scale
+        if img_long <= max_edge:
+            return sample  # decoded image already within budget
+        scale = max_edge / img_long
+        target_h = max(1, int(round(h * scale)))
+        target_w = max(1, int(round(w * scale)))
+        resized = torch.nn.functional.interpolate(
+            batched, size=(target_h, target_w),
+            mode="bilinear", align_corners=False)
+        return resized[0] if squeeze else resized
+    except Exception:
+        return sample  # any failure → decode at full latent size
 
 
 def _taesd_decode_preview(latent, max_edge=0):
@@ -2089,9 +2278,14 @@ def _taesd_decode_preview(latent, max_edge=0):
 
     The decode runs on a side CUDA stream so it overlaps the sampler on the
     default stream instead of serializing with it. Stream preference order:
-    Neo's dedicated ``vae_stream`` (when its launch-flag gate created one) →
-    Studio's own lazily-created side stream → the default stream. The chosen
-    branch is recorded in ``_preview_path_info`` for the status line.
+    Studio's own lazily-created normal-priority side stream → the default
+    stream. We deliberately do NOT borrow ``shared.state.vae_stream`` merely
+    because it exists — its priority is set by Neo (often the launch-flag
+    high-priority path) and it is the same stream Neo uses for its own full VAE
+    decode of the final image, so borrowing it can serialize a cosmetic preview
+    behind (or ahead of) real work. A Studio-owned normal-priority stream has
+    predictable scheduling. The chosen branch is recorded in
+    ``_preview_path_info`` for the status line.
 
     Falls back gracefully if TAESD model isn't available.
     max_edge=0 means no downscale (full generation resolution).
@@ -2100,27 +2294,28 @@ def _taesd_decode_preview(latent, max_edge=0):
     import torch
     from modules import sd_samplers_common
 
-    # ── Stream selection (Neo vae_stream → Studio side stream → default) ──
+    # ── Stream selection (Studio-owned side stream → default) ──
     side_stream = None
     stream_label = "default"
-    neo_stream = getattr(shared.state, "vae_stream", None)
-    if neo_stream is not None:
-        side_stream = neo_stream
-        stream_label = "vae"
-    else:
-        s = _get_preview_stream()
-        if s is not None:
-            side_stream = s
-            stream_label = "studio"
+    s = _get_preview_stream()
+    if s is not None:
+        side_stream = s
+        stream_label = "studio"
 
-    downscale_label = "pre-transfer" if max_edge > 0 else "post-transfer"
+    downscale_label = "latent-first" if max_edge > 0 else "full-res"
 
     def _decode_and_downscale(sample):
         if max_edge > 0:
-            # Downscale BEFORE the CPU transfer (GPU-side interpolate).
+            # ── Latent-first downscale ──
+            # Shrink the LATENT before TAESD so the decoder itself processes
+            # far fewer pixels, then do the (now tiny) CPU transfer. This cuts
+            # the dominant cost — the decode + transfer — not just the transfer.
+            sample = _resize_latent_for_preview(sample, max_edge)
             t = sd_samplers_common.samples_to_images_tensor(
                 sample.unsqueeze(0), approximation=3)  # TAESD, on GPU, [-1,1]
             t = t * 0.5 + 0.5
+            # Safety net: if decoder_scale differed from 8 and the decoded image
+            # still overshoots max_edge, do a final cheap pixel-space resize.
             _, _, h, w = t.shape
             long_edge = max(w, h)
             if long_edge > max_edge:
@@ -2132,7 +2327,7 @@ def _taesd_decode_preview(latent, max_edge=0):
                     mode="bilinear", align_corners=False)
             # Blocking transfer = the synchronization point that ends the side
             # stream's work for this decode (no CUDA events needed).
-            x = t[0].to("cpu", non_blocking=False)  # ~1MB instead of ~63MB
+            x = t[0].to("cpu", non_blocking=False)  # tiny transfer
             x = (x.clamp(0, 1) * 255.0).round().to(torch.uint8)
             return Image.fromarray(np.moveaxis(x.numpy(), 0, 2))
         # Full-resolution path (Live mode): keep Neo's decoder.
@@ -2175,6 +2370,7 @@ def _progress_polling_thread():
     shared.state concurrently — all reads are snapshot-guarded.
     """
     global _last_preview_b64, _last_preview_id
+    global _preview_decode_count, _preview_decode_time_total
     _idle_ticks = [0]  # count consecutive idle polls to debounce
     _logged_error = [False]  # only log first error to avoid spam
     _last_preview_step = [(-1, -1)]  # last (job_no, step) we decoded a preview for
@@ -2261,24 +2457,57 @@ def _progress_polling_thread():
                 _last_step_change_time[0] = now
 
             preview_b64 = None
+            # Demand gate: skip the expensive TAESD decode entirely when no
+            # client wants a preview (toggle off or tab hidden) and Live Painting
+            # is inactive. Progress (step/percent/textinfo) still broadcasts
+            # below — only the decode is gated. This is the single biggest win
+            # for the Preview-off case.
+            preview_wanted = live_mode or _preview_requested()
+
             # Adaptive preview settings:
             #   Live mode:   decode every 0.3s, full resolution (no downscale)
             #   Normal gen:  scale the gate with measured step duration so
             #                previews fire at most every other step (hires steps
-            #                run ~1.7-2.0s each; a fixed 0.5s gate would decode
-            #                every step and contend with the sampler). Floor 0.5s.
+            #                run ~1.7-2.0s each). Two bounds cap the cadence:
+            #                  • min wall-clock 1.0s between decodes
+            #                  • min 4 sampling-steps between decodes
+            #                so fast base-pass steps can't trigger a decode every
+            #                tick and contend with the sampler.
             if live_mode:
                 preview_interval = 0.3
             else:
-                preview_interval = max(0.5, 2.0 * _measured_step_dur[0])
-            preview_max_edge = 0 if live_mode else 480
+                preview_interval = max(_MIN_PREVIEW_WALL, 2.0 * _measured_step_dur[0])
+            preview_max_edge = 0 if live_mode else _preview_requested_max_edge(480)
 
             current_key = (job_no, sampling_step)
             step_changed = current_key != _last_preview_step[0]
             interval_ok = (now - _last_preview_time[0]) >= preview_interval
-            should_decode = step_changed and interval_ok
+            # Step-delta bound (normal gen only): require a minimum number of
+            # sampling steps since the last decoded preview, EXCEPT always allow:
+            #   • a new job (batch image boundary),
+            #   • a within-job step RESET — the base→hires (or base→refiner)
+            #     transition restarts sampling_step at 0 under the SAME job_no,
+            #     so sampling_step < last_pv_step signals a new pass whose
+            #     previews must resume immediately (otherwise the whole hires
+            #     pass shows a frozen base image until its final step), and
+            #   • the final step (so short/low-step generations still preview).
+            last_pv_job, last_pv_step = _last_preview_step[0]
+            is_last_step = sampling_steps > 0 and sampling_step >= sampling_steps - 1
+            if live_mode:
+                step_delta_ok = True
+            else:
+                step_delta_ok = (
+                    job_no != last_pv_job
+                    or sampling_step < last_pv_step
+                    or (sampling_step - last_pv_step) >= _MIN_PREVIEW_STEP_DELTA
+                    or is_last_step
+                )
+            should_decode = (
+                preview_wanted and step_changed and interval_ok and step_delta_ok
+            )
 
             if should_decode:
+                _pv_decode_t0 = time.time()
                 try:
                     # TAESD decode — fast (~5-10ms), doesn't stall the sampler.
                     # Reads current_latent directly instead of going through
@@ -2304,7 +2533,7 @@ def _progress_polling_thread():
                             # interval), so each phase is visible exactly once.
                             if latent is not None and latent.ndim != 5:
                                 _scaled = (not live_mode) and (
-                                    2.0 * _measured_step_dur[0] > 0.5)
+                                    2.0 * _measured_step_dur[0] > _MIN_PREVIEW_WALL)
                                 _kind = "scaled" if _scaled else "fixed"
                                 _skey = (_preview_path_info["stream"],
                                          round(preview_interval, 1), _kind,
@@ -2324,6 +2553,10 @@ def _progress_polling_thread():
                             _last_preview_id += 1
                             _last_preview_step[0] = current_key
                             _last_preview_time[0] = now
+                            # Telemetry: count this fresh decode + its wall time
+                            # so the generate handler can report preview cost.
+                            _preview_decode_count += 1
+                            _preview_decode_time_total += time.time() - _pv_decode_t0
                 except Exception:
                     # Preview decode failed — non-fatal, cached preview is used below.
                     # Common during model reloads where shared.sd_model briefly lacks
@@ -2473,6 +2706,13 @@ def setup_studio_routes(app: FastAPI):
 
         # --- Normal generation ---
         _cancel_auto_unload()
+        # [Studio Perf] telemetry — env logged once; per-gen timing bracketed
+        # around the compute call and the save loop below.
+        _log_perf_environment()
+        _perf_handler_t0 = time.time()
+        _perf_pv_count0 = _preview_decode_count
+        _perf_pv_time0 = _preview_decode_time_total
+        _perf_compute = 0.0
         run_generation = _import("studio_generation", "run_generation")
 
         # Diagnostic: log the AR randomization flags exactly as the request
@@ -2523,6 +2763,7 @@ def setup_studio_routes(app: FastAPI):
             except Exception:
                 log.exception("Extension suppression failed")
 
+        _perf_compute_t0 = time.time()
         try:
             result = await asyncio.to_thread(
                 run_generation,
@@ -2573,6 +2814,7 @@ def setup_studio_routes(app: FastAPI):
         except Exception as e:
             log.exception("Generation handler failed")
             return GenerateResponse(error=str(e))
+        _perf_compute = time.time() - _perf_compute_t0
 
         if not result or not isinstance(result, (list, tuple)) or len(result) < 5:
             return GenerateResponse(error="Generation returned no result")
@@ -2591,6 +2833,7 @@ def setup_studio_routes(app: FastAPI):
         # absent on older cached modules → empty list).
         float_stats = list(result[7]) if len(result) >= 8 else []
 
+        _perf_save_t0 = time.time()  # save loop + postprocess begins here
         images_b64 = []
         image_paths = []
         float_paths = []  # parallel to images_b64; "" when no sidecar saved
@@ -2842,7 +3085,7 @@ def setup_studio_routes(app: FastAPI):
 
                         if req.save_format == "jpeg":
                             img = img.convert("RGB")  # Drop alpha for JPEG
-                            save_kwargs = {"quality": req.save_quality, "optimize": True}
+                            save_kwargs = _final_jpeg_save_kwargs(req.save_quality)  # 4:4:4
                         else:  # webp
                             if req.save_lossless:
                                 save_kwargs = {"lossless": True}
@@ -2960,6 +3203,27 @@ def setup_studio_routes(app: FastAPI):
             _schedule_auto_unload()
 
         _log_vram("Generation complete")
+
+        # [Studio Perf] per-generation summary: compute vs. save vs. total,
+        # plus how much preview decoding cost during this run and which stream /
+        # downscale path it took. Guarded so telemetry can never break a gen.
+        try:
+            _perf_save = time.time() - _perf_save_t0
+            _perf_total = time.time() - _perf_handler_t0
+            _perf_pv_decodes = _preview_decode_count - _perf_pv_count0
+            _perf_pv_time = _preview_decode_time_total - _perf_pv_time0
+            _perf_pv_avg_ms = (
+                _perf_pv_time / _perf_pv_decodes * 1000.0) if _perf_pv_decodes else 0.0
+            print(f"{PERF} gen: compute={_perf_compute:.2f}s "
+                  f"save={_perf_save:.2f}s total={_perf_total:.2f}s | "
+                  f"previews={_perf_pv_decodes} "
+                  f"decode_total={_perf_pv_time * 1000.0:.0f}ms "
+                  f"avg={_perf_pv_avg_ms:.1f}ms "
+                  f"stream={_preview_path_info.get('stream')} "
+                  f"downscale={_preview_path_info.get('downscale')} "
+                  f"task={task_id or '?'}")
+        except Exception as _pe:
+            print(f"{PERF} gen summary error: {_pe}")
 
         return GenerateResponse(
             images=images_b64,
@@ -3383,6 +3647,10 @@ def setup_studio_routes(app: FastAPI):
         global _uvicorn_loop
         await websocket.accept()
         _progress_connections.append(websocket)
+        # Register this client's preview demand with a permissive default
+        # (enabled + visible) so previews behave exactly as before until the
+        # client sends its real state; the demand gate then engages.
+        _preview_client_configs[websocket] = dict(_PREVIEW_CONFIG_DEFAULT)
         # Capture Uvicorn's event loop — background threads need this to
         # safely write to WebSocket transports without assertion errors
         if _uvicorn_loop is None:
@@ -3410,11 +3678,36 @@ def setup_studio_routes(app: FastAPI):
                 data = await websocket.receive_text()
                 if data == "ping":
                     await websocket.send_json({"type": "pong"})
+                    continue
+                # Preview demand-gating: the client declares whether it wants
+                # previews (toggle) and whether its tab is visible. Anything
+                # unparseable is ignored (forward-compat).
+                try:
+                    msg = json.loads(data)
+                except (ValueError, TypeError):
+                    continue
+                if isinstance(msg, dict) and msg.get("type") == "preview_config":
+                    cfg = _preview_client_configs.get(websocket)
+                    if cfg is None:
+                        cfg = dict(_PREVIEW_CONFIG_DEFAULT)
+                        _preview_client_configs[websocket] = cfg
+                    if "enabled" in msg:
+                        cfg["enabled"] = bool(msg["enabled"])
+                    if "visible" in msg:
+                        cfg["visible"] = bool(msg["visible"])
+                    if "max_edge" in msg:
+                        try:
+                            me = int(msg["max_edge"])
+                            # Clamp to a sane preview range; 0/negative → default.
+                            cfg["max_edge"] = min(2048, me) if me > 0 else _PREVIEW_CONFIG_DEFAULT["max_edge"]
+                        except (ValueError, TypeError):
+                            pass
         except WebSocketDisconnect:
             pass
         finally:
             if websocket in _progress_connections:
                 _progress_connections.remove(websocket)
+            _preview_client_configs.pop(websocket, None)
             print(f"{TAG} WebSocket disconnected ({len(_progress_connections)} clients)")
 
     # ------------------------------------------------------------------
@@ -3695,7 +3988,7 @@ def setup_studio_routes(app: FastAPI):
         # Save params
         save_outputs: bool = True
         save_format: str = "png"
-        save_quality: int = 95
+        save_quality: int = Field(default=80, ge=1, le=100)  # aligned with GenerateRequest
         save_lossless: bool = False
         embed_metadata: bool = True
 
@@ -4008,7 +4301,7 @@ def setup_studio_routes(app: FastAPI):
                         f.write(png_bytes)
                 elif req.save_format == "jpeg":
                     save_img = result.convert("RGB") if result.mode != "RGB" else result
-                    save_kwargs = {"quality": req.save_quality, "optimize": True}
+                    save_kwargs = _final_jpeg_save_kwargs(req.save_quality)  # 4:4:4
                     if req.embed_metadata and infotext:
                         exif_bytes = _build_exif_usercomment(infotext)
                         if exif_bytes:
@@ -5489,7 +5782,7 @@ def setup_studio_routes(app: FastAPI):
     class SaveImageRequest(BaseModel):
         image_b64: str
         format: str = "png"          # png | jpeg | webp
-        quality: int = 80            # for jpeg/webp; matches GenerateRequest.save_quality default
+        quality: int = Field(default=80, ge=1, le=100)  # for jpeg/webp
         subfolder: str = ""          # optional subfolder under output dir
         dest_dir: Optional[str] = None  # optional absolute folder (configurable "Save to Gallery folder"); confined to safe write roots
         filename: Optional[str] = None  # optional custom filename (without ext)
@@ -5636,7 +5929,7 @@ def setup_studio_routes(app: FastAPI):
             save_kwargs = {}
             if req.format == "jpeg":
                 img = img.convert("RGB")  # drop alpha for JPEG
-                save_kwargs = {"quality": req.quality, "optimize": True}
+                save_kwargs = _final_jpeg_save_kwargs(req.quality)  # 4:4:4
                 if req.metadata:
                     exif_bytes = _build_exif_usercomment(req.metadata)
                     if exif_bytes:

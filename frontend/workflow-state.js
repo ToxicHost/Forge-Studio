@@ -353,6 +353,14 @@ function _syncStateFlags() {
   if (highPrec)    AppState.highPrecision = highPrec.classList.contains("on");
   if (livePreview) AppState.livePreview   = livePreview.classList.contains("on");
   if (embedMeta)   AppState.embedMetadata = embedMeta.classList.contains("on");
+  // Defense in depth: authoritatively re-read output format + independent
+  // JPEG/WebP quality from the DOM after a workflow/tab restore, so event
+  // order among the slider writes can never leave stale/crossed quality.
+  try {
+    window.StudioOutputSettings?.syncFromDOM?.();
+  } catch (e) {
+    console.warn("[WorkflowState] Failed to sync output settings", e);
+  }
 }
 
 function _maybeResizeCanvas(width, height) {

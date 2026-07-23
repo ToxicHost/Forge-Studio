@@ -181,6 +181,9 @@ const Progress = {
     this.ws.onopen = () => {
       console.log("[Studio] WebSocket connected");
       StatusBar.setStatus("ready");
+      // Declare this client's preview demand up front so the backend can
+      // skip decoding previews nobody is watching.
+      this.sendPreviewConfig();
     };
 
     this.ws.onmessage = (e) => {
@@ -265,6 +268,26 @@ const Progress = {
       this.ws.send("ping");
     }
   },
+
+  // Tell the backend whether this client currently wants live previews
+  // (Live Preview toggle) and whether its tab is visible. The backend gates
+  // the expensive preview decode on this: if no connected client wants a
+  // preview, it stops decoding entirely. Safe to call anytime; it no-ops
+  // when the socket isn't open (config is re-sent on the next onopen).
+  sendPreviewConfig() {
+    if (this.ws?.readyState !== WebSocket.OPEN) return;
+    const visible = (typeof document !== "undefined" && document.visibilityState)
+      ? document.visibilityState === "visible"
+      : true;
+    try {
+      this.ws.send(JSON.stringify({
+        type: "preview_config",
+        enabled: !!(window.State && window.State.livePreview),
+        visible,
+        max_edge: 480,
+      }));
+    } catch (_) {}
+  },
 };
 
 
@@ -283,6 +306,58 @@ const SESSION_ID = (typeof crypto !== "undefined" && crypto.randomUUID)
   ? crypto.randomUUID()
   : `s-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 10)}-${Math.random().toString(36).slice(2, 10)}`;
 
+// ═══════════════════════════════════════════
+// OUTPUT QUALITY (independent JPEG / WebP state)
+// ═══════════════════════════════════════════
+// JPEG and WebP quality are separate preferences. They must never
+// cross-overwrite through format switches, workflow/tab restore, defaults,
+// or session restore. Every save/encode path selects quality by the ACTUAL
+// requested format via getOutputQualityForFormat(), so there is one source
+// of truth and no scattered magic fallbacks.
+const OUTPUT_QUALITY_DEFAULTS = Object.freeze({ jpeg: 80, webp: 75 });
+
+function _normalizeOutputQuality(value, fallback) {
+  const parsed = Number.parseInt(value, 10);
+  if (!Number.isFinite(parsed)) return fallback;
+  return Math.min(100, Math.max(1, parsed));
+}
+
+// Quality for a given output format, or null for PNG / non-lossy formats
+// (the backend ignores quality for PNG).
+function getOutputQualityForFormat(format) {
+  const fmt = String(format || "").toLowerCase();
+  if (fmt === "jpeg" || fmt === "jpg") {
+    return _normalizeOutputQuality(State.jpegQuality, OUTPUT_QUALITY_DEFAULTS.jpeg);
+  }
+  if (fmt === "webp") {
+    return _normalizeOutputQuality(State.webpQuality, OUTPUT_QUALITY_DEFAULTS.webp);
+  }
+  return null;
+}
+
+// Authoritative read of the output-format controls into State — never
+// depends on which slider event fired last.
+function syncOutputSettingsFromDOM() {
+  const fmt = document.getElementById("settingSaveFormat")?.value || "png";
+  State.saveFormat = ["png", "jpeg", "webp"].includes(fmt) ? fmt : "png";
+  State.jpegQuality = _normalizeOutputQuality(
+    document.getElementById("settingJpegQuality")?.value, OUTPUT_QUALITY_DEFAULTS.jpeg);
+  State.webpQuality = _normalizeOutputQuality(
+    document.getElementById("settingWebpQuality")?.value, OUTPUT_QUALITY_DEFAULTS.webp);
+  State.saveLossless = document.getElementById("toggleWebpLossless")?.classList.contains("on") || false;
+
+  const jpegVal = document.getElementById("settingJpegQualityVal");
+  if (jpegVal) jpegVal.textContent = `${State.jpegQuality}%`;
+  const webpVal = document.getElementById("settingWebpQualityVal");
+  if (webpVal) webpVal.textContent = `${State.webpQuality}%`;
+  const fmtJpeg = document.getElementById("fmtJpegOpts");
+  if (fmtJpeg) fmtJpeg.style.display = State.saveFormat === "jpeg" ? "" : "none";
+  const fmtWebp = document.getElementById("fmtWebpOpts");
+  if (fmtWebp) fmtWebp.style.display = State.saveFormat === "webp" ? "" : "none";
+  const webpQualityRow = document.getElementById("webpQualityRow");
+  if (webpQualityRow) webpQualityRow.style.display = State.saveLossless ? "none" : "";
+}
+
 const State = {
   // Generation
   generating: false,
@@ -298,7 +373,8 @@ const State = {
   embedMetadata: true,     // whether to embed generation params in saved images
   saveOutputs: true,       // auto-save generated images to disk
   saveFormat: "png",       // output format: png | jpeg | webp
-  saveQuality: 80,         // JPEG/WebP quality (0-100)
+  jpegQuality: OUTPUT_QUALITY_DEFAULTS.jpeg, // JPEG quality (1-100), independent of WebP
+  webpQuality: OUTPUT_QUALITY_DEFAULTS.webp, // WebP quality (1-100), independent of JPEG
   saveLossless: false,     // WebP lossless mode
   galleryFolder: "",       // optional absolute server-side folder for "Save to Gallery" (empty = output/studio/)
   saveDir: "",             // optional absolute server-side folder for auto-save on generate (empty = Forge output dir)
@@ -337,6 +413,36 @@ const State = {
   // Action history
   history: [],
   historyIdx: -1,
+};
+
+// Deprecated compatibility alias. First-party code must NOT use
+// State.saveQuality — it reads/writes the format-appropriate independent
+// field instead. Kept non-enumerable for one release so third-party
+// extensions that still touch State.saveQuality keep working.
+// TODO: remove in a later release once extensions migrate.
+Object.defineProperty(State, "saveQuality", {
+  configurable: true,
+  enumerable: false,
+  get() {
+    return getOutputQualityForFormat(State.saveFormat) ?? OUTPUT_QUALITY_DEFAULTS.jpeg;
+  },
+  set(value) {
+    if (State.saveFormat === "webp") {
+      State.webpQuality = _normalizeOutputQuality(value, OUTPUT_QUALITY_DEFAULTS.webp);
+    } else {
+      // JPEG is the safest target for PNG/unknown — old code treated
+      // saveQuality as JPEG/WebP quality.
+      State.jpegQuality = _normalizeOutputQuality(value, OUTPUT_QUALITY_DEFAULTS.jpeg);
+    }
+  },
+});
+
+// Stable runtime helper for other frontend files (canvas-ui, workflow-state).
+window.StudioOutputSettings = {
+  defaults: OUTPUT_QUALITY_DEFAULTS,
+  normalizeQuality: _normalizeOutputQuality,
+  qualityForFormat: getOutputQualityForFormat,
+  syncFromDOM: syncOutputSettingsFromDOM,
 };
 
 
@@ -2223,6 +2329,10 @@ async function doGenerate() {
   // stale State.livePreview from permanently suppressing the preview.
   // Also reset the deferred-hide flag so previous gen's cleanup doesn't interfere.
   State.livePreview = document.getElementById("toggleLivePreview")?.classList.contains("on") ?? true;
+  // Re-declare preview demand to the backend right before it matters, in case
+  // the toggle was changed via a path that didn't fire its click handler
+  // (workflow restore / defaults apply).
+  if (window.Progress) window.Progress.sendPreviewConfig();
   State._deferPreviewHide = false;
   State._previewShown = false;       // reset sticky preview flag
   State._resultPreviewActive = false; // dismiss result preview for new gen
@@ -2382,7 +2492,7 @@ async function doGenerate() {
     session_id: SESSION_ID,
     save_outputs: State.saveOutputs,
     save_format: State.saveFormat || "png",
-    save_quality: State.saveQuality || 80,
+    save_quality: getOutputQualityForFormat(State.saveFormat) ?? OUTPUT_QUALITY_DEFAULTS.jpeg,
     save_lossless: State.saveLossless || false,
     embed_metadata: State.embedMetadata ?? true,
     save_dir: State.saveDir || "",
@@ -4065,7 +4175,7 @@ function bindUI() {
         })),
         save_outputs:   State.saveOutputs,
         save_format:    State.saveFormat || "png",
-        save_quality:   State.saveQuality || 95,
+        save_quality:   getOutputQualityForFormat(State.saveFormat) ?? OUTPUT_QUALITY_DEFAULTS.jpeg,
         save_lossless:  State.saveLossless || false,
         embed_metadata: State.embedMetadata ?? true,
       };
@@ -4412,7 +4522,11 @@ function bindUI() {
           if (fmt === "jpeg") { ctx.fillStyle = "#fff"; ctx.fillRect(0, 0, c.width, c.height); }
           ctx.drawImage(img, 0, 0);
           const mime = fmt === "jpeg" ? "image/jpeg" : (fmt === "webp" ? "image/webp" : "image/png");
-          const q = (fmt === "jpeg" || fmt === "webp") ? ((State.saveQuality || 90) / 100) : undefined;
+          // Quality by the REQUESTED fmt (the picker can differ from the active
+          // generation format). Browser toBlob has no chroma-subsampling control,
+          // so this JPEG path cannot guarantee 4:4:4 (documented limitation).
+          const quality = getOutputQualityForFormat(fmt);
+          const q = quality == null ? undefined : quality / 100;
           c.toBlob((b) => resolve(b), mime, q);
         } catch (e) { resolve(null); }
       };
@@ -4530,7 +4644,7 @@ function bindUI() {
       const result = await API.saveImage({
         image_b64: imgSrc,
         format: fmt,
-        quality: 95,
+        quality: getOutputQualityForFormat(fmt) ?? OUTPUT_QUALITY_DEFAULTS.jpeg,
         metadata: infotext || null,
         subfolder: toGallery ? "" : "downloads",
         dest_dir: galleryDir || null,
@@ -5097,6 +5211,8 @@ function bindUI() {
       const wrap = document.getElementById("canvasPreviewWrap");
       if (wrap) wrap.style.display = "none";
     }
+    // Update backend preview demand so it can stop/resume decoding.
+    if (window.Progress) window.Progress.sendPreviewConfig();
   });
 
   // Embed metadata in PNG
@@ -5232,12 +5348,11 @@ function bindUI() {
 
   function _syncFormatUI() {
     const fmt = _fmtSelect?.value || "png";
-    State.saveFormat = fmt;
-    if (_fmtJpeg) _fmtJpeg.style.display = fmt === "jpeg" ? "" : "none";
-    if (_fmtWebp) _fmtWebp.style.display = fmt === "webp" ? "" : "none";
-    // Sync quality to the active format's slider
-    if (fmt === "jpeg") State.saveQuality = parseInt(_jpegSlider?.value) || 80;
-    else if (fmt === "webp") State.saveQuality = parseInt(_webpSlider?.value) || 75;
+    State.saveFormat = ["png", "jpeg", "webp"].includes(fmt) ? fmt : "png";
+    if (_fmtJpeg) _fmtJpeg.style.display = State.saveFormat === "jpeg" ? "" : "none";
+    if (_fmtWebp) _fmtWebp.style.display = State.saveFormat === "webp" ? "" : "none";
+    // Quality is independent per-format state now; switching format never
+    // touches State.jpegQuality / State.webpQuality.
   }
 
   _fmtSelect?.addEventListener("change", _syncFormatUI);
@@ -5246,16 +5361,16 @@ function bindUI() {
   const _jpegSlider = document.getElementById("settingJpegQuality");
   const _jpegVal = document.getElementById("settingJpegQualityVal");
   _jpegSlider?.addEventListener("input", () => {
-    if (_jpegVal) _jpegVal.textContent = _jpegSlider.value + "%";
-    State.saveQuality = parseInt(_jpegSlider.value);
+    State.jpegQuality = _normalizeOutputQuality(_jpegSlider.value, OUTPUT_QUALITY_DEFAULTS.jpeg);
+    if (_jpegVal) _jpegVal.textContent = `${State.jpegQuality}%`;
   });
 
   // WebP quality slider
   const _webpSlider = document.getElementById("settingWebpQuality");
   const _webpVal = document.getElementById("settingWebpQualityVal");
   _webpSlider?.addEventListener("input", () => {
-    if (_webpVal) _webpVal.textContent = _webpSlider.value + "%";
-    State.saveQuality = parseInt(_webpSlider.value);
+    State.webpQuality = _normalizeOutputQuality(_webpSlider.value, OUTPUT_QUALITY_DEFAULTS.webp);
+    if (_webpVal) _webpVal.textContent = `${State.webpQuality}%`;
   });
 
   // WebP lossless toggle
@@ -5864,19 +5979,9 @@ function bindUI() {
     State.galleryFolder = document.getElementById("settingGalleryFolder")?.value?.trim() || "";
     State.saveDir = document.getElementById("settingSaveDir")?.value?.trim() || "";
     State.saveTree = document.getElementById("settingSaveTree")?.value === "neo" ? "neo" : "studio";
-    _syncFormatUI();
-    const jq = parseInt(document.getElementById("settingJpegQuality")?.value) || 80;
-    const wq = parseInt(document.getElementById("settingWebpQuality")?.value) || 75;
-    State.saveQuality = (State.saveFormat === "jpeg") ? jq : wq;
-    // Sync slider labels to restored values (they don't fire input events on .value set)
-    const jqLabel = document.getElementById("settingJpegQualityVal");
-    if (jqLabel) jqLabel.textContent = jq + "%";
-    const wqLabel = document.getElementById("settingWebpQualityVal");
-    if (wqLabel) wqLabel.textContent = wq + "%";
-    State.saveLossless = document.getElementById("toggleWebpLossless")?.classList.contains("on") ?? false;
-    // Hide WebP quality row if lossless
-    const wqRow = document.getElementById("webpQualityRow");
-    if (wqRow) wqRow.style.display = State.saveLossless ? "none" : "";
+    // Read format + both independent qualities + lossless from the restored
+    // DOM authoritatively (also updates slider labels and row visibility).
+    syncOutputSettingsFromDOM();
 
     // Sync watermark state + labels from restored DOM (.value sets don't fire events)
     State.watermarkEnable = document.getElementById("toggleWatermark")?.classList.contains("on") ?? false;
@@ -8480,6 +8585,9 @@ async function init() {
   // If gen finished while tab was hidden, hide preview when user returns
   document.addEventListener("visibilitychange", () => {
     if (!document.hidden && State._deferPreviewHide) _hidePreview();
+    // Update backend preview demand: a hidden tab doesn't need previews
+    // decoded, so the backend can skip that work while we're backgrounded.
+    if (window.Progress) window.Progress.sendPreviewConfig();
   });
 
   // Populate dropdowns from API
@@ -9134,6 +9242,38 @@ window.LayoutBlocks = LayoutBlocks;
 window.SessionStrip = SessionStrip;
 window.LayoutManager = LayoutManager;
 window.Customizer = Customizer;
+
+// ═══════════════════════════════════════════
+// SETTINGS PAGE NAVIGATION
+// ═══════════════════════════════════════════
+// Settings is a top-level app page (see module-system.js). This is the
+// supported way to send the user there — optionally scrolling to and
+// briefly highlighting a specific setting group. Safe to call before the
+// module system has loaded (returns without throwing).
+window.openStudioSettings = function openStudioSettings(sectionId) {
+  const activated = window.StudioModules?.activateApp("settings");
+  if (activated === false) return;
+
+  if (!sectionId) return;
+
+  requestAnimationFrame(() => {
+    const target = document.getElementById(sectionId);
+    if (!target) return;
+
+    target.scrollIntoView({ behavior: "smooth", block: "start" });
+    target.classList.add("settings-attention");
+    setTimeout(() => target.classList.remove("settings-attention"), 1200);
+  });
+};
+
+// Refresh display-only Settings state when the page becomes active. The
+// shortcuts table can be rebound elsewhere; re-render it so it shows live
+// bindings. Deliberately does NOT re-run init/bindUI/preference loading —
+// those bind once at boot.
+window.addEventListener("studio:app-activated", (event) => {
+  if (event.detail?.id !== "settings") return;
+  window.Shortcuts?.renderSettings?.();
+});
 
 // Go
 if (document.readyState === "loading") {
