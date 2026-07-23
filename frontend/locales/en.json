@@ -385,6 +385,10 @@
   "lora.menu.removePreview": "Remove preview",
 
   "wildcard.allFolder": "All",
+  "wildcard.resolutions": "Possible resolutions",
+  "wildcard.reroll": "Reroll",
+  "wildcard.previewInPrompt": "Preview in current prompt",
+  "wildcard.noResolution": "No resolution",
   "wildcard.search.placeholder": "Search wildcards...",
   "wildcard.refresh.tooltip": "Refresh wildcard list",
   "wildcard.close.tooltip": "Close (Esc)",
