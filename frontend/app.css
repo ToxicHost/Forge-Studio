@@ -3095,3 +3095,83 @@ body.customizing .customize-divider:hover { background: var(--accent); opacity: 
 @media (max-width: 1600px) {
   :root[data-strip-live] #outputGrid { display: grid; }
 }
+
+/* ── Per-slot ADetailer LoRA chips (ad-lora-stack.js) ─────────────────── */
+.ad-lora-controls {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 2px;
+}
+.ad-lora-chips {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  min-height: 0;
+}
+.ad-lora-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 3px;
+  padding: 1px 3px 1px 6px;
+  background: var(--bg-3, #2a2a2a);
+  border: 1px solid var(--border-subtle, #3a3a3a);
+  border-radius: 10px;
+  font-size: 10px;
+  line-height: 1.4;
+  max-width: 100%;
+}
+.ad-lora-chip .ad-lora-name {
+  max-width: 120px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  color: var(--text-2, #cfcfcf);
+}
+.ad-lora-chip .ad-lora-weight {
+  width: 40px;
+  padding: 0 2px;
+  font-size: 10px;
+  text-align: center;
+  background: var(--bg-2, #1e1e1e);
+  border: 1px solid var(--border-subtle, #3a3a3a);
+  border-radius: 4px;
+  color: var(--text-1, #eee);
+  -moz-appearance: textfield;
+}
+.ad-lora-chip .ad-lora-weight::-webkit-outer-spin-button,
+.ad-lora-chip .ad-lora-weight::-webkit-inner-spin-button {
+  -webkit-appearance: none;
+  margin: 0;
+}
+.ad-lora-chip .ad-lora-trig {
+  width: 16px;
+  height: 16px;
+  padding: 0;
+  font-size: 9px;
+  font-weight: 700;
+  line-height: 1;
+  border: 1px solid var(--border-subtle, #3a3a3a);
+  border-radius: 4px;
+  background: transparent;
+  color: var(--text-3, #888);
+  cursor: pointer;
+}
+.ad-lora-chip .ad-lora-trig.on {
+  background: var(--accent, #6c8cff);
+  border-color: var(--accent, #6c8cff);
+  color: #fff;
+}
+.ad-lora-chip .ad-lora-remove {
+  width: 14px;
+  height: 14px;
+  padding: 0;
+  font-size: 12px;
+  line-height: 1;
+  border: none;
+  background: transparent;
+  color: var(--text-3, #888);
+  cursor: pointer;
+}
+.ad-lora-chip .ad-lora-remove:hover { color: var(--danger, #e06666); }
