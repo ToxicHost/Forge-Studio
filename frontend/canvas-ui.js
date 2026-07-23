@@ -3675,7 +3675,9 @@ async function _ctxSaveCanvas(fmt, applyWm) {
         const result = await window.API.saveImage({
             image_b64: dataUrl,
             format: fmt,
-            quality: State?.saveQuality ?? 95,
+            // Quality by the requested fmt (not the active generation format)
+            quality: window.StudioOutputSettings?.qualityForFormat?.(fmt)
+                ?? window.StudioOutputSettings?.defaults?.jpeg ?? 80,
             metadata: metadata,
             filename: docName,
         });
