@@ -2483,9 +2483,14 @@ def _progress_polling_thread():
             step_changed = current_key != _last_preview_step[0]
             interval_ok = (now - _last_preview_time[0]) >= preview_interval
             # Step-delta bound (normal gen only): require a minimum number of
-            # sampling steps since the last decoded preview, EXCEPT always allow
-            # the final step (so short/low-step generations still get a preview)
-            # and any job boundary.
+            # sampling steps since the last decoded preview, EXCEPT always allow:
+            #   • a new job (batch image boundary),
+            #   • a within-job step RESET — the base→hires (or base→refiner)
+            #     transition restarts sampling_step at 0 under the SAME job_no,
+            #     so sampling_step < last_pv_step signals a new pass whose
+            #     previews must resume immediately (otherwise the whole hires
+            #     pass shows a frozen base image until its final step), and
+            #   • the final step (so short/low-step generations still preview).
             last_pv_job, last_pv_step = _last_preview_step[0]
             is_last_step = sampling_steps > 0 and sampling_step >= sampling_steps - 1
             if live_mode:
@@ -2493,6 +2498,7 @@ def _progress_polling_thread():
             else:
                 step_delta_ok = (
                     job_no != last_pv_job
+                    or sampling_step < last_pv_step
                     or (sampling_step - last_pv_step) >= _MIN_PREVIEW_STEP_DELTA
                     or is_last_step
                 )
