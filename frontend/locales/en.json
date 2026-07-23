@@ -86,6 +86,11 @@
   "settings.generation.highPrecision": "High precision",
   "settings.generation.highPrecision.tooltip": "Saves high-precision float data alongside each image. Eliminates banding and gives the Develop module ~0.5 stops of highlight headroom. Adds ~0.5–3s and ~12 MB per image. Best with fp32 VAE.",
   "settings.generation.livePreview": "Live preview",
+  "settings.generation.livePreviewQuality": "Live preview quality",
+  "settings.generation.livePreviewQuality.auto": "Auto (recommended)",
+  "settings.generation.livePreviewQuality.fast": "Fast (experimental)",
+  "settings.generation.livePreviewQuality.legacy": "Legacy",
+  "settings.generation.livePreviewQuality.tooltip": "Auto (recommended): full-resolution decode, resized for display — always compatible. Fast: experimental reduced-latent decode; faster on some setups but can look garbled on certain models (auto-falls back). Legacy: exact old decode, for comparison; slower.",
   "settings.generation.rememberSession": "Remember last session",
 
   "settings.outputFormat.title": "Output Format",
