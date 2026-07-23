@@ -3326,9 +3326,11 @@ def setup_studio_routes(app: FastAPI):
                   f"preview_work_sum={_perf_pv_time * 1000.0:.0f}ms "
                   f"(overlaps run_generation; non-additive) "
                   f"previews={_perf_pv_decodes} avg={_perf_pv_avg_ms:.1f}ms "
-                  f"mode={_preview_path_info.get('mode')} "
-                  f"stream={_preview_path_info.get('stream')} "
-                  f"path={_preview_path_info.get('downscale')} "
+                  # When no preview decoded this gen, _preview_path_info still
+                  # holds the LAST decode's path — report n/a instead of stale.
+                  f"mode={_preview_path_info.get('mode') if _perf_pv_decodes else 'n/a'} "
+                  f"stream={_preview_path_info.get('stream') if _perf_pv_decodes else 'n/a'} "
+                  f"path={_preview_path_info.get('downscale') if _perf_pv_decodes else 'n/a'} "
                   f"task={task_id or '?'}")
             # Regression assertion: the non-overlapping phases we measured
             # separately (setup + run_generation + save) must reconcile with the
