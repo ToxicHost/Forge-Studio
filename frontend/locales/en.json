@@ -88,6 +88,11 @@
   "adetailer.loras.label": "LoRAs (this slot only)",
   "adetailer.loras.add": "+ LoRAs",
   "settings.generation.livePreview": "Live preview",
+  "settings.generation.livePreviewQuality": "Live preview quality",
+  "settings.generation.livePreviewQuality.auto": "Auto (recommended)",
+  "settings.generation.livePreviewQuality.fast": "Fast (experimental)",
+  "settings.generation.livePreviewQuality.legacy": "Legacy",
+  "settings.generation.livePreviewQuality.tooltip": "Auto (recommended): full-resolution decode, resized for display — always compatible. Fast: experimental reduced-latent decode; faster on some setups but can look garbled on certain models (auto-falls back). Legacy: exact old decode, for comparison; slower.",
   "settings.generation.rememberSession": "Remember last session",
 
   "settings.outputFormat.title": "Output Format",

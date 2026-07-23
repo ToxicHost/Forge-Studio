@@ -962,6 +962,14 @@
               </div>
               <div class="setting-row" data-i18n-title="settings.generation.highPrecision.tooltip" title="Saves high-precision float data alongside each image. Eliminates banding and gives the Develop module ~0.5 stops of highlight headroom. Adds ~0.5–3s and ~12 MB per image. Best with fp32 VAE."><span class="setting-label" data-i18n="settings.generation.highPrecision">High precision</span><div class="toggle-track" id="toggleHighPrecision"><div class="toggle-knob"></div></div></div>
               <div class="setting-row"><span class="setting-label" data-i18n="settings.generation.livePreview">Live preview</span><div class="toggle-track on" id="toggleLivePreview"><div class="toggle-knob"></div></div></div>
+              <div class="setting-row" data-i18n-title="settings.generation.livePreviewQuality.tooltip" title="Auto (recommended): full-resolution decode, resized for display — always compatible. Fast: experimental reduced-latent decode; faster on some setups but can look garbled on certain models (auto-falls back). Legacy: exact old decode, for comparison; slower.">
+                <span class="setting-label" data-i18n="settings.generation.livePreviewQuality">Live preview quality</span>
+                <select class="param-select" id="settingLivePreviewQuality" style="width:120px;padding:4px 8px;">
+                  <option value="auto" data-i18n="settings.generation.livePreviewQuality.auto">Auto (recommended)</option>
+                  <option value="fast" data-i18n="settings.generation.livePreviewQuality.fast">Fast (experimental)</option>
+                  <option value="legacy" data-i18n="settings.generation.livePreviewQuality.legacy">Legacy</option>
+                </select>
+              </div>
               <div class="setting-row"><span class="setting-label" data-i18n="settings.generation.rememberSession">Remember last session</span><div class="toggle-track" id="toggleRememberSession"><div class="toggle-knob"></div></div></div>
               <div id="sessionCategories" style="display:none;">
                 <div class="session-accordion" id="sessionAccordionHeader">
