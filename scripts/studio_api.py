@@ -1086,7 +1086,7 @@ class GenerateRequest(BaseModel):
     session_id: str = ""
     save_outputs: bool = True
     save_format: str = "png"         # png | jpeg | webp
-    save_quality: int = 80           # JPEG/WebP quality (0-100)
+    save_quality: int = Field(default=80, ge=1, le=100)  # JPEG/WebP quality
     save_lossless: bool = False      # WebP lossless mode
     embed_metadata: bool = True      # whether to embed generation params in saved files
     save_dir: str = ""               # optional auto-save folder override (empty = Forge output dir)
@@ -1418,12 +1418,42 @@ def _pil_to_b64(img: Image.Image) -> str:
 
 def _pil_to_preview_b64(img: Image.Image) -> str:
     """Fast preview encoder — JPEG at q=70 balances quality and payload size.
-    Used for both TAESD step previews and live preview thumbnails."""
+    Used for both TAESD step previews and live preview thumbnails.
+
+    This is a TRANSIENT UI image, not a final artifact: it keeps 4:2:0
+    subsampling for speed/size and must NOT adopt the final-output 4:4:4
+    policy (_final_jpeg_save_kwargs)."""
     buf = io.BytesIO()
     if img.mode != "RGB":
         img = img.convert("RGB")
-    img.save(buf, format="JPEG", quality=70, icc_profile=_SRGB_ICC)
+    img.save(buf, format="JPEG", quality=70, subsampling=2, optimize=False, icc_profile=_SRGB_ICC)
     return "data:image/jpeg;base64," + base64.b64encode(buf.getvalue()).decode()
+
+
+def _normalize_jpeg_quality(value, fallback: int = 80) -> int:
+    """Clamp a JPEG quality value to the supported 1–100 range."""
+    try:
+        quality = int(value)
+    except (TypeError, ValueError):
+        quality = fallback
+    return max(1, min(100, quality))
+
+
+def _final_jpeg_save_kwargs(quality, *, exif_bytes=None) -> dict:
+    """Canonical Pillow save kwargs for every USER-VISIBLE final JPEG.
+
+    Forces JPEG 4:4:4 chroma (subsampling=0) so saturated edges and line
+    art keep full color resolution — Pillow/libjpeg otherwise default to
+    4:2:0, which bleeds color. Callers still pass icc_profile=_SRGB_ICC at
+    save time. Not for the transient step preview (_pil_to_preview_b64)."""
+    kwargs = {
+        "quality": _normalize_jpeg_quality(quality),
+        "subsampling": 0,   # JPEG 4:4:4 — retain full chroma resolution
+        "optimize": True,
+    }
+    if exif_bytes:
+        kwargs["exif"] = exif_bytes
+    return kwargs
 
 
 def _studio_upscale_image(img, upscaler_name: str, scale: float):
@@ -2842,7 +2872,7 @@ def setup_studio_routes(app: FastAPI):
 
                         if req.save_format == "jpeg":
                             img = img.convert("RGB")  # Drop alpha for JPEG
-                            save_kwargs = {"quality": req.save_quality, "optimize": True}
+                            save_kwargs = _final_jpeg_save_kwargs(req.save_quality)  # 4:4:4
                         else:  # webp
                             if req.save_lossless:
                                 save_kwargs = {"lossless": True}
@@ -3695,7 +3725,7 @@ def setup_studio_routes(app: FastAPI):
         # Save params
         save_outputs: bool = True
         save_format: str = "png"
-        save_quality: int = 95
+        save_quality: int = Field(default=80, ge=1, le=100)  # aligned with GenerateRequest
         save_lossless: bool = False
         embed_metadata: bool = True
 
@@ -4008,7 +4038,7 @@ def setup_studio_routes(app: FastAPI):
                         f.write(png_bytes)
                 elif req.save_format == "jpeg":
                     save_img = result.convert("RGB") if result.mode != "RGB" else result
-                    save_kwargs = {"quality": req.save_quality, "optimize": True}
+                    save_kwargs = _final_jpeg_save_kwargs(req.save_quality)  # 4:4:4
                     if req.embed_metadata and infotext:
                         exif_bytes = _build_exif_usercomment(infotext)
                         if exif_bytes:
@@ -5489,7 +5519,7 @@ def setup_studio_routes(app: FastAPI):
     class SaveImageRequest(BaseModel):
         image_b64: str
         format: str = "png"          # png | jpeg | webp
-        quality: int = 80            # for jpeg/webp; matches GenerateRequest.save_quality default
+        quality: int = Field(default=80, ge=1, le=100)  # for jpeg/webp
         subfolder: str = ""          # optional subfolder under output dir
         dest_dir: Optional[str] = None  # optional absolute folder (configurable "Save to Gallery folder"); confined to safe write roots
         filename: Optional[str] = None  # optional custom filename (without ext)
@@ -5636,7 +5666,7 @@ def setup_studio_routes(app: FastAPI):
             save_kwargs = {}
             if req.format == "jpeg":
                 img = img.convert("RGB")  # drop alpha for JPEG
-                save_kwargs = {"quality": req.quality, "optimize": True}
+                save_kwargs = _final_jpeg_save_kwargs(req.quality)  # 4:4:4
                 if req.metadata:
                     exif_bytes = _build_exif_usercomment(req.metadata)
                     if exif_bytes:
