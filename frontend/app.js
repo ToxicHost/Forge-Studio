@@ -2483,6 +2483,7 @@ async function doGenerate() {
       mask_blur:  parseInt(document.getElementById(`paramAD${n}Blur`)?.value) || 4,
       prompt:     _clean(document.getElementById(`paramAD${n}Prompt`)?.value || ""),
       neg_prompt: "",
+      loras:      window.ADLoRAStack?.payloadForSlot?.(n) || [],
     })),
 
     // Regional / ControlNet
@@ -4175,6 +4176,7 @@ function bindUI() {
           mask_blur:  parseInt(document.getElementById(`paramAD${n}Blur`)?.value) || 4,
           prompt:     document.getElementById(`paramAD${n}Prompt`)?.value || "",
           neg_prompt: "",
+          loras:      window.ADLoRAStack?.payloadForSlot?.(n) || [],
         })),
         save_outputs:   State.saveOutputs,
         save_format:    State.saveFormat || "png",
@@ -5764,13 +5766,13 @@ function bindUI() {
       ["checkAD", "check"],
       ["checkAD1", "check"], ["paramAD1Model", "val"],
       ["paramAD1Conf", "val"], ["paramAD1Denoise", "val"],
-      ["paramAD1Blur", "val"], ["paramAD1Prompt", "val"],
+      ["paramAD1Blur", "val"], ["paramAD1Prompt", "val"], ["adLoraStack1", "val"],
       ["checkAD2", "check"], ["paramAD2Model", "val"],
       ["paramAD2Conf", "val"], ["paramAD2Denoise", "val"],
-      ["paramAD2Blur", "val"], ["paramAD2Prompt", "val"],
+      ["paramAD2Blur", "val"], ["paramAD2Prompt", "val"], ["adLoraStack2", "val"],
       ["checkAD3", "check"], ["paramAD3Model", "val"],
       ["paramAD3Conf", "val"], ["paramAD3Denoise", "val"],
-      ["paramAD3Blur", "val"], ["paramAD3Prompt", "val"],
+      ["paramAD3Blur", "val"], ["paramAD3Prompt", "val"], ["adLoraStack3", "val"],
     ],
     upscale: [
       ["paramUpscaleModel", "val"], ["paramUpscaleScale", "val"],
@@ -5971,6 +5973,10 @@ function bindUI() {
         }
       }
     }
+
+    // Defaults/session restore writes #adLoraStack{n}.value without an input
+    // event (the "val" branch above), so rehydrate the AD LoRA chips explicitly.
+    if (window.ADLoRAStack) window.ADLoRAStack.restoreFromHidden();
 
     // Sync canvas size to restored width/height
     const w = parseInt(document.getElementById("paramWidth")?.value) || 768;

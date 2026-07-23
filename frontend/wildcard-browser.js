@@ -35,25 +35,38 @@
   let _foldersDefaulted = false;  // collapse folders on first load
   let previewPane = null;      // content preview element
   let previewName = "";        // currently previewed wildcard
+  let _previewSeed = 12345;    // seed for resolution samples (Reroll advances)
+  let _previewInPrompt = false;// resolve __name__ alone vs. inside the target prompt
+  let _resolveAbort = null;    // AbortController for the in-flight resolution
 
   // ── Keyboard navigation state (survives re-renders) ──
   let _kbPane = null;          // null = not in kb nav, "folders" or "items"
   let _kbFolderPath = null;    // folder path currently kb-focused
   let _kbItemIdx = -1;         // item index currently kb-focused
 
-  // ── Shared: prompt focus tracking (set up by lora-browser or us) ──
+  // ── Shared: prompt focus tracking (delegates to PromptTargets) ──
+  // The registry (prompt-targets.js) is the single source of truth for the
+  // active insert target across main / negative / AD-slot / regional prompts.
   function _trackPromptFocus() {
-    if (window._studioPromptTracker) return;
-    window._studioPromptTracker = true;
-    window._studioLastPrompt = document.getElementById("paramPrompt");
-    for (const id of ["paramPrompt", "paramNeg"]) {
-      const el = document.getElementById(id);
-      if (el) el.addEventListener("focusin", () => { window._studioLastPrompt = el; });
-    }
+    if (window.PromptTargets) window.PromptTargets.init();
   }
 
   function getTargetTextarea() {
-    return window._studioLastPrompt || document.getElementById("paramPrompt");
+    return (window.PromptTargets && window.PromptTargets.getActiveTarget())
+      || document.getElementById("paramPrompt");
+  }
+
+  // Explicit target override for a button click (avoids depending on stale
+  // last-focus state). Passing a target opens the browser bound to it; the next
+  // insert/preview uses that element until the modal closes.
+  let _forcedTarget = null;
+  function openFor(target) {
+    _forcedTarget = (target && target.nodeType === 1) ? target : null;
+    openModal();
+  }
+  function resolveTarget() {
+    if (_forcedTarget && document.contains(_forcedTarget)) return _forcedTarget;
+    return getTargetTextarea();
   }
 
   // ── CSS Injection ──────────────────────────────────────
@@ -246,6 +259,35 @@
   background: var(--green-dim, rgba(80, 200, 120, 0.1));
 }
 
+/* Possible resolutions */
+.wc-preview-resolved-head {
+  font-family: var(--font); font-size: 10px; font-weight: 600;
+  color: var(--text-3); text-transform: uppercase; letter-spacing: 0.4px;
+  margin: 10px 0 4px;
+}
+.wc-preview-resolved { display: flex; flex-direction: column; gap: 3px; }
+.wc-preview-res {
+  font-family: var(--font); font-size: 10px; line-height: 1.4;
+  color: var(--text-1); padding: 3px 6px;
+  background: var(--bg-input); border-radius: 3px;
+  border-left: 2px solid var(--accent);
+  white-space: normal; word-break: break-word;
+}
+.wc-preview-res-empty { font-size: 10px; color: var(--text-4); padding: 2px 6px; }
+.wc-preview-actions { display: flex; gap: 6px; margin-top: 8px; flex-wrap: wrap; }
+.wc-preview-reroll, .wc-preview-inprompt {
+  font-family: var(--font); font-size: 10px;
+  background: var(--bg-raised); color: var(--text-2);
+  border: 1px solid var(--border-subtle); border-radius: var(--radius-sm);
+  padding: 3px 8px; cursor: pointer; transition: all 0.12s;
+}
+.wc-preview-reroll:hover, .wc-preview-inprompt:hover {
+  color: var(--text-1); border-color: var(--accent);
+}
+.wc-preview-inprompt.on {
+  background: var(--accent); color: #fff; border-color: var(--accent);
+}
+
 /* Footer */
 .wc-footer {
   display: flex; align-items: center; justify-content: space-between;
@@ -308,6 +350,7 @@
     const btn = modal?.querySelector(".wc-refresh-btn");
     if (btn) btn.classList.add("spinning");
     loaded = false;
+    if (window.WildcardPreview) window.WildcardPreview.bumpRevision();  // invalidate preview caches
     await fetchWildcards(true);
     if (modal) { renderFolderTree(); renderList(); }
     if (btn) setTimeout(() => btn.classList.remove("spinning"), 300);
@@ -566,6 +609,47 @@
     }
   }
 
+  // Render 1-3 possible recursive resolutions for the previewed wildcard, via
+  // the shared service (same resolver as generation). Non-destructive: when
+  // "preview in current prompt" is on it resolves an IN-MEMORY copy of the
+  // active target's prompt with __name__ inserted — never the textarea.
+  async function _renderResolutions(name) {
+    const box = previewPane && previewPane.querySelector(".wc-preview-resolved");
+    if (!box || !window.WildcardPreview) return;
+    box.innerHTML = `<div class="wc-preview-res-empty">${_t("status.loading", "Loading...")}</div>`;
+    let promptToResolve = "__" + name + "__";
+    if (_previewInPrompt) {
+      promptToResolve = window.WildcardPreview.buildPromptWithToken(resolveTarget(), name);
+    }
+    if (_resolveAbort) { try { _resolveAbort.abort(); } catch (_) {} }
+    _resolveAbort = ("AbortController" in window) ? new AbortController() : null;
+    const reqName = name;
+    try {
+      const data = await window.WildcardPreview.resolvePrompt(promptToResolve, {
+        seed: _previewSeed, samples: 3,
+        signal: _resolveAbort ? _resolveAbort.signal : undefined,
+      });
+      if (previewName !== reqName) return;   // user moved to another wildcard
+      const samples = (data && data.samples) || [];
+      box.innerHTML = "";
+      if (!samples.length) {
+        box.innerHTML = `<div class="wc-preview-res-empty">${_t("wildcard.noResolution", "No resolution")}</div>`;
+        return;
+      }
+      samples.forEach((s, i) => {
+        const el = document.createElement("div");
+        el.className = "wc-preview-res";
+        el.textContent = (i + 1) + ". " + (s.expanded || "");
+        if (s.warnings && s.warnings.length) el.title = s.warnings.join("; ");
+        box.appendChild(el);
+      });
+    } catch (e) {
+      if (e && e.name === "AbortError") return;   // superseded by a newer request
+      if (previewName !== reqName) return;
+      box.innerHTML = `<div class="wc-preview-res-empty">${_t("wildcard.failedToLoad", "Failed to load")}</div>`;
+    }
+  }
+
   async function showPreview(name) {
     previewName = name;
     previewPane.classList.add("visible");
@@ -574,10 +658,32 @@
       <button class="wc-preview-edit" data-i18n="wildcard.editButton" data-i18n-title="wildcard.edit.tooltip" title="${_t("wildcard.edit.tooltip", "Open in Wildcards editor")}">${_t("wildcard.editButton", "Edit in Wildcards")}</button>
       <div class="wc-preview-count" data-i18n="status.loading">${_t("status.loading", "Loading...")}</div>
       <div class="wc-preview-entries"></div>
+      <div class="wc-preview-resolved-head" data-i18n="wildcard.resolutions">Possible resolutions</div>
+      <div class="wc-preview-resolved"></div>
+      <div class="wc-preview-actions">
+        <button class="wc-preview-reroll" type="button" data-i18n="wildcard.reroll">Reroll</button>
+        <button class="wc-preview-inprompt" type="button" data-i18n="wildcard.previewInPrompt">Preview in current prompt</button>
+      </div>
     `;
 
     // Wire up the edit button
     previewPane.querySelector(".wc-preview-edit").addEventListener("click", switchToWildcardsModule);
+
+    // Resolutions: seed reroll + "preview in current prompt" toggle. A concrete
+    // seed keeps the sample stable; Reroll advances it. inPrompt=true resolves
+    // the ACTIVE target prompt with __name__ inserted at its caret (in memory).
+    _previewSeed = 12345;
+    _previewInPrompt = false;
+    previewPane.querySelector(".wc-preview-reroll").addEventListener("click", () => {
+      _previewSeed = (_previewSeed + 1) >>> 0;
+      _renderResolutions(name);
+    });
+    previewPane.querySelector(".wc-preview-inprompt").addEventListener("click", (e) => {
+      _previewInPrompt = !_previewInPrompt;
+      e.currentTarget.classList.toggle("on", _previewInPrompt);
+      _renderResolutions(name);
+    });
+    _renderResolutions(name);
 
     try {
       const resp = await fetch(`/studio/wildcard_content?name=${encodeURIComponent(name)}`);
@@ -630,7 +736,7 @@
 
   // ── Prompt Insertion ───────────────────────────────────
   function insertWildcard(name) {
-    const textarea = getTargetTextarea();
+    const textarea = resolveTarget();
     if (!textarea) return;
     const tag = `__${name}__`;
     insertAtCursor(textarea, tag);
@@ -666,7 +772,8 @@
   function closeModal() {
     if (modal) modal.style.display = "none";
     _clearKbFocus();
-    const target = getTargetTextarea();
+    const target = resolveTarget();
+    _forcedTarget = null;   // clear any openFor() binding after use
     if (target) target.focus();
   }
 
@@ -716,7 +823,9 @@
     document.addEventListener("keydown", e => {
       if (e.ctrlKey && e.shiftKey && e.key === "L") {
         const active = document.activeElement;
-        const isPrompt = active && (active.id === "paramPrompt" || active.id === "paramNeg");
+        const isPrompt = window.PromptTargets
+          ? window.PromptTargets.isTarget(active)
+          : (active && (active.id === "paramPrompt" || active.id === "paramNeg"));
         const isBody = !active || active === document.body;
         if (isPrompt || isBody) {
           e.preventDefault();
@@ -888,5 +997,5 @@
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
   else init();
 
-  window.WildcardBrowser = { open: openModal, close: closeModal, refresh: refreshWildcards };
+  window.WildcardBrowser = { open: openModal, openFor: openFor, close: closeModal, refresh: refreshWildcards };
 })();

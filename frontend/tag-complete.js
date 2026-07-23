@@ -250,6 +250,7 @@
   // cache is cleared too — old content for a name may no longer match
   // the file that resolves under the new folder.
   async function refreshWildcards() {
+    if (window.WildcardPreview) window.WildcardPreview.bumpRevision();  // invalidate preview caches
     try {
       const resp = await fetch(window.location.origin + "/studio/wildcards");
       if (!resp.ok) throw new Error(`HTTP ${resp.status}`);
@@ -657,6 +658,81 @@
     </div>`;
   }
 
+  // ── Wildcard preview sidecar ──────────────────────────────
+  // Non-destructive preview shown next to the dropdown when a wildcard result
+  // is highlighted (hover or keyboard). Raw entries come from the cached
+  // /studio/wildcard_content; the recursive "example resolution" comes from the
+  // shared WildcardPreview service. Debounced + abortable; never mutates text.
+  let _wcSidecar = null, _wcSideTimer = null, _wcSideAbort = null;
+  let _wcSideSeed = 12345, _wcSideName = null;
+
+  function _sideEsc(s) {
+    return String(s == null ? "" : s).replace(/[&<>"]/g, c =>
+      ({ "&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;" }[c]));
+  }
+  function _ensureSidecar() {
+    if (_wcSidecar) return _wcSidecar;
+    const el = document.createElement("div");
+    el.className = "tac-wc-sidecar";
+    el.style.cssText = "position:fixed;z-index:100000;display:none;width:240px;" +
+      "max-height:280px;overflow:auto;padding:8px 10px;font-family:var(--font,sans-serif);" +
+      "font-size:11px;color:var(--text-1,#eee);background:var(--bg-surface,#1c1c1c);" +
+      "border:1px solid var(--border,#3a3a3a);border-radius:6px;box-shadow:0 8px 24px rgba(0,0,0,.5);";
+    document.body.appendChild(el);
+    _wcSidecar = el;
+    return el;
+  }
+  function _hideSidecar() {
+    _wcSideName = null;
+    if (_wcSideTimer) { clearTimeout(_wcSideTimer); _wcSideTimer = null; }
+    if (_wcSideAbort) { try { _wcSideAbort.abort(); } catch (_) {} _wcSideAbort = null; }
+    if (_wcSidecar) _wcSidecar.style.display = "none";
+  }
+  function _positionSidecar(el) {
+    if (!dropdown) return;
+    const r = dropdown.getBoundingClientRect();
+    let left = r.right + 6;
+    if (left + 248 > window.innerWidth) left = Math.max(4, r.left - 246);
+    el.style.left = left + "px";
+    el.style.top = Math.max(4, r.top) + "px";
+  }
+  function _previewFromIdx(idx) {
+    const item = currentResults[idx];
+    if (!item || item.type !== "wildcard" || !window.WildcardPreview) { _hideSidecar(); return; }
+    if (_wcSideTimer) clearTimeout(_wcSideTimer);
+    _wcSideTimer = setTimeout(() => _renderSidecar(item.name), 200);  // hover delay
+  }
+  async function _renderSidecar(name) {
+    if (!window.WildcardPreview) return;
+    _wcSideName = name;
+    _wcSideSeed = 12345;
+    const el = _ensureSidecar();
+    el.innerHTML = `<div style="font-family:var(--mono,monospace);color:var(--accent,#6c8cff);margin-bottom:5px;word-break:break-all;">__${_sideEsc(name)}__</div><div style="color:var(--text-4,#888);">…</div>`;
+    _positionSidecar(el);
+    el.style.display = "block";
+    let content = { lines: [], count: 0 };
+    try { content = await window.WildcardPreview.getContent(name); } catch (_) {}
+    if (_wcSideName !== name) return;   // selection moved on
+    let expanded = "";
+    if (_wcSideAbort) { try { _wcSideAbort.abort(); } catch (_) {} }
+    _wcSideAbort = ("AbortController" in window) ? new AbortController() : null;
+    try {
+      const data = await window.WildcardPreview.resolvePrompt("__" + name + "__", {
+        seed: _wcSideSeed, samples: 1,
+        signal: _wcSideAbort ? _wcSideAbort.signal : undefined,
+      });
+      expanded = (data && data.samples && data.samples[0] && data.samples[0].expanded) || "";
+    } catch (e) { if (e && e.name === "AbortError") return; }
+    if (_wcSideName !== name) return;
+    const entries = (content.lines || []).slice(0, 6)
+      .map(l => `<div style="padding:1px 0;color:var(--text-2,#ccc);overflow:hidden;text-overflow:ellipsis;white-space:nowrap;">• ${_sideEsc(l)}</div>`).join("");
+    const more = (content.count || 0) > 6 ? `<div style="color:var(--text-4,#888);">… ${content.count - 6} more</div>` : "";
+    el.innerHTML =
+      `<div style="font-family:var(--mono,monospace);color:var(--accent,#6c8cff);margin-bottom:5px;word-break:break-all;">__${_sideEsc(name)}__ · ${content.count || 0}</div>` +
+      `<div style="color:var(--text-4,#888);text-transform:uppercase;font-size:9px;letter-spacing:.4px;margin-bottom:2px;">Entries</div>${entries}${more}` +
+      (expanded ? `<div style="color:var(--text-4,#888);text-transform:uppercase;font-size:9px;letter-spacing:.4px;margin:6px 0 2px;">Example resolution</div><div style="line-height:1.4;color:var(--text-1,#eee);word-break:break-word;">${_sideEsc(expanded)}</div>` : "");
+  }
+
   function showDropdown(results, textarea) {
     const dd = createDropdown();
     currentResults = results;
@@ -680,6 +756,11 @@
           hideDropdown();
         }
       });
+      // Non-destructive wildcard preview on hover.
+      item.addEventListener("mouseenter", () => {
+        const idx = parseInt(item.dataset.idx);
+        if (idx >= 0 && idx < currentResults.length) _previewFromIdx(idx);
+      });
     });
   }
 
@@ -688,6 +769,7 @@
     currentResults = [];
     selectedIdx = -1;
     _wcContentCtx = null;
+    _hideSidecar();
   }
 
   function updateSelection(idx) {
@@ -698,6 +780,7 @@
     });
     selectedIdx = idx;
     if (items[idx]) items[idx].scrollIntoView({ block: "nearest" });
+    _previewFromIdx(idx);   // keyboard-driven preview
   }
 
   // ── Event Handlers ──────────────────────────────────────
@@ -809,6 +892,9 @@
   function attachToTextarea(textarea) {
     if (!textarea || textarea._tacAttached) return;
     textarea._tacAttached = true;
+    // Register with the shared prompt-target registry so insert/preview from
+    // the LoRA & Wildcard browsers resolve to this field when it's focused.
+    if (window.PromptTargets) window.PromptTargets.register(textarea);
     textarea.addEventListener("input", onInput);
     textarea.addEventListener("keydown", onKeyDown);
     textarea.addEventListener("blur", onBlur);

@@ -4,18 +4,18 @@
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Forge Studio</title>
-<link rel="icon" type="image/svg+xml" href="/studio/static/brand/favicon.svg?v=4.16.1">
-<link rel="icon" type="image/png" sizes="32x32" href="/studio/static/brand/favicon-32.png?v=4.16.1">
+<link rel="icon" type="image/svg+xml" href="/studio/static/brand/favicon.svg?v=4.17.0">
+<link rel="icon" type="image/png" sizes="32x32" href="/studio/static/brand/favicon-32.png?v=4.17.0">
 <link rel="apple-touch-icon" href="/studio/static/brand/apple-touch-icon.png">
 <link href="https://fonts.googleapis.com/css2?family=DM+Sans:ital,wght@0,300;0,400;0,500;0,600&family=JetBrains+Mono:wght@400;500&display=swap" rel="stylesheet">
 <!-- Keep the ?v= in sync with `const v` in the loader script at the bottom
      of this file — stylesheets had no cache-buster, so deploys kept serving
      stale CSS even after the versioned JS refreshed. -->
-<link rel="stylesheet" href="/studio/static/app.css?v=4.16.1">
-<link rel="stylesheet" href="/studio/static/searchable-select.css?v=4.16.1">
-<link rel="stylesheet" href="/studio/static/education.css?v=4.16.1">
-<link rel="stylesheet" href="/studio/static/studio-tour.css?v=4.16.1">
-<link rel="stylesheet" href="/studio/static/studio-docs.css?v=4.16.1">
+<link rel="stylesheet" href="/studio/static/app.css?v=4.17.0">
+<link rel="stylesheet" href="/studio/static/searchable-select.css?v=4.17.0">
+<link rel="stylesheet" href="/studio/static/education.css?v=4.17.0">
+<link rel="stylesheet" href="/studio/static/studio-tour.css?v=4.17.0">
+<link rel="stylesheet" href="/studio/static/studio-docs.css?v=4.17.0">
 </head>
 <body>
 
@@ -24,7 +24,7 @@
      ═══════════════════════════════════════════ -->
 
 <div class="titlebar">
-  <div class="brand"><img class="brand-mark" src="/studio/static/brand/forge-studio-mark.svg?v=4.16.1" alt=""><em>FORGE</em>&ensp;<span class="brand-studio">STUDIO</span></div>
+  <div class="brand"><img class="brand-mark" src="/studio/static/brand/forge-studio-mark.svg?v=4.17.0" alt=""><em>FORGE</em>&ensp;<span class="brand-studio">STUDIO</span></div>
   <div class="tab-bar" id="appTabs">
     <button class="active" data-app="studio">Canvas</button>
     <button data-app="settings" data-i18n="tabs.settings">Settings</button>
@@ -673,6 +673,13 @@
                 <div class="param-grid cols-1 secondary param-advanced" style="margin-top:4px;">
                   <div class="param-cell" data-help="help.adetailer.prompt"><label>Prompt (blank = main)</label><input class="param-val" id="paramAD1Prompt" value="" style="text-align:left;font-family:var(--font);"></div>
                 </div>
+                <div class="param-grid cols-1 secondary param-advanced ad-lora-row" data-ad-slot="1" style="margin-top:4px;">
+                  <div class="param-cell">
+                    <label data-i18n="adetailer.loras.label">LoRAs (this slot only)</label>
+                    <div class="ad-lora-controls"><div class="ad-lora-chips" id="adLoraChips1"></div><button type="button" class="prompt-browser-btn ad-lora-add" id="adLoraAdd1" data-ad-slot="1" data-i18n="adetailer.loras.add">+ LoRAs</button></div>
+                  </div>
+                  <input type="hidden" id="adLoraStack1">
+                </div>
               </div>
               <!-- Slot 2 -->
               <div style="margin-bottom:8px;padding-bottom:8px;border-bottom:1px solid var(--border-subtle);">
@@ -692,6 +699,13 @@
                 </div>
                 <div class="param-grid cols-1 secondary param-advanced" style="margin-top:4px;">
                   <div class="param-cell" data-help="help.adetailer.prompt"><label>Prompt (blank = main)</label><input class="param-val" id="paramAD2Prompt" value="" style="text-align:left;font-family:var(--font);"></div>
+                </div>
+                <div class="param-grid cols-1 secondary param-advanced ad-lora-row" data-ad-slot="2" style="margin-top:4px;">
+                  <div class="param-cell">
+                    <label data-i18n="adetailer.loras.label">LoRAs (this slot only)</label>
+                    <div class="ad-lora-controls"><div class="ad-lora-chips" id="adLoraChips2"></div><button type="button" class="prompt-browser-btn ad-lora-add" id="adLoraAdd2" data-ad-slot="2" data-i18n="adetailer.loras.add">+ LoRAs</button></div>
+                  </div>
+                  <input type="hidden" id="adLoraStack2">
                 </div>
                 </div>
               </div>
@@ -713,6 +727,13 @@
                 </div>
                 <div class="param-grid cols-1 secondary param-advanced" style="margin-top:4px;">
                   <div class="param-cell" data-help="help.adetailer.prompt"><label>Prompt (blank = main)</label><input class="param-val" id="paramAD3Prompt" value="" style="text-align:left;font-family:var(--font);"></div>
+                </div>
+                <div class="param-grid cols-1 secondary param-advanced ad-lora-row" data-ad-slot="3" style="margin-top:4px;">
+                  <div class="param-cell">
+                    <label data-i18n="adetailer.loras.label">LoRAs (this slot only)</label>
+                    <div class="ad-lora-controls"><div class="ad-lora-chips" id="adLoraChips3"></div><button type="button" class="prompt-browser-btn ad-lora-add" id="adLoraAdd3" data-ad-slot="3" data-i18n="adetailer.loras.add">+ LoRAs</button></div>
+                  </div>
+                  <input type="hidden" id="adLoraStack3">
                 </div>
                 </div>
               </div>
@@ -1348,13 +1369,14 @@
     "ag-psd.js", "png-metadata.js", "i18n.js", "prefs.js", "shortcuts.js",
     "searchable-select.js", "canvas-core.js",
     "canvas-ui.js", "workflow-state.js", "app.js", "workflows.js",
-    "module-system.js", "studio-tour.js", "studio-docs.js", "tag-complete.js",
-    "lora-browser.js", "checkpoint-browser.js", "lora-stack.js", "wildcard-browser.js"
+    "module-system.js", "studio-tour.js", "studio-docs.js",
+    "prompt-targets.js", "wildcard-preview.js", "tag-complete.js",
+    "lora-browser.js", "checkpoint-browser.js", "lora-stack.js", "ad-lora-stack.js", "wildcard-browser.js"
   ];
   // Optional modules — loaded if available, silently skipped if not.
   // debug.js exposes window.StudioDebug.* — dev-tools-only, no UI.
   const optionalScripts = ["develop.js", "workshop.js", "lexicon.js", "education.js", "codex.js", "studio-showme.js", "gallery.js", "module-tours.js", "debug.js", "canvas-webgl-preview.js"];
-  const v = "4.16.1";
+  const v = "4.17.0";
   window.__STUDIO_V = v;
   for (const s of scripts) {
     await new Promise((resolve, reject) => {

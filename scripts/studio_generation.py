@@ -205,6 +205,28 @@ def to_rgb(img):
 # If concurrent support is needed, wrap in threading.Lock or use a queue.
 _studio_task_id = None
 
+# Per-slot AD LoRA suffixes for the CURRENT generation (index 0/1/2 → slot
+# 1/2/3), set by run_generation from the validated API input. Module-level
+# because generations are serialized (same pattern as _studio_task_id); read by
+# _run_studio_ad and _build_native_ad_dicts to append the suffix after the
+# ADetailer prompt/region resolution. One-time compatibility flag guards the
+# native-fork feature-detect log.
+_studio_ad_lora_suffixes = []
+# Raw (un-baked) per-slot user prompts, published by _build_native_ad_dicts.
+# _run_studio_ad reads these instead of the dict's ad_prompt: the native path
+# bakes the LoRA suffix into ad_prompt, but _run_studio_ad appends the suffix
+# itself, so it must start from the raw prompt to avoid a double application (and
+# a literal "[PROMPT]" leak) and to keep blank->main inheritance + region match.
+_studio_ad_user_prompts = []
+_ad_lora_native_compat_logged = False
+
+
+def set_ad_lora_suffixes(suffixes):
+    """Set per-slot AD LoRA suffixes for the next AD pass. Used by the standalone
+    upscale/refine path, which composes AD dicts without calling run_generation."""
+    global _studio_ad_lora_suffixes
+    _studio_ad_lora_suffixes = list(suffixes) if suffixes else []
+
 # One-time guard for logging whether the live Neo build exposes
 # shared.total_tqdm.clear() (see _reset_generation_state).
 _total_tqdm_api_logged = False
@@ -802,21 +824,89 @@ def _get_output_dir(mode):
     return studio_outdir
 
 
+def _append_prompt_suffix(base, suffix):
+    """Comma-safe append of a slot-local LoRA suffix to a prompt. Never mutates
+    inputs; returns the combined string."""
+    base = (base or "").strip()
+    suffix = (suffix or "").strip()
+    if not suffix:
+        return base
+    if not base:
+        return suffix
+    sep = " " if base.endswith(",") else ", "
+    return base + sep + suffix
+
+
+def _native_ad_supports_suffix():
+    """True if the installed ADetailer exposes a dedicated ``ad_prompt_suffix``
+    field (a patched fork). When present we can append the LoRA suffix AFTER the
+    fork's own blank→main / region resolution; when absent we must inject into
+    ad_prompt itself (see _build_native_ad_dicts). Non-throwing."""
+    try:
+        import dataclasses
+        from adetailer.args import ADetailerArgs
+        if dataclasses.is_dataclass(ADetailerArgs):
+            names = {f.name for f in dataclasses.fields(ADetailerArgs)}
+        else:
+            names = set(getattr(ADetailerArgs, "__annotations__", {}).keys())
+        return "ad_prompt_suffix" in names
+    except Exception:
+        return False
+
+
 def _build_native_ad_dicts(ad_enable, ad_raw_slots):
     """Build native ADetailer-compatible slot dicts from Studio's frontend params.
 
     Returns (enable_bool, list_of_slot_dicts) ready for injection into
     native AD's script_args slots.
     """
+    global _ad_lora_native_compat_logged, _studio_ad_user_prompts
+    _supports_suffix = _native_ad_supports_suffix()
+    # Publish the RAW per-slot user prompts (before any LoRA bake) so the
+    # _run_studio_ad consumer can compose from them without double-applying.
+    _studio_ad_user_prompts = [(s.get("prompt") or "") for s in ad_raw_slots]
     dicts = []
-    for s in ad_raw_slots:
+    for _idx, s in enumerate(ad_raw_slots):
         slot_enabled = bool(ad_enable) and bool(s.get("enable", False))
         model = s.get("model") or "None"
-        dicts.append({
+        # ── Per-slot LoRA suffix injection ──
+        # Preferred: a patched fork's ad_prompt_suffix field (appended AFTER the
+        # fork's blank→main / region resolution — no inheritance loss). Fallback
+        # for stock/unpatched ADetailer (no such field, and adding an unknown key
+        # would make ADetailerArgs(**slot_dict) raise): fold the suffix into
+        # ad_prompt using the [PROMPT] main-prompt placeholder so the main prompt
+        # is still inherited. That fallback DOES make ad_prompt non-blank, which
+        # bypasses the fork's ad_prompt-blank per-region matching for LoRA slots —
+        # logged once so it isn't silent.
+        _user_prompt = s.get("prompt") or ""
+        _slot_sfx = ""
+        try:
+            _slot_sfx = (_studio_ad_lora_suffixes[_idx]
+                         if _idx < len(_studio_ad_lora_suffixes) else "")
+        except Exception:
+            _slot_sfx = ""
+        _ad_prompt_val = _user_prompt
+        _extra = {}
+        if _slot_sfx and slot_enabled:
+            if _supports_suffix:
+                _extra["ad_prompt_suffix"] = _slot_sfx
+            else:
+                if _user_prompt.strip():
+                    _ad_prompt_val = _append_prompt_suffix(_user_prompt, _slot_sfx)
+                else:
+                    # Preserve main-prompt inheritance via the [PROMPT] placeholder.
+                    _ad_prompt_val = _append_prompt_suffix("[PROMPT]", _slot_sfx)
+                if not _ad_lora_native_compat_logged:
+                    _ad_lora_native_compat_logged = True
+                    print("[Studio AD] Native ADetailer has no ad_prompt_suffix "
+                          "field — injecting slot LoRAs via [PROMPT] placeholder. "
+                          "Per-region AD prompt matching is bypassed for slots "
+                          "that carry LoRAs (install the patched fork to avoid this).")
+        slot_dict = {
             "ad_model": model,
             "ad_model_classes": "",
             "ad_tab_enable": slot_enabled,
-            "ad_prompt": s.get("prompt") or "",
+            "ad_prompt": _ad_prompt_val,
             "ad_negative_prompt": s.get("neg_prompt") or "",
             "ad_confidence": float(s.get("confidence", 0.3)),
             "ad_mask_filter_method": "Area" if not s.get("topk_filter") else "Confidence",
@@ -856,7 +946,10 @@ def _build_native_ad_dicts(ad_enable, ad_raw_slots):
             "ad_controlnet_guidance_start": 0.0,
             "ad_controlnet_guidance_end": 1.0,
             "is_api": True,
-        })
+        }
+        # Only carries ad_prompt_suffix when the installed fork declares it.
+        slot_dict.update(_extra)
+        dicts.append(slot_dict)
     return bool(ad_enable), dicts
 
 
@@ -1091,7 +1184,19 @@ def _run_studio_ad(result_img, p, ad_slots, mask_img=None, capture_blend_mask=Fa
         # Use resolved prompts (post-wildcard, post-dynamic-prompts) from the
         # main generation pass. p.prompt is raw text with __wildcards__ still in it.
         # p.all_prompts[0] is what actually generated the image.
-        ad_prompt = slot.get("ad_prompt", "").strip()
+        #
+        # Read the RAW slot prompt (published by _build_native_ad_dicts), NOT the
+        # dict's ad_prompt: the native path may have baked a LoRA suffix / [PROMPT]
+        # placeholder into ad_prompt, but we append the suffix ourselves below, so
+        # starting from the baked value would double the LoRA, leak a literal
+        # "[PROMPT]", and clobber blank->main inheritance + region matching.
+        try:
+            _raw_slot_prompt = (_studio_ad_user_prompts[slot_idx]
+                                if slot_idx < len(_studio_ad_user_prompts) else None)
+        except Exception:
+            _raw_slot_prompt = None
+        ad_prompt = (_raw_slot_prompt if _raw_slot_prompt is not None
+                     else slot.get("ad_prompt", "")).strip()
         ad_neg = slot.get("ad_negative_prompt", "").strip()
         resolved_prompt = p.all_prompts[0] if hasattr(p, 'all_prompts') and p.all_prompts else p.prompt
         resolved_neg = p.all_negative_prompts[0] if hasattr(p, 'all_negative_prompts') and p.all_negative_prompts else p.negative_prompt
@@ -1148,6 +1253,23 @@ def _run_studio_ad(result_img, p, ad_slots, mask_img=None, capture_blend_mask=Fa
                         f"[Studio AD] Slot {slot_idx+1} det {j+1}: "
                         f"region match → \"{r_prompt[:60]}\""
                     )
+
+            # ── Per-slot LoRA suffix ──
+            # Appended AFTER the final per-detection prompt is chosen (explicit
+            # slot prompt / blank→main inheritance / region match all applied),
+            # so a slot LoRA never replaces the inherited or matched prompt. The
+            # suffix is slot-local and rebuilt for every detection; p.prompt /
+            # p.all_prompts / global extra-network state are never mutated.
+            try:
+                _slot_lora_sfx = (_studio_ad_lora_suffixes[slot_idx]
+                                  if slot_idx < len(_studio_ad_lora_suffixes) else "")
+            except Exception:
+                _slot_lora_sfx = ""
+            if _slot_lora_sfx:
+                det_prompt = _append_prompt_suffix(det_prompt, _slot_lora_sfx)
+                if j == 0:
+                    print(f"[Studio AD] Slot {slot_idx+1}: +LoRA suffix "
+                          f"\"{_slot_lora_sfx[:60]}\"")
 
             seed = (p.seed or 0) + j if hasattr(p, 'seed') else -1
 
@@ -2455,7 +2577,14 @@ def run_generation(
     high_precision=False,
     studio_dynamic_prompts_enabled=True,
     watermark=None,
+    ad_lora_suffixes=None,
 ):
+    # Per-slot AD LoRA suffixes (index 0/1/2 → slot 1/2/3), compiled and
+    # validated by the API layer. Appended AFTER ADetailer prompt/region
+    # resolution so a slot LoRA never replaces blank→main inheritance.
+    _ad_lora_suffixes = list(ad_lora_suffixes) if ad_lora_suffixes else []
+    global _studio_ad_lora_suffixes
+    _studio_ad_lora_suffixes = _ad_lora_suffixes
     # === DEBUG: confirm function is being called ===
     print(f"[Studio] run_generation called: mode={repr(mode)}, inpaint_mode={repr(inpaint_mode)}, is_txt2img={is_txt2img}, regions_json_len={len(regions_json) if regions_json else 0}")
     # --- Unpack into structured params ---
