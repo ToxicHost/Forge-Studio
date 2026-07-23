@@ -212,6 +212,12 @@ _studio_task_id = None
 # ADetailer prompt/region resolution. One-time compatibility flag guards the
 # native-fork feature-detect log.
 _studio_ad_lora_suffixes = []
+# Raw (un-baked) per-slot user prompts, published by _build_native_ad_dicts.
+# _run_studio_ad reads these instead of the dict's ad_prompt: the native path
+# bakes the LoRA suffix into ad_prompt, but _run_studio_ad appends the suffix
+# itself, so it must start from the raw prompt to avoid a double application (and
+# a literal "[PROMPT]" leak) and to keep blank->main inheritance + region match.
+_studio_ad_user_prompts = []
 _ad_lora_native_compat_logged = False
 
 
@@ -854,8 +860,11 @@ def _build_native_ad_dicts(ad_enable, ad_raw_slots):
     Returns (enable_bool, list_of_slot_dicts) ready for injection into
     native AD's script_args slots.
     """
-    global _ad_lora_native_compat_logged
+    global _ad_lora_native_compat_logged, _studio_ad_user_prompts
     _supports_suffix = _native_ad_supports_suffix()
+    # Publish the RAW per-slot user prompts (before any LoRA bake) so the
+    # _run_studio_ad consumer can compose from them without double-applying.
+    _studio_ad_user_prompts = [(s.get("prompt") or "") for s in ad_raw_slots]
     dicts = []
     for _idx, s in enumerate(ad_raw_slots):
         slot_enabled = bool(ad_enable) and bool(s.get("enable", False))
@@ -1175,7 +1184,19 @@ def _run_studio_ad(result_img, p, ad_slots, mask_img=None, capture_blend_mask=Fa
         # Use resolved prompts (post-wildcard, post-dynamic-prompts) from the
         # main generation pass. p.prompt is raw text with __wildcards__ still in it.
         # p.all_prompts[0] is what actually generated the image.
-        ad_prompt = slot.get("ad_prompt", "").strip()
+        #
+        # Read the RAW slot prompt (published by _build_native_ad_dicts), NOT the
+        # dict's ad_prompt: the native path may have baked a LoRA suffix / [PROMPT]
+        # placeholder into ad_prompt, but we append the suffix ourselves below, so
+        # starting from the baked value would double the LoRA, leak a literal
+        # "[PROMPT]", and clobber blank->main inheritance + region matching.
+        try:
+            _raw_slot_prompt = (_studio_ad_user_prompts[slot_idx]
+                                if slot_idx < len(_studio_ad_user_prompts) else None)
+        except Exception:
+            _raw_slot_prompt = None
+        ad_prompt = (_raw_slot_prompt if _raw_slot_prompt is not None
+                     else slot.get("ad_prompt", "")).strip()
         ad_neg = slot.get("ad_negative_prompt", "").strip()
         resolved_prompt = p.all_prompts[0] if hasattr(p, 'all_prompts') and p.all_prompts else p.prompt
         resolved_neg = p.all_negative_prompts[0] if hasattr(p, 'all_negative_prompts') and p.all_negative_prompts else p.negative_prompt

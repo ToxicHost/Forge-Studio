@@ -1231,7 +1231,11 @@ def _flatten_ad_slot(slot: ADSlotParams) -> list:
 # delimiters (``<`` ``>`` ``:`` ``,``) or be treated as a filesystem path.
 _AD_LORA_MAX_PER_SLOT = 8
 _AD_LORA_ACT_MAX = 512
-_AD_LORA_NAME_RE = re.compile(r"^[A-Za-z0-9 _\-.()]+$")
+# Denylist rather than allowlist so non-ASCII LoRA filenames (CJK, accented,
+# etc.) still apply, while the prompt delimiters that matter for injection
+# (< > : ,) and control chars are always rejected. Path separators are already
+# stripped to a basename before this check.
+_AD_LORA_NAME_BAD = re.compile(r"[<>:,\x00-\x1f]")
 
 
 def _fmt_lora_weight(w) -> str:
@@ -1244,7 +1248,7 @@ def _fmt_lora_weight(w) -> str:
         f = 1.0
     f = max(-10.0, min(10.0, f))
     s = f"{f:.2f}".rstrip("0").rstrip(".")
-    return s if s else "0"
+    return "0" if s in ("", "-0") else s
 
 
 def _compile_ad_lora_suffix(loras) -> str:
@@ -1269,7 +1273,7 @@ def _compile_ad_lora_suffix(loras) -> str:
             name = (getattr(item, "name", None) or (item.get("name") if isinstance(item, dict) else "") or "").strip()
             # Never a filesystem path: keep only the basename.
             name = name.replace("\\", "/").split("/")[-1].strip()
-            if not name or not _AD_LORA_NAME_RE.match(name):
+            if not name or _AD_LORA_NAME_BAD.search(name):
                 continue
             weight = getattr(item, "weight", None)
             if weight is None and isinstance(item, dict):
