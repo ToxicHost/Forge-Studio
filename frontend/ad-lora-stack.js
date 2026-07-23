@@ -26,6 +26,7 @@
 
   var slots = { 1: [], 2: [], 3: [] };
   var _idSeq = 0;
+  var _selfWrite = false;   // true while WE write a hidden input (ignore the echo)
 
   function _newId() { return "adl" + (++_idSeq).toString(36) + Date.now().toString(36); }
 
@@ -53,8 +54,12 @@
   function _writeHidden(n) {
     var el = _hidden(n);
     if (el) {
+      _selfWrite = true;
       el.value = JSON.stringify(slots[n] || []);
+      // Mirror to workflow/defaults capture. dispatch is synchronous, so the
+      // _selfWrite guard is still set when our own input listener fires.
       el.dispatchEvent(new Event("input", { bubbles: true }));
+      _selfWrite = false;
     }
   }
   function _commit(n) { _writeHidden(n); render(n); }
@@ -243,8 +248,28 @@
     });
   }
 
+  // Rehydrate chips when a hidden input is written EXTERNALLY (workflow / tab /
+  // defaults / session restore all set #adLoraStack{n} and dispatch input). Our
+  // own writes are ignored via the _selfWrite guard so user edits don't re-render
+  // and steal focus.
+  function _wireHiddenInputs() {
+    SLOTS.forEach(function (n) {
+      var el = _hidden(n);
+      if (el && !el._adWired) {
+        el._adWired = true;
+        el.addEventListener("input", function () {
+          if (_selfWrite) return;
+          try { slots[n] = _sanitizeList(JSON.parse(el.value || "[]")); }
+          catch (e) { slots[n] = []; }
+          render(n);
+        });
+      }
+    });
+  }
+
   function init() {
     _wireButtons();
+    _wireHiddenInputs();
     restoreFromHidden();  // pick up any value already present (e.g. session)
     console.log(TAG + " Initialized");
   }

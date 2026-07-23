@@ -990,6 +990,14 @@ else:
 # REQUEST / RESPONSE MODELS
 # =========================================================================
 
+class ADLoraParams(BaseModel):
+    """One LoRA assigned to an ADetailer slot (applies only during that pass)."""
+    name: str = ""
+    weight: float = 1.0
+    activation_text: str = ""
+    include_activation: bool = False
+
+
 class ADSlotParams(BaseModel):
     """ADetailer slot parameters."""
     enable: bool = False
@@ -1017,6 +1025,7 @@ class ADSlotParams(BaseModel):
     scheduler: str = "Use same scheduler"
     prompt: str = ""
     neg_prompt: str = ""
+    loras: List[ADLoraParams] = Field(default_factory=list)
 
 
 class GenerateRequest(BaseModel):
@@ -1215,6 +1224,74 @@ def _flatten_ad_slot(slot: ADSlotParams) -> list:
         slot.sep_sampler, slot.sampler, slot.scheduler,
         slot.prompt, slot.neg_prompt,
     ]
+
+
+# Per-slot AD LoRA suffix compilation. Names are reduced to a basename and
+# limited to a safe charset so a frontend-supplied value can never inject prompt
+# delimiters (``<`` ``>`` ``:`` ``,``) or be treated as a filesystem path.
+_AD_LORA_MAX_PER_SLOT = 8
+_AD_LORA_ACT_MAX = 512
+_AD_LORA_NAME_RE = re.compile(r"^[A-Za-z0-9 _\-.()]+$")
+
+
+def _fmt_lora_weight(w) -> str:
+    """Compact, deterministic weight formatting for <lora:name:weight>."""
+    try:
+        f = float(w)
+    except (TypeError, ValueError):
+        f = 1.0
+    if f != f or f in (float("inf"), float("-inf")):  # NaN / inf guard
+        f = 1.0
+    f = max(-10.0, min(10.0, f))
+    s = f"{f:.2f}".rstrip("0").rstrip(".")
+    return s if s else "0"
+
+
+def _compile_ad_lora_suffix(loras) -> str:
+    """Compile a slot's LoRA list into a comma-safe prompt suffix.
+
+    Output like ``<lora:model:0.7>, <lora:other:1>, trigger words``. Sanitizes
+    each entry (basename-only name, safe charset, clamped finite weight,
+    length-capped activation text, per-slot count cap). Activation text is added
+    only when the item opted in AND it isn't already present. Returns "" for an
+    empty/invalid list. Never raises.
+    """
+    if not loras:
+        return ""
+    tags = []
+    acts = []
+    try:
+        items = list(loras)[:_AD_LORA_MAX_PER_SLOT]
+    except TypeError:
+        return ""
+    for item in items:
+        try:
+            name = (getattr(item, "name", None) or (item.get("name") if isinstance(item, dict) else "") or "").strip()
+            # Never a filesystem path: keep only the basename.
+            name = name.replace("\\", "/").split("/")[-1].strip()
+            if not name or not _AD_LORA_NAME_RE.match(name):
+                continue
+            weight = getattr(item, "weight", None)
+            if weight is None and isinstance(item, dict):
+                weight = item.get("weight", 1.0)
+            tags.append(f"<lora:{name}:{_fmt_lora_weight(weight)}>")
+            inc = getattr(item, "include_activation", None)
+            if inc is None and isinstance(item, dict):
+                inc = item.get("include_activation", False)
+            if inc:
+                act = getattr(item, "activation_text", None)
+                if act is None and isinstance(item, dict):
+                    act = item.get("activation_text", "")
+                act = (act or "").strip()[:_AD_LORA_ACT_MAX]
+                if act:
+                    acts.append(act)
+        except Exception:
+            continue
+    suffix = ", ".join(tags)
+    for a in acts:
+        if a.lower() not in suffix.lower():
+            suffix = f"{suffix}, {a}" if suffix else a
+    return suffix
 
 
 def _decode_b64_to_numpy(b64_str: Optional[str]):
@@ -2729,6 +2806,10 @@ def setup_studio_routes(app: FastAPI):
         ad1_args = _flatten_ad_slot(ad_slots[0])
         ad2_args = _flatten_ad_slot(ad_slots[1])
         ad3_args = _flatten_ad_slot(ad_slots[2])
+        # Per-slot LoRA suffixes are passed OUT-OF-BAND (keyword below), not
+        # through the positional slot args, so they can be appended AFTER the
+        # ADetailer prompt/region resolution instead of polluting ad_prompt.
+        ad_lora_suffixes = [_compile_ad_lora_suffix(s.loras) for s in ad_slots[:3]]
 
         cn1_img = _decode_b64_to_numpy(req.cn1_upload_b64)
         cn2_img = _decode_b64_to_numpy(req.cn2_upload_b64)
@@ -2810,6 +2891,7 @@ def setup_studio_routes(app: FastAPI):
                     if (req.watermark_enable and req.watermark_name.strip())
                     else None
                 ),
+                ad_lora_suffixes=ad_lora_suffixes,
             )
         except Exception as e:
             log.exception("Generation handler failed")
@@ -4055,6 +4137,13 @@ def setup_studio_routes(app: FastAPI):
                 "ad_scheduler": s.scheduler,
                 "prompt": s.prompt, "neg_prompt": s.neg_prompt,
             } for s in ad_slots[:3]]
+            # Per-slot LoRA suffixes for this refine/upscale AD pass (same
+            # out-of-band channel the main generate flow uses).
+            try:
+                _set_ad_lora = _import("studio_generation", "set_ad_lora_suffixes")
+                _set_ad_lora([_compile_ad_lora_suffix(s.loras) for s in ad_slots[:3]])
+            except Exception:
+                log.exception("Failed to set AD LoRA suffixes for upscale/refine")
             ad_enable_flag, ad_slot_dicts = _build_native_ad_dicts(
                 bool(req.run_ad), ad_raw_slots
             )
