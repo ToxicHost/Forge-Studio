@@ -2664,6 +2664,35 @@ def _progress_polling_thread():
 
 
 # =========================================================================
+# WILDCARD PREVIEW (non-destructive resolution preview)
+# =========================================================================
+
+_WILDCARD_PREVIEW_PROMPT_MAX = 16 * 1024   # 16 KiB
+_WILDCARD_PREVIEW_MAX_SAMPLES = 5
+_WILDCARD_PREVIEW_MAX_DEPTH = 10
+
+
+class WildcardPreviewRequest(BaseModel):
+    prompt: str = ""
+    seed: int = -1
+    samples: int = 3
+    max_depth: int = _WILDCARD_PREVIEW_MAX_DEPTH
+
+
+def _sanitize_wildcard_used(used) -> list:
+    """Keep only privacy-safe keys from a resolver ``used`` list (never paths)."""
+    safe = []
+    try:
+        for u in (used or []):
+            if isinstance(u, dict):
+                safe.append({k: u[k] for k in ("kind", "wildcard", "choice_index", "count")
+                             if k in u})
+    except Exception:
+        return []
+    return safe
+
+
+# =========================================================================
 # ROUTE REGISTRATION
 # =========================================================================
 
@@ -5213,6 +5242,52 @@ def setup_studio_routes(app: FastAPI):
         except Exception:
             log.exception("Failed to read wildcard file")
             return {"lines": [], "count": 0, "truncated": False}
+
+    @app.post("/studio/wildcard_preview")
+    async def wildcard_preview(req: WildcardPreviewRequest):
+        """Non-destructively resolve a prompt through the SAME resolver used by
+        generation, for N sample seeds. Performs no generation and loads no
+        checkpoint. Privacy: the prompt body is never logged; the response
+        carries no filesystem paths.
+        """
+        prompt = (req.prompt or "")[:_WILDCARD_PREVIEW_PROMPT_MAX]
+        if not prompt.strip():
+            return {"samples": []}
+        samples = max(1, min(_WILDCARD_PREVIEW_MAX_SAMPLES, int(req.samples or 1)))
+        max_depth = max(1, min(_WILDCARD_PREVIEW_MAX_DEPTH, int(req.max_depth or _WILDCARD_PREVIEW_MAX_DEPTH)))
+        try:
+            _load_config = _import("studio_dynamic_prompts", "load_config")
+            _resolve_dirs = _import("studio_dynamic_prompts", "resolve_wildcard_dirs")
+            _expand = _import("studio_dynamic_prompts", "expand_prompt")
+            cfg = _load_config()
+            dirs = _resolve_dirs(cfg)
+        except Exception:
+            log.exception("wildcard_preview: resolver unavailable")
+            return {"samples": [], "error": "resolver unavailable"}
+        # Honor a concrete non-negative seed; otherwise pick a random 32-bit one
+        # and return it so the client can display which seed was used.
+        try:
+            base_seed = int(req.seed)
+        except (ValueError, TypeError):
+            base_seed = -1
+        if base_seed < 0:
+            import random as _random
+            base_seed = _random.randint(0, 0xFFFFFFFF)
+        out = []
+        for i in range(samples):
+            s = (base_seed + i) & 0xFFFFFFFF
+            try:
+                res = _expand(prompt, seed=s, wildcard_dirs=dirs, max_depth=max_depth)
+                out.append({
+                    "seed": s,
+                    "expanded": getattr(res, "expanded", "") or "",
+                    "used": _sanitize_wildcard_used(getattr(res, "used", [])),
+                    "warnings": list(getattr(res, "warnings", []) or []),
+                })
+            except Exception:
+                log.exception("wildcard_preview: expansion failed")  # no prompt in log
+                out.append({"seed": s, "expanded": "", "used": [], "warnings": ["expansion failed"]})
+        return {"samples": out}
 
     # =========================================================================
     # STUDIO-NATIVE DYNAMIC PROMPTS — config & folder management
