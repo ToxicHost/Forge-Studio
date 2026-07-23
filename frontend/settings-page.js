@@ -165,8 +165,8 @@
     qsa(".settings-nav-button").forEach(function (btn) {
       var on = btn.getAttribute("data-settings-nav") === slug;
       btn.classList.toggle("active", on);
-      if (on) { btn.setAttribute("aria-current", "page"); btn.setAttribute("aria-selected", "true"); }
-      else { btn.removeAttribute("aria-current"); btn.setAttribute("aria-selected", "false"); }
+      if (on) btn.setAttribute("aria-current", "page");
+      else btn.removeAttribute("aria-current");
     });
     var sel = $("settingsNavSelect");
     if (sel && sel.value !== slug) sel.value = slug;
@@ -383,9 +383,15 @@
       var show = matchedCards.has(card);
       card.classList.toggle("settings-hidden-by-search", !show);
       var body = card.querySelector(".settings-card-body");
+      var head = card.querySelector(".settings-card-head");
       if (body) {
-        if (show) body.classList.add("settings-search-expanded");
-        else body.classList.remove("settings-search-expanded");
+        if (show) {
+          body.classList.add("settings-search-expanded");
+          // Keep the accessible state coherent with the force-shown body.
+          if (head && card.hasAttribute("data-collapsible")) head.setAttribute("aria-expanded", "true");
+        } else {
+          body.classList.remove("settings-search-expanded");
+        }
       }
     });
 
@@ -426,6 +432,17 @@
 
     qsa(".settings-hidden-by-search").forEach(function (el) { el.classList.remove("settings-hidden-by-search"); });
     qsa(".settings-card-body.settings-search-expanded").forEach(function (el) { el.classList.remove("settings-search-expanded"); });
+    // Restore each collapsible card's aria-expanded to its real collapse state
+    // (search force-showed some bodies without touching the persistent state).
+    qsa(".settings-card[data-collapsible]").forEach(function (card) {
+      var head = card.querySelector(".settings-card-head");
+      var body = card.querySelector(".settings-card-body");
+      if (!head || !body) return;
+      var open = card.getAttribute("data-collapsible") === "bespoke"
+        ? body.style.display !== "none"
+        : !body.hasAttribute("hidden");
+      head.setAttribute("aria-expanded", open ? "true" : "false");
+    });
 
     // Restore single-category view.
     if (_activeCategory) {
@@ -479,16 +496,22 @@
       if (!toggle || !summary || card._sumBound) return;
       card._sumBound = true;
       var autoExpandId = card.getAttribute("data-auto-expand-on");
-      var hasAutoExpanded = false;
+      // Seed prevOn from the current state so the initial render (and app.js's
+      // async restore of the saved toggle) is NOT treated as an off->on
+      // transition — that would re-open a card the user had collapsed (persisted
+      // collapse must survive reload).
+      var prevOn = toggle.classList.contains("on");
+      summary.textContent = prevOn ? t("common.on", "On") : t("common.off", "Off");
       var sync = function () {
         var on = toggle.classList.contains("on");
         summary.textContent = on ? t("common.on", "On") : t("common.off", "Off");
-        if (autoExpandId && on && !hasAutoExpanded) {
-          hasAutoExpanded = true;
-          if (card.getAttribute("data-collapsible") === "true") setCardOpen(card, true, false);
+        if (autoExpandId && on && !prevOn &&
+            card.getAttribute("data-collapsible") === "true" &&
+            collapsedState()[cardSection(card)] !== "closed") {
+          setCardOpen(card, true, false);
         }
+        prevOn = on;
       };
-      sync();
       try {
         new MutationObserver(sync).observe(toggle, { attributes: true, attributeFilter: ["class"] });
       } catch (e) {}
@@ -629,6 +652,27 @@
     if (container.children.length) enhanceShortcuts();
   }
 
+  // ── Session-categories accordion: keyboard + SR access ────────────────────
+  // app.js owns the click/display toggle (#sessionAccordionHeader ->
+  // #sessionAccordionBody). We only add the missing semantics/keyboard: role,
+  // tabindex, aria-controls, Enter/Space -> click, and mirror aria-expanded from
+  // the body's display. No second click handler (would double-toggle).
+  function initSessionAccordion() {
+    var head = $("sessionAccordionHeader");
+    var body = $("sessionAccordionBody");
+    if (!head || !body || head._settingsBound) return;
+    head._settingsBound = true;
+    head.setAttribute("role", "button");
+    head.setAttribute("tabindex", "0");
+    head.setAttribute("aria-controls", "sessionAccordionBody");
+    head.addEventListener("keydown", function (e) {
+      if (e.key === "Enter" || e.key === " " || e.key === "Spacebar") { e.preventDefault(); head.click(); }
+    });
+    var sync = function () { head.setAttribute("aria-expanded", body.style.display !== "none" ? "true" : "false"); };
+    sync();
+    try { new MutationObserver(sync).observe(body, { attributes: true, attributeFilter: ["style"] }); } catch (e) {}
+  }
+
   // ── About: version ────────────────────────────────────────────────────────
   function initAbout() {
     var el = $("aboutStudioVersion");
@@ -681,6 +725,7 @@
     initSummarySources();
     initExtensions();
     initShortcuts();
+    initSessionAccordion();
     initAbout();
 
     // Deep-link API override (this file loads after app.js, so we win).

@@ -2107,6 +2107,7 @@ button.settings-card-head:hover { background: color-mix(in srgb, var(--bg-raised
   font-size: 12px; color: var(--text-2); cursor: pointer; user-select: none;
   display: flex; align-items: center; gap: 6px; padding: 4px 0;
 }
+.session-accordion:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; border-radius: 4px; }
 .session-accordion-arrow { transition: transform 0.2s; }
 .session-accordion-arrow.open { transform: rotate(-180deg); }
 .session-accordion-body { padding: 4px 0 6px; display: flex; flex-direction: column; gap: 2px; }
