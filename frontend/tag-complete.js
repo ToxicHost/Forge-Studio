@@ -809,6 +809,9 @@
   function attachToTextarea(textarea) {
     if (!textarea || textarea._tacAttached) return;
     textarea._tacAttached = true;
+    // Register with the shared prompt-target registry so insert/preview from
+    // the LoRA & Wildcard browsers resolve to this field when it's focused.
+    if (window.PromptTargets) window.PromptTargets.register(textarea);
     textarea.addEventListener("input", onInput);
     textarea.addEventListener("keydown", onKeyDown);
     textarea.addEventListener("blur", onBlur);

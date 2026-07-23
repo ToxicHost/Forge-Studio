@@ -41,19 +41,29 @@
   let _kbFolderPath = null;    // folder path currently kb-focused
   let _kbItemIdx = -1;         // item index currently kb-focused
 
-  // ── Shared: prompt focus tracking (set up by lora-browser or us) ──
+  // ── Shared: prompt focus tracking (delegates to PromptTargets) ──
+  // The registry (prompt-targets.js) is the single source of truth for the
+  // active insert target across main / negative / AD-slot / regional prompts.
   function _trackPromptFocus() {
-    if (window._studioPromptTracker) return;
-    window._studioPromptTracker = true;
-    window._studioLastPrompt = document.getElementById("paramPrompt");
-    for (const id of ["paramPrompt", "paramNeg"]) {
-      const el = document.getElementById(id);
-      if (el) el.addEventListener("focusin", () => { window._studioLastPrompt = el; });
-    }
+    if (window.PromptTargets) window.PromptTargets.init();
   }
 
   function getTargetTextarea() {
-    return window._studioLastPrompt || document.getElementById("paramPrompt");
+    return (window.PromptTargets && window.PromptTargets.getActiveTarget())
+      || document.getElementById("paramPrompt");
+  }
+
+  // Explicit target override for a button click (avoids depending on stale
+  // last-focus state). Passing a target opens the browser bound to it; the next
+  // insert/preview uses that element until the modal closes.
+  let _forcedTarget = null;
+  function openFor(target) {
+    _forcedTarget = (target && target.nodeType === 1) ? target : null;
+    openModal();
+  }
+  function resolveTarget() {
+    if (_forcedTarget && document.contains(_forcedTarget)) return _forcedTarget;
+    return getTargetTextarea();
   }
 
   // ── CSS Injection ──────────────────────────────────────
@@ -630,7 +640,7 @@
 
   // ── Prompt Insertion ───────────────────────────────────
   function insertWildcard(name) {
-    const textarea = getTargetTextarea();
+    const textarea = resolveTarget();
     if (!textarea) return;
     const tag = `__${name}__`;
     insertAtCursor(textarea, tag);
@@ -666,7 +676,8 @@
   function closeModal() {
     if (modal) modal.style.display = "none";
     _clearKbFocus();
-    const target = getTargetTextarea();
+    const target = resolveTarget();
+    _forcedTarget = null;   // clear any openFor() binding after use
     if (target) target.focus();
   }
 
@@ -716,7 +727,9 @@
     document.addEventListener("keydown", e => {
       if (e.ctrlKey && e.shiftKey && e.key === "L") {
         const active = document.activeElement;
-        const isPrompt = active && (active.id === "paramPrompt" || active.id === "paramNeg");
+        const isPrompt = window.PromptTargets
+          ? window.PromptTargets.isTarget(active)
+          : (active && (active.id === "paramPrompt" || active.id === "paramNeg"));
         const isBody = !active || active === document.body;
         if (isPrompt || isBody) {
           e.preventDefault();
@@ -888,5 +901,5 @@
   if (document.readyState === "loading") document.addEventListener("DOMContentLoaded", init);
   else init();
 
-  window.WildcardBrowser = { open: openModal, close: closeModal, refresh: refreshWildcards };
+  window.WildcardBrowser = { open: openModal, openFor: openFor, close: closeModal, refresh: refreshWildcards };
 })();

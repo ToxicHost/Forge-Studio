@@ -49,19 +49,17 @@
   // "+ Add" button so picks go straight into the structured stack.
   let pickCallback = null;
 
-  // ── Shared: last-focused prompt tracking ───────────────
+  // ── Shared: last-focused prompt tracking (delegates to PromptTargets) ──
+  // The registry (prompt-targets.js) tracks main / negative / AD-slot / regional
+  // prompt fields via one document-level listener. Falls back to the old
+  // paramPrompt default if the registry script isn't present.
   function _trackPromptFocus() {
-    if (window._studioPromptTracker) return;
-    window._studioPromptTracker = true;
-    window._studioLastPrompt = document.getElementById("paramPrompt");
-    for (const id of ["paramPrompt", "paramNeg"]) {
-      const el = document.getElementById(id);
-      if (el) el.addEventListener("focusin", () => { window._studioLastPrompt = el; });
-    }
+    if (window.PromptTargets) window.PromptTargets.init();
   }
 
   function getTargetTextarea() {
-    return window._studioLastPrompt || document.getElementById("paramPrompt");
+    return (window.PromptTargets && window.PromptTargets.getActiveTarget())
+      || document.getElementById("paramPrompt");
   }
 
   // ── CSS Injection ──────────────────────────────────────
@@ -1494,6 +1492,19 @@
     document.addEventListener("keydown", e => {
       if (e.ctrlKey && e.key === "l" && !e.shiftKey && !e.altKey) {
         const active = document.activeElement;
+        // AD-slot prompt focused → pick into THAT slot's LoRA stack, never the
+        // global LoRA Stack. The visible "+ LoRAs" button is the primary control;
+        // this is a convenience. Guarded so it no-ops until ADLoRAStack loads.
+        const adMatch = active && active.id && active.id.match(/^paramAD([123])Prompt$/);
+        if (adMatch) {
+          e.preventDefault();
+          if (modal && modal.style.display === "flex") { closeModal(); return; }
+          const slot = Number(adMatch[1]);
+          if (window.ADLoRAStack && typeof window.ADLoRAStack.add === "function") {
+            openPick((lora, weight) => window.ADLoRAStack.add(slot, lora, weight));
+          }
+          return;
+        }
         const isPrompt = active && (active.id === "paramPrompt" || active.id === "paramNeg");
         const isBody = !active || active === document.body;
         if (!isPrompt && !isBody) return;
