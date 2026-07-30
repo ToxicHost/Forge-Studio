@@ -41,20 +41,87 @@ except Exception as _e:
 _ad_model_mapping = None
 
 
-def get_ad_model_mapping():
+def _ad_model_dirs():
+    """Every directory ADetailer itself scans for detection models.
+
+    Mirrors the extension's own discovery so Studio's dropdown lists exactly
+    what ADetailer lists (it logs "num models: N" at startup):
+
+        <models_path>/adetailer  +  shared.opts.ad_extra_models_dir
+
+    ``ad_extra_models_dir`` is the extension's setting for models kept outside
+    the default folder; it is a "|"-separated list of paths (same format in the
+    old fork and current ADetailer-Neo). Without this Studio only saw the
+    default folder, so users who store their models elsewhere got an empty
+    model dropdown and could never enable a slot.
+
+    Only the default dir is created; extra dirs are used as-is if they exist.
+    Non-throwing — always returns at least the default dir.
+    """
+    dirs = []
+    default_dir = os.path.join(getattr(shared, "models_path", "models"), "adetailer")
+    try:
+        os.makedirs(default_dir, exist_ok=True)
+    except Exception:
+        pass
+    dirs.append(default_dir)
+
+    try:
+        extra = shared.opts.data.get("ad_extra_models_dir", "") or ""
+    except Exception:
+        extra = ""
+    for raw in str(extra).split("|"):
+        d = raw.strip()
+        if not d:
+            continue
+        try:
+            if os.path.isdir(d) and d not in dirs:
+                dirs.append(d)
+        except Exception:
+            continue
+    return dirs
+
+
+def get_ad_model_mapping(force: bool = False):
     global _ad_model_mapping
-    if _ad_model_mapping is not None:
+    if _ad_model_mapping is not None and not force:
         return _ad_model_mapping
     try:
-        from adetailer.common import get_models as ad_get_models
-        model_dir = os.path.join(getattr(shared, 'models_path', 'models'), 'adetailer')
-        os.makedirs(model_dir, exist_ok=True)
-        _ad_model_mapping = ad_get_models(model_dir)
-        print(f"[Studio AD] Found {len(_ad_model_mapping)} models")
+        try:
+            from adetailer.common import get_models as ad_get_models
+        except ImportError:
+            # Current ADetailer-Neo renamed its package adetailer -> lib_adetailer.
+            from lib_adetailer.common import get_models as ad_get_models
+        dirs = _ad_model_dirs()
+        # Honor the extension's own --ad-no-huggingface opt-out so Studio
+        # doesn't pull models the user deliberately disabled.
+        try:
+            from modules.shared import cmd_opts as _co
+            no_hf = getattr(_co, "ad_no_huggingface", False)
+        except Exception:
+            no_hf = False
+        try:
+            _ad_model_mapping = ad_get_models(*dirs, huggingface=not no_hf)
+        except TypeError:
+            # Older/newer signature without the huggingface kwarg.
+            _ad_model_mapping = ad_get_models(*dirs)
+        if len(dirs) > 1:
+            print(f"[Studio AD] Found {len(_ad_model_mapping)} models "
+                  f"across {len(dirs)} dirs (incl. ad_extra_models_dir)")
+        else:
+            print(f"[Studio AD] Found {len(_ad_model_mapping)} models")
         return _ad_model_mapping
     except Exception as e:
         print(f"[Studio AD] Could not load model list: {e}")
         return {}
+
+
+def refresh_ad_models():
+    """Drop the cached mapping and rescan (picks up newly added models or an
+    ad_extra_models_dir the user just set, without a Forge restart)."""
+    global _ad_model_mapping
+    _ad_model_mapping = None
+    return get_ad_model_mapping(force=True)
 
 
 def get_ad_models():

@@ -5715,8 +5715,17 @@ def setup_studio_routes(app: FastAPI):
             return [{"name": "None"}]
 
     @app.get("/studio/ad_models")
-    async def get_ad_models():
+    async def get_ad_models(refresh: bool = False):
+        """ADetailer detection models. Scans the default folder plus any
+        ad_extra_models_dir the user configured. refresh=1 rescans (picks up a
+        newly added model or folder without restarting Forge)."""
         try:
+            if refresh:
+                try:
+                    _refresh = _import("studio_adetailer", "refresh_ad_models")
+                    _refresh()
+                except Exception:
+                    log.exception("AD model refresh failed")
             _get = _import("studio_adetailer", "get_ad_models")
             return [{"name": m} for m in _get()]
         except Exception:
