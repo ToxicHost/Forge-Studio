@@ -1711,6 +1711,48 @@ async function restoreVAEForModel(modelTitle, reason = "model-change", opts = {}
 // POPULATE DROPDOWNS FROM API
 // ═══════════════════════════════════════════
 
+// Populate the three ADetailer model dropdowns.
+//
+// Deliberately its OWN function, called separately from populateDropdowns():
+// that function is one large try/catch, and this fetch used to sit ~300 lines
+// inside it. Any earlier throw (a slow/failing models, samplers or schedulers
+// call) jumped straight to its catch, so the AD fetch never ran and the selects
+// silently kept their hardcoded HTML options — indistinguishable from "no
+// models installed", with nothing logged server-side because the endpoint was
+// never hit. Keeping it independent means an unrelated failure can't take
+// ADetailer's model list down with it.
+async function populateADModels(opts) {
+  const refresh = !!(opts && opts.refresh);
+  try {
+    const adModels = await API.get("/studio/ad_models" + (refresh ? "?refresh=1" : ""));
+    if (!Array.isArray(adModels) || !adModels.length) {
+      console.warn("[Studio] ADetailer model list empty — check the [Studio AD] line in the Forge console");
+      return;
+    }
+    [1, 2, 3].forEach(n => {
+      const sel = document.getElementById(`paramAD${n}Model`);
+      if (!sel) return;
+      // Restore session-saved value (stashed in data-pending-value by _applyDefaults)
+      const savedVal = sel.dataset.pendingValue || sel.value;
+      sel.innerHTML = adModels.map(m =>
+        `<option value="${m.name}">${m.name}</option>`
+      ).join("");
+      // Restore saved value if it exists in the new options, otherwise
+      // default slot 1 to face_yolo (slots 2/3 stay at first option)
+      if (savedVal && [...sel.options].some(o => o.value === savedVal)) {
+        sel.value = savedVal;
+      } else if (n === 1) {
+        const faceOpt = [...sel.options].find(o => o.value.includes("face_yolo"));
+        if (faceOpt) sel.value = faceOpt.value;
+      }
+      try { sel._studioSSelHandle?.refresh?.(); } catch (_) {}
+    });
+  } catch (e) {
+    console.error("[Studio] ADetailer model list failed to load:", e);
+  }
+}
+window.populateADModels = populateADModels;
+
 async function populateDropdowns() {
   try {
     const [models, samplers, schedulers, upscalers] = await Promise.all([
@@ -2020,26 +2062,8 @@ async function populateDropdowns() {
     }).catch(() => { State._textEncoderList = []; });
 
     // ADetailer model dropdowns (async, non-blocking)
-    API.adModels().then(adModels => {
-      [1, 2, 3].forEach(n => {
-        const sel = document.getElementById(`paramAD${n}Model`);
-        if (sel) {
-          // Restore session-saved value (stashed in data-pending-value by _applyDefaults)
-          const savedVal = sel.dataset.pendingValue || sel.value;
-          sel.innerHTML = adModels.map(m =>
-            `<option value="${m.name}">${m.name}</option>`
-          ).join("");
-          // Restore saved value if it exists in the new options, otherwise
-          // default slot 1 to face_yolo (slots 2/3 stay at first option)
-          if (savedVal && [...sel.options].some(o => o.value === savedVal)) {
-            sel.value = savedVal;
-          } else if (n === 1) {
-            const faceOpt = [...sel.options].find(o => o.value.includes("face_yolo"));
-            if (faceOpt) sel.value = faceOpt.value;
-          }
-        }
-      });
-    }).catch(() => {});
+    // ADetailer models are populated by populateADModels(), called
+    // INDEPENDENTLY of this function (see init) — see the note there.
 
     // ControlNet model + preprocessor dropdowns (async, non-blocking)
     Promise.all([
@@ -5044,6 +5068,10 @@ function bindUI() {
     try {
       await API.refreshModels();
       await populateDropdowns();
+      // Rescan ADetailer models too (refresh=1 bypasses the server-side cache),
+      // so a newly added model or corrected folder is picked up without a
+      // Forge restart. Independent: a failure here must not fail the refresh.
+      await populateADModels({ refresh: true });
       showToast(I18N.t("toast.modelsRefreshed", "Models refreshed"), "success");
     } catch (e) {
       showToast(I18N.t("toast.refreshFailed", "Refresh failed: {error}", {error: e.message}), "error");
@@ -8621,6 +8649,8 @@ async function init() {
 
   // Populate dropdowns from API
   await populateDropdowns();
+  // ADetailer models load independently so a failure above can't suppress them.
+  await populateADModels();
 
   // Load saved workflow defaults (must run AFTER dropdowns are populated)
   // _applyDefaults handles canvas resize and status bar updates
