@@ -90,8 +90,11 @@ def get_ad_model_mapping(force: bool = False):
         try:
             from adetailer.common import get_models as ad_get_models
         except ImportError:
-            # Current ADetailer-Neo renamed its package adetailer -> lib_adetailer.
-            from lib_adetailer.common import get_models as ad_get_models
+            # Current ADetailer-Neo renamed its package adetailer -> lib_adetailer
+            # AND moved get_models to lib_adetailer/detection/common.py. Import it
+            # from the package root, which re-exports it (see its __init__.py) —
+            # lib_adetailer.common does not exist.
+            from lib_adetailer import get_models as ad_get_models
         dirs = _ad_model_dirs()
         # Honor the extension's own --ad-no-huggingface opt-out so Studio
         # doesn't pull models the user deliberately disabled.
