@@ -41,6 +41,32 @@ except Exception as _e:
 _ad_model_mapping = None
 
 
+def _models_root():
+    """Forge's models root, resolved the SAME way ADetailer resolves it.
+
+    The extension uses ``modules.paths.models_path``; Studio previously used
+    ``getattr(shared, "models_path", "models")``, which silently degrades to the
+    RELATIVE string "models" on builds where ``shared`` doesn't re-export it.
+    A relative path resolves against the process CWD, so the scan directory
+    didn't exist and was skipped — and current ADetailer-Neo's get_models
+    returns an EMPTY dict (no unconditional entries) rather than raising, which
+    is why the extension reported "11 Models" while Studio's dropdown was empty
+    with no error logged.
+
+    Order: modules.paths.models_path -> shared.models_path -> absolute "models".
+    """
+    try:
+        from modules.paths import models_path as _mp
+        if _mp:
+            return str(_mp)
+    except Exception:
+        pass
+    _mp = getattr(shared, "models_path", None)
+    if _mp:
+        return str(_mp)
+    return os.path.abspath("models")
+
+
 def _ad_model_dirs():
     """Every directory ADetailer itself scans for detection models.
 
@@ -59,7 +85,7 @@ def _ad_model_dirs():
     Non-throwing — always returns at least the default dir.
     """
     dirs = []
-    default_dir = os.path.join(getattr(shared, "models_path", "models"), "adetailer")
+    default_dir = os.path.join(_models_root(), "adetailer")
     try:
         os.makedirs(default_dir, exist_ok=True)
     except Exception:
@@ -90,8 +116,11 @@ def get_ad_model_mapping(force: bool = False):
         try:
             from adetailer.common import get_models as ad_get_models
         except ImportError:
-            # Current ADetailer-Neo renamed its package adetailer -> lib_adetailer.
-            from lib_adetailer.common import get_models as ad_get_models
+            # Current ADetailer-Neo renamed its package adetailer -> lib_adetailer
+            # AND moved get_models to lib_adetailer/detection/common.py. Import it
+            # from the package root, which re-exports it (see its __init__.py) —
+            # lib_adetailer.common does not exist.
+            from lib_adetailer import get_models as ad_get_models
         dirs = _ad_model_dirs()
         # Honor the extension's own --ad-no-huggingface opt-out so Studio
         # doesn't pull models the user deliberately disabled.
@@ -105,7 +134,15 @@ def get_ad_model_mapping(force: bool = False):
         except TypeError:
             # Older/newer signature without the huggingface kwarg.
             _ad_model_mapping = ad_get_models(*dirs)
-        if len(dirs) > 1:
+        # A zero result is NOT an error on current ADetailer-Neo (its get_models
+        # returns only files it actually finds), so name the scanned dirs —
+        # otherwise "empty dropdown" is indistinguishable from "scanned the
+        # wrong folder", which is exactly how this bug hid.
+        if not _ad_model_mapping:
+            print(f"[Studio AD] Found 0 models. Scanned: {dirs} — "
+                  f"if ADetailer itself reports models, they live elsewhere; "
+                  f"set Settings > ADetailer > ad_extra_models_dir.")
+        elif len(dirs) > 1:
             print(f"[Studio AD] Found {len(_ad_model_mapping)} models "
                   f"across {len(dirs)} dirs (incl. ad_extra_models_dir)")
         else:
