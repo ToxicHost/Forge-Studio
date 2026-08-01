@@ -108,9 +108,39 @@ def _ad_model_dirs():
     return dirs
 
 
+def _ad_mapping_from_extension():
+    """The model mapping ADetailer's own script already built at import time.
+
+    Both forks compute a module-level ``model_mapping`` in their main script and
+    log it at startup ("N Models"). Reading that is immune to any difference in
+    how we resolve directories, so it is the reliable fallback when our own scan
+    comes up empty. The script module name differs per fork
+    (``!adetailer`` old, ``adetailer`` new), so scan sys.modules rather than
+    guessing. Non-throwing; returns {} when unavailable.
+    """
+    try:
+        import sys
+        for name, mod in list(sys.modules.items()):
+            if mod is None:
+                continue
+            base = name.rsplit(".", 1)[-1]
+            if base not in ("!adetailer", "adetailer"):
+                continue
+            mapping = getattr(mod, "model_mapping", None)
+            if isinstance(mapping, dict) and mapping:
+                return dict(mapping)
+    except Exception:
+        pass
+    return {}
+
+
 def get_ad_model_mapping(force: bool = False):
     global _ad_model_mapping
-    if _ad_model_mapping is not None and not force:
+    # Only a NON-EMPTY result is cached. An empty mapping means the scan found
+    # nothing (wrong dir, extension not loaded yet, models added later) — caching
+    # that pinned the dropdown empty for the whole session, so even after fixing
+    # the cause the user had to fully restart Forge to see models.
+    if _ad_model_mapping and not force:
         return _ad_model_mapping
     try:
         try:
@@ -139,9 +169,20 @@ def get_ad_model_mapping(force: bool = False):
         # otherwise "empty dropdown" is indistinguishable from "scanned the
         # wrong folder", which is exactly how this bug hid.
         if not _ad_model_mapping:
-            print(f"[Studio AD] Found 0 models. Scanned: {dirs} — "
-                  f"if ADetailer itself reports models, they live elsewhere; "
-                  f"set Settings > ADetailer > ad_extra_models_dir.")
+            # Last resort: reuse the mapping the extension's own script already
+            # built at import time (the "N Models" it logs at startup). It is
+            # the authoritative list and is immune to any path/scan difference
+            # on our side, so a user whose extension clearly found models never
+            # ends up with an empty dropdown.
+            borrowed = _ad_mapping_from_extension()
+            if borrowed:
+                _ad_model_mapping = borrowed
+                print(f"[Studio AD] Own scan found 0 (scanned: {dirs}); "
+                      f"using the extension's own list ({len(borrowed)} models)")
+            else:
+                print(f"[Studio AD] Found 0 models. Scanned: {dirs} — "
+                      f"if ADetailer itself reports models, they live elsewhere; "
+                      f"set Settings > ADetailer > ad_extra_models_dir.")
         elif len(dirs) > 1:
             print(f"[Studio AD] Found {len(_ad_model_mapping)} models "
                   f"across {len(dirs)} dirs (incl. ad_extra_models_dir)")
