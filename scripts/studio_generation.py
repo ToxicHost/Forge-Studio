@@ -837,19 +837,105 @@ def _append_prompt_suffix(base, suffix):
     return base + sep + suffix
 
 
+def _ad_args_class():
+    """The installed ADetailerArgs model, from whichever fork is present."""
+    try:
+        from adetailer.args import ADetailerArgs
+        return ADetailerArgs
+    except Exception:
+        pass
+    try:
+        from lib_adetailer.args import ADetailerArgs
+        return ADetailerArgs
+    except Exception:
+        return None
+
+
+def _ad_args_fields():
+    """Field names the installed ADetailerArgs declares. Empty set = unknown.
+
+    Both forks set ``extra='forbid'``, so passing a key the installed version
+    doesn't declare raises a pydantic ValidationError inside the extension's own
+    is_ad_enabled() — which it catches, treats as "slot disabled", and silently
+    never runs ADetailer. Introspecting lets us send only what it accepts.
+    Supports pydantic v2 (model_fields), v1 (__fields__) and dataclasses.
+    """
+    cls = _ad_args_class()
+    if cls is None:
+        return set()
+    try:
+        mf = getattr(cls, "model_fields", None)   # pydantic v2
+        if mf:
+            return set(mf.keys())
+    except Exception:
+        pass
+    try:
+        f = getattr(cls, "__fields__", None)      # pydantic v1
+        if f:
+            return set(f.keys())
+    except Exception:
+        pass
+    try:
+        import dataclasses
+        if dataclasses.is_dataclass(cls):
+            return {fl.name for fl in dataclasses.fields(cls)}
+    except Exception:
+        pass
+    return set()
+
+
+_ad_schema_filter_logged = False
+
+
+def _filter_ad_slot_dict(slot_dict):
+    """Drop/remap keys the installed ADetailerArgs doesn't declare.
+
+    Current ADetailer-Neo removed ad_use_clip_skip / ad_clip_skip and merged
+    ad_controlnet_guidance_start + _end into a single
+    ad_controlnet_guidance_start_end tuple. Sending the old keys trips
+    extra='forbid' and ADetailer silently never runs. When the merged tuple
+    field exists we fold the two floats into it so the setting is preserved
+    rather than just dropped.
+
+    Unknown schema (introspection failed) -> return unchanged, so we never
+    strip fields on a fork we couldn't inspect.
+    """
+    global _ad_schema_filter_logged
+    fields = _ad_args_fields()
+    if not fields:
+        return slot_dict
+
+    out = dict(slot_dict)
+
+    # Fold the split guidance floats into the merged tuple when that's the shape.
+    if ("ad_controlnet_guidance_start_end" in fields
+            and "ad_controlnet_guidance_start" not in fields):
+        try:
+            start = float(out.get("ad_controlnet_guidance_start", 0.0))
+            end = float(out.get("ad_controlnet_guidance_end", 1.0))
+            out["ad_controlnet_guidance_start_end"] = (start, end)
+        except Exception:
+            pass
+
+    dropped = [k for k in out if k not in fields]
+    for k in dropped:
+        out.pop(k, None)
+
+    if dropped and not _ad_schema_filter_logged:
+        _ad_schema_filter_logged = True
+        print(f"[Studio AD] Installed ADetailer doesn't declare {sorted(dropped)} — "
+              f"dropping so its arg validation passes "
+              f"(ADetailer silently skips every slot otherwise).")
+    return out
+
+
 def _native_ad_supports_suffix():
     """True if the installed ADetailer exposes a dedicated ``ad_prompt_suffix``
     field (a patched fork). When present we can append the LoRA suffix AFTER the
     fork's own blank→main / region resolution; when absent we must inject into
     ad_prompt itself (see _build_native_ad_dicts). Non-throwing."""
     try:
-        import dataclasses
-        from adetailer.args import ADetailerArgs
-        if dataclasses.is_dataclass(ADetailerArgs):
-            names = {f.name for f in dataclasses.fields(ADetailerArgs)}
-        else:
-            names = set(getattr(ADetailerArgs, "__annotations__", {}).keys())
-        return "ad_prompt_suffix" in names
+        return "ad_prompt_suffix" in _ad_args_fields()
     except Exception:
         return False
 
@@ -949,7 +1035,10 @@ def _build_native_ad_dicts(ad_enable, ad_raw_slots):
         }
         # Only carries ad_prompt_suffix when the installed fork declares it.
         slot_dict.update(_extra)
-        dicts.append(slot_dict)
+        # Drop/remap keys the INSTALLED ADetailer doesn't declare. Both forks
+        # use extra='forbid', so an unknown key makes its is_ad_enabled() raise
+        # and silently treat every slot as disabled — ADetailer then never runs.
+        dicts.append(_filter_ad_slot_dict(slot_dict))
     return bool(ad_enable), dicts
 
 
@@ -968,7 +1057,23 @@ try:
     from adetailer.mask import mask_preprocess, filter_by_ratio, filter_k_by, sort_bboxes, is_all_black
     _HAS_AD_LIBS = True
 except ImportError:
-    pass
+    # Current ADetailer-Neo renamed the package adetailer -> lib_adetailer and
+    # moved things around: ultralytics_predict / get_models / PredictOutput are
+    # re-exported from the package root, ensure_pil_image lives in .utils, and
+    # the mask helpers stayed in .mask. Verified against that fork's source.
+    try:
+        from lib_adetailer import (
+            ultralytics_predict,
+            get_models as ad_get_models,
+            PredictOutput,
+        )
+        from lib_adetailer.utils import ensure_pil_image
+        from lib_adetailer.mask import (
+            mask_preprocess, filter_by_ratio, filter_k_by, sort_bboxes, is_all_black,
+        )
+        _HAS_AD_LIBS = True
+    except ImportError:
+        pass
 
 
 def _get_ad_model_mapping():
@@ -1552,8 +1657,9 @@ def _attach_script_runner(p, has_mask=False, ip=None, cn_units=None, extension_a
                         for i, slot_dict in enumerate(ad_slot_dicts):
                             if slot_dict.get("ad_tab_enable") and slot_dict.get("ad_model", "None") != "None":
                                 try:
-                                    from adetailer.args import ADetailerArgs
-                                    ADetailerArgs(**slot_dict)
+                                    _ADArgs = _ad_args_class()
+                                    if _ADArgs is not None:
+                                        _ADArgs(**slot_dict)
                                 except Exception as e:
                                     print(f"[Studio AD] WARNING: Slot {i+1} dict failed ADetailerArgs validation: {e}")
                         print(f"[Studio AD] Injected {active} active slot(s) into native ADetailer (args_from={idx})")
@@ -1759,8 +1865,9 @@ def _attach_txt2img_script_runner(p, gp=None, cn_units=None, extension_args=None
                         for i, slot_dict in enumerate(ad_slot_dicts):
                             if slot_dict.get("ad_tab_enable") and slot_dict.get("ad_model", "None") != "None":
                                 try:
-                                    from adetailer.args import ADetailerArgs
-                                    ADetailerArgs(**slot_dict)
+                                    _ADArgs = _ad_args_class()
+                                    if _ADArgs is not None:
+                                        _ADArgs(**slot_dict)
                                 except Exception as e:
                                     print(f"[Studio AD] WARNING: txt2img slot {i+1} failed validation: {e}")
                         print(f"[Studio AD] Injected {active} active slot(s) into native ADetailer txt2img (args_from={idx})")
