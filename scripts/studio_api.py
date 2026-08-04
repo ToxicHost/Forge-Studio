@@ -2883,9 +2883,11 @@ def setup_studio_routes(app: FastAPI):
     async def generate(req: GenerateRequest):
         # --- Defaults actions (reuse working endpoint) ---
         print(f"{TAG} generate endpoint called: action={req.action!r}")
-        _here = Path(__file__).parent
-        _ext_root = _here if (_here / "frontend").is_dir() else _here.parent
-        _defaults_file = _ext_root / "user_defaults.json"
+        try:
+            from studio_paths import data_path as _sdata
+        except ImportError:
+            from scripts.studio_paths import data_path as _sdata
+        _defaults_file = _sdata("user_defaults.json")
 
         if req.action == "save_defaults" and req.defaults_data is not None:
             try:
@@ -6029,9 +6031,11 @@ def setup_studio_routes(app: FastAPI):
         params: dict
 
     def _develop_presets_dir() -> Path:
-        _here = Path(__file__).parent
-        _ext_root = _here if (_here / "frontend").is_dir() else _here.parent
-        d = _ext_root / "presets" / "develop"
+        try:
+            from studio_paths import data_path as _sdata
+        except ImportError:
+            from scripts.studio_paths import data_path as _sdata
+        d = _sdata("presets", "develop")
         d.mkdir(parents=True, exist_ok=True)
         return d
 

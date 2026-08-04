@@ -1,0 +1,41 @@
+# Forge Studio — container (community / unsupported)
+#
+#   docker compose -f docker/docker-compose.yml up -d --build
+#   → http://localhost:7860/studio
+#
+# Requires an NVIDIA GPU + NVIDIA Container Toolkit on the host.
+
+services:
+  forge-studio:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      # args:
+      #   FORGE_REF: <commit-sha>   # pin a known-good upstream revision
+    image: forge-studio
+    container_name: forge-studio
+    ports:
+      - "7860:7860"
+    volumes:
+      # Checkpoints, LoRAs, VAEs, ADetailer models — put your models here.
+      - ./data/models:/forge/models
+      # Generated images.
+      - ./data/outputs:/forge/outputs
+      # Studio's own state: defaults, presets, gallery index, wildcards config.
+      # Survives image rebuilds. Nothing to pre-create.
+      - ./data/studio:/studio-data
+    environment:
+      - STUDIO_DATA_DIR=/studio-data
+      # Adjust launch flags here (e.g. add --sage, or swap in --medvram).
+      - COMMANDLINE_ARGS=--xformers --cuda-malloc --cuda-stream --fast-fp16 --nowebui --port 7860 --listen
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+    # Generation is a single long-lived HTTP request; don't let a health check
+    # or proxy sever it mid-run. See the proxy note in README.md.
+    stop_grace_period: 30s
