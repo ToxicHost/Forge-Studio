@@ -59,10 +59,21 @@ _config_lock = threading.Lock()
 
 
 def _config_path() -> Path:
-    """Return the path to studio_dynamic_prompts.json next to user_defaults."""
-    here = Path(__file__).parent
-    ext_root = here if (here / "frontend").is_dir() else here.parent
-    return ext_root / "studio_dynamic_prompts.json"
+    """Return the path to studio_dynamic_prompts.json next to user_defaults.
+
+    Honors STUDIO_DATA_DIR via studio_paths (import kept local + guarded so this
+    module still works standalone, which the rest of it is careful to preserve).
+    """
+    try:
+        try:
+            from studio_paths import data_path as _sdata
+        except ImportError:
+            from scripts.studio_paths import data_path as _sdata
+        return _sdata("studio_dynamic_prompts.json")
+    except Exception:
+        here = Path(__file__).parent
+        ext_root = here if (here / "frontend").is_dir() else here.parent
+        return ext_root / "studio_dynamic_prompts.json"
 
 
 def load_config() -> dict:

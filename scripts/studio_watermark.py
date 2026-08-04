@@ -27,14 +27,23 @@ _ALLOWED_EXTS = (".png", ".webp")
 
 
 def _watermarks_dir() -> Path:
-    """Return <ext_root>/watermarks/, creating it on demand.
+    """Return the watermarks folder, creating it on demand.
 
-    Resolved the same way studio_dynamic_prompts._config_path locates the
-    extension root so the folder sits next to the extension's other state.
+    User-added watermark images are mutable state, so this routes through
+    studio_paths: the extension folder by default (unchanged behavior), or
+    STUDIO_DATA_DIR when set — with the shipped folder migrated across on
+    first use so the bundled defaults aren't lost.
     """
-    here = Path(__file__).parent
-    ext_root = here if (here / "frontend").is_dir() else here.parent
-    d = ext_root / "watermarks"
+    try:
+        try:
+            from studio_paths import data_path as _sdata
+        except ImportError:
+            from scripts.studio_paths import data_path as _sdata
+        d = _sdata("watermarks")
+    except Exception:
+        here = Path(__file__).parent
+        ext_root = here if (here / "frontend").is_dir() else here.parent
+        d = ext_root / "watermarks"
     try:
         d.mkdir(parents=True, exist_ok=True)
     except Exception:

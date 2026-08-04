@@ -1,0 +1,63 @@
+# Forge Studio — container (community / unsupported)
+#
+#   docker compose -f docker/docker-compose.yml up -d --build
+#   → http://localhost:7860/studio
+#
+# Requires an NVIDIA GPU (driver 560+) + NVIDIA Container Toolkit on the host.
+# First start installs the remaining Python requirements — give it a few
+# minutes (watch: docker compose -f docker/docker-compose.yml logs -f).
+
+services:
+  # One-shot: the container runs as UID 99 / GID 100 (nobody:users, matching
+  # upstream's image). Docker creates missing bind-mount dirs as root, which
+  # UID 99 can't write — this fixes ownership so first run works out of the
+  # box on Linux. (On Docker Desktop / WSL2 bind mounts ignore ownership, so
+  # this is a harmless no-op there.)
+  init-perms:
+    image: busybox:stable
+    user: "0:0"
+    command: chown -R 99:100 /data
+    volumes:
+      - ./data:/data
+
+  forge-studio:
+    build:
+      context: ..
+      dockerfile: docker/Dockerfile
+      # args:
+      #   FORGE_REF: <sha>   # move the pinned Forge Neo revision
+    image: forge-studio
+    container_name: forge-studio
+    depends_on:
+      init-perms:
+        condition: service_completed_successfully
+    ports:
+      - "7860:7860"
+    volumes:
+      # Checkpoints, LoRAs, VAEs, ControlNet, ADetailer models.
+      - ./data/models:/home/forge/sd-webui/models
+      # Generated images (Neo's dir name is `output`, singular).
+      - ./data/output:/home/forge/sd-webui/output
+      # Your own extensions (ADetailer, ControlNet, ...). Studio itself is
+      # baked into the image and re-synced here on every start.
+      - ./data/extensions:/home/forge/sd-webui/extensions
+      # Forge settings + ALL Studio state (defaults, presets, gallery index,
+      # wildcards, watermarks — under config/studio). Survives rebuilds.
+      - ./data/config:/home/forge/sd-webui/config
+    environment:
+      # Extra launch flags. --listen --nowebui --port 7860 are always set by
+      # the entrypoint. Performance flags from the Windows launcher, opt-in:
+      # COMMANDLINE_ARGS: "--xformers --cuda-malloc --cuda-stream --pin-shared-memory --fast-fp16"
+      COMMANDLINE_ARGS: ""
+    deploy:
+      resources:
+        reservations:
+          devices:
+            - driver: nvidia
+              count: all
+              capabilities: [gpu]
+    restart: unless-stopped
+    # A generation is one long-lived HTTP request; give it time to finish on
+    # shutdown. See the reverse-proxy note in README.md before fronting this
+    # with nginx.
+    stop_grace_period: 30s

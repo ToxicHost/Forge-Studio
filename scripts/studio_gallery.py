@@ -566,9 +566,11 @@ def _get_db():
         # Module identity fix: when called via _import() from studio_api.py,
         # this may be a different module instance than the one setup_gallery_routes()
         # initialized. Compute the path from __file__ so it works either way.
-        _here = Path(__file__).parent
-        _ext_root = _here if (_here / "frontend").is_dir() else _here.parent
-        _data_dir = _ext_root / "gallery_data"
+        try:
+            from studio_paths import data_path as _sdata
+        except ImportError:
+            from scripts.studio_paths import data_path as _sdata
+        _data_dir = _sdata("gallery_data")
         _db_path = str(_data_dir / "gallery.db")
     conn = sqlite3.connect(_db_path, factory=_WriteLockingConnection)
     conn._holds_wlock = False
@@ -2453,9 +2455,11 @@ def setup_gallery_routes(app: FastAPI):
     global _db_path
 
     # Determine extension root and data directory
-    _here = Path(__file__).parent
-    _ext_root = _here if (_here / "frontend").is_dir() else _here.parent
-    _data_dir = _ext_root / "gallery_data"
+    try:
+        from studio_paths import data_path as _sdata
+    except ImportError:
+        from scripts.studio_paths import data_path as _sdata
+    _data_dir = _sdata("gallery_data")
     _data_dir.mkdir(exist_ok=True)
     _trash_dir = _data_dir / ".trash"
     _trash_dir.mkdir(exist_ok=True)
