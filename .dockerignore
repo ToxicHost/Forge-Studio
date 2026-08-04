@@ -1,0 +1,5 @@
+# Keep the Docker build context lean (context root = repo root).
+.git
+docker/data
+**/__pycache__
+*.pyc

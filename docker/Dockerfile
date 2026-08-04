@@ -1,58 +1,113 @@
 # Forge Studio — container image (community / unsupported)
 #
-# Builds Forge Classic with Forge Studio installed as an extension. Studio is an
-# extension, not a standalone app, so the image necessarily contains both.
+# Based on Forge Neo's own official docker/Dockerfile (Haoming02/
+# sd-webui-forge-classic, branch `neo`), with Forge Studio baked in. Deviating
+# from upstream's proven recipe is how container builds rot, so this mirrors it:
+# same base, same uv-managed Python 3.13 venv, same torch pre-install, same
+# non-root UID 99 / GID 100 (nobody:users, Unraid-friendly).
 #
-# Requires an NVIDIA GPU on the host plus the NVIDIA Container Toolkit
-# (`--gpus all`). Linux, or Windows via WSL2. macOS cannot pass a GPU through.
+# Requires an NVIDIA GPU (driver 560+, per upstream) and the NVIDIA Container
+# Toolkit. Linux, or Windows via WSL2. macOS cannot pass a GPU through.
 #
 # Build from the repository root:
 #   docker build -f docker/Dockerfile -t forge-studio .
 
-FROM nvidia/cuda:12.1.1-runtime-ubuntu22.04
+ARG CUDA_VERSION=12.6.3
+
+FROM nvidia/cuda:${CUDA_VERSION}-runtime-ubuntu22.04
+
+# See: https://download.pytorch.org/whl/
+ARG TORCH_INDEX=cu126
+
+# Pinned Forge Neo revision (branch `neo`), verified against this Studio
+# release. Override with --build-arg FORGE_REF=<sha> to move it — an unpinned
+# branch means a future upstream change can break a rebuild that worked.
+ARG FORGE_REF=fd64ddb9effa6b88fcb5123bcfba31926c61e3ff
 
 ENV DEBIAN_FRONTEND=noninteractive \
-    PIP_NO_CACHE_DIR=1 \
-    PYTHONUNBUFFERED=1
+    PYTHONUNBUFFERED=1 \
+    PYTHONDONTWRITEBYTECODE=1 \
+    UV_PYTHON_DOWNLOADS=automatic \
+    UV_NO_CACHE=1 \
+    TORCH_INDEX_URL=https://download.pytorch.org/whl/${TORCH_INDEX}
 
-# ffmpeg: Gallery video thumbnails. libgl1/libglib2.0: OpenCV runtime deps.
+# uv binary (installs Python 3.13 itself)
+COPY --from=ghcr.io/astral-sh/uv:latest /uv /usr/local/bin/uv
+
+# ffmpeg: Studio Gallery video thumbnails. libgl1/libglib2.0: OpenCV runtime.
+# libtcmalloc: upstream preloads it to cut memory fragmentation.
 RUN apt-get update && apt-get install -y --no-install-recommends \
-        git python3 python3-venv python3-pip \
-        ffmpeg libgl1 libglib2.0-0 \
-        ca-certificates \
+        build-essential \
+        curl \
+        ffmpeg \
+        git \
+        libgl1 \
+        libglib2.0-0 \
+        libgomp1 \
+        libtcmalloc-minimal4 \
     && rm -rf /var/lib/apt/lists/*
 
-# Pin the upstream commit. An unpinned clone means a future upstream change can
-# silently break a rebuild that previously worked — override at build time with
-# --build-arg FORGE_REF=<sha> once you have a known-good revision.
-ARG FORGE_REPO=https://github.com/Haoming02/sd-webui-forge-classic
-ARG FORGE_REF=main
-RUN git clone "${FORGE_REPO}" /forge && \
-    cd /forge && git checkout "${FORGE_REF}"
+# Non-Root User (UID 99 / GID 100 = nobody:users), as upstream
+RUN groupadd -g 100 users 2>/dev/null || true \
+    && useradd -u 99 -g 100 -d /home/forge -m -s /bin/bash forge
 
-WORKDIR /forge
+WORKDIR /home/forge/sd-webui
 
-# Studio itself.
-COPY . /forge/extensions/Forge-Studio
+# Fetch Forge Neo at the PINNED revision (shallow fetch of the exact sha —
+# GitHub serves reachable-sha fetches, so no full clone is needed).
+RUN git init -q . \
+    && git remote add origin https://github.com/Haoming02/sd-webui-forge-classic.git \
+    && git fetch --depth 1 origin "${FORGE_REF}" \
+    && git checkout -q FETCH_HEAD \
+    && chown -R 99:100 /home/forge
 
-# Warm the dependency install at BUILD time instead of first run. Forge installs
-# torch et al. from launch.py; without this every fresh container re-downloads
-# several GB on first start. Non-fatal: if upstream changes its bootstrap this
-# just falls back to installing at runtime.
-ENV SKIP_VENV=1
-RUN python3 launch.py --skip-torch-cuda-test --exit || \
-    echo "[build] dependency warm-up skipped — deps will install on first run"
+# Forge Studio, staged OUTSIDE the extensions dir. The entrypoint syncs it into
+# extensions/Forge-Studio at startup, so users can bind-mount extensions/ for
+# their own additions (ADetailer, ControlNet, ...) without the mount shadowing
+# the baked-in Studio. Safe to re-sync on every start because Studio's mutable
+# state lives in STUDIO_DATA_DIR, not the extension folder.
+COPY --chown=99:100 . /opt/forge-studio
 
-# All mutable Studio state (defaults, presets, gallery index, wildcards config)
-# lives here rather than inside the extension folder, so rebuilding or replacing
-# the image never destroys user settings. See scripts/studio_paths.py.
-ENV STUDIO_DATA_DIR=/studio-data
-RUN mkdir -p /studio-data /forge/models /forge/outputs
+USER forge
 
-VOLUME ["/studio-data", "/forge/models", "/forge/outputs"]
+# Python 3.13 virtual environment (upstream's choice for the neo branch)
+RUN uv venv venv --python 3.13 --seed
+
+ENV VIRTUAL_ENV="/home/forge/sd-webui/venv" \
+    PATH="/home/forge/sd-webui/venv/bin:$PATH" \
+    PYTHON="/home/forge/sd-webui/venv/bin/python3.13"
+
+# PyTorch pre-install at build time (requirements.txt leaves torch unpinned, so
+# this satisfies it and first start doesn't download ~2.5 GB). The remaining
+# requirements and extension deps install on first run via prepare_environment,
+# exactly as upstream's image does.
+RUN uv pip install torch torchvision \
+    --index-url "https://download.pytorch.org/whl/${TORCH_INDEX}"
+
+# Persistent data directories (upstream's set; `output` is Neo's dir name).
+# config/studio is where STUDIO_DATA_DIR points — Studio defaults, presets,
+# gallery index, wildcards, watermarks all persist under the config mount.
+RUN mkdir -p \
+        models/Stable-diffusion \
+        models/VAE \
+        models/Lora \
+        models/ControlNet \
+        extensions \
+        config/studio \
+        output
+
+ENV STUDIO_DATA_DIR=/home/forge/sd-webui/config/studio
+
+COPY --chown=99:100 docker/entrypoint.sh /home/forge/sd-webui/entrypoint.sh
+RUN chmod +x /home/forge/sd-webui/entrypoint.sh
+
 EXPOSE 7860
 
-# --nowebui: Studio serves its own UI; Gradio's is not needed.
-# Studio is at http://<host>:7860/studio
-ENV COMMANDLINE_ARGS="--xformers --cuda-malloc --cuda-stream --fast-fp16 --nowebui --port 7860 --listen"
-CMD ["sh", "-c", "python3 launch.py ${COMMANDLINE_ARGS}"]
+# NOTE: in --nowebui mode Forge defaults to port 7861; the entrypoint passes
+# --port 7860 explicitly, and this healthcheck hits Studio's own route (`/`
+# does not exist in API-only mode). Long start-period: first run installs the
+# remaining requirements.
+HEALTHCHECK --interval=30s --timeout=10s --start-period=600s --retries=15 \
+    CMD curl -f http://localhost:7860/studio || exit 1
+
+ENTRYPOINT ["/home/forge/sd-webui/entrypoint.sh"]
