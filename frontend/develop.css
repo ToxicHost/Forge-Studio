@@ -738,6 +738,48 @@ body.develop-active #canvasArea canvas {
 .develop-preset-save:hover { color: var(--accent); border-color: var(--accent); }
 
 /* ═══════════════════════════════════════════
+   SAVE SECTION
+   ═══════════════════════════════════════════ */
+
+.develop-save-row {
+  display: flex;
+  gap: 6px;
+  align-items: center;
+}
+
+.develop-save-btn {
+  flex: 1;
+  font-size: 11px;
+  padding: 6px 10px;
+  background: var(--bg-raised);
+  color: var(--text-2);
+  border: 1px solid var(--border);
+  border-radius: 3px;
+  cursor: pointer;
+  white-space: nowrap;
+  transition: color 0.12s, border-color 0.12s, background 0.12s;
+}
+.develop-save-btn:hover { color: var(--accent); border-color: var(--accent); }
+
+.develop-save-btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  color: #fff;
+  font-weight: 600;
+}
+.develop-save-btn.primary:hover {
+  filter: brightness(1.1);
+  color: #fff;
+}
+
+.develop-save-hint {
+  margin-top: 6px;
+  font-size: 10px;
+  line-height: 1.4;
+  color: var(--text-4);
+}
+
+/* ═══════════════════════════════════════════
    BEFORE/AFTER SPLIT OVERLAY
    ═══════════════════════════════════════════ */
 

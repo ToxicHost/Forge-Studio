@@ -2397,8 +2397,118 @@ function _buildPanel() {
         body.appendChild(_buildPresetSection());
     }
 
+    // Save section — saving the corrected image from the panel you corrected
+    // it in. Previously the only path that kept Develop corrections was the
+    // canvas right-click menu, so people reasonably used the prominent
+    // output-strip Save buttons and got the uncorrected original back.
+    body.appendChild(_buildSaveSection());
+
     _panel.appendChild(body);
     document.body.appendChild(_panel);
+}
+
+// The developed image as a PNG data URL: the flattened canvas composite with
+// the Develop pipeline baked in — exactly the pixels on screen.
+function _developedDataUrl() {
+    var C = window.StudioCore;
+    if (!C || typeof C.exportFlattened !== "function") return null;
+    return C.exportFlattened("image/png");
+}
+
+function _docStem() {
+    var name = (window.StudioDocs && window.StudioDocs.activeDoc
+        && window.StudioDocs.activeDoc.name) || "";
+    name = String(name).trim();
+    return name ? name.replace(/\.[^.]+$/, "") : ("studio_" + Date.now());
+}
+
+// Save As… — hand the corrected pixels to the browser so the user picks the
+// name/location (real OS dialog on Chromium at localhost/https; a named
+// download elsewhere). Delegates to the shared helper in app.js.
+function _saveDevelopedAs() {
+    var SA = window.StudioSaveAs;
+    if (!SA || typeof SA.save !== "function") {
+        if (window.showToast) window.showToast("Save As is unavailable", "error");
+        return;
+    }
+    SA.save({
+        dataUrl: _developedDataUrl,
+        suggestedName: _docStem(),
+        emptyMessage: "Nothing on the canvas to save",
+        successPrefix: "Saved",
+    });
+}
+
+// Save — one click to the Studio output folder, same destination as the
+// canvas save. Reuses the canvas save path so watermark/metadata/format
+// handling stays in exactly one place.
+function _saveDeveloped() {
+    var UI = window.StudioUI;
+    if (UI && typeof UI.saveCanvasAs === "function") {
+        var fmt = (window.State && window.State.saveFormat) || "png";
+        UI.saveCanvasAs(fmt);
+        return;
+    }
+    if (window.showToast) window.showToast("Save is unavailable", "error");
+}
+
+function _buildSaveSection() {
+    var s = document.createElement("div");
+    s.className = "develop-section";
+
+    var head = document.createElement("div");
+    head.className = "develop-section-header";
+    var t = document.createElement("span");
+    t.className = "develop-section-title";
+    t.dataset.i18n = "develop.save.title";
+    t.textContent = _t("develop.save.title", "Save corrected image");
+    head.appendChild(t);
+    s.appendChild(head);
+
+    var body = document.createElement("div");
+    body.className = "develop-section-body";
+
+    var row = document.createElement("div");
+    row.className = "develop-save-row";
+
+    var saveBtn = document.createElement("button");
+    saveBtn.className = "develop-save-btn primary";
+    saveBtn.dataset.i18n = "develop.save.save";
+    saveBtn.textContent = _t("develop.save.save", "Save");
+    saveBtn.dataset.i18nTitle = "develop.save.save.tooltip";
+    saveBtn.title = _t("develop.save.save.tooltip",
+        "Save the corrected image to the Studio output folder");
+    saveBtn.addEventListener("click", _saveDeveloped);
+    row.appendChild(saveBtn);
+
+    var saveAsBtn = document.createElement("button");
+    saveAsBtn.className = "develop-save-btn";
+    saveAsBtn.dataset.i18n = "develop.save.saveAs";
+    saveAsBtn.textContent = _t("develop.save.saveAs", "Save As…");
+    // Label the tooltip honestly: the File System Access API only exists on
+    // Chromium in a secure context, so over a plain-http LAN address the user
+    // gets a download instead of a dialog.
+    var hasPicker = !!(window.StudioSaveAs && window.StudioSaveAs.hasPicker
+        && window.StudioSaveAs.hasPicker());
+    saveAsBtn.title = hasPicker
+        ? _t("develop.save.saveAs.tooltip",
+            "Choose a name and location on this computer")
+        : _t("develop.save.saveAs.tooltipDownload",
+            "Download to this computer (your browser decides where)");
+    saveAsBtn.addEventListener("click", _saveDevelopedAs);
+    row.appendChild(saveAsBtn);
+
+    body.appendChild(row);
+
+    var hint = document.createElement("div");
+    hint.className = "develop-save-hint";
+    hint.dataset.i18n = "develop.save.hint";
+    hint.textContent = _t("develop.save.hint",
+        "Saves what you see, with these corrections applied.");
+    body.appendChild(hint);
+
+    s.appendChild(body);
+    return s;
 }
 
 function _buildSection(sec) {
