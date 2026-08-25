@@ -230,6 +230,93 @@ def _apply_unet_storage_dtype(params: dict) -> dict:
     return params
 
 
+# Forge keeps the checkpoint/TE/VAE selection in one process-global dict
+# (model_data.forge_loading_parameters) that forge_model_reload() reads back.
+# Studio drives that from several independent endpoints, and the browser can
+# fire them concurrently — a text-encoder change and a model change dispatched
+# back to back each POST their own load. Without serialisation the two threads
+# interleave: A installs its parameters, B overwrites them, then A's reload
+# runs against B's dict. The user gets the checkpoint they asked for wearing
+# the previous model's TE/VAE, or a hard size-mismatch on the VAE.
+#
+# Every read-modify-write of forge_loading_parameters *and* the reload that
+# consumes it has to happen under this lock, as one transaction. It is an
+# RLock because the generation path can re-enter while already holding it.
+_MODEL_LOAD_LOCK = RLock()
+
+
+def _reload_with_params(params: dict):
+    """Install loading parameters and reload, atomically.
+
+    Runs on a worker thread (via asyncio.to_thread) — never hold the lock on
+    the event loop, a checkpoint load blocks for seconds.
+    """
+    with _MODEL_LOAD_LOCK:
+        sd_models.model_data.forge_loading_parameters = params
+        sd_models.forge_model_reload()
+
+
+def _swap_vae_locked(vae_name: str) -> None:
+    """Replace just the VAE entry in the live loading parameters, then reload.
+
+    The read of the existing parameters has to sit inside the lock with the
+    write — otherwise a concurrent load_model can land between them and this
+    reload resurrects the checkpoint the user just navigated away from.
+
+    Raises ValueError when no checkpoint can be resolved to reload.
+    """
+    from modules import sd_vae
+
+    with _MODEL_LOAD_LOCK:
+        try:
+            existing_params = dict(sd_models.model_data.forge_loading_parameters or {})
+        except Exception:
+            existing_params = {}
+
+        ci = getattr(shared.sd_model, "sd_checkpoint_info", None)
+        if ci is None:
+            ci = existing_params.get("checkpoint_info")
+        if ci is None:
+            raise ValueError("No active checkpoint to reload")
+
+        # Preserve existing additional modules except any current VAE
+        # (we're replacing it). Known VAE paths come from sd_vae.vae_dict.
+        known_vae_paths = {
+            os.path.normcase(os.path.abspath(p))
+            for p in sd_vae.vae_dict.values()
+            if p
+        }
+        prior_additional = existing_params.get("additional_modules") or []
+        preserved = []
+        for mod in prior_additional:
+            if not mod:
+                continue
+            try:
+                norm = os.path.normcase(os.path.abspath(mod))
+            except Exception:
+                norm = mod
+            if norm in known_vae_paths:
+                continue  # drop old VAE, we're swapping it
+            preserved.append(mod)
+
+        # Append the newly selected VAE (if a concrete one was chosen)
+        if vae_name and vae_name not in ("Automatic", "None", ""):
+            vae_path = sd_vae.vae_dict.get(vae_name)
+            if vae_path and os.path.isfile(vae_path):
+                preserved.append(vae_path)
+                print(f"{TAG} VAE (additional module): {vae_name}")
+            else:
+                print(f"{TAG} Warning: VAE not found in vae_dict: {vae_name}")
+
+        new_params = dict(existing_params)
+        new_params["checkpoint_info"] = ci
+        new_params["additional_modules"] = preserved
+        _apply_unet_storage_dtype(new_params)
+
+        sd_models.model_data.forge_loading_parameters = new_params
+        sd_models.forge_model_reload()
+
+
 def _is_path_within_roots(resolved, allowed_roots) -> bool:
     """True if `resolved` lives under any allowed root.
 
@@ -4735,57 +4822,11 @@ def setup_studio_routes(app: FastAPI):
                 print(f"{TAG} VAE preference set to: {vae_name} (no model loaded)")
                 return {"ok": True, "loaded": vae_name}
 
-            # Resolve the checkpoint currently in use for the reload
-            ci = getattr(shared.sd_model, 'sd_checkpoint_info', None)
-            existing_params = {}
             try:
-                existing_params = dict(sd_models.model_data.forge_loading_parameters or {})
-            except Exception:
-                existing_params = {}
-            if ci is None:
-                ci = existing_params.get("checkpoint_info")
-            if ci is None:
+                await asyncio.to_thread(_swap_vae_locked, vae_name)
+            except ValueError as ve:
                 print(f"{TAG} Cannot resolve current checkpoint for VAE swap")
-                return JSONResponse(
-                    {"error": "No active checkpoint to reload"}, status_code=400
-                )
-
-            # Preserve existing additional modules except any current VAE
-            # (we're replacing it). Known VAE paths come from sd_vae.vae_dict.
-            known_vae_paths = {
-                os.path.normcase(os.path.abspath(p))
-                for p in sd_vae.vae_dict.values()
-                if p
-            }
-            prior_additional = existing_params.get("additional_modules") or []
-            preserved = []
-            for mod in prior_additional:
-                if not mod:
-                    continue
-                try:
-                    norm = os.path.normcase(os.path.abspath(mod))
-                except Exception:
-                    norm = mod
-                if norm in known_vae_paths:
-                    continue  # drop old VAE, we're swapping it
-                preserved.append(mod)
-
-            # Append the newly selected VAE (if a concrete one was chosen)
-            if vae_name and vae_name not in ("Automatic", "None", ""):
-                vae_path = sd_vae.vae_dict.get(vae_name)
-                if vae_path and os.path.isfile(vae_path):
-                    preserved.append(vae_path)
-                    print(f"{TAG} VAE (additional module): {vae_name}")
-                else:
-                    print(f"{TAG} Warning: VAE not found in vae_dict: {vae_name}")
-
-            new_params = dict(existing_params)
-            new_params["checkpoint_info"] = ci
-            new_params["additional_modules"] = preserved
-            _apply_unet_storage_dtype(new_params)
-            sd_models.model_data.forge_loading_parameters = new_params
-
-            await asyncio.to_thread(sd_models.forge_model_reload)
+                return JSONResponse({"error": str(ve)}, status_code=400)
 
             print(f"{TAG} VAE changed to: {vae_name}")
             return {"ok": True, "loaded": vae_name}
@@ -5827,13 +5868,22 @@ def setup_studio_routes(app: FastAPI):
 
             # Forge Neo uses model_data.forge_loading_parameters to control
             # which model gets loaded. forge_model_reload() checks if the
-            # parameters hash changed and only reloads if it did.
-            sd_models.model_data.forge_loading_parameters = _apply_unet_storage_dtype({
+            # parameters hash changed and only reloads if it did. Installing
+            # the parameters and reloading is one transaction under
+            # _MODEL_LOAD_LOCK — see the note on the lock for what a
+            # concurrent TE/VAE/model change would otherwise do to it.
+            params = _apply_unet_storage_dtype({
                 "checkpoint_info": info,
                 "additional_modules": additional,
             })
 
-            # Also update shared.opts so the UI stays in sync
+            # Trigger the actual reload
+            await asyncio.to_thread(_reload_with_params, params)
+
+            # Record the selection only once the load actually succeeded. On
+            # failure forge_model_reload raises and we never get here, which
+            # keeps opts from advertising a checkpoint that is not resident —
+            # the state the UI reads back to decide what is loaded.
             shared.opts.data["sd_model_checkpoint"] = info.title
 
             # Persist to config.json so Forge loads this model on next restart
@@ -5841,9 +5891,6 @@ def setup_studio_routes(app: FastAPI):
                 shared.opts.save(shared.config_filename)
             except Exception:
                 pass  # Non-critical — model loads fine, just won't persist
-
-            # Trigger the actual reload
-            await asyncio.to_thread(sd_models.forge_model_reload)
 
             _log_vram(f"Model loaded: {info.title}"
                       f" ({len(additional)} additional module(s))")

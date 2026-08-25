@@ -23,6 +23,7 @@ except ImportError:
 from PIL import Image
 import numpy as np
 import base64, io, os, json, random, time, traceback
+import contextlib
 from dataclasses import dataclass, field
 from typing import Optional, List
 
@@ -181,6 +182,30 @@ except ImportError:
 # =========================================================================
 # UTILITIES
 # =========================================================================
+
+def _model_load_lock():
+    """The API's model-load lock, so generation-time checkpoint swaps
+    serialise against /studio/load_model and /studio/load_vae.
+
+    Both mutate the same process-global forge_loading_parameters. The hires
+    restore below reinstalls the *previous* checkpoint's parameters, so a
+    user-initiated model change landing mid-restore would be silently undone
+    — the new checkpoint selected in the UI, the old one's weights resident.
+
+    Degrades to a no-op context when studio_api isn't loaded, which keeps
+    this module importable on its own.
+    """
+    try:
+        from scripts.studio_api import _MODEL_LOAD_LOCK
+        return _MODEL_LOAD_LOCK
+    except Exception:
+        pass
+    try:
+        from studio_api import _MODEL_LOAD_LOCK
+        return _MODEL_LOAD_LOCK
+    except Exception:
+        return contextlib.nullcontext()
+
 
 def decode_b64(data_url):
     if not data_url or data_url in ("null", ""): return None
@@ -391,8 +416,9 @@ def _swap_checkpoint(checkpoint_name):
                 new_params.setdefault("additional_modules",
                                       existing_params.get("additional_modules") or [])
                 new_params.setdefault("unet_storage_dtype", None)
-                sd_models.model_data.forge_loading_parameters = new_params
-                sd_models.forge_model_reload()
+                with _model_load_lock():
+                    sd_models.model_data.forge_loading_parameters = new_params
+                    sd_models.forge_model_reload()
                 print(f"[Studio HR] Swapped via forge_model_reload: {checkpoint_name}")
                 return True
     except Exception as e:
@@ -658,8 +684,9 @@ def run_hires_fix(image, upscaler_name, scale, hr_steps, hr_denoise, hr_cfg, p_o
             if original_loading_params is not None:
                 try:
                     print(f"[Studio HR] Restoring checkpoint + modules: {original_checkpoint}")
-                    sd_models.model_data.forge_loading_parameters = original_loading_params
-                    sd_models.forge_model_reload()
+                    with _model_load_lock():
+                        sd_models.model_data.forge_loading_parameters = original_loading_params
+                        sd_models.forge_model_reload()
                     print(f"[Studio HR] Full loading parameters restored")
                     restored = True
                 except Exception as e:
@@ -737,7 +764,8 @@ def _ensure_model_loaded():
         # Method 1: Forge-specific full reload (sets up forge_objects)
         if hasattr(sd_models, 'forge_model_reload'):
             try:
-                sd_models.forge_model_reload()
+                with _model_load_lock():
+                    sd_models.forge_model_reload()
                 if hasattr(shared.sd_model, 'forge_objects') and shared.sd_model.forge_objects is not None:
                     print("[Studio] Model loaded via forge_model_reload")
                     print(f"[Studio Perf] model reload: {time.time() - _reload_t0:.2f}s (forge_model_reload)")
