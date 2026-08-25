@@ -139,7 +139,11 @@ function _applyInfotextToUI(infotext) {
     const exact = opts.find(o => o.value === val || o.textContent === val);
     if (exact) { el.value = exact.value; return; }
     const ci = opts.find(o => o.value.toLowerCase() === val.toLowerCase() || o.textContent.toLowerCase() === val.toLowerCase());
-    if (ci) el.value = ci.value;
+    if (ci) { el.value = ci.value; return; }
+    // No match: the field keeps its previous selection while the rest of the
+    // infotext applies, so the resulting generation is a blend of the loaded
+    // image's settings and the current ones. Silent before — say so.
+    console.warn(`[Studio] Infotext "${id}": "${val}" is not in the dropdown — keeping "${el.value}"`);
   };
 
   _set("paramPrompt", p.prompt);
@@ -4928,7 +4932,29 @@ function bindUI() {
   // Returns true when the backend reports a successful load, false on any
   // failure or when the switch was deferred. Most callers ignore the
   // result; the generation preflight relies on it to abort cleanly.
+  // Every model-state mutation the UI can trigger — model change, TE change,
+  // VAE change, the post-generation flush — POSTs into the same process-global
+  // forge_loading_parameters on the backend. The browser fires them
+  // independently: picking a model runs the TE and VAE restores, and either
+  // can dispatch its own change event while the first request is still in
+  // flight. Overlapping requests interleaved server-side and loaded a
+  // checkpoint wearing the previous model's TE/VAE. The backend serialises
+  // too; this chain keeps the UI from queueing redundant reloads at all and
+  // makes last-write-wins deterministic rather than a race.
+  let _modelStateChain = Promise.resolve();
+  function _serializeModelState(fn) {
+    const next = _modelStateChain.then(fn, fn);
+    // Swallow rejections on the chain itself so one failed load doesn't
+    // poison every subsequent switch; callers still see their own rejection.
+    _modelStateChain = next.then(() => {}, () => {});
+    return next;
+  }
+
   async function loadSelectedModelComponents(reason = "model-change") {
+    return _serializeModelState(() => _loadSelectedModelComponentsInner(reason));
+  }
+
+  async function _loadSelectedModelComponentsInner(reason = "model-change") {
     const modelSelect = document.getElementById("paramModel");
     const title = modelSelect?.value;
     if (!title) return false;
@@ -5058,6 +5084,7 @@ function bindUI() {
       return;
     }
     showToast(I18N.t("toast.switchingVae", "Switching VAE..."), "info");
+    await _serializeModelState(async () => {
     try {
       const r = await fetch(API.base + "/studio/load_vae", {
         method: "POST",
@@ -5086,6 +5113,7 @@ function bindUI() {
       console.error("[Studio] VAE load error:", err);
       showToast(_i18n("toast.vae.loadError", "VAE load error: " + err.message, { error: err.message }), "error");
     }
+    });
   });
 
   // Text Encoder change — reload the current model with the chosen TE.
