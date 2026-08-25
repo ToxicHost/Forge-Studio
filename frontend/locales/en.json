@@ -326,6 +326,13 @@
 
   "develop.presets.title": "Presets",
   "develop.presets.save": "Save…",
+  "develop.save.title": "Save corrected image",
+  "develop.save.save": "Save",
+  "develop.save.save.tooltip": "Save the corrected image to the Studio output folder",
+  "develop.save.saveAs": "Save As…",
+  "develop.save.saveAs.tooltip": "Choose a name and location on this computer",
+  "develop.save.saveAs.tooltipDownload": "Download to this computer (your browser decides where)",
+  "develop.save.hint": "Saves what you see, with these corrections applied.",
 
   "develop.hsl.band.red": "Red",
   "develop.hsl.band.orange": "Orange",

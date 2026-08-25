@@ -3521,10 +3521,17 @@ function _showCtxMenu(x, y) {
         { type: "sep" },
         { label: "Zoom to Fit", shortcut: "F", action: () => { C.zoomFit(); updateStatus(); _redraw(); } },
         { type: "sep" },
-        { label: "Save as PNG", action: () => _ctxSaveCanvas("png") },
-        { label: "Save as JPEG", action: () => _ctxSaveCanvas("jpeg") },
-        { label: "Save as WebP", action: () => _ctxSaveCanvas("webp") },
-        { label: "Save as PSD (layers)", action: () => savePSD() },
+        // "Save As…" opens a real name/location dialog and writes to the
+        // USER's machine. The entries below it write straight to the Studio
+        // output folder on the machine running Forge — the labels say which
+        // is which, because "Save as PNG" previously read like a dialog and
+        // silently wrote server-side.
+        { label: "Save As…  (choose location)", shortcut: "Ctrl+Shift+S", action: () => _ctxSaveCanvasAs() },
+        { type: "sep" },
+        { label: "Save PNG to Studio folder", shortcut: "Ctrl+S", action: () => _ctxSaveCanvas("png") },
+        { label: "Save JPEG to Studio folder", action: () => _ctxSaveCanvas("jpeg") },
+        { label: "Save WebP to Studio folder", action: () => _ctxSaveCanvas("webp") },
+        { label: "Save PSD (layers)", action: () => savePSD() },
     ].filter(Boolean);
 
     menu.innerHTML = items.map(item => {
@@ -3603,6 +3610,26 @@ function _showLayerCtxMenu(x, y) {
     menu.style.left = Math.min(x, window.innerWidth - 220) + "px";
     menu.style.top = Math.min(y, window.innerHeight - 240) + "px";
     menu.style.display = "block";
+}
+
+// Save As… for the canvas — the flattened composite (Develop baked in, same
+// pixels as the on-screen preview) handed to the browser so the user picks the
+// name and location. Delegates to the shared helper in app.js so the picker /
+// download-fallback logic lives in exactly one place.
+async function _ctxSaveCanvasAs() {
+    const C = window.StudioCore;
+    const SA = window.StudioSaveAs;
+    if (!C || !SA || typeof SA.save !== "function") {
+        if (window.showToast) window.showToast("Save As is unavailable", "error");
+        return;
+    }
+    const stem = (window.StudioDocs?.activeDoc?.name || "").trim().replace(/\.[^.]+$/, "")
+        || `studio_${Date.now()}`;
+    await SA.save({
+        dataUrl: () => C.exportFlattened("image/png"),
+        suggestedName: stem,
+        emptyMessage: "Nothing on the canvas to save",
+    });
 }
 
 async function _ctxSaveCanvas(fmt, applyWm) {
@@ -3821,6 +3848,15 @@ function bindKeys() {
                     }
                     e.shiftKey ? C.redo() : C.undo();
                     renderLayerPanel(); renderHistoryPanel(); _redraw();
+                    return;
+                }
+                case "s": {
+                    // Ctrl+S / Ctrl+Shift+S — what every user reaches for.
+                    // Both save the canvas as displayed (Develop included);
+                    // Shift opens the name/location dialog.
+                    e.preventDefault();
+                    if (e.shiftKey) _ctxSaveCanvasAs();
+                    else _ctxSaveCanvas((window.State && window.State.saveFormat) || "png");
                     return;
                 }
                 case "a": e.preventDefault(); C.selectionAll(); startMarchingAnts(); _redraw(); return;
@@ -4791,7 +4827,11 @@ window.StudioUI = {
     updateColorUI,
     saveFlattened,
     savePSD,
-    showSaveMenu
+    showSaveMenu,
+    // Canvas saves, exposed so other panels (Develop) can offer the same
+    // actions without duplicating the watermark/metadata/format handling.
+    saveCanvasAs: _ctxSaveCanvas,        // → Studio output folder
+    saveCanvasAsDialog: _ctxSaveCanvasAs // → user's machine, via file dialog
 };
 
 console.log("[StudioUI] Module loaded — Phase 2 DOM integration");

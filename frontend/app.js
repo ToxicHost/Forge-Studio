@@ -4648,6 +4648,81 @@ function bindUI() {
     showToast("Saved to your browser downloads", "info");
   }
 
+  // ── Shared "Save As…" (exported) ────────────────────────────────────────
+  // Any surface that has pixels can offer a real save dialog through this:
+  // the Develop panel, the canvas context menu, the output strip. Takes a
+  // data URL (or a function returning one) so the caller decides WHICH pixels
+  // — e.g. the flattened canvas with Develop baked, vs. a pristine output.
+  //
+  // Uses the File System Access API when the browser allows it (Chromium on a
+  // secure context: localhost/127.0.0.1 or https — a genuine name/location/
+  // format picker). Everywhere else — Firefox, Safari, or Studio reached over
+  // a plain-http LAN address — that API does not exist, so we fall back to a
+  // named download and say so, rather than pretending a dialog appeared.
+  async function studioSaveAs(opts) {
+    const o = opts || {};
+    let src = o.dataUrl;
+    if (typeof src === "function") src = await src();
+    if (typeof src?.then === "function") src = await src;
+    if (!src) { showToast(o.emptyMessage || "Nothing to save", "info"); return false; }
+
+    const srcMime = (String(src).match(/^data:([^;]+)/) || [])[1] || "image/png";
+    const srcFmt = srcMime === "image/jpeg" ? "jpeg" : (srcMime === "image/webp" ? "webp" : "png");
+    const defFmt = o.defaultFormat || State.saveFormat || srcFmt || "png";
+    const stem = (o.suggestedName || `studio_${Date.now()}`).replace(/\.[^.]+$/, "");
+
+    // Same-format saves reuse the original bytes so embedded metadata
+    // (prompt/seed/settings) survives; a format change re-encodes.
+    const bytesFor = async (fmt) =>
+      (fmt === srcFmt) ? _dataUrlToBlob(src) : await _encodeOutputBlob(src, fmt);
+
+    if (typeof window.showSaveFilePicker === "function") {
+      const order = [defFmt, ...["png", "jpeg", "webp"].filter(f => f !== defFmt)];
+      const types = order.map(f => ({
+        description: f.toUpperCase() + " image",
+        accept: { [_mimeForFmt(f)]: ["." + _extForFmt(f)] },
+      }));
+      try {
+        const handle = await window.showSaveFilePicker({
+          suggestedName: stem + "." + _extForFmt(defFmt), types,
+        });
+        const fmt = _fmtFromName(handle.name);
+        const blob = await bytesFor(fmt);
+        if (!blob) { showToast("Could not encode image", "error"); return false; }
+        const w = await handle.createWritable();
+        await w.write(blob);
+        await w.close();
+        showToast((o.successPrefix || "Saved") + " " + handle.name, "success");
+        return true;
+      } catch (err) {
+        if (err && err.name === "AbortError") return false;  // cancelled — no toast
+        console.warn("[Studio] Save As (native) failed:", err);
+        showToast("Save As failed: " + (err?.message || err), "error");
+        return false;
+      }
+    }
+
+    // Fallback: named download. The browser's own "ask where to save each
+    // file" setting governs whether the user gets a location prompt.
+    const blob = await bytesFor(defFmt);
+    if (!blob) { showToast("Could not encode image", "error"); return false; }
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement("a");
+    a.href = url; a.download = stem + "." + _extForFmt(defFmt);
+    document.body.appendChild(a); a.click();
+    setTimeout(() => { document.body.removeChild(a); URL.revokeObjectURL(url); }, 100);
+    showToast("Saved to your browser downloads", "info");
+    return true;
+  }
+
+  // True when a real OS file dialog is possible here (used to label buttons
+  // honestly instead of promising a picker the browser won't show).
+  function studioSaveAsHasPicker() {
+    return typeof window.showSaveFilePicker === "function";
+  }
+
+  window.StudioSaveAs = { save: studioSaveAs, hasPicker: studioSaveAsHasPicker };
+
   // Gallery save — anchor a floating popover off the icon button so we
   // can offer "Save to Gallery" (drops in the watched outputs root) in
   // addition to the format-specific download targets.
