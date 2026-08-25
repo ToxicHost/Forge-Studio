@@ -139,7 +139,11 @@ function _applyInfotextToUI(infotext) {
     const exact = opts.find(o => o.value === val || o.textContent === val);
     if (exact) { el.value = exact.value; return; }
     const ci = opts.find(o => o.value.toLowerCase() === val.toLowerCase() || o.textContent.toLowerCase() === val.toLowerCase());
-    if (ci) el.value = ci.value;
+    if (ci) { el.value = ci.value; return; }
+    // No match: the field keeps its previous selection while the rest of the
+    // infotext applies, so the resulting generation is a blend of the loaded
+    // image's settings and the current ones. Silent before — say so.
+    console.warn(`[Studio] Infotext "${id}": "${val}" is not in the dropdown — keeping "${el.value}"`);
   };
 
   _set("paramPrompt", p.prompt);

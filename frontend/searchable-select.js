@@ -321,9 +321,32 @@ function attach(select, opts) {
         _open();
     });
 
-    // Refresh the trigger label whenever the native select's value
-    // is set programmatically (which doesn't fire "change"). Also
-    // refresh on options-list changes.
+    // A property write — `select.value = "x"` — is invisible to
+    // MutationObserver: it mutates no attribute and no child node, and it
+    // fires no "change" event. Every programmatic write in the app is of
+    // that form (infotext apply, defaults restore, selection restore after
+    // an options rebuild), so without an interceptor the trigger keeps
+    // rendering the previously selected option while the native select --
+    // the thing the generate payload actually reads -- holds a different
+    // value. The UI shows one sampler and the backend receives another.
+    //
+    // Patch the accessor on this instance so the label can never drift.
+    // destroy() deletes the own property, restoring the prototype's.
+    const valueDesc = Object.getOwnPropertyDescriptor(HTMLSelectElement.prototype, "value");
+    if (valueDesc && valueDesc.get && valueDesc.set) {
+        Object.defineProperty(select, "value", {
+            configurable: true,
+            enumerable: false,
+            get() { return valueDesc.get.call(this); },
+            set(v) {
+                valueDesc.set.call(this, v);
+                try { triggerLabel.textContent = _currentLabel(select, placeholder); } catch (_) {}
+            },
+        });
+    }
+
+    // Options-list changes still come through the observer: rebuilding
+    // innerHTML can invalidate the current selection entirely.
     const observer = new MutationObserver((mutations) => {
         let optionsChanged = false;
         for (const m of mutations) {
@@ -351,6 +374,14 @@ function attach(select, opts) {
             observer.disconnect();
             trigger.remove();
             select.classList.remove("ssel-native-hidden");
+            // Drop the own-property accessor so the prototype's takes over
+            // again; leaving it behind would keep a reference to a removed
+            // trigger element alive.
+            if (Object.prototype.hasOwnProperty.call(select, "value")) {
+                const v = select.value;
+                delete select.value;
+                select.value = v;
+            }
             delete select[ATTR_KEY];
         },
     };
