@@ -181,6 +181,55 @@ def _natural_sort_key(text):
     return [int(c) if c.isdigit() else c for c in _NAT_SORT_RE.split(str(text).lower())]
 
 
+def _forge_unet_storage_dtype():
+    """Resolve Forge Neo's "Diffusion in Low Bits" setting.
+
+    Neo's own model picker maps the ``forge_unet_storage_dtype`` option
+    string ("Automatic", "float8-e4m3fn", ...) through
+    ``main_entry.forge_unet_storage_dtype_options`` into the
+    ``(torch.dtype | None, lora_fp16)`` pair it stores on
+    ``forge_loading_parameters``. Studio used to hardcode ``None`` there,
+    which silently ignored the user's saved preference and loaded every
+    checkpoint at full precision — the fp8 options were unreachable from
+    Studio no matter what the Neo settings page said.
+
+    Returns ``(None, False)`` (Neo's own "Automatic" entry) if anything is
+    missing, so this stays safe on forks without the option.
+    """
+    try:
+        from modules_forge.main_entry import forge_unet_storage_dtype_options
+    except Exception:
+        return None, False
+
+    name = getattr(shared.opts, "forge_unet_storage_dtype", "Automatic")
+    try:
+        return forge_unet_storage_dtype_options.get(name, (None, False))
+    except Exception:
+        return None, False
+
+
+def _apply_unet_storage_dtype(params: dict) -> dict:
+    """Stamp the resolved low-bits dtype onto Forge loading parameters.
+
+    Mirrors what Neo's ``refresh_model_loading_parameters`` does, including
+    the ``online_lora`` side effect — GGUF aside, that flag is only ever set
+    by the model picker, so Studio has to set it too or the "(fp16 LoRA)"
+    variants of the option do nothing.
+    """
+    dtype, lora_fp16 = _forge_unet_storage_dtype()
+    params["unet_storage_dtype"] = dtype
+
+    try:
+        from backend.args import dynamic_args
+        dynamic_args.online_lora = lora_fp16
+    except Exception:
+        pass
+
+    if dtype is not None:
+        print(f"{TAG} UNet storage dtype: {dtype} (fp16 LoRA: {lora_fp16})")
+    return params
+
+
 def _is_path_within_roots(resolved, allowed_roots) -> bool:
     """True if `resolved` lives under any allowed root.
 
@@ -4733,7 +4782,7 @@ def setup_studio_routes(app: FastAPI):
             new_params = dict(existing_params)
             new_params["checkpoint_info"] = ci
             new_params["additional_modules"] = preserved
-            new_params.setdefault("unet_storage_dtype", None)
+            _apply_unet_storage_dtype(new_params)
             sd_models.model_data.forge_loading_parameters = new_params
 
             await asyncio.to_thread(sd_models.forge_model_reload)
@@ -5779,11 +5828,10 @@ def setup_studio_routes(app: FastAPI):
             # Forge Neo uses model_data.forge_loading_parameters to control
             # which model gets loaded. forge_model_reload() checks if the
             # parameters hash changed and only reloads if it did.
-            sd_models.model_data.forge_loading_parameters = {
+            sd_models.model_data.forge_loading_parameters = _apply_unet_storage_dtype({
                 "checkpoint_info": info,
                 "additional_modules": additional,
-                "unet_storage_dtype": None,
-            }
+            })
 
             # Also update shared.opts so the UI stays in sync
             shared.opts.data["sd_model_checkpoint"] = info.title
