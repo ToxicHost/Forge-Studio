@@ -3407,6 +3407,10 @@ body.customizing .customize-divider:hover { background: var(--accent); opacity: 
   opacity: 0.45;
   cursor: not-allowed;
 }
+.ad-override-subrow {
+  /* Aligns the flag-less schedule row with the tickboxed rows above it. */
+  padding-left: 16px;
+}
 .ad-override-unsupported {
   opacity: 0.45;
   cursor: not-allowed;

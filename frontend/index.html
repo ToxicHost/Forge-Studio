@@ -697,6 +697,28 @@
                     <input class="param-val" id="paramAD1Clip" data-min="1" data-max="12" data-step="1" value="1">
                   </div>
                 </div>
+                <div class="param-grid cols-2 secondary param-advanced" style="margin-top:4px;">
+                  <div class="param-cell" data-help="help.adetailer.sepSteps">
+                    <label class="ar-rand-check"><input type="checkbox" id="paramAD1SepSteps"> <span data-i18n="adetailer.overrides.steps">Steps</span></label>
+                    <input class="param-val" id="paramAD1Steps" data-min="1" data-max="150" data-step="1" value="28">
+                  </div>
+                  <div class="param-cell" data-help="help.adetailer.sepCfg">
+                    <label class="ar-rand-check"><input type="checkbox" id="paramAD1SepCfg"> <span data-i18n="adetailer.overrides.cfg">CFG</span></label>
+                    <input class="param-val" id="paramAD1Cfg" data-min="1" data-max="30" data-step="0.5" value="7">
+                  </div>
+                </div>
+                <div class="param-grid cols-1 secondary param-advanced" style="margin-top:4px;">
+                  <div class="param-cell" data-help="help.adetailer.sepSampler">
+                    <div class="ad-override-row">
+                      <label class="ar-rand-check"><input type="checkbox" id="paramAD1SepSampler"> <span data-i18n="adetailer.overrides.sampler">Sampler</span></label>
+                      <select class="param-select ad-override-select" id="paramAD1Sampler" disabled></select>
+                    </div>
+                    <div class="ad-override-row">
+                      <label class="ar-rand-check ad-override-subrow" data-i18n="adetailer.overrides.scheduler">Schedule</label>
+                      <select class="param-select ad-override-select" id="paramAD1Scheduler" disabled></select>
+                    </div>
+                  </div>
+                </div>
                 <div class="param-grid cols-1 secondary param-advanced ad-lora-row" data-ad-slot="1" style="margin-top:4px;">
                   <div class="param-cell">
                     <label data-i18n="adetailer.loras.label">LoRAs (this slot only)</label>
@@ -746,6 +768,28 @@
                   <div class="param-cell" data-help="help.adetailer.clipSkip">
                     <label class="ar-rand-check"><input type="checkbox" id="paramAD2SepClip"> <span data-i18n="adetailer.overrides.clipSkip">CLIP skip</span></label>
                     <input class="param-val" id="paramAD2Clip" data-min="1" data-max="12" data-step="1" value="1">
+                  </div>
+                </div>
+                <div class="param-grid cols-2 secondary param-advanced" style="margin-top:4px;">
+                  <div class="param-cell" data-help="help.adetailer.sepSteps">
+                    <label class="ar-rand-check"><input type="checkbox" id="paramAD2SepSteps"> <span data-i18n="adetailer.overrides.steps">Steps</span></label>
+                    <input class="param-val" id="paramAD2Steps" data-min="1" data-max="150" data-step="1" value="28">
+                  </div>
+                  <div class="param-cell" data-help="help.adetailer.sepCfg">
+                    <label class="ar-rand-check"><input type="checkbox" id="paramAD2SepCfg"> <span data-i18n="adetailer.overrides.cfg">CFG</span></label>
+                    <input class="param-val" id="paramAD2Cfg" data-min="1" data-max="30" data-step="0.5" value="7">
+                  </div>
+                </div>
+                <div class="param-grid cols-1 secondary param-advanced" style="margin-top:4px;">
+                  <div class="param-cell" data-help="help.adetailer.sepSampler">
+                    <div class="ad-override-row">
+                      <label class="ar-rand-check"><input type="checkbox" id="paramAD2SepSampler"> <span data-i18n="adetailer.overrides.sampler">Sampler</span></label>
+                      <select class="param-select ad-override-select" id="paramAD2Sampler" disabled></select>
+                    </div>
+                    <div class="ad-override-row">
+                      <label class="ar-rand-check ad-override-subrow" data-i18n="adetailer.overrides.scheduler">Schedule</label>
+                      <select class="param-select ad-override-select" id="paramAD2Scheduler" disabled></select>
+                    </div>
                   </div>
                 </div>
                 <div class="param-grid cols-1 secondary param-advanced ad-lora-row" data-ad-slot="2" style="margin-top:4px;">
@@ -798,6 +842,28 @@
                   <div class="param-cell" data-help="help.adetailer.clipSkip">
                     <label class="ar-rand-check"><input type="checkbox" id="paramAD3SepClip"> <span data-i18n="adetailer.overrides.clipSkip">CLIP skip</span></label>
                     <input class="param-val" id="paramAD3Clip" data-min="1" data-max="12" data-step="1" value="1">
+                  </div>
+                </div>
+                <div class="param-grid cols-2 secondary param-advanced" style="margin-top:4px;">
+                  <div class="param-cell" data-help="help.adetailer.sepSteps">
+                    <label class="ar-rand-check"><input type="checkbox" id="paramAD3SepSteps"> <span data-i18n="adetailer.overrides.steps">Steps</span></label>
+                    <input class="param-val" id="paramAD3Steps" data-min="1" data-max="150" data-step="1" value="28">
+                  </div>
+                  <div class="param-cell" data-help="help.adetailer.sepCfg">
+                    <label class="ar-rand-check"><input type="checkbox" id="paramAD3SepCfg"> <span data-i18n="adetailer.overrides.cfg">CFG</span></label>
+                    <input class="param-val" id="paramAD3Cfg" data-min="1" data-max="30" data-step="0.5" value="7">
+                  </div>
+                </div>
+                <div class="param-grid cols-1 secondary param-advanced" style="margin-top:4px;">
+                  <div class="param-cell" data-help="help.adetailer.sepSampler">
+                    <div class="ad-override-row">
+                      <label class="ar-rand-check"><input type="checkbox" id="paramAD3SepSampler"> <span data-i18n="adetailer.overrides.sampler">Sampler</span></label>
+                      <select class="param-select ad-override-select" id="paramAD3Sampler" disabled></select>
+                    </div>
+                    <div class="ad-override-row">
+                      <label class="ar-rand-check ad-override-subrow" data-i18n="adetailer.overrides.scheduler">Schedule</label>
+                      <select class="param-select ad-override-select" id="paramAD3Scheduler" disabled></select>
+                    </div>
                   </div>
                 </div>
                 <div class="param-grid cols-1 secondary param-advanced ad-lora-row" data-ad-slot="3" style="margin-top:4px;">

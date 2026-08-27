@@ -5867,7 +5867,8 @@ def setup_studio_routes(app: FastAPI):
             # rather than disabling controls that may well work.
             return {
                 "known": False, "checkpoint": True, "vae": True,
-                "noise": True, "clip_skip": True,
+                "noise": True, "clip_skip": True, "steps": True,
+                "cfg": True, "sampler": True, "scheduler": True,
             }
         return {
             "known": True,
@@ -5875,6 +5876,12 @@ def setup_studio_routes(app: FastAPI):
             "vae": _has("ad_use_vae", "ad_vae"),
             "noise": _has("ad_use_noise_multiplier", "ad_noise_multiplier"),
             "clip_skip": _has("ad_use_clip_skip", "ad_clip_skip"),
+            "steps": _has("ad_use_steps", "ad_steps"),
+            "cfg": _has("ad_use_cfg_scale", "ad_cfg_scale"),
+            "sampler": _has("ad_use_sampler", "ad_sampler"),
+            # No ad_use_scheduler exists — the schedule rides ad_use_sampler,
+            # so it only needs the value field to be declared.
+            "scheduler": _has("ad_scheduler"),
         }
 
     @app.post("/studio/load_model")

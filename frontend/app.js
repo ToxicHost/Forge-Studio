@@ -156,7 +156,18 @@ function adOverridePayload(n) {
   const val = (id) => document.getElementById(id)?.value || "";
   const sepCkpt = on(`paramAD${n}SepCkpt`);
   const sepVae = on(`paramAD${n}SepVae`);
+  // ADetailer has no separate scheduler flag — the schedule rides ad_use_sampler.
+  const sepSampler = on(`paramAD${n}SepSampler`);
   return {
+    sep_steps:        on(`paramAD${n}SepSteps`),
+    steps:            parseInt(document.getElementById(`paramAD${n}Steps`)?.value) || 28,
+    sep_cfg:          on(`paramAD${n}SepCfg`),
+    cfg:              _num(`paramAD${n}Cfg`, 7.0),
+    sep_sampler:      sepSampler,
+    sampler:          sepSampler ? (val(`paramAD${n}Sampler`) || "DPM++ 2M SDE Karras")
+                                 : "DPM++ 2M SDE Karras",
+    scheduler:        sepSampler ? (val(`paramAD${n}Scheduler`) || "Use same scheduler")
+                                 : "Use same scheduler",
     sep_checkpoint:   sepCkpt,
     checkpoint:       sepCkpt ? val(`paramAD${n}Ckpt`) : "",
     sep_vae:          sepVae,
@@ -1795,15 +1806,21 @@ async function applyADCapabilities() {
     "adetailer.overrides.unsupported",
     "The installed ADetailer version doesn't support this option.",
   );
+  // A null flag means the value has no tickbox of its own — the schedule is
+  // gated by ad_use_sampler, so only its control gets disabled.
   for (const [cap, flag, control] of [
     ["checkpoint", "SepCkpt", "Ckpt"],
     ["vae", "SepVae", "Vae"],
     ["noise", "SepNoise", "Noise"],
     ["clip_skip", "SepClip", "Clip"],
+    ["steps", "SepSteps", "Steps"],
+    ["cfg", "SepCfg", "Cfg"],
+    ["sampler", "SepSampler", "Sampler"],
+    ["scheduler", null, "Scheduler"],
   ]) {
     if (caps[cap] !== false) continue;
     for (const n of [1, 2, 3]) {
-      const cb = document.getElementById(`paramAD${n}${flag}`);
+      const cb = flag ? document.getElementById(`paramAD${n}${flag}`) : null;
       const target = document.getElementById(`paramAD${n}${control}`);
       if (cb) {
         cb.checked = false;
@@ -1811,7 +1828,13 @@ async function applyADCapabilities() {
         const row = cb.closest("label");
         if (row) { row.classList.add("ad-override-unsupported"); row.title = unsupported; }
       }
-      if (target) target.disabled = true;
+      if (target) {
+        target.disabled = true;
+        // Sticky: defaults/session restore dispatches "change" after setting
+        // .checked, and the flag->control sync below would otherwise re-enable
+        // a control the installed ADetailer can't accept.
+        target.dataset.adUnsupported = "1";
+      }
     }
     console.info(`[Studio AD] Override "${cap}" unavailable in the installed ADetailer — control disabled`);
   }
@@ -1909,6 +1932,17 @@ async function populateDropdowns() {
     _fillADOverrideSelects("Ckpt", models.map(m => ({
       value: m.title, label: _stripModelHash(m.title),
     })));
+
+    // Per-slot AD sampler/schedule overrides share the main lists. The
+    // schedule list carries ADetailer's own "Use same scheduler" sentinel
+    // first, which is what the backend defaults to when the flag is off.
+    _fillADOverrideSelects("Sampler", samplers.map(x => ({
+      value: x.name, label: x.name,
+    })));
+    _fillADOverrideSelects("Scheduler", [
+      { value: "Use same scheduler", label: "Use same scheduler" },
+      ...schedulers.map(x => ({ value: x.label, label: x.label })),
+    ]);
 
     // Sampler dropdown
     const samplerSelect = document.getElementById("paramSampler");
@@ -5243,11 +5277,15 @@ function bindUI() {
     for (const [flag, control] of [
       ["SepCkpt", "Ckpt"], ["SepVae", "Vae"],
       ["SepNoise", "Noise"], ["SepClip", "Clip"],
+      ["SepSteps", "Steps"], ["SepCfg", "Cfg"],
+      ["SepSampler", "Sampler"], ["SepSampler", "Scheduler"],
     ]) {
       const cb = document.getElementById(`paramAD${n}${flag}`);
       const target = document.getElementById(`paramAD${n}${control}`);
       if (!cb || !target) continue;
-      const sync = () => { target.disabled = !cb.checked; };
+      const sync = () => {
+        target.disabled = !cb.checked || target.dataset.adUnsupported === "1";
+      };
       cb.addEventListener("change", sync);
       sync();
     }
@@ -6029,6 +6067,10 @@ function bindUI() {
       ["paramAD1SepVae", "checkbox"], ["paramAD1Vae", "val"],
       ["paramAD1SepNoise", "checkbox"], ["paramAD1Noise", "val"],
       ["paramAD1SepClip", "checkbox"], ["paramAD1Clip", "val"],
+      ["paramAD1SepSteps", "checkbox"], ["paramAD1Steps", "val"],
+      ["paramAD1SepCfg", "checkbox"], ["paramAD1Cfg", "val"],
+      ["paramAD1SepSampler", "checkbox"], ["paramAD1Sampler", "val"],
+      ["paramAD1Scheduler", "val"],
       ["checkAD2", "check"], ["paramAD2Model", "val"],
       ["paramAD2Conf", "val"], ["paramAD2Denoise", "val"],
       ["paramAD2Blur", "val"], ["paramAD2Prompt", "val"], ["adLoraStack2", "val"],
@@ -6036,6 +6078,10 @@ function bindUI() {
       ["paramAD2SepVae", "checkbox"], ["paramAD2Vae", "val"],
       ["paramAD2SepNoise", "checkbox"], ["paramAD2Noise", "val"],
       ["paramAD2SepClip", "checkbox"], ["paramAD2Clip", "val"],
+      ["paramAD2SepSteps", "checkbox"], ["paramAD2Steps", "val"],
+      ["paramAD2SepCfg", "checkbox"], ["paramAD2Cfg", "val"],
+      ["paramAD2SepSampler", "checkbox"], ["paramAD2Sampler", "val"],
+      ["paramAD2Scheduler", "val"],
       ["checkAD3", "check"], ["paramAD3Model", "val"],
       ["paramAD3Conf", "val"], ["paramAD3Denoise", "val"],
       ["paramAD3Blur", "val"], ["paramAD3Prompt", "val"], ["adLoraStack3", "val"],
@@ -6043,6 +6089,10 @@ function bindUI() {
       ["paramAD3SepVae", "checkbox"], ["paramAD3Vae", "val"],
       ["paramAD3SepNoise", "checkbox"], ["paramAD3Noise", "val"],
       ["paramAD3SepClip", "checkbox"], ["paramAD3Clip", "val"],
+      ["paramAD3SepSteps", "checkbox"], ["paramAD3Steps", "val"],
+      ["paramAD3SepCfg", "checkbox"], ["paramAD3Cfg", "val"],
+      ["paramAD3SepSampler", "checkbox"], ["paramAD3Sampler", "val"],
+      ["paramAD3Scheduler", "val"],
     ],
     upscale: [
       ["paramUpscaleModel", "val"], ["paramUpscaleScale", "val"],
