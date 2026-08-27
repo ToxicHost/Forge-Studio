@@ -140,11 +140,17 @@ async function checkADArchMatch(n) {
   const warn = document.getElementById(`adArchWarn${n}`);
   const sepCkpt = document.getElementById(`paramAD${n}SepCkpt`);
   const ckpt = document.getElementById(`paramAD${n}Ckpt`);
+  const sepTE = document.getElementById(`paramAD${n}SepTE`);
+  const te = document.getElementById(`paramAD${n}TE`);
   if (!warn) return;
 
   const hide = () => { warn.style.display = "none"; warn.textContent = ""; };
-  if (!sepCkpt?.checked || !ckpt?.value) { hide(); return; }
+  const show = (key, fallback, vars) => {
+    warn.textContent = _i18n(key, fallback, vars);
+    warn.style.display = "";
+  };
 
+  if (!sepCkpt?.checked || !ckpt?.value) { hide(); return; }
   const mainTitle = document.getElementById("paramModel")?.value || "";
   if (!mainTitle) { hide(); return; }
 
@@ -157,28 +163,46 @@ async function checkADArchMatch(n) {
       || !mainArch || mainArch === "unknown") { hide(); return; }
   if (target.arch === mainArch) { hide(); return; }
 
-  const teSupported = document.getElementById(`paramAD${n}SepTE`)
-    && !document.getElementById(`paramAD${n}SepTE`).disabled;
+  const teSupported = sepTE && !sepTE.disabled;
+  const vars = { target: target.arch, main: mainArch };
 
-  if (teSupported) {
-    warn.textContent = _i18n(
-      "adetailer.overrides.archMismatch",
-      `This checkpoint is ${target.arch}, the loaded model is ${mainArch}. Set a matching text encoder below or the detail pass will run against the wrong one.`,
-      { target: target.arch, main: mainArch },
-    );
-    warn.style.display = "";
-  } else {
-    // No encoder override available — the combination cannot be made to work.
+  if (!teSupported) {
+    // Nothing can make this combination load correctly.
     sepCkpt.checked = false;
     sepCkpt.dispatchEvent(new Event("change"));
-    warn.textContent = _i18n(
-      "adetailer.overrides.archBlocked",
-      `Cleared: this checkpoint is ${target.arch} but the loaded model is ${mainArch}, and the installed ADetailer can't switch text encoders. Loading it would produce noise.`,
-      { target: target.arch, main: mainArch },
-    );
-    warn.style.display = "";
+    show("adetailer.overrides.archBlocked",
+         `Cleared: this checkpoint is ${target.arch} but the loaded model is ${mainArch}, and the installed ADetailer can't switch text encoders. Loading it would produce noise.`,
+         vars);
     console.warn(`[Studio AD] Slot ${n} checkpoint override cleared — ${target.arch} vs ${mainArch}, no encoder override available`);
+    return;
   }
+
+  if (target.needs_te) {
+    // Needs an external encoder, and the loaded one belongs to another
+    // architecture. Anything but a real selection here loads noise.
+    const chosen = sepTE.checked ? (te?.value || "") : "";
+    if (!chosen || chosen === "None") {
+      show("adetailer.overrides.archNeedsTE",
+           `This checkpoint is ${target.arch} and needs its own text encoder — the loaded ${mainArch} one won't work. Tick Text encoder and pick a matching one.`,
+           vars);
+    } else {
+      hide();
+    }
+    return;
+  }
+
+  // Bundles its own encoder. The loaded external one has to be dropped, or it
+  // rides along into a checkpoint that didn't ask for it — so select the
+  // explicit "None" rather than just leaving the override off.
+  if (!sepTE.checked || te?.value !== "None") {
+    sepTE.checked = true;
+    if (te) te.value = "None";
+    sepTE.dispatchEvent(new Event("change"));
+    console.info(`[Studio AD] Slot ${n}: ${target.arch} bundles its own text encoder — dropping the loaded ${mainArch} one for this pass`);
+  }
+  show("adetailer.overrides.archBundledTE",
+       `This checkpoint is ${target.arch} and bundles its own text encoder, so the loaded ${mainArch} one is dropped for the detail pass.`,
+       vars);
 }
 
 /**
@@ -2235,7 +2259,13 @@ async function populateDropdowns() {
     // wipes whatever value was just selected.
     fetch(API.base + "/studio/text_encoders").then(r => r.json()).then(async teList => {
       // Per-slot AD encoder overrides share the main text-encoder list.
-      _fillADOverrideSelects("TE", (teList || []).map(t => ({ value: t, label: t })));
+      // "None" is a real choice, not an empty one: a checkpoint that bundles
+      // its own encoder needs the loaded external one dropped, which is the
+      // SDXL-under-Anima direction.
+      _fillADOverrideSelects("TE", [
+        { value: "None", label: _i18n("adetailer.overrides.teBundled", "None (bundled)") },
+        ...(teList || []).map(t => ({ value: t, label: t })),
+      ]);
 
       const teSelect = document.getElementById("paramTextEncoder");
       // A session/defaults-stashed TE (pendingValue) is an explicit user

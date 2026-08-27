@@ -968,6 +968,11 @@ def _native_ad_supports_suffix():
         return False
 
 
+# "no external encoder" — the checkpoint bundles its own. Distinct from the
+# override being off, which leaves the loaded encoder in place.
+_AD_TE_BUNDLED = ("", "None", "Bundled", None)
+
+
 def _resolve_ad_modules(te_name, vae_name=None):
     """Build the forge_additional_modules replacement list for a detail pass.
 
@@ -979,24 +984,38 @@ def _resolve_ad_modules(te_name, vae_name=None):
     Names are resolved to full paths because Forge's modules_change() matches
     on basename against its own registry and silently skips anything it
     doesn't recognise — a dropped entry there would look like the override
-    simply had no effect. Returns [] if the encoder can't be resolved, which
-    leaves the override off rather than sending a half-built list.
+    simply had no effect.
+
+    Returns None when a named encoder can't be resolved, so the caller can
+    leave the override off instead of sending a half-built list. An empty list
+    is a real answer, not a failure: a checkpoint that bundles its own encoder
+    needs the loaded one *removed*, which is the SDXL-under-Anima direction.
     """
-    if not te_name:
-        return []
+    if te_name in _AD_TE_BUNDLED:
+        # Deliberately no external encoder. Fall through with an empty list so
+        # the VAE rules below still apply, and the loaded encoder gets dropped.
+        modules = []
+        return _ad_append_vae(modules, vae_name)
 
     try:
         models_dir = getattr(shared, "models_path", None) or "models"
         te_path = os.path.join(models_dir, "text_encoder", str(te_name))
         if not os.path.isfile(te_path):
             print(f"[Studio AD] Text encoder not found, override skipped: {te_path}")
-            return []
+            return None
     except Exception:
         print(f"[Studio AD] Could not resolve text encoder {te_name!r}, override skipped")
-        return []
+        return None
 
-    modules = [te_path]
+    return _ad_append_vae([te_path], vae_name)
 
+
+def _ad_append_vae(modules, vae_name):
+    """Append the VAE for a detail-pass module list.
+
+    A named VAE wins; otherwise the loaded one is carried across so swapping
+    the encoder doesn't quietly take the VAE with it.
+    """
     try:
         from modules import sd_vae
         vae_dict = getattr(sd_vae, "vae_dict", {}) or {}
@@ -1007,8 +1026,6 @@ def _resolve_ad_modules(te_name, vae_name=None):
             else:
                 print(f"[Studio AD] VAE not found for override: {vae_name}")
         else:
-            # Carry the loaded VAE across so swapping the encoder doesn't
-            # quietly take the VAE with it.
             known = {os.path.normcase(os.path.abspath(v)) for v in vae_dict.values() if v}
             current = getattr(shared.opts, "forge_additional_modules", None) or []
             for mod in current:
@@ -1089,13 +1106,13 @@ def _build_native_ad_dicts(ad_enable, ad_raw_slots):
         # for the sd_vae path; leaving both on would have the two mechanisms
         # write the same slot twice. With no encoder override the VAE keeps its
         # existing dedicated path untouched.
-        _ad_modules = []
+        _ad_modules = None
         if _ad_sep_te:
             _ad_modules = _resolve_ad_modules(
                 s.get("ad_text_encoder"),
                 s.get("ad_vae") if _ad_sep_vae else None,
             )
-            if _ad_modules:
+            if _ad_modules is not None:
                 _ad_sep_vae = False
         slot_dict = {
             "ad_model": model,
@@ -1133,8 +1150,8 @@ def _build_native_ad_dicts(ad_enable, ad_raw_slots):
             "ad_vae": (s.get("ad_vae") or None) if _ad_sep_vae else None,
             # Dropped by _filter_ad_slot_dict on forks without them, which is
             # why the UI gates the control on /studio/ad_capabilities.
-            "ad_use_modules": bool(_ad_modules),
-            "ad_modules": list(_ad_modules),
+            "ad_use_modules": _ad_modules is not None,
+            "ad_modules": list(_ad_modules or []),
             "ad_use_sampler": bool(s.get("use_sep_sampler", False)),
             "ad_sampler": s.get("ad_sampler") or "DPM++ 2M Karras",
             "ad_scheduler": s.get("ad_scheduler") or "Use same scheduler",
