@@ -128,6 +128,8 @@ var FIELD_MAP = {
   ad1_sep_sampler:   { id: "paramAD1SepSampler", type: "checkbox" },
   ad1_sampler:       { id: "paramAD1Sampler", type: "value" },
   ad1_scheduler:     { id: "paramAD1Scheduler", type: "value" },
+  ad1_sep_te:        { id: "paramAD1SepTE",   type: "checkbox" },
+  ad1_text_encoder:  { id: "paramAD1TE",      type: "value" },
   ad2_enabled:       { id: "checkAD2",        type: "collapseCheck" },
   ad2_model:         { id: "paramAD2Model",   type: "value" },
   ad2_conf:          { id: "paramAD2Conf",    type: "number" },
@@ -150,6 +152,8 @@ var FIELD_MAP = {
   ad2_sep_sampler:   { id: "paramAD2SepSampler", type: "checkbox" },
   ad2_sampler:       { id: "paramAD2Sampler", type: "value" },
   ad2_scheduler:     { id: "paramAD2Scheduler", type: "value" },
+  ad2_sep_te:        { id: "paramAD2SepTE",   type: "checkbox" },
+  ad2_text_encoder:  { id: "paramAD2TE",      type: "value" },
   ad3_enabled:       { id: "checkAD3",        type: "collapseCheck" },
   ad3_model:         { id: "paramAD3Model",   type: "value" },
   ad3_conf:          { id: "paramAD3Conf",    type: "number" },
@@ -172,6 +176,8 @@ var FIELD_MAP = {
   ad3_sep_sampler:   { id: "paramAD3SepSampler", type: "checkbox" },
   ad3_sampler:       { id: "paramAD3Sampler", type: "value" },
   ad3_scheduler:     { id: "paramAD3Scheduler", type: "value" },
+  ad3_sep_te:        { id: "paramAD3SepTE",   type: "checkbox" },
+  ad3_text_encoder:  { id: "paramAD3TE",      type: "value" },
 
   // ControlNet master + 2 units (image bytes intentionally omitted) -------
   cn_enabled:        { id: "checkCN",         type: "collapseCheck" },

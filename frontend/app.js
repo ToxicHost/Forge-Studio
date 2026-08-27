@@ -122,6 +122,90 @@ function _num(id, fallback) {
 }
 
 /**
+ * Warn (or veto) when a slot's checkpoint override crosses architectures.
+ *
+ * A checkpoint override rewrites sd_model_checkpoint and nothing else — Forge
+ * rebuilds forge_loading_parameters from opts, and forge_additional_modules
+ * (which is where the text encoder lives) carries over from the main model
+ * untouched. Override an SDXL generation to an Anima checkpoint and Anima
+ * loads against SDXL's module set, i.e. with no Qwen3 encoder. Forge builds
+ * under no_init_weights(), so the missing tensors stay as uninitialised
+ * memory and the detail pass paints noise.
+ *
+ * With a fork that supports the encoder override the user can supply the
+ * right one, so this only warns. Without it there's no way to make the
+ * combination work, so the override is cleared.
+ */
+async function checkADArchMatch(n) {
+  const warn = document.getElementById(`adArchWarn${n}`);
+  const sepCkpt = document.getElementById(`paramAD${n}SepCkpt`);
+  const ckpt = document.getElementById(`paramAD${n}Ckpt`);
+  const sepTE = document.getElementById(`paramAD${n}SepTE`);
+  const te = document.getElementById(`paramAD${n}TE`);
+  if (!warn) return;
+
+  const hide = () => { warn.style.display = "none"; warn.textContent = ""; };
+  const show = (key, fallback, vars) => {
+    warn.textContent = _i18n(key, fallback, vars);
+    warn.style.display = "";
+  };
+
+  if (!sepCkpt?.checked || !ckpt?.value) { hide(); return; }
+  const mainTitle = document.getElementById("paramModel")?.value || "";
+  if (!mainTitle) { hide(); return; }
+
+  let mainArch = State._currentModelArch || null;
+  if (!mainArch || mainArch === "unknown") {
+    mainArch = (await checkModelTE(mainTitle)).arch;
+  }
+  const target = await checkModelTE(ckpt.value);
+  if (!target || !target.arch || target.arch === "unknown"
+      || !mainArch || mainArch === "unknown") { hide(); return; }
+  if (target.arch === mainArch) { hide(); return; }
+
+  const teSupported = sepTE && !sepTE.disabled;
+  const vars = { target: target.arch, main: mainArch };
+
+  if (!teSupported) {
+    // Nothing can make this combination load correctly.
+    sepCkpt.checked = false;
+    sepCkpt.dispatchEvent(new Event("change"));
+    show("adetailer.overrides.archBlocked",
+         `Cleared: this checkpoint is ${target.arch} but the loaded model is ${mainArch}, and the installed ADetailer can't switch text encoders. Loading it would produce noise.`,
+         vars);
+    console.warn(`[Studio AD] Slot ${n} checkpoint override cleared — ${target.arch} vs ${mainArch}, no encoder override available`);
+    return;
+  }
+
+  if (target.needs_te) {
+    // Needs an external encoder, and the loaded one belongs to another
+    // architecture. Anything but a real selection here loads noise.
+    const chosen = sepTE.checked ? (te?.value || "") : "";
+    if (!chosen || chosen === "None") {
+      show("adetailer.overrides.archNeedsTE",
+           `This checkpoint is ${target.arch} and needs its own text encoder — the loaded ${mainArch} one won't work. Tick Text encoder and pick a matching one.`,
+           vars);
+    } else {
+      hide();
+    }
+    return;
+  }
+
+  // Bundles its own encoder. The loaded external one has to be dropped, or it
+  // rides along into a checkpoint that didn't ask for it — so select the
+  // explicit "None" rather than just leaving the override off.
+  if (!sepTE.checked || te?.value !== "None") {
+    sepTE.checked = true;
+    if (te) te.value = "None";
+    sepTE.dispatchEvent(new Event("change"));
+    console.info(`[Studio AD] Slot ${n}: ${target.arch} bundles its own text encoder — dropping the loaded ${mainArch} one for this pass`);
+  }
+  show("adetailer.overrides.archBundledTE",
+       `This checkpoint is ${target.arch} and bundles its own text encoder, so the loaded ${mainArch} one is dropped for the detail pass.`,
+       vars);
+}
+
+/**
  * Fill the per-slot AD override dropdowns (suffix "Ckpt" or "Vae") for all
  * three slots, preserving each slot's current pick when it still exists.
  * Populated from the same lists the main model/VAE selectors use, so an
@@ -158,6 +242,7 @@ function adOverridePayload(n) {
   const sepVae = on(`paramAD${n}SepVae`);
   // ADetailer has no separate scheduler flag — the schedule rides ad_use_sampler.
   const sepSampler = on(`paramAD${n}SepSampler`);
+  const sepTE = on(`paramAD${n}SepTE`);
   return {
     sep_steps:        on(`paramAD${n}SepSteps`),
     steps:            parseInt(document.getElementById(`paramAD${n}Steps`)?.value) || 28,
@@ -176,6 +261,8 @@ function adOverridePayload(n) {
     noise_multiplier: _num(`paramAD${n}Noise`, 1.0),
     sep_clip_skip:    on(`paramAD${n}SepClip`),
     clip_skip:        parseInt(document.getElementById(`paramAD${n}Clip`)?.value) || 1,
+    sep_text_encoder: sepTE,
+    text_encoder:     sepTE ? val(`paramAD${n}TE`) : "",
   };
 }
 
@@ -1817,6 +1904,7 @@ async function applyADCapabilities() {
     ["cfg", "SepCfg", "Cfg"],
     ["sampler", "SepSampler", "Sampler"],
     ["scheduler", null, "Scheduler"],
+    ["text_encoder", "SepTE", "TE"],
   ]) {
     if (caps[cap] !== false) continue;
     for (const n of [1, 2, 3]) {
@@ -2170,6 +2258,15 @@ async function populateDropdowns() {
     // come after innerHTML rebuild — otherwise replacing the <option>s
     // wipes whatever value was just selected.
     fetch(API.base + "/studio/text_encoders").then(r => r.json()).then(async teList => {
+      // Per-slot AD encoder overrides share the main text-encoder list.
+      // "None" is a real choice, not an empty one: a checkpoint that bundles
+      // its own encoder needs the loaded external one dropped, which is the
+      // SDXL-under-Anima direction.
+      _fillADOverrideSelects("TE", [
+        { value: "None", label: _i18n("adetailer.overrides.teBundled", "None (bundled)") },
+        ...(teList || []).map(t => ({ value: t, label: t })),
+      ]);
+
       const teSelect = document.getElementById("paramTextEncoder");
       // A session/defaults-stashed TE (pendingValue) is an explicit user
       // choice and must not be clobbered by per-model/arch memory. When
@@ -5138,6 +5235,9 @@ function bindUI() {
     });
     State._currentModelArch = check.arch || "unknown";
     _applyArchRules(State._currentModelArch);
+    // A slot override that matched the previous model may now cross
+    // architectures, so re-evaluate every slot against the new one.
+    for (const _n of [1, 2, 3]) checkADArchMatch(_n);
 
     const textEncoder = teSelect?.value || "None";
     const vaeVal = document.getElementById("paramVAE")?.value;
@@ -5279,6 +5379,7 @@ function bindUI() {
       ["SepNoise", "Noise"], ["SepClip", "Clip"],
       ["SepSteps", "Steps"], ["SepCfg", "Cfg"],
       ["SepSampler", "Sampler"], ["SepSampler", "Scheduler"],
+      ["SepTE", "TE"],
     ]) {
       const cb = document.getElementById(`paramAD${n}${flag}`);
       const target = document.getElementById(`paramAD${n}${control}`);
@@ -5288,6 +5389,12 @@ function bindUI() {
       };
       cb.addEventListener("change", sync);
       sync();
+      if (flag === "SepCkpt") {
+        // Re-check on both the flag and the value: either can create the
+        // mismatch. Fire-and-forget — it only paints a warning line.
+        cb.addEventListener("change", () => { checkADArchMatch(n); });
+        target.addEventListener("change", () => { checkADArchMatch(n); });
+      }
     }
   }
 
@@ -6071,6 +6178,7 @@ function bindUI() {
       ["paramAD1SepCfg", "checkbox"], ["paramAD1Cfg", "val"],
       ["paramAD1SepSampler", "checkbox"], ["paramAD1Sampler", "val"],
       ["paramAD1Scheduler", "val"],
+      ["paramAD1SepTE", "checkbox"], ["paramAD1TE", "val"],
       ["checkAD2", "check"], ["paramAD2Model", "val"],
       ["paramAD2Conf", "val"], ["paramAD2Denoise", "val"],
       ["paramAD2Blur", "val"], ["paramAD2Prompt", "val"], ["adLoraStack2", "val"],
@@ -6082,6 +6190,7 @@ function bindUI() {
       ["paramAD2SepCfg", "checkbox"], ["paramAD2Cfg", "val"],
       ["paramAD2SepSampler", "checkbox"], ["paramAD2Sampler", "val"],
       ["paramAD2Scheduler", "val"],
+      ["paramAD2SepTE", "checkbox"], ["paramAD2TE", "val"],
       ["checkAD3", "check"], ["paramAD3Model", "val"],
       ["paramAD3Conf", "val"], ["paramAD3Denoise", "val"],
       ["paramAD3Blur", "val"], ["paramAD3Prompt", "val"], ["adLoraStack3", "val"],
@@ -6093,6 +6202,7 @@ function bindUI() {
       ["paramAD3SepCfg", "checkbox"], ["paramAD3Cfg", "val"],
       ["paramAD3SepSampler", "checkbox"], ["paramAD3Sampler", "val"],
       ["paramAD3Scheduler", "val"],
+      ["paramAD3SepTE", "checkbox"], ["paramAD3TE", "val"],
     ],
     upscale: [
       ["paramUpscaleModel", "val"], ["paramUpscaleScale", "val"],
