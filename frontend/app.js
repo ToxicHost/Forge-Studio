@@ -122,6 +122,53 @@ function _num(id, fallback) {
 }
 
 /**
+ * Fill the per-slot AD override dropdowns (suffix "Ckpt" or "Vae") for all
+ * three slots, preserving each slot's current pick when it still exists.
+ * Populated from the same lists the main model/VAE selectors use, so an
+ * override can only ever name something Forge can actually load.
+ */
+function _fillADOverrideSelects(suffix, items) {
+  for (const n of [1, 2, 3]) {
+    const el = document.getElementById(`paramAD${n}${suffix}`);
+    if (!el) continue;
+    const prev = el.dataset.pendingValue || el.value;
+    // Built through the DOM rather than an innerHTML template: a checkpoint
+    // filename may contain quotes or angle brackets, and the page's escape
+    // helper targets text nodes (it converts newlines to <br>), not attributes.
+    el.replaceChildren(...items.map(it => new Option(it.label, it.value)));
+    if (prev && [...el.options].some(o => o.value === prev)) el.value = prev;
+    delete el.dataset.pendingValue;
+  }
+}
+
+/**
+ * Per-slot ADetailer detail-pass overrides.
+ *
+ * ADetailer gates each override behind its own ad_use_* flag. We only send a
+ * value when its flag is on, so a leftover dropdown selection can never leak
+ * into the detail pass. Checkpoint and VAE ride ADetailer's override_settings
+ * path, which reloads the model each way — the panel warns about the cost.
+ *
+ * Face restoration is deliberately not surfaced.
+ */
+function adOverridePayload(n) {
+  const on = (id) => document.getElementById(id)?.checked || false;
+  const val = (id) => document.getElementById(id)?.value || "";
+  const sepCkpt = on(`paramAD${n}SepCkpt`);
+  const sepVae = on(`paramAD${n}SepVae`);
+  return {
+    sep_checkpoint:   sepCkpt,
+    checkpoint:       sepCkpt ? val(`paramAD${n}Ckpt`) : "",
+    sep_vae:          sepVae,
+    vae:              sepVae ? val(`paramAD${n}Vae`) : "",
+    sep_noise:        on(`paramAD${n}SepNoise`),
+    noise_multiplier: _num(`paramAD${n}Noise`, 1.0),
+    sep_clip_skip:    on(`paramAD${n}SepClip`),
+    clip_skip:        parseInt(document.getElementById(`paramAD${n}Clip`)?.value) || 1,
+  };
+}
+
+/**
  * Apply parsed A1111 infotext parameters to UI fields.
  * Best-effort: sets whatever fields match, skips the rest.
  */
@@ -1725,9 +1772,58 @@ async function restoreVAEForModel(modelTitle, reason = "model-change", opts = {}
 // models installed", with nothing logged server-side because the endpoint was
 // never hit. Keeping it independent means an unrelated failure can't take
 // ADetailer's model list down with it.
+/**
+ * Disable the per-slot override controls the installed ADetailer can't accept.
+ *
+ * The forks diverge on which ad_use_* fields exist, and Studio strips unknown
+ * keys before dispatch (extra='forbid' makes ADetailer skip every slot
+ * otherwise). Without this an unsupported control would look live and do
+ * nothing — the same silent-failure shape that made the AD model list hard to
+ * diagnose. Failure to probe leaves every control enabled.
+ */
+async function applyADCapabilities() {
+  let caps;
+  try {
+    caps = await API.get("/studio/ad_capabilities");
+  } catch (err) {
+    console.warn("[Studio AD] Capability probe failed — leaving overrides enabled:", err);
+    return;
+  }
+  if (!caps || typeof caps !== "object") return;
+
+  const unsupported = _i18n(
+    "adetailer.overrides.unsupported",
+    "The installed ADetailer version doesn't support this option.",
+  );
+  for (const [cap, flag, control] of [
+    ["checkpoint", "SepCkpt", "Ckpt"],
+    ["vae", "SepVae", "Vae"],
+    ["noise", "SepNoise", "Noise"],
+    ["clip_skip", "SepClip", "Clip"],
+  ]) {
+    if (caps[cap] !== false) continue;
+    for (const n of [1, 2, 3]) {
+      const cb = document.getElementById(`paramAD${n}${flag}`);
+      const target = document.getElementById(`paramAD${n}${control}`);
+      if (cb) {
+        cb.checked = false;
+        cb.disabled = true;
+        const row = cb.closest("label");
+        if (row) { row.classList.add("ad-override-unsupported"); row.title = unsupported; }
+      }
+      if (target) target.disabled = true;
+    }
+    console.info(`[Studio AD] Override "${cap}" unavailable in the installed ADetailer — control disabled`);
+  }
+}
+
 async function populateADModels(opts) {
   const refresh = !!(opts && opts.refresh);
   try {
+    // Independent of the model list: the override controls must be gated
+    // even when no detection model is installed.
+    applyADCapabilities();
+
     const adModels = await API.get("/studio/ad_models" + (refresh ? "?refresh=1" : ""));
     if (!Array.isArray(adModels) || !adModels.length) {
       console.warn("[Studio] ADetailer model list empty — check the [Studio AD] line in the Forge console");
@@ -1808,6 +1904,11 @@ async function populateDropdowns() {
         searchPlaceholder: "Filter models…",
       });
     }
+
+    // Per-slot AD checkpoint overrides draw from the same checkpoint list.
+    _fillADOverrideSelects("Ckpt", models.map(m => ({
+      value: m.title, label: _stripModelHash(m.title),
+    })));
 
     // Sampler dropdown
     const samplerSelect = document.getElementById("paramSampler");
@@ -1980,6 +2081,12 @@ async function populateDropdowns() {
       });
     }
     fetch(API.base + "/studio/vaes").then(r => r.json()).then(async vaes => {
+      // Runs before the early return below so the AD slots populate even
+      // when the main VAE selector is absent from the current layout.
+      _fillADOverrideSelects("Vae", vaes
+        .filter(v => v.name && v.name !== "Automatic" && v.name !== "None")
+        .map(v => ({ value: v.name, label: v.name })));
+
       const vaeSelect = document.getElementById("paramVAE");
       if (!vaeSelect) return;
       const pendingVAE = vaeSelect.dataset.pendingValue || "";
@@ -2512,6 +2619,7 @@ async function doGenerate() {
       prompt:     _clean(document.getElementById(`paramAD${n}Prompt`)?.value || ""),
       neg_prompt: "",
       loras:      window.ADLoRAStack?.payloadForSlot?.(n) || [],
+      ...adOverridePayload(n),
     })),
 
     // Regional / ControlNet
@@ -4205,6 +4313,7 @@ function bindUI() {
           prompt:     document.getElementById(`paramAD${n}Prompt`)?.value || "",
           neg_prompt: "",
           loras:      window.ADLoRAStack?.payloadForSlot?.(n) || [],
+          ...adOverridePayload(n),
         })),
         save_outputs:   State.saveOutputs,
         save_format:    State.saveFormat || "png",
@@ -5126,6 +5235,24 @@ function bindUI() {
     await loadSelectedModelComponents("te-change");
   });
 
+  // Per-slot AD overrides: each control is inert until its flag is ticked,
+  // so the disabled state matches what adOverridePayload() will actually
+  // send. Defaults/session restore dispatches "change" after setting
+  // .checked, which re-runs the same sync.
+  for (const n of [1, 2, 3]) {
+    for (const [flag, control] of [
+      ["SepCkpt", "Ckpt"], ["SepVae", "Vae"],
+      ["SepNoise", "Noise"], ["SepClip", "Clip"],
+    ]) {
+      const cb = document.getElementById(`paramAD${n}${flag}`);
+      const target = document.getElementById(`paramAD${n}${control}`);
+      if (!cb || !target) continue;
+      const sync = () => { target.disabled = !cb.checked; };
+      cb.addEventListener("change", sync);
+      sync();
+    }
+  }
+
   // Toggle tracks — generic CSS toggle
   document.querySelectorAll(".toggle-track").forEach(t => {
     t.addEventListener("click", () => t.classList.toggle("on"));
@@ -5898,12 +6025,24 @@ function bindUI() {
       ["checkAD1", "check"], ["paramAD1Model", "val"],
       ["paramAD1Conf", "val"], ["paramAD1Denoise", "val"],
       ["paramAD1Blur", "val"], ["paramAD1Prompt", "val"], ["adLoraStack1", "val"],
+      ["paramAD1SepCkpt", "checkbox"], ["paramAD1Ckpt", "val"],
+      ["paramAD1SepVae", "checkbox"], ["paramAD1Vae", "val"],
+      ["paramAD1SepNoise", "checkbox"], ["paramAD1Noise", "val"],
+      ["paramAD1SepClip", "checkbox"], ["paramAD1Clip", "val"],
       ["checkAD2", "check"], ["paramAD2Model", "val"],
       ["paramAD2Conf", "val"], ["paramAD2Denoise", "val"],
       ["paramAD2Blur", "val"], ["paramAD2Prompt", "val"], ["adLoraStack2", "val"],
+      ["paramAD2SepCkpt", "checkbox"], ["paramAD2Ckpt", "val"],
+      ["paramAD2SepVae", "checkbox"], ["paramAD2Vae", "val"],
+      ["paramAD2SepNoise", "checkbox"], ["paramAD2Noise", "val"],
+      ["paramAD2SepClip", "checkbox"], ["paramAD2Clip", "val"],
       ["checkAD3", "check"], ["paramAD3Model", "val"],
       ["paramAD3Conf", "val"], ["paramAD3Denoise", "val"],
       ["paramAD3Blur", "val"], ["paramAD3Prompt", "val"], ["adLoraStack3", "val"],
+      ["paramAD3SepCkpt", "checkbox"], ["paramAD3Ckpt", "val"],
+      ["paramAD3SepVae", "checkbox"], ["paramAD3Vae", "val"],
+      ["paramAD3SepNoise", "checkbox"], ["paramAD3Noise", "val"],
+      ["paramAD3SepClip", "checkbox"], ["paramAD3Clip", "val"],
     ],
     upscale: [
       ["paramUpscaleModel", "val"], ["paramUpscaleScale", "val"],

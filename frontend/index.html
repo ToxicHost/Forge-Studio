@@ -673,6 +673,30 @@
                 <div class="param-grid cols-1 secondary param-advanced" style="margin-top:4px;">
                   <div class="param-cell" data-help="help.adetailer.prompt"><label>Prompt (blank = main)</label><input class="param-val" id="paramAD1Prompt" value="" style="text-align:left;font-family:var(--font);"></div>
                 </div>
+                <div class="param-grid cols-1 secondary param-advanced" style="margin-top:4px;">
+                  <div class="param-cell" data-help="help.adetailer.overrides">
+                    <label data-i18n="adetailer.overrides.label">Detail-pass overrides</label>
+                    <div class="ad-override-row">
+                      <label class="ar-rand-check"><input type="checkbox" id="paramAD1SepCkpt"> <span data-i18n="adetailer.overrides.checkpoint">Checkpoint</span></label>
+                      <select class="param-select ad-override-select" id="paramAD1Ckpt" disabled></select>
+                    </div>
+                    <div class="ad-override-row">
+                      <label class="ar-rand-check"><input type="checkbox" id="paramAD1SepVae"> <span data-i18n="adetailer.overrides.vae">VAE</span></label>
+                      <select class="param-select ad-override-select" id="paramAD1Vae" disabled></select>
+                    </div>
+                    <div class="ad-override-hint" data-i18n="adetailer.overrides.reloadWarning">Checkpoint and VAE overrides reload the model for each detail pass, then reload the main model again afterwards.</div>
+                  </div>
+                </div>
+                <div class="param-grid cols-2 secondary param-advanced" style="margin-top:4px;">
+                  <div class="param-cell" data-help="help.adetailer.noiseMultiplier">
+                    <label class="ar-rand-check"><input type="checkbox" id="paramAD1SepNoise"> <span data-i18n="adetailer.overrides.noise">Noise mult.</span></label>
+                    <input class="param-val" id="paramAD1Noise" data-min="0.5" data-max="1.5" data-step="0.01" value="1">
+                  </div>
+                  <div class="param-cell" data-help="help.adetailer.clipSkip">
+                    <label class="ar-rand-check"><input type="checkbox" id="paramAD1SepClip"> <span data-i18n="adetailer.overrides.clipSkip">CLIP skip</span></label>
+                    <input class="param-val" id="paramAD1Clip" data-min="1" data-max="12" data-step="1" value="1">
+                  </div>
+                </div>
                 <div class="param-grid cols-1 secondary param-advanced ad-lora-row" data-ad-slot="1" style="margin-top:4px;">
                   <div class="param-cell">
                     <label data-i18n="adetailer.loras.label">LoRAs (this slot only)</label>
@@ -699,6 +723,30 @@
                 </div>
                 <div class="param-grid cols-1 secondary param-advanced" style="margin-top:4px;">
                   <div class="param-cell" data-help="help.adetailer.prompt"><label>Prompt (blank = main)</label><input class="param-val" id="paramAD2Prompt" value="" style="text-align:left;font-family:var(--font);"></div>
+                </div>
+                <div class="param-grid cols-1 secondary param-advanced" style="margin-top:4px;">
+                  <div class="param-cell" data-help="help.adetailer.overrides">
+                    <label data-i18n="adetailer.overrides.label">Detail-pass overrides</label>
+                    <div class="ad-override-row">
+                      <label class="ar-rand-check"><input type="checkbox" id="paramAD2SepCkpt"> <span data-i18n="adetailer.overrides.checkpoint">Checkpoint</span></label>
+                      <select class="param-select ad-override-select" id="paramAD2Ckpt" disabled></select>
+                    </div>
+                    <div class="ad-override-row">
+                      <label class="ar-rand-check"><input type="checkbox" id="paramAD2SepVae"> <span data-i18n="adetailer.overrides.vae">VAE</span></label>
+                      <select class="param-select ad-override-select" id="paramAD2Vae" disabled></select>
+                    </div>
+                    <div class="ad-override-hint" data-i18n="adetailer.overrides.reloadWarning">Checkpoint and VAE overrides reload the model for each detail pass, then reload the main model again afterwards.</div>
+                  </div>
+                </div>
+                <div class="param-grid cols-2 secondary param-advanced" style="margin-top:4px;">
+                  <div class="param-cell" data-help="help.adetailer.noiseMultiplier">
+                    <label class="ar-rand-check"><input type="checkbox" id="paramAD2SepNoise"> <span data-i18n="adetailer.overrides.noise">Noise mult.</span></label>
+                    <input class="param-val" id="paramAD2Noise" data-min="0.5" data-max="1.5" data-step="0.01" value="1">
+                  </div>
+                  <div class="param-cell" data-help="help.adetailer.clipSkip">
+                    <label class="ar-rand-check"><input type="checkbox" id="paramAD2SepClip"> <span data-i18n="adetailer.overrides.clipSkip">CLIP skip</span></label>
+                    <input class="param-val" id="paramAD2Clip" data-min="1" data-max="12" data-step="1" value="1">
+                  </div>
                 </div>
                 <div class="param-grid cols-1 secondary param-advanced ad-lora-row" data-ad-slot="2" style="margin-top:4px;">
                   <div class="param-cell">
@@ -727,6 +775,30 @@
                 </div>
                 <div class="param-grid cols-1 secondary param-advanced" style="margin-top:4px;">
                   <div class="param-cell" data-help="help.adetailer.prompt"><label>Prompt (blank = main)</label><input class="param-val" id="paramAD3Prompt" value="" style="text-align:left;font-family:var(--font);"></div>
+                </div>
+                <div class="param-grid cols-1 secondary param-advanced" style="margin-top:4px;">
+                  <div class="param-cell" data-help="help.adetailer.overrides">
+                    <label data-i18n="adetailer.overrides.label">Detail-pass overrides</label>
+                    <div class="ad-override-row">
+                      <label class="ar-rand-check"><input type="checkbox" id="paramAD3SepCkpt"> <span data-i18n="adetailer.overrides.checkpoint">Checkpoint</span></label>
+                      <select class="param-select ad-override-select" id="paramAD3Ckpt" disabled></select>
+                    </div>
+                    <div class="ad-override-row">
+                      <label class="ar-rand-check"><input type="checkbox" id="paramAD3SepVae"> <span data-i18n="adetailer.overrides.vae">VAE</span></label>
+                      <select class="param-select ad-override-select" id="paramAD3Vae" disabled></select>
+                    </div>
+                    <div class="ad-override-hint" data-i18n="adetailer.overrides.reloadWarning">Checkpoint and VAE overrides reload the model for each detail pass, then reload the main model again afterwards.</div>
+                  </div>
+                </div>
+                <div class="param-grid cols-2 secondary param-advanced" style="margin-top:4px;">
+                  <div class="param-cell" data-help="help.adetailer.noiseMultiplier">
+                    <label class="ar-rand-check"><input type="checkbox" id="paramAD3SepNoise"> <span data-i18n="adetailer.overrides.noise">Noise mult.</span></label>
+                    <input class="param-val" id="paramAD3Noise" data-min="0.5" data-max="1.5" data-step="0.01" value="1">
+                  </div>
+                  <div class="param-cell" data-help="help.adetailer.clipSkip">
+                    <label class="ar-rand-check"><input type="checkbox" id="paramAD3SepClip"> <span data-i18n="adetailer.overrides.clipSkip">CLIP skip</span></label>
+                    <input class="param-val" id="paramAD3Clip" data-min="1" data-max="12" data-step="1" value="1">
+                  </div>
                 </div>
                 <div class="param-grid cols-1 secondary param-advanced ad-lora-row" data-ad-slot="3" style="margin-top:4px;">
                   <div class="param-cell">
