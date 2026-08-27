@@ -1175,6 +1175,13 @@ class ADSlotParams(BaseModel):
     noise_multiplier: float = 1.0
     sep_clip_skip: bool = False
     clip_skip: int = 1
+    # Text encoder for the detail pass. Forge carries the TE in
+    # forge_additional_modules, which a checkpoint override does NOT rewrite —
+    # so overriding to a checkpoint of another architecture would otherwise
+    # load it against the previous model's encoder. Needs a fork that declares
+    # ad_use_modules/ad_modules; see docs/adetailer-text-encoder.md.
+    sep_text_encoder: bool = False
+    text_encoder: str = ""
 
 
 class GenerateRequest(BaseModel):
@@ -1374,6 +1381,7 @@ def _flatten_ad_slot(slot: ADSlotParams) -> list:
         slot.prompt, slot.neg_prompt,
         slot.sep_checkpoint, slot.checkpoint, slot.sep_vae, slot.vae,
         slot.sep_noise, slot.noise_multiplier, slot.sep_clip_skip, slot.clip_skip,
+        slot.sep_text_encoder, slot.text_encoder,
     ]
 
 
@@ -4455,6 +4463,7 @@ def setup_studio_routes(app: FastAPI):
                 "use_sep_vae": s.sep_vae, "ad_vae": s.vae,
                 "use_sep_noise": s.sep_noise, "ad_noise_multiplier": s.noise_multiplier,
                 "use_sep_clip_skip": s.sep_clip_skip, "ad_clip_skip": s.clip_skip,
+                "use_sep_te": s.sep_text_encoder, "ad_text_encoder": s.text_encoder,
                 "prompt": s.prompt, "neg_prompt": s.neg_prompt,
             } for s in ad_slots[:3]]
             # Per-slot LoRA suffixes for this refine/upscale AD pass (same
@@ -5869,6 +5878,10 @@ def setup_studio_routes(app: FastAPI):
                 "known": False, "checkpoint": True, "vae": True,
                 "noise": True, "clip_skip": True, "steps": True,
                 "cfg": True, "sampler": True, "scheduler": True,
+                # Not assumed: this one needs a patched fork, and claiming it
+                # when we couldn't look would let cross-architecture overrides
+                # through with no encoder to load them against.
+                "text_encoder": False,
             }
         return {
             "known": True,
@@ -5882,6 +5895,10 @@ def setup_studio_routes(app: FastAPI):
             # No ad_use_scheduler exists — the schedule rides ad_use_sampler,
             # so it only needs the value field to be declared.
             "scheduler": _has("ad_scheduler"),
+            # Stock ADetailer builds its override_settings from scratch and
+            # never reads the parent's, so a text-encoder swap is only
+            # reachable on a fork that declares these.
+            "text_encoder": _has("ad_use_modules", "ad_modules"),
         }
 
     @app.post("/studio/load_model")

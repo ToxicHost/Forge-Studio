@@ -3411,6 +3411,9 @@ body.customizing .customize-divider:hover { background: var(--accent); opacity: 
   /* Aligns the flag-less schedule row with the tickboxed rows above it. */
   padding-left: 16px;
 }
+.ad-arch-warning {
+  color: var(--warning, #d89b3c);
+}
 .ad-override-unsupported {
   opacity: 0.45;
   cursor: not-allowed;

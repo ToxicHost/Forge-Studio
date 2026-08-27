@@ -968,6 +968,64 @@ def _native_ad_supports_suffix():
         return False
 
 
+def _resolve_ad_modules(te_name, vae_name=None):
+    """Build the forge_additional_modules replacement list for a detail pass.
+
+    Forge keeps the text encoder and the VAE in the same list, so replacing it
+    to swap the encoder would drop the VAE with it. Start from whatever is
+    loaded, keep its VAE unless the slot names its own, and put the requested
+    encoder in front.
+
+    Names are resolved to full paths because Forge's modules_change() matches
+    on basename against its own registry and silently skips anything it
+    doesn't recognise — a dropped entry there would look like the override
+    simply had no effect. Returns [] if the encoder can't be resolved, which
+    leaves the override off rather than sending a half-built list.
+    """
+    if not te_name:
+        return []
+
+    try:
+        models_dir = getattr(shared, "models_path", None) or "models"
+        te_path = os.path.join(models_dir, "text_encoder", str(te_name))
+        if not os.path.isfile(te_path):
+            print(f"[Studio AD] Text encoder not found, override skipped: {te_path}")
+            return []
+    except Exception:
+        print(f"[Studio AD] Could not resolve text encoder {te_name!r}, override skipped")
+        return []
+
+    modules = [te_path]
+
+    try:
+        from modules import sd_vae
+        vae_dict = getattr(sd_vae, "vae_dict", {}) or {}
+        if vae_name:
+            vae_path = vae_dict.get(vae_name)
+            if vae_path and os.path.isfile(vae_path):
+                modules.append(vae_path)
+            else:
+                print(f"[Studio AD] VAE not found for override: {vae_name}")
+        else:
+            # Carry the loaded VAE across so swapping the encoder doesn't
+            # quietly take the VAE with it.
+            known = {os.path.normcase(os.path.abspath(v)) for v in vae_dict.values() if v}
+            current = getattr(shared.opts, "forge_additional_modules", None) or []
+            for mod in current:
+                try:
+                    if os.path.normcase(os.path.abspath(mod)) in known:
+                        modules.append(mod)
+                        break
+                except Exception:
+                    continue
+    except Exception:
+        log_exc = getattr(traceback, "print_exc", None)
+        if log_exc:
+            log_exc()
+
+    return modules
+
+
 def _build_native_ad_dicts(ad_enable, ad_raw_slots):
     """Build native ADetailer-compatible slot dicts from Studio's frontend params.
 
@@ -1018,6 +1076,27 @@ def _build_native_ad_dicts(ad_enable, ad_raw_slots):
                           "that carry LoRAs (install the patched fork to avoid this).")
         _ad_sep_ckpt = bool(s.get("use_sep_checkpoint", False)) and bool(s.get("ad_checkpoint"))
         _ad_sep_vae = bool(s.get("use_sep_vae", False)) and bool(s.get("ad_vae"))
+        _ad_sep_te = bool(s.get("use_sep_te", False)) and bool(s.get("ad_text_encoder"))
+
+        # Forge keeps the text encoder and the VAE in one list
+        # (forge_additional_modules), and a checkpoint override rewrites
+        # neither. When a detail-pass encoder is requested we therefore have to
+        # send the whole replacement list, not just the encoder — otherwise
+        # setting it would silently drop the VAE alongside it.
+        #
+        # The VAE folds into that list and ad_use_vae is switched off, because
+        # Forge applies forge_additional_modules first and then re-reads opts
+        # for the sd_vae path; leaving both on would have the two mechanisms
+        # write the same slot twice. With no encoder override the VAE keeps its
+        # existing dedicated path untouched.
+        _ad_modules = []
+        if _ad_sep_te:
+            _ad_modules = _resolve_ad_modules(
+                s.get("ad_text_encoder"),
+                s.get("ad_vae") if _ad_sep_vae else None,
+            )
+            if _ad_modules:
+                _ad_sep_vae = False
         slot_dict = {
             "ad_model": model,
             "ad_model_classes": "",
@@ -1052,6 +1131,10 @@ def _build_native_ad_dicts(ad_enable, ad_raw_slots):
             "ad_checkpoint": (s.get("ad_checkpoint") or None) if _ad_sep_ckpt else None,
             "ad_use_vae": _ad_sep_vae,
             "ad_vae": (s.get("ad_vae") or None) if _ad_sep_vae else None,
+            # Dropped by _filter_ad_slot_dict on forks without them, which is
+            # why the UI gates the control on /studio/ad_capabilities.
+            "ad_use_modules": bool(_ad_modules),
+            "ad_modules": list(_ad_modules),
             "ad_use_sampler": bool(s.get("use_sep_sampler", False)),
             "ad_sampler": s.get("ad_sampler") or "DPM++ 2M Karras",
             "ad_scheduler": s.get("ad_scheduler") or "Use same scheduler",
@@ -2720,6 +2803,7 @@ def run_generation(
     ad1_prompt, ad1_neg_prompt,
     ad1_sep_checkpoint, ad1_checkpoint, ad1_sep_vae, ad1_vae,
     ad1_sep_noise, ad1_noise_multiplier, ad1_sep_clip_skip, ad1_clip_skip,
+    ad1_sep_te, ad1_text_encoder,
     ad2_enable, ad2_model, ad2_confidence, ad2_mask_min, ad2_mask_max, ad2_topk_filter, ad2_topk,
     ad2_x_offset, ad2_y_offset, ad2_erosion_dilation, ad2_merge_mode,
     ad2_denoise, ad2_mask_blur, ad2_inpaint_pad, ad2_full_res, ad2_fill,
@@ -2727,6 +2811,7 @@ def run_generation(
     ad2_prompt, ad2_neg_prompt,
     ad2_sep_checkpoint, ad2_checkpoint, ad2_sep_vae, ad2_vae,
     ad2_sep_noise, ad2_noise_multiplier, ad2_sep_clip_skip, ad2_clip_skip,
+    ad2_sep_te, ad2_text_encoder,
     ad3_enable, ad3_model, ad3_confidence, ad3_mask_min, ad3_mask_max, ad3_topk_filter, ad3_topk,
     ad3_x_offset, ad3_y_offset, ad3_erosion_dilation, ad3_merge_mode,
     ad3_denoise, ad3_mask_blur, ad3_inpaint_pad, ad3_full_res, ad3_fill,
@@ -2734,6 +2819,7 @@ def run_generation(
     ad3_prompt, ad3_neg_prompt,
     ad3_sep_checkpoint, ad3_checkpoint, ad3_sep_vae, ad3_vae,
     ad3_sep_noise, ad3_noise_multiplier, ad3_sep_clip_skip, ad3_clip_skip,
+    ad3_sep_te, ad3_text_encoder,
     regions_json="",
     cn_json="",
     cn1_upload_img=None,
@@ -2868,6 +2954,7 @@ def run_generation(
          "use_sep_vae": ad1_sep_vae, "ad_vae": ad1_vae,
          "use_sep_noise": ad1_sep_noise, "ad_noise_multiplier": ad1_noise_multiplier,
          "use_sep_clip_skip": ad1_sep_clip_skip, "ad_clip_skip": ad1_clip_skip,
+         "use_sep_te": ad1_sep_te, "ad_text_encoder": ad1_text_encoder,
          "prompt": ad1_prompt, "neg_prompt": ad1_neg_prompt},
         {"enable": ad2_enable, "model": ad2_model, "confidence": ad2_confidence,
          "mask_min_ratio": ad2_mask_min, "mask_max_ratio": ad2_mask_max,
@@ -2883,6 +2970,7 @@ def run_generation(
          "use_sep_vae": ad2_sep_vae, "ad_vae": ad2_vae,
          "use_sep_noise": ad2_sep_noise, "ad_noise_multiplier": ad2_noise_multiplier,
          "use_sep_clip_skip": ad2_sep_clip_skip, "ad_clip_skip": ad2_clip_skip,
+         "use_sep_te": ad2_sep_te, "ad_text_encoder": ad2_text_encoder,
          "prompt": ad2_prompt, "neg_prompt": ad2_neg_prompt},
         {"enable": ad3_enable, "model": ad3_model, "confidence": ad3_confidence,
          "mask_min_ratio": ad3_mask_min, "mask_max_ratio": ad3_mask_max,
@@ -2898,6 +2986,7 @@ def run_generation(
          "use_sep_vae": ad3_sep_vae, "ad_vae": ad3_vae,
          "use_sep_noise": ad3_sep_noise, "ad_noise_multiplier": ad3_noise_multiplier,
          "use_sep_clip_skip": ad3_sep_clip_skip, "ad_clip_skip": ad3_clip_skip,
+         "use_sep_te": ad3_sep_te, "ad_text_encoder": ad3_text_encoder,
          "prompt": ad3_prompt, "neg_prompt": ad3_neg_prompt},
     ])
 
