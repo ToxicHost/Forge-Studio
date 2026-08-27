@@ -1068,6 +1068,29 @@ def _build_native_ad_dicts(ad_enable, ad_raw_slots):
             "ad_controlnet_guidance_end": 1.0,
             "is_api": True,
         }
+        # Overrides are the likeliest source of a silently-disabled slot: the
+        # schema filter catches unknown *keys*, but an unknown *value* (a
+        # scheduler name this fork doesn't know, say) fails inside ADetailer's
+        # own validation, which it treats as "slot disabled" without a word.
+        # Log what was engaged so that failure is diagnosable from the console
+        # instead of looking like ADetailer just stopped running.
+        _engaged = [
+            f"{k}={slot_dict[v]!r}"
+            for k, v in (("checkpoint", "ad_checkpoint"), ("vae", "ad_vae"),
+                         ("sampler", "ad_sampler"), ("scheduler", "ad_scheduler"),
+                         ("steps", "ad_steps"), ("cfg", "ad_cfg_scale"),
+                         ("noise", "ad_noise_multiplier"), ("clip_skip", "ad_clip_skip"))
+            if slot_dict.get({
+                "ad_checkpoint": "ad_use_checkpoint", "ad_vae": "ad_use_vae",
+                "ad_sampler": "ad_use_sampler", "ad_scheduler": "ad_use_sampler",
+                "ad_steps": "ad_use_steps", "ad_cfg_scale": "ad_use_cfg_scale",
+                "ad_noise_multiplier": "ad_use_noise_multiplier",
+                "ad_clip_skip": "ad_use_clip_skip",
+            }[v])
+        ]
+        if _engaged:
+            print(f"[Studio AD] Slot {_idx + 1} overrides: {', '.join(_engaged)}")
+
         # Only carries ad_prompt_suffix when the installed fork declares it.
         slot_dict.update(_extra)
         # Drop/remap keys the INSTALLED ADetailer doesn't declare. Both forks
