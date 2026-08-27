@@ -1163,6 +1163,18 @@ class ADSlotParams(BaseModel):
     prompt: str = ""
     neg_prompt: str = ""
     loras: List[ADLoraParams] = Field(default_factory=list)
+    # Opt-in overrides for the detail pass. Each is gated by its own flag so
+    # an unset value can never silently diverge from the main generation.
+    # ADetailer applies the checkpoint/VAE via p.override_settings, which
+    # costs a full model reload each way — surfaced in the UI as a warning.
+    sep_checkpoint: bool = False
+    checkpoint: str = ""
+    sep_vae: bool = False
+    vae: str = ""
+    sep_noise: bool = False
+    noise_multiplier: float = 1.0
+    sep_clip_skip: bool = False
+    clip_skip: int = 1
 
 
 class GenerateRequest(BaseModel):
@@ -1360,6 +1372,8 @@ def _flatten_ad_slot(slot: ADSlotParams) -> list:
         slot.sep_steps, slot.steps, slot.sep_cfg, slot.cfg,
         slot.sep_sampler, slot.sampler, slot.scheduler,
         slot.prompt, slot.neg_prompt,
+        slot.sep_checkpoint, slot.checkpoint, slot.sep_vae, slot.vae,
+        slot.sep_noise, slot.noise_multiplier, slot.sep_clip_skip, slot.clip_skip,
     ]
 
 
@@ -4437,6 +4451,10 @@ def setup_studio_routes(app: FastAPI):
                 "use_sep_cfg": s.sep_cfg, "ad_cfg": s.cfg,
                 "use_sep_sampler": s.sep_sampler, "ad_sampler": s.sampler,
                 "ad_scheduler": s.scheduler,
+                "use_sep_checkpoint": s.sep_checkpoint, "ad_checkpoint": s.checkpoint,
+                "use_sep_vae": s.sep_vae, "ad_vae": s.vae,
+                "use_sep_noise": s.sep_noise, "ad_noise_multiplier": s.noise_multiplier,
+                "use_sep_clip_skip": s.sep_clip_skip, "ad_clip_skip": s.clip_skip,
                 "prompt": s.prompt, "neg_prompt": s.neg_prompt,
             } for s in ad_slots[:3]]
             # Per-slot LoRA suffixes for this refine/upscale AD pass (same
@@ -5822,6 +5840,49 @@ def setup_studio_routes(app: FastAPI):
             return [{"name": m} for m in _get()]
         except Exception:
             return [{"name": "None"}]
+
+    @app.get("/studio/ad_capabilities")
+    async def get_ad_capabilities():
+        """Which optional per-slot overrides the installed ADetailer declares.
+
+        The forks diverge here — ADetailer-Neo dropped ad_use_clip_skip /
+        ad_clip_skip, for instance. Keys the installed version doesn't declare
+        get stripped before dispatch (extra='forbid' would otherwise make it
+        skip every slot silently), so a control for an absent field would look
+        functional and do nothing. The UI disables those instead.
+        """
+        try:
+            _fields = _import("studio_generation", "_ad_args_fields")
+            fields = _fields() or set()
+        except Exception:
+            log.exception("AD capability probe failed")
+            fields = set()
+
+        def _has(*names):
+            return all(n in fields for n in names)
+
+        if not fields:
+            # Introspection failed. _filter_ad_slot_dict passes the dict
+            # through untouched in this case, so report everything available
+            # rather than disabling controls that may well work.
+            return {
+                "known": False, "checkpoint": True, "vae": True,
+                "noise": True, "clip_skip": True, "steps": True,
+                "cfg": True, "sampler": True, "scheduler": True,
+            }
+        return {
+            "known": True,
+            "checkpoint": _has("ad_use_checkpoint", "ad_checkpoint"),
+            "vae": _has("ad_use_vae", "ad_vae"),
+            "noise": _has("ad_use_noise_multiplier", "ad_noise_multiplier"),
+            "clip_skip": _has("ad_use_clip_skip", "ad_clip_skip"),
+            "steps": _has("ad_use_steps", "ad_steps"),
+            "cfg": _has("ad_use_cfg_scale", "ad_cfg_scale"),
+            "sampler": _has("ad_use_sampler", "ad_sampler"),
+            # No ad_use_scheduler exists — the schedule rides ad_use_sampler,
+            # so it only needs the value field to be declared.
+            "scheduler": _has("ad_scheduler"),
+        }
 
     @app.post("/studio/load_model")
     async def load_model(body: dict):

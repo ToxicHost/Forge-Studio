@@ -3388,6 +3388,40 @@ body.customizing .customize-divider:hover { background: var(--accent); opacity: 
   :root[data-strip-live] #outputGrid { display: grid; }
 }
 
+/* ── Per-slot ADetailer detail-pass overrides ─────────────────────────── */
+.ad-override-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-top: 3px;
+}
+.ad-override-row .ar-rand-check {
+  flex: 0 0 auto;
+  white-space: nowrap;
+}
+.ad-override-select {
+  flex: 1 1 auto;
+  min-width: 0;
+}
+.ad-override-select:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.ad-override-subrow {
+  /* Aligns the flag-less schedule row with the tickboxed rows above it. */
+  padding-left: 16px;
+}
+.ad-override-unsupported {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+.ad-override-hint {
+  margin-top: 4px;
+  font-size: 9px;
+  line-height: 1.35;
+  color: var(--text-3);
+}
+
 /* ── Per-slot ADetailer LoRA chips (ad-lora-stack.js) ─────────────────── */
 .ad-lora-controls {
   display: flex;

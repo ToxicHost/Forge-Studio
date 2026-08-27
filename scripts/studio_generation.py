@@ -1016,6 +1016,8 @@ def _build_native_ad_dicts(ad_enable, ad_raw_slots):
                           "field — injecting slot LoRAs via [PROMPT] placeholder. "
                           "Per-region AD prompt matching is bypassed for slots "
                           "that carry LoRAs (install the patched fork to avoid this).")
+        _ad_sep_ckpt = bool(s.get("use_sep_checkpoint", False)) and bool(s.get("ad_checkpoint"))
+        _ad_sep_vae = bool(s.get("use_sep_vae", False)) and bool(s.get("ad_vae"))
         slot_dict = {
             "ad_model": model,
             "ad_model_classes": "",
@@ -1042,17 +1044,22 @@ def _build_native_ad_dicts(ad_enable, ad_raw_slots):
             "ad_steps": int(s.get("ad_steps", 28)),
             "ad_use_cfg_scale": bool(s.get("use_sep_cfg", False)),
             "ad_cfg_scale": float(s.get("ad_cfg", 7.0)),
-            "ad_use_checkpoint": False,
-            "ad_checkpoint": None,
-            "ad_use_vae": False,
-            "ad_vae": None,
+            # Opt-in overrides. Each value only travels when its flag is on,
+            # so a stale dropdown value can't leak into the detail pass.
+            # ADetailer routes checkpoint/VAE through p.override_settings,
+            # which reloads the model both ways — the UI warns about the cost.
+            "ad_use_checkpoint": _ad_sep_ckpt,
+            "ad_checkpoint": (s.get("ad_checkpoint") or None) if _ad_sep_ckpt else None,
+            "ad_use_vae": _ad_sep_vae,
+            "ad_vae": (s.get("ad_vae") or None) if _ad_sep_vae else None,
             "ad_use_sampler": bool(s.get("use_sep_sampler", False)),
             "ad_sampler": s.get("ad_sampler") or "DPM++ 2M Karras",
             "ad_scheduler": s.get("ad_scheduler") or "Use same scheduler",
-            "ad_use_noise_multiplier": False,
-            "ad_noise_multiplier": 1.0,
-            "ad_use_clip_skip": False,
-            "ad_clip_skip": 1,
+            "ad_use_noise_multiplier": bool(s.get("use_sep_noise", False)),
+            "ad_noise_multiplier": float(s.get("ad_noise_multiplier", 1.0) or 1.0),
+            "ad_use_clip_skip": bool(s.get("use_sep_clip_skip", False)),
+            "ad_clip_skip": int(s.get("ad_clip_skip", 1) or 1),
+            # Deliberately not exposed.
             "ad_restore_face": False,
             "ad_controlnet_model": "None",
             "ad_controlnet_module": "None",
@@ -1061,6 +1068,29 @@ def _build_native_ad_dicts(ad_enable, ad_raw_slots):
             "ad_controlnet_guidance_end": 1.0,
             "is_api": True,
         }
+        # Overrides are the likeliest source of a silently-disabled slot: the
+        # schema filter catches unknown *keys*, but an unknown *value* (a
+        # scheduler name this fork doesn't know, say) fails inside ADetailer's
+        # own validation, which it treats as "slot disabled" without a word.
+        # Log what was engaged so that failure is diagnosable from the console
+        # instead of looking like ADetailer just stopped running.
+        _engaged = [
+            f"{k}={slot_dict[v]!r}"
+            for k, v in (("checkpoint", "ad_checkpoint"), ("vae", "ad_vae"),
+                         ("sampler", "ad_sampler"), ("scheduler", "ad_scheduler"),
+                         ("steps", "ad_steps"), ("cfg", "ad_cfg_scale"),
+                         ("noise", "ad_noise_multiplier"), ("clip_skip", "ad_clip_skip"))
+            if slot_dict.get({
+                "ad_checkpoint": "ad_use_checkpoint", "ad_vae": "ad_use_vae",
+                "ad_sampler": "ad_use_sampler", "ad_scheduler": "ad_use_sampler",
+                "ad_steps": "ad_use_steps", "ad_cfg_scale": "ad_use_cfg_scale",
+                "ad_noise_multiplier": "ad_use_noise_multiplier",
+                "ad_clip_skip": "ad_use_clip_skip",
+            }[v])
+        ]
+        if _engaged:
+            print(f"[Studio AD] Slot {_idx + 1} overrides: {', '.join(_engaged)}")
+
         # Only carries ad_prompt_suffix when the installed fork declares it.
         slot_dict.update(_extra)
         # Drop/remap keys the INSTALLED ADetailer doesn't declare. Both forks
@@ -2688,16 +2718,22 @@ def run_generation(
     ad1_denoise, ad1_mask_blur, ad1_inpaint_pad, ad1_full_res, ad1_fill,
     ad1_sep_steps, ad1_steps, ad1_sep_cfg, ad1_cfg, ad1_sep_sampler, ad1_sampler, ad1_scheduler,
     ad1_prompt, ad1_neg_prompt,
+    ad1_sep_checkpoint, ad1_checkpoint, ad1_sep_vae, ad1_vae,
+    ad1_sep_noise, ad1_noise_multiplier, ad1_sep_clip_skip, ad1_clip_skip,
     ad2_enable, ad2_model, ad2_confidence, ad2_mask_min, ad2_mask_max, ad2_topk_filter, ad2_topk,
     ad2_x_offset, ad2_y_offset, ad2_erosion_dilation, ad2_merge_mode,
     ad2_denoise, ad2_mask_blur, ad2_inpaint_pad, ad2_full_res, ad2_fill,
     ad2_sep_steps, ad2_steps, ad2_sep_cfg, ad2_cfg, ad2_sep_sampler, ad2_sampler, ad2_scheduler,
     ad2_prompt, ad2_neg_prompt,
+    ad2_sep_checkpoint, ad2_checkpoint, ad2_sep_vae, ad2_vae,
+    ad2_sep_noise, ad2_noise_multiplier, ad2_sep_clip_skip, ad2_clip_skip,
     ad3_enable, ad3_model, ad3_confidence, ad3_mask_min, ad3_mask_max, ad3_topk_filter, ad3_topk,
     ad3_x_offset, ad3_y_offset, ad3_erosion_dilation, ad3_merge_mode,
     ad3_denoise, ad3_mask_blur, ad3_inpaint_pad, ad3_full_res, ad3_fill,
     ad3_sep_steps, ad3_steps, ad3_sep_cfg, ad3_cfg, ad3_sep_sampler, ad3_sampler, ad3_scheduler,
     ad3_prompt, ad3_neg_prompt,
+    ad3_sep_checkpoint, ad3_checkpoint, ad3_sep_vae, ad3_vae,
+    ad3_sep_noise, ad3_noise_multiplier, ad3_sep_clip_skip, ad3_clip_skip,
     regions_json="",
     cn_json="",
     cn1_upload_img=None,
@@ -2828,6 +2864,10 @@ def run_generation(
          "use_sep_steps": ad1_sep_steps, "ad_steps": ad1_steps,
          "use_sep_cfg": ad1_sep_cfg, "ad_cfg": ad1_cfg,
          "use_sep_sampler": ad1_sep_sampler, "ad_sampler": ad1_sampler, "ad_scheduler": ad1_scheduler,
+         "use_sep_checkpoint": ad1_sep_checkpoint, "ad_checkpoint": ad1_checkpoint,
+         "use_sep_vae": ad1_sep_vae, "ad_vae": ad1_vae,
+         "use_sep_noise": ad1_sep_noise, "ad_noise_multiplier": ad1_noise_multiplier,
+         "use_sep_clip_skip": ad1_sep_clip_skip, "ad_clip_skip": ad1_clip_skip,
          "prompt": ad1_prompt, "neg_prompt": ad1_neg_prompt},
         {"enable": ad2_enable, "model": ad2_model, "confidence": ad2_confidence,
          "mask_min_ratio": ad2_mask_min, "mask_max_ratio": ad2_mask_max,
@@ -2839,6 +2879,10 @@ def run_generation(
          "use_sep_steps": ad2_sep_steps, "ad_steps": ad2_steps,
          "use_sep_cfg": ad2_sep_cfg, "ad_cfg": ad2_cfg,
          "use_sep_sampler": ad2_sep_sampler, "ad_sampler": ad2_sampler, "ad_scheduler": ad2_scheduler,
+         "use_sep_checkpoint": ad2_sep_checkpoint, "ad_checkpoint": ad2_checkpoint,
+         "use_sep_vae": ad2_sep_vae, "ad_vae": ad2_vae,
+         "use_sep_noise": ad2_sep_noise, "ad_noise_multiplier": ad2_noise_multiplier,
+         "use_sep_clip_skip": ad2_sep_clip_skip, "ad_clip_skip": ad2_clip_skip,
          "prompt": ad2_prompt, "neg_prompt": ad2_neg_prompt},
         {"enable": ad3_enable, "model": ad3_model, "confidence": ad3_confidence,
          "mask_min_ratio": ad3_mask_min, "mask_max_ratio": ad3_mask_max,
@@ -2850,6 +2894,10 @@ def run_generation(
          "use_sep_steps": ad3_sep_steps, "ad_steps": ad3_steps,
          "use_sep_cfg": ad3_sep_cfg, "ad_cfg": ad3_cfg,
          "use_sep_sampler": ad3_sep_sampler, "ad_sampler": ad3_sampler, "ad_scheduler": ad3_scheduler,
+         "use_sep_checkpoint": ad3_sep_checkpoint, "ad_checkpoint": ad3_checkpoint,
+         "use_sep_vae": ad3_sep_vae, "ad_vae": ad3_vae,
+         "use_sep_noise": ad3_sep_noise, "ad_noise_multiplier": ad3_noise_multiplier,
+         "use_sep_clip_skip": ad3_sep_clip_skip, "ad_clip_skip": ad3_clip_skip,
          "prompt": ad3_prompt, "neg_prompt": ad3_neg_prompt},
     ])
 
